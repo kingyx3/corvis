@@ -10,7 +10,15 @@ export async function GET(request: Request, context: { params: Promise<{ uploadI
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const session = await uploads().get(identity, uploadId);
-    return json({ data: { uploadId: session.uploadId, documentId: session.documentId, artifactVersionId: session.artifactVersionId, ingestionId: session.ingestionId, partSize: session.partSize, state: session.state, completedParts: session.completedParts }, correlationId: id });
+    return json({ data: {
+      uploadId: session.uploadId,
+      documentId: session.documentId,
+      artifactVersionId: session.artifactVersionId,
+      ingestionId: session.ingestionId,
+      chunkSize: session.chunkSize,
+      state: session.state,
+      uploadUrl: ["initiated", "uploading"].includes(session.state) ? session.resumableUploadUrl : undefined,
+    }, correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
 
