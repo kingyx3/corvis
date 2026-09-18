@@ -14,6 +14,8 @@ Corvis uses three GitHub Environments:
 
 GitHub is the deployment/configuration control plane, but it is **not** the long-term runtime secret store. GitHub Actions should copy or generate runtime secrets into GCP Secret Manager and deploy Cloud Run/Jobs using Secret Manager references.
 
+Customer-provided GP portal, data-room or source-repository credentials are a separate class of **tenant runtime secret**. Customers configure/authorize them through the authenticated Corvis product, not through GitHub; the runtime writes the secret material directly to managed secret storage. See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md).
+
 Use environment-scoped variables/secrets rather than repository-wide secrets whenever the value differs by environment. Production secrets must not be reused in `dev` or `uat`.
 
 ## Required GitHub Environment variables
@@ -79,13 +81,14 @@ Add only when the integration is enabled and cannot use federation/workload iden
 
 ## Secrets that must NOT be entered manually into GitHub
 
-The following should be generated or derived by deployment automation and stored in GCP Secret Manager, not manually maintained in multiple systems:
+The following should be generated, derived or collected through the runtime product flow and stored in GCP Secret Manager, not manually maintained in multiple systems:
 
 - `CORVIS_POSTGRES_DSN` — derive from the environment Supabase project/connection information plus the approved database password; write to Secret Manager.
 - `CORVIS_TRUSTED_AUTH_PROXY_SECRET` — generate/rotate automatically if the compatibility gateway remains in use; retire when direct token verification replaces it.
 - `CORVIS_WEBHOOK_SIGNING_SECRET` — generate/rotate automatically.
 - `CORVIS_WORKER_SECRET` — generate/rotate automatically if static worker authentication remains required; prefer service identity where possible.
 - internal service-to-service tokens — prefer IAM/OIDC/service identity; generate in Secret Manager only when a static token is unavoidable.
+- **customer GP portal/data-room/source credentials, OAuth refresh tokens, passwords or session secrets** — collect/authorize through the authenticated customer portal and store directly as tenant-scoped runtime secrets; never copy them into GitHub.
 
 GitHub Actions should not print these values and should not pass them as Terraform outputs or normal logs.
 
@@ -98,6 +101,7 @@ Do not add these secrets:
 - static GCP access tokens for CI
 - AWS access key/secret key for the baseline architecture
 - plaintext database DSNs in repository variables
+- customer source-portal credentials or session tokens
 
 GCP CI/CD uses GitHub OIDC → Workload Identity Federation. `GITHUB_TOKEN` is supplied automatically by GitHub Actions and must not be manually stored.
 
@@ -107,16 +111,22 @@ Expected flow:
 
 ```text
 Human
-  ↓ one-time values
+  ↓ one-time deployment values
 GitHub Environment vars/secrets: dev | uat | prod
   ↓ reviewed workflow
 GitHub Actions
   ├─ OIDC → GCP Workload Identity Federation
   ├─ Terraform → Cloudflare / GCP / Supabase
   ├─ SQL migrations → Postgres
-  ├─ runtime secrets → GCP Secret Manager
+  ├─ deployment/runtime secrets → GCP Secret Manager
   ├─ derived URLs/IDs → deployment configuration
   └─ Cloud Run/Jobs → Secret Manager references + non-secret env vars
+
+Customer administrator
+  ↓ source authorization / credential setup in Corvis
+Corvis runtime
+  ├─ connection metadata → Postgres
+  └─ source credential/token material → GCP Secret Manager
 ```
 
 Provider management tokens such as `CLOUDFLARE_API_TOKEN` and `SUPABASE_ACCESS_TOKEN` are deployment credentials only. Do not copy them into Cloud Run.
@@ -145,7 +155,7 @@ These are the deliberate exceptions to “configure it in GitHub and cascade it�
 5. Create GitHub Environments `dev`, `uat`, `prod` and enter the variables/secrets listed above.
 6. Create/own any external provider account where account/billing/contract ownership cannot be bootstrapped safely by API.
 
-After those trust roots exist, normal infrastructure/settings changes should be GitHub-driven.
+After those trust roots exist, normal infrastructure/settings changes should be GitHub-driven. Customer source credentials remain intentionally customer/runtime-driven rather than GitHub-driven.
 
 ## Production protections
 
