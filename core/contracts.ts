@@ -1,4 +1,4 @@
-export type View = "overview" | "documents" | "review" | "research";
+export type View = "overview" | "documents" | "review" | "delivery" | "research";
 
 export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
 export type DocumentQuality = "High" | "Medium" | "Pending";
@@ -20,6 +20,8 @@ export type DocumentRecord = {
 
 export type ObservationRecord = {
   id: string;
+  snapshotId?: string;
+  fund?: string;
   company: string;
   metric: string;
   value: string;

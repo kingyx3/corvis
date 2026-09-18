@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
 import { workspacePort } from "@/runtime/workspace-services";
@@ -10,7 +10,15 @@ import { DocumentsView } from "@/features/documents/documents-view";
 import { UploadModal } from "@/features/documents/upload-modal";
 import { DocumentDrawer } from "@/features/documents/document-drawer";
 import { ReviewView } from "@/features/review/review-view";
+import { DeliveryView } from "@/features/delivery/delivery-view";
 import { ResearchView } from "@/features/research/research-view";
+
+type ReadModule = "documents" | "snapshots" | "observations";
+type ModuleErrors = Partial<Record<ReadModule, string>>;
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : "Module temporarily unavailable";
+}
 
 export default function CorvisApp() {
   const [view, setView] = useState<View>("overview");
@@ -18,29 +26,64 @@ export default function CorvisApp() {
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [moduleErrors, setModuleErrors] = useState<ModuleErrors>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
 
+  const refreshWorkspace = useCallback(async () => {
+    const [documentsResult, snapshotsResult, observationsResult] = await Promise.allSettled([
+      workspacePort.listDocuments(),
+      workspacePort.listSnapshots(),
+      workspacePort.listObservations(),
+    ]);
+
+    const nextErrors: ModuleErrors = {};
+    if (documentsResult.status === "fulfilled") setDocs(documentsResult.value);
+    else nextErrors.documents = errorMessage(documentsResult.reason);
+
+    if (snapshotsResult.status === "fulfilled") setSnapshots(snapshotsResult.value);
+    else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
+
+    if (observationsResult.status === "fulfilled") setObservations(observationsResult.value);
+    else nextErrors.observations = errorMessage(observationsResult.reason);
+
+    setModuleErrors(nextErrors);
+    setLoading(false);
+  }, []);
+
   useEffect(() => {
     let active = true;
-    Promise.all([workspacePort.listDocuments(), workspacePort.listSnapshots(), workspacePort.listObservations()])
-      .then(([loadedDocs, loadedSnapshots, loadedObservations]) => {
-        if (!active) return;
-        setDocs(loadedDocs); setSnapshots(loadedSnapshots); setObservations(loadedObservations); setLoadError(null);
-      })
-      .catch((error) => active && setLoadError(error instanceof Error ? error.message : "Unable to load workspace"))
-      .finally(() => active && setLoading(false));
+    Promise.allSettled([
+      workspacePort.listDocuments(),
+      workspacePort.listSnapshots(),
+      workspacePort.listObservations(),
+    ]).then(([documentsResult, snapshotsResult, observationsResult]) => {
+      if (!active) return;
+      const nextErrors: ModuleErrors = {};
+      if (documentsResult.status === "fulfilled") setDocs(documentsResult.value);
+      else nextErrors.documents = errorMessage(documentsResult.reason);
+      if (snapshotsResult.status === "fulfilled") setSnapshots(snapshotsResult.value);
+      else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
+      if (observationsResult.status === "fulfilled") setObservations(observationsResult.value);
+      else nextErrors.observations = errorMessage(observationsResult.reason);
+      setModuleErrors(nextErrors);
+      setLoading(false);
+    });
     return () => { active = false; };
   }, []);
 
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
+  const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
+  const degradedModules = Object.keys(moduleErrors) as ReadModule[];
   const nav = useMemo(() => [
     { id: "overview" as View, label: "Overview", icon: "home" as IconName },
     { id: "documents" as View, label: "Documents", icon: "file" as IconName, badge: docs.filter((doc) => doc.status === "Review").length },
     { id: "review" as View, label: "Data review", icon: "table" as IconName, badge: observations.filter((row) => row.state === "Needs review").length },
+    { id: "delivery" as View, label: "Data delivery", icon: "download" as IconName },
     { id: "research" as View, label: "Ask Corvis", icon: "spark" as IconName },
   ], [docs, observations]);
+
+  const scopedUnavailable = (title: string, detail: string) => <section className="page-heading" role="alert"><div><p className="eyebrow">MODULE UNAVAILABLE</p><h1>{title}</h1><p className="lede">{detail}</p><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button></div></section>;
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -53,14 +96,15 @@ export default function CorvisApp() {
       <header className="topbar"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === view)?.label}</strong></div><div className="top-actions"><button className="global-search"><Icon name="search" size={16}/>Search funds, companies, documents <kbd>⌘K</kbd></button><button className="icon-button"><Icon name="dots"/></button></div></header>
       <div className={`content ${view === "research" ? "research-content" : ""}`}>
         {loading && <section className="page-heading"><div><p className="eyebrow">WORKSPACE</p><h1>Loading trusted data…</h1></div></section>}
-        {!loading && loadError && <section className="page-heading"><div><p className="eyebrow">WORKSPACE ERROR</p><h1>Unable to load this workspace</h1><p className="lede">{loadError}</p></div></section>}
-        {!loading && !loadError && view === "overview" && <OverviewView snapshots={snapshots} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={setView} onUpload={() => setUploadOpen(true)}/>} 
-        {!loading && !loadError && view === "documents" && <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc}/>} 
-        {!loading && !loadError && view === "review" && <ReviewView observations={observations} snapshot={reviewSnapshot}/>} 
-        {!loading && !loadError && view === "research" && <ResearchView suggestions={researchSuggestions}/>} 
+        {!loading && degradedModules.length > 0 && <div className="lineage-note" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available while the affected module is repaired.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
+        {!loading && view === "overview" && <OverviewView snapshots={snapshots} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={setView} onUpload={() => setUploadOpen(true)}/>} 
+        {!loading && view === "documents" && (moduleErrors.documents ? scopedUnavailable("Documents are temporarily unavailable", moduleErrors.documents) : <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc}/>)} 
+        {!loading && view === "review" && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)} 
+        {!loading && view === "delivery" && <DeliveryView publishedSnapshots={publishedSnapshots}/>} 
+        {!loading && view === "research" && <ResearchView suggestions={researchSuggestions}/>} 
       </div>
     </main>
-    {uploadOpen && <UploadModal onClose={() => { setUploadOpen(false); setView("documents"); }} onCompleted={(record) => setDocs((prev) => [record, ...prev])}/>} 
+    {uploadOpen && <UploadModal onClose={() => { setUploadOpen(false); setView("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>} 
     {selectedDoc && <DocumentDrawer doc={selectedDoc} onClose={() => setSelectedDoc(null)} onReview={() => { setSelectedDoc(null); setView("review"); }}/>} 
   </div>;
 }

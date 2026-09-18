@@ -2,7 +2,7 @@
 
 This document maps Confluence-owned business/enterprise requirements to executable repository components. GitHub owns the technical implementation details; Confluence owns business semantics, customer rights, control requirements and readiness decisions.
 
-See [`README.md`](README.md) for the technical-doc authority rule.
+See [`README.md`](README.md) for the technical-doc authority rule and [`MODULARITY.md`](MODULARITY.md) for module/failure-isolation requirements.
 
 ## Implemented runtime
 
@@ -42,7 +42,21 @@ Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 - Critical-observation independent-review and publication-policy foundations exist.
 - Publication gates block unresolved review/material exceptions/incomplete lineage according to current policy primitives.
 - Snapshot publication changes create durable outbox foundations.
-- The exception/reconciliation workbench, persistence-bound four-eyes enforcement and complete UAT workflow coverage remain in issue #6.
+- Customer review UI now scopes review/publish state to the selected fund-period snapshot where snapshot-scoped observations are available.
+- The exception/reconciliation workbench, persistence-bound four-eyes enforcement and complete provider-backed UAT workflow coverage remain in issue #6.
+
+### Customer journey and module isolation
+
+- The client workspace loads Documents, Snapshots and Observations independently with partial-success handling rather than one all-or-nothing request chain.
+- A read-module failure produces a scoped degraded state; healthy modules remain usable.
+- Acquisition/upload, workspace reads, review/publication, research and delivery are composed through typed ports/adapters rather than direct provider access from feature UI.
+- Customer structured delivery now has a dedicated `DeliveryPort` and customer-facing Data Delivery surface for CSV/XLSX/Parquet export requests.
+- The demo/E2E harness is stateful across the product seams: an uploaded source creates a review-scoped snapshot and structured observations, review decisions unlock publication, and published snapshots can be requested through the delivery module.
+- Playwright covers the representative seam `upload → structured observations → review → publish → structured delivery` and an injected Observations-module outage that leaves unrelated customer surfaces available.
+- These tests prove product contracts and blast-radius behavior in CI; they are **not** production/provider activation evidence. Production-equivalent `uat` must repeat the journey against real Postgres/GCS/processing/delivery bindings and fault-inject representative module/dependency failures.
+- The largest remaining technical coupling is the legacy `lib/server/platform.ts` service/persistence composition. Issue #28 must replace its Snowflake-oriented persistence paths with bounded Postgres-backed repositories/module adapters rather than reproducing a new provider-specific platform monolith.
+
+See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
 ### Retrieval and AI
 
@@ -60,6 +74,7 @@ Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
 - Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.
 - Live consumers, durable inbox/deduplication, UAT failure tests, SLO dashboards/alerts and recovery evidence remain in issues #4 and #9.
+- Real asynchronous export rendering/storage/expiry and customer webhook delivery remain tracked in issue #11; the client delivery port/surface does not substitute for those provider-backed paths.
 
 ### Admin, control and evidence
 
@@ -83,6 +98,7 @@ Remaining technical infrastructure is tracked primarily in issue #13: `uat`/`pro
 
 Technical standards:
 
+- [`MODULARITY.md`](MODULARITY.md)
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)
 - [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md)
 - [`DEPLOYMENT.md`](DEPLOYMENT.md)

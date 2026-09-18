@@ -10,7 +10,7 @@ Human-entered technical deployment inputs are configured in GitHub Environments 
 
 Customer-provided GP portal/data-room/source credentials are not GitHub configuration. They are authorized through the authenticated Corvis customer/admin portal and stored as tenant-scoped runtime secrets. See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md).
 
-See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) and [`DEPLOYMENT.md`](DEPLOYMENT.md).
+See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md), [`DEPLOYMENT.md`](DEPLOYMENT.md) and [`MODULARITY.md`](MODULARITY.md).
 
 ## Required production bindings
 
@@ -40,6 +40,38 @@ Do not enable external production traffic merely because the current endpoint re
 ## Provider-side / UAT acceptance checks
 
 The `uat` environment should exercise the production topology using synthetic or explicitly sanitized data before production promotion.
+
+### Canonical customer journey
+
+UAT must prove at least one representative customer workflow end to end using production-equivalent module/provider boundaries:
+
+```text
+authenticated customer
+  → uploads or authorizes a source document
+  → source is validated/quarantined/registered with immutable lineage
+  → durable processing produces governed structured observations
+  → review/quality/reconciliation gates are exercised
+  → a fund-period snapshot is published
+  → customer browses the structured data and source lineage
+  → customer requests/receives an enabled structured delivery (API/export/webhook as applicable)
+```
+
+This journey must be repeatable without hidden manual engineering steps. CI demo E2E coverage proves product contracts only; it does not replace this provider-backed UAT evidence.
+
+### Failure-domain acceptance
+
+Production modules must degrade according to [`MODULARITY.md`](MODULARITY.md). UAT must inject or safely simulate representative failures/timeouts for non-critical modules/dependencies and prove that:
+
+- the affected capability fails locally with an actionable, observable state;
+- unrelated customer workflows remain usable where their own dependencies are healthy;
+- tenant/auth/RLS/lineage/publication controls are never bypassed to preserve availability;
+- retry/backoff/dead-letter/replay behavior is bounded and owned where asynchronous;
+- health/readiness distinguishes required core dependencies from optional/degradable capabilities;
+- operators can identify the failing module from logs/metrics/traces without changing unrelated modules.
+
+A non-critical connector, research, export or read-model failure must not automatically turn into a platform-wide outage. Fail closed where correctness/security requires it; otherwise prefer scoped degradation.
+
+### Detailed acceptance checks
 
 Required checks include:
 
@@ -86,7 +118,7 @@ A production release requires, at minimum:
 - TypeScript;
 - unit tests;
 - production Next.js build;
-- critical-path Playwright E2E;
+- critical-path Playwright E2E, including the canonical customer-journey seam and scoped degradation contract;
 - dependency vulnerability gate;
 - CodeQL;
 - Terraform formatting/validation for implemented roots;
@@ -103,6 +135,8 @@ Minimum recurring evidence includes:
 - access review;
 - tenant-isolation/RLS test result;
 - CI/security scan per release;
+- successful canonical customer-journey UAT result for material release changes;
+- module/dependency degradation or recovery evidence for material reliability changes;
 - successful backup/restore and DR exercise;
 - SLO/incident records;
 - vulnerability remediation evidence;
