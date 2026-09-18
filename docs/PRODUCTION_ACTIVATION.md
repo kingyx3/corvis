@@ -7,13 +7,15 @@ The repository contains the production runtime contracts and reference adapters.
 Production startup requires all of the following and rejects demo mode:
 
 1. **Identity gateway** — OIDC/SAML issuer/audience, MFA policy upstream, trusted auth-proxy secret, header stripping/injection rules, joiner/mover/leaver process.
-2. **Snowflake** — OAuth SQL API access, database/warehouse/role, migrations 001–003 applied, tenant-role grants populated, row-policy isolation tests passed.
+2. **Snowflake** — OAuth SQL API access, database/warehouse/role, migrations 001–004 applied, tenant-role grants populated, row-policy isolation tests passed.
 3. **Object store** — private versioned S3/S3-compatible bucket, KMS encryption, CORS restricted to exact app origins, workload credentials, incomplete multipart cleanup.
 4. **Malware gate** — approved scanner writes the configured clean/threat tag. Uploaded artifacts remain quarantined until the clean tag is observed.
 5. **Retrieval** — permissioned search endpoint enforces tenant/workspace/document/fund filters before returning chunks/source references.
 6. **AI answer service** — trusted-data endpoint accepts only the fixed Corvis contract; documents are data, not tool instructions.
 7. **Observability** — structured telemetry collector is configured, alerts and service dashboards are owned.
-8. **Webhooks** — signing secret is managed and rotated if outbound subscriptions are enabled.
+8. **Data lifecycle adapter** — retention/deletion executor can purge or tombstone the target systems in scope and returns completion evidence.
+9. **Export delivery adapter** — asynchronous export renderer/delivery service produces the requested format, checksum, governed object URI and expiry.
+10. **Worker authentication / webhooks** — internal delivery worker secret and outbound webhook signing secret are managed and rotated.
 
 `GET /api/v1/admin/readiness` actively checks Snowflake and S3 plus configuration state. It must report `productionReady: true` in the deployed environment before external production traffic is enabled.
 
@@ -21,14 +23,15 @@ Production startup requires all of the following and rejects demo mode:
 
 - SSO/MFA authentication test for admin, reviewer, analyst and API/service-account identities.
 - Horizontal and vertical authorization tests across at least two isolated test tenants.
-- S3 multipart upload >5 GB test plan (or configured maximum), interruption/resume test and ETag CORS verification.
+- S3 multipart upload at the configured maximum, interruption/resume test and ETag CORS verification.
 - Benign and test-malware upload validation proving quarantine blocks the processing event until scan disposition.
 - Snowflake tenant row-policy negative tests using customer-serving roles.
 - Restore test with recorded RPO/RTO evidence.
 - Search negative tests proving unauthorized document existence/snippets are not revealed.
 - AI evaluation covering numerical correctness, citations, prompt injection and unsupported-question refusal.
-- Webhook signature/replay/idempotency test if enabled.
-- Customer export checksum/manifest validation.
+- Webhook signature/replay/idempotency test.
+- Customer export renderer/checksum/manifest/expiry validation.
+- Data-lifecycle execution test proving a deletion request yields retained completion evidence without bypassing legal/contractual holds.
 
 ## Release gate
 
@@ -47,7 +50,7 @@ A production release requires:
 
 ## Operating evidence
 
-Evidence should be generated from normal operation and retained against the Confluence Enterprise Control Register. Minimum evidence includes:
+Evidence should be generated from normal operation and retained against the Confluence Enterprise Control Register. The admin control-evidence API snapshots runtime state into `PM_CONTROL.CONTROL_EVIDENCE`; this complements, rather than replaces, human/provider evidence. Minimum evidence includes:
 
 - quarterly access review;
 - tenant-isolation test result;
