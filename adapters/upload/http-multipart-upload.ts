@@ -1,15 +1,11 @@
 import type { UploadCallbacks, UploadPort, UploadResult } from "@/core/contracts";
 
-type InitiateResponse = { uploadId: string; documentId: string; partSize: number };
+type InitiateResponse = { uploadId: string; documentId: string; partSize: number; completedParts?: CompletedPart[] };
+type StatusResponse = { data: { uploadId: string; documentId: string; partSize: number; state: string; completedParts: CompletedPart[] } };
 type PartUrlResponse = { url: string; headers?: Record<string, string> };
 type CompletedPart = { partNumber: number; etag: string };
 
-type Options = {
-  apiBase: string;
-  partSize?: number;
-  concurrency?: number;
-  maxRetries?: number;
-};
+type Options = { apiBase: string; partSize?: number; concurrency?: number; maxRetries?: number };
 
 const DEFAULT_PART_SIZE = 32 * 1024 * 1024;
 const DEFAULT_CONCURRENCY = 3;
@@ -28,13 +24,7 @@ function createJsonRequester(apiBase: string) {
   };
 }
 
-function uploadPartWithProgress(
-  url: string,
-  blob: Blob,
-  headers: Record<string, string>,
-  onDelta: (loaded: number) => void,
-  signal?: AbortSignal,
-): Promise<string> {
+function uploadPartWithProgress(url: string, blob: Blob, headers: Record<string, string>, onDelta: (loaded: number) => void, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     let lastLoaded = 0;
@@ -49,15 +39,9 @@ function uploadPartWithProgress(
     xhr.onerror = () => reject(new Error("Network error while uploading part"));
     xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
     xhr.onload = () => {
-      if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(`Object storage rejected part (${xhr.status})`));
-        return;
-      }
+      if (xhr.status < 200 || xhr.status >= 300) return reject(new Error(`Object storage rejected part (${xhr.status})`));
       const etag = xhr.getResponseHeader("etag")?.replaceAll('"', "");
-      if (!etag) {
-        reject(new Error("Object storage response did not expose an ETag"));
-        return;
-      }
+      if (!etag) return reject(new Error("Object storage response did not expose an ETag"));
       resolve(etag);
     };
     const abort = () => xhr.abort();
@@ -70,9 +54,8 @@ function uploadPartWithProgress(
 async function withRetry<T>(operation: () => Promise<T>, maxRetries: number): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error) {
+    try { return await operation(); }
+    catch (error) {
       lastError = error;
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       if (attempt < maxRetries - 1) await sleep(500 * 2 ** attempt);
@@ -80,6 +63,9 @@ async function withRetry<T>(operation: () => Promise<T>, maxRetries: number): Pr
   }
   throw lastError;
 }
+
+function fingerprint(file: File) { return `${file.name}:${file.size}:${file.lastModified}`; }
+function storageKey(file: File) { return `corvis:upload:${fingerprint(file)}`; }
 
 export function createHttpMultipartUploadPort(options: Options): UploadPort {
   const apiBase = options.apiBase.replace(/\/$/, "");
@@ -92,65 +78,62 @@ export function createHttpMultipartUploadPort(options: Options): UploadPort {
     runtime: { mode: "direct", partSize: fallbackPartSize, concurrency },
     async upload(file: File, callbacks: UploadCallbacks = {}, signal?: AbortSignal): Promise<UploadResult> {
       if (file.size <= 0) throw new Error("Cannot upload an empty file");
+      const key = storageKey(file);
+      let initiated: InitiateResponse | undefined;
 
-      const initiated = await requestJson<InitiateResponse>("/uploads/initiate", {
-        method: "POST",
-        body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", sizeBytes: file.size, lastModified: file.lastModified }),
-      });
+      const persisted = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+      if (persisted) {
+        try {
+          const saved = JSON.parse(persisted) as { uploadId: string };
+          const status = await requestJson<StatusResponse>(`/api/v1/uploads/${saved.uploadId}`);
+          if (status.data.state !== "aborted" && status.data.state !== "complete") {
+            initiated = { uploadId: status.data.uploadId, documentId: status.data.documentId, partSize: status.data.partSize, completedParts: status.data.completedParts };
+          }
+        } catch { window.localStorage.removeItem(key); }
+      }
+
+      if (!initiated) {
+        initiated = await requestJson<InitiateResponse>("/api/v1/uploads/initiate", {
+          method: "POST",
+          headers: { "idempotency-key": fingerprint(file) },
+          body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", sizeBytes: file.size, lastModified: file.lastModified, idempotencyKey: fingerprint(file) }),
+        });
+        window.localStorage.setItem(key, JSON.stringify({ uploadId: initiated.uploadId }));
+      }
+
       const partSize = initiated.partSize || fallbackPartSize;
       if (!Number.isFinite(partSize) || partSize <= 0) throw new Error("Upload API returned an invalid part size");
-
       const partCount = Math.ceil(file.size / partSize);
-      let uploadedBytes = 0;
-      let nextPart = 1;
-      const completedParts: CompletedPart[] = [];
+      const completedParts: CompletedPart[] = [...(initiated.completedParts || [])];
+      const completedNumbers = new Set(completedParts.map((p) => p.partNumber));
+      const pendingParts = Array.from({ length: partCount }, (_, i) => i + 1).filter((n) => !completedNumbers.has(n));
+      let uploadedBytes = completedParts.reduce((sum, p) => sum + Math.min(partSize, Math.max(0, file.size - (p.partNumber - 1) * partSize)), 0);
+      let cursor = 0;
 
-      callbacks.onProgress?.({ fileName: file.name, uploadedBytes: 0, totalBytes: file.size, percent: 0, status: "uploading", documentId: initiated.documentId });
+      callbacks.onProgress?.({ fileName: file.name, uploadedBytes, totalBytes: file.size, percent: Math.min(99, Math.round((uploadedBytes / file.size) * 100)), status: "uploading", documentId: initiated.documentId });
 
       const worker = async () => {
         while (true) {
-          const partNumber = nextPart++;
-          if (partNumber > partCount) return;
+          const partNumber = pendingParts[cursor++];
+          if (!partNumber) return;
           if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
-
           const start = (partNumber - 1) * partSize;
           const end = Math.min(start + partSize, file.size);
           const blob = file.slice(start, end);
-          const partUrl = await requestJson<PartUrlResponse>(`/uploads/${initiated.uploadId}/parts`, {
-            method: "POST",
-            body: JSON.stringify({ partNumber, contentLength: blob.size }),
-          });
-
+          const partUrl = await requestJson<PartUrlResponse>(`/api/v1/uploads/${initiated!.uploadId}/parts`, { method: "POST", body: JSON.stringify({ partNumber, contentLength: blob.size }) });
           let partReported = 0;
-          const etag = await withRetry(
-            () => uploadPartWithProgress(partUrl.url, blob, partUrl.headers || {}, (delta) => {
-              partReported += delta;
-              uploadedBytes += delta;
-              callbacks.onProgress?.({
-                fileName: file.name,
-                uploadedBytes: Math.min(uploadedBytes, file.size),
-                totalBytes: file.size,
-                percent: Math.min(99, Math.round((uploadedBytes / file.size) * 100)),
-                status: "uploading",
-                documentId: initiated.documentId,
-              });
-            }, signal).catch((error) => {
-              uploadedBytes -= partReported;
-              partReported = 0;
-              throw error;
-            }),
-            maxRetries,
-          );
+          const etag = await withRetry(() => uploadPartWithProgress(partUrl.url, blob, partUrl.headers || {}, (delta) => {
+            partReported += delta; uploadedBytes += delta;
+            callbacks.onProgress?.({ fileName: file.name, uploadedBytes: Math.min(uploadedBytes, file.size), totalBytes: file.size, percent: Math.min(99, Math.round((uploadedBytes / file.size) * 100)), status: "uploading", documentId: initiated!.documentId });
+          }, signal).catch((error) => { uploadedBytes -= partReported; partReported = 0; throw error; }), maxRetries);
           completedParts.push({ partNumber, etag });
         }
       };
 
-      await Promise.all(Array.from({ length: Math.min(concurrency, partCount) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, pendingParts.length)) }, () => worker()));
       callbacks.onProgress?.({ fileName: file.name, uploadedBytes: file.size, totalBytes: file.size, percent: 100, status: "finalizing", documentId: initiated.documentId });
-      await requestJson(`/uploads/${initiated.uploadId}/complete`, {
-        method: "POST",
-        body: JSON.stringify({ parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }),
-      });
+      await requestJson(`/api/v1/uploads/${initiated.uploadId}/complete`, { method: "POST", headers: { "idempotency-key": fingerprint(file) }, body: JSON.stringify({ idempotencyKey: fingerprint(file), parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }) });
+      window.localStorage.removeItem(key);
       callbacks.onProgress?.({ fileName: file.name, uploadedBytes: file.size, totalBytes: file.size, percent: 100, status: "complete", documentId: initiated.documentId });
       return { documentId: initiated.documentId };
     },
