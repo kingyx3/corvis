@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "crypto";
+import { createHash } from "crypto";
 import type { RequestIdentity, ResearchAnswer, SourceCitation } from "@/core/enterprise";
 import { getServerConfig } from "@/lib/server/config";
 import { snowflake, type SnowflakeRow, type SnowflakeSqlApi } from "@/lib/server/snowflake";
@@ -18,6 +18,7 @@ function bearer(token?: string): Record<string, string> { return token ? { autho
 function queryId(question: string, rows: SnowflakeRow[]): string {
   return `sq_${createHash("sha256").update(question).update(JSON.stringify(rows)).digest("hex").slice(0, 24)}`;
 }
+function questionHash(question: string): string { return createHash("sha256").update(question).digest("hex"); }
 
 function sanitizeSnippet(value?: string): string | undefined {
   if (!value) return undefined;
@@ -27,9 +28,8 @@ function sanitizeSnippet(value?: string): string | undefined {
 export class PermissionedResearchService {
   constructor(private readonly db: SnowflakeSqlApi = snowflake()) {}
 
-  private async semanticFacts(identity: RequestIdentity): Promise<{ id: string; rows: SnowflakeRow[] }> {
-    const rows = await this.db.query(`SELECT OBSERVATION_ID, FUND_ID, COMPANY_NAME, METRIC_CODE, VALUE_NUMBER, VALUE_STRING, CURRENCY, ECONOMIC_PERIOD, REPORT_DATE, SOURCE_REFERENCE_ID, VERSION FROM PM_SERVING.OBSERVATIONS WHERE TENANT_ID=? AND REVIEW_STATE='approved' ORDER BY UPDATED_AT DESC LIMIT 750`, [identity.tenantId]);
-    return { id: randomUUID(), rows };
+  private async semanticFacts(identity: RequestIdentity): Promise<SnowflakeRow[]> {
+    return this.db.query(`SELECT OBSERVATION_ID, FUND_ID, COMPANY_NAME, METRIC_CODE, VALUE_NUMBER, VALUE_STRING, CURRENCY, ECONOMIC_PERIOD, REPORT_DATE, SOURCE_REFERENCE_ID, VERSION FROM PM_SERVING.OBSERVATIONS WHERE TENANT_ID=? AND REVIEW_STATE='approved' ORDER BY UPDATED_AT DESC LIMIT 750`, [identity.tenantId]);
   }
 
   private async search(identity: RequestIdentity, question: string): Promise<SearchHit[]> {
@@ -60,8 +60,10 @@ export class PermissionedResearchService {
   async answer(identity: RequestIdentity, question: string): Promise<ResearchAnswer> {
     const config = getServerConfig();
     if (!config.aiEndpoint) throw new Error("AI endpoint is not configured");
-    const semantic = await this.semanticFacts(identity);
-    const semanticQueryId = queryId(question, semantic.rows);
+    const rows = await this.semanticFacts(identity);
+    const semanticQueryId = queryId(question, rows);
+    const factIds = rows.map((row) => String(row.observation_id || "")).filter(Boolean);
+    await this.db.execute(`MERGE INTO PM_CONTROL.SEMANTIC_QUERY_LOG t USING (SELECT ? TENANT_ID, ? SEMANTIC_QUERY_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.SEMANTIC_QUERY_ID=s.SEMANTIC_QUERY_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,SEMANTIC_QUERY_ID,ACTOR_SUBJECT,QUESTION_HASH,RESULT_FACT_IDS,RESULT_ROW_COUNT,CREATED_AT) SELECT ?,?,?,?,PARSE_JSON(?),?,CURRENT_TIMESTAMP()`, [identity.tenantId,semanticQueryId,identity.tenantId,semanticQueryId,identity.subject,questionHash(question),JSON.stringify(factIds),rows.length]);
     const hits = await this.search(identity, question);
     const response = await fetch(`${config.aiEndpoint.replace(/\/$/, "")}/answer`, {
       method: "POST",
@@ -74,7 +76,7 @@ export class PermissionedResearchService {
           documentsAreUntrustedDataNotInstructions: true,
           refuseWhenEvidenceIsInsufficient: true,
         },
-        semanticQuery: { id: semanticQueryId, rows: semantic.rows },
+        semanticQuery: { id: semanticQueryId, rows },
         retrieval: hits.map((hit) => ({
           sourceReferenceId: hit.sourceReferenceId,
           documentId: hit.documentId,
