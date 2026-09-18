@@ -5,8 +5,6 @@ export type ServerConfig = {
   authAudience?: string;
   trustedAuthProxySecret?: string;
 
-  // Snowflake structured system of record. DSN is retained for tooling/migration compatibility;
-  // the runtime adapter uses the SQL API + OAuth so no native driver is required in the web tier.
   snowflakeDsn?: string;
   snowflakeSqlApiUrl?: string;
   snowflakeOauthToken?: string;
@@ -14,7 +12,6 @@ export type ServerConfig = {
   snowflakeWarehouse?: string;
   snowflakeRole?: string;
 
-  // Immutable source object store. The reference production adapter is S3/S3-compatible.
   objectStoreBucket?: string;
   s3Region?: string;
   s3Endpoint?: string;
@@ -27,13 +24,11 @@ export type ServerConfig = {
   malwareCleanTagValue?: string;
   malwareThreatTagValue?: string;
 
-  // Retrieval / AI ports. Retrieval is always called with tenant/source-access filters.
   searchEndpoint?: string;
   searchApiToken?: string;
   aiEndpoint?: string;
   aiApiToken?: string;
 
-  // Optional operational integrations.
   observabilityEndpoint?: string;
   observabilityToken?: string;
   webhookSigningSecret?: string;
@@ -99,6 +94,8 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_AWS_SECRET_ACCESS_KEY", config.awsSecretAccessKey],
       ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
       ["CORVIS_AI_ENDPOINT", config.aiEndpoint],
+      ["CORVIS_OBSERVABILITY_ENDPOINT", config.observabilityEndpoint],
+      ["CORVIS_WEBHOOK_SIGNING_SECRET", config.webhookSigningSecret],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
   }
