@@ -5,6 +5,10 @@ export type ServerConfig = {
   authAudience?: string;
   trustedAuthProxySecret?: string;
 
+  postgresDsn?: string;
+
+  // Snowflake is an optional downstream analytics/sharing replica. These
+  // bindings must not be required for the application to start.
   snowflakeDsn?: string;
   snowflakeSqlApiUrl?: string;
   snowflakeOauthToken?: string;
@@ -54,6 +58,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     authIssuer: env.CORVIS_AUTH_ISSUER,
     authAudience: env.CORVIS_AUTH_AUDIENCE,
     trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
+    postgresDsn: env.CORVIS_POSTGRES_DSN,
     snowflakeDsn: env.CORVIS_SNOWFLAKE_DSN,
     snowflakeSqlApiUrl: env.CORVIS_SNOWFLAKE_SQL_API_URL,
     snowflakeOauthToken: env.CORVIS_SNOWFLAKE_OAUTH_TOKEN,
@@ -91,11 +96,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
       ["CORVIS_TRUSTED_AUTH_PROXY_SECRET", config.trustedAuthProxySecret],
-      ["CORVIS_SNOWFLAKE_SQL_API_URL", config.snowflakeSqlApiUrl],
-      ["CORVIS_SNOWFLAKE_OAUTH_TOKEN", config.snowflakeOauthToken],
-      ["CORVIS_SNOWFLAKE_DATABASE", config.snowflakeDatabase],
-      ["CORVIS_SNOWFLAKE_WAREHOUSE", config.snowflakeWarehouse],
-      ["CORVIS_SNOWFLAKE_ROLE", config.snowflakeRole],
+      ["CORVIS_POSTGRES_DSN", config.postgresDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
       ["CORVIS_UPLOAD_ALLOWED_ORIGINS", config.uploadAllowedOrigins.length ? "configured" : undefined],
       ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
