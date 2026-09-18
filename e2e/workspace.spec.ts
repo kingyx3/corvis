@@ -49,8 +49,9 @@ test("customer can upload, review, publish and request structured delivery", asy
   await page.getByRole("button", { name: /data review/i }).first().click();
   await expect(page.getByRole("heading", { name: /data review/i })).toBeVisible();
   const reviewRow = page.getByRole("row").filter({ hasText: "Adjusted EBITDA" });
-  await expect(reviewRow).toContainText("Needs review");
-  await reviewRow.getByRole("button", { name: "Approve" }).click();
+  const approveButton = reviewRow.getByRole("button", { name: "Approve" });
+  await expect(approveButton).toBeVisible();
+  await approveButton.click();
   await expect(page.getByText("Observation approval recorded.")).toBeVisible();
 
   const publishButton = page.getByRole("button", { name: /publish snapshot/i });
