@@ -2,19 +2,55 @@
 
 Customer-facing workspace for the Corvis private-markets data platform.
 
-## What is included
+## Product surface
 
 - Reporting-cycle overview and fund-period status
 - Source document library with ingestion/extraction/review state
-- Large-file upload workflow for PDFs, Excel, Word, PowerPoint and CSV
-- Direct-to-object-storage multipart upload client (32 MB parts, concurrent uploads, retries and progress)
-- Document detail / processing pipeline view
-- Trusted observation review surface with source evidence and confidence
-- CSV export of customer-facing trusted data
-- Research workspace for quantitative questions plus permissioned source evidence
-- Responsive desktop/tablet/mobile product shell
+- Large-file upload for PDF, Excel, Word, PowerPoint and CSV
+- Direct-to-object-storage multipart uploads
+- Document processing / lineage view
+- Trusted observation review with source evidence
+- CSV export
+- Ask Corvis research workspace with cited evidence
 
-The UI intentionally exposes fund-period snapshots, reviewed observations and source evidence rather than raw extraction-agent JSON.
+The customer UI exposes fund-period snapshots, trusted observations and entitled source evidence. It never treats raw extraction JSON or physical Snowflake tables as product contracts.
+
+## Architecture: linked, not married
+
+Each capability owns one concern and depends on contracts rather than another module's implementation.
+
+```text
+core/contracts.ts                    stable domain + port contracts
+        │
+        ├── application/             use-case orchestration
+        │     └── upload-document.ts
+        │
+        ├── adapters/                replaceable infrastructure / demo bindings
+        │     ├── upload/http-multipart-upload.ts
+        │     ├── upload/mock-upload.ts
+        │     └── demo/catalog.ts
+        │
+        ├── runtime/services.ts      composition root for adapters
+        │
+        ├── features/                product capabilities
+        │     ├── overview/
+        │     ├── documents/
+        │     ├── review/
+        │     └── research/
+        │
+        ├── components/ui/           reusable presentation primitives
+        └── app/page.tsx             shell + feature composition only
+```
+
+Rules:
+
+- Feature modules depend on `core` contracts and application services, not adapter internals.
+- Vendor/API details live in adapters.
+- `runtime/services.ts` selects adapters; replacing object storage or API transport should not change UI features.
+- Demo data is an adapter, not domain state.
+- Customer-facing modules consume serving/application contracts, not extraction schemas.
+- Search, source evidence and structured fact access remain independently permissioned.
+- Global entity identity never widens tenant access.
 
 ## Run locally
 
@@ -25,56 +61,62 @@ npm run dev
 
 Then open `http://localhost:3000`.
 
-By default the frontend uses a demo upload transport so the end-to-end interaction is usable before backend services are connected.
+By default the frontend uses the mock upload adapter so the workflow remains interactive before backend services are connected.
 
-## Production upload API contract
+## Production upload port
 
-Set `NEXT_PUBLIC_CORVIS_API_BASE` and `NEXT_PUBLIC_CORVIS_MOCK_API=false`.
+Set:
 
-The browser never needs to proxy large PDF bytes through the Next.js server. Instead:
+```bash
+NEXT_PUBLIC_CORVIS_API_BASE=https://api.example.com
+NEXT_PUBLIC_CORVIS_MOCK_API=false
+```
+
+The HTTP multipart adapter implements the current upload protocol:
 
 1. `POST /uploads/initiate`
    - request: `fileName`, `contentType`, `sizeBytes`, `lastModified`
    - response: `uploadId`, `documentId`, `partSize`
 2. `POST /uploads/{uploadId}/parts`
    - request: `partNumber`, `contentLength`
-   - response: presigned object-storage `url` and optional request `headers`
-3. Browser `PUT`s each part directly to object storage and records the returned ETag.
+   - response: presigned object-storage `url` and optional headers
+3. Browser uploads each part directly to object storage and records the ETag.
 4. `POST /uploads/{uploadId}/complete`
    - request: ordered `parts: [{ partNumber, etag }]`
-5. Backend finalizes multipart upload, registers the immutable source artifact, and starts the Corvis document pipeline.
+5. Backend finalizes the artifact, registers immutable source identity and emits the next pipeline event.
 
-The current client uses 32 MB parts, concurrency of 3, exponential retry and XHR upload progress. These values can be made backend-configurable without changing the UI contract.
+Current defaults are 32 MB parts, concurrency 3 and exponential retry. Those are adapter configuration, not UI semantics.
 
-## Expected backend lifecycle
+## Platform lifecycle expected by the UI
 
-After upload completion the backend should expose document state progressing through:
+```text
+registered
+  → represented
+  → extracted
+  → reviewed
+  → canonicalized
+  → reconciled
+  → consolidated
+  → published
+```
 
-`registered → interpreting → extracting → reviewing → reconciling → consolidated → published`
-
-The frontend is already organized around those product semantics. In production, replace the representative data in `lib/mock-data.ts` with API/query hooks backed by the serving layer.
-
-## Architecture boundaries
-
-- Original files live in immutable object storage.
-- Structured trusted data is served from governed Snowflake/serving APIs.
-- Search and narrative evidence are permission checked independently from structured fact access.
-- Customer interfaces do not query raw extraction JSON.
-- Global entity identity must not widen tenant data access.
+These are product lifecycle states, not a requirement that one monolithic worker execute every step. Each downstream process can be retried or replaced using durable upstream records and stable identifiers.
 
 ## Current stack
 
 - Next.js 16.3
 - React 19.3
 - TypeScript
-- No component framework dependency; the visual system is implemented in `app/globals.css` to keep the initial surface lightweight.
+- No component framework dependency
 
-## Next implementation steps
+## Next backend contracts
 
-1. Wire authentication / tenant session.
-2. Implement the upload API and object-storage presigning service.
-3. Add document-list and document-status endpoints plus WebSocket or SSE status updates.
-4. Connect data review to fund-period snapshot / consolidated-fact serving APIs.
-5. Connect source evidence links to a permissioned document renderer.
-6. Connect Ask Corvis to semantic-query + document-retrieval endpoints.
-7. Add audit telemetry, errors/retry UX and customer-specific feature flags.
+1. Authentication and tenant/workspace context.
+2. Upload/presigning adapter implementation.
+3. Document read-model + processing-event stream (SSE/WebSocket).
+4. Fund-period snapshot and consolidated-fact serving APIs.
+5. Permissioned evidence-reader/document-renderer endpoint.
+6. Semantic-query and retrieval ports for Ask Corvis.
+7. Audit telemetry, errors/retries and feature entitlements.
+
+When those services arrive, bind new adapters at the runtime composition root instead of rewriting product features.
