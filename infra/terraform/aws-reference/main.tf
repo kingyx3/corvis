@@ -28,7 +28,7 @@ resource "aws_kms_key" "documents" {
   description             = "Corvis ${var.environment} source-document and queue encryption"
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  tags = { Service = "corvis", Environment = var.environment, DataClass = "confidential-source" }
+  tags                    = { Service = "corvis", Environment = var.environment, DataClass = "confidential-source" }
 }
 
 resource "aws_kms_alias" "documents" {
@@ -39,7 +39,7 @@ resource "aws_kms_alias" "documents" {
 resource "aws_s3_bucket" "documents" {
   bucket        = "${var.name}-${var.environment}-documents"
   force_destroy = var.force_destroy
-  tags = { Service = "corvis", Environment = var.environment, DataClass = "confidential-source" }
+  tags          = { Service = "corvis", Environment = var.environment, DataClass = "confidential-source" }
 }
 
 resource "aws_s3_bucket_versioning" "documents" {
@@ -116,7 +116,7 @@ resource "aws_sqs_queue" "processing_dlq" {
   kms_master_key_id                 = aws_kms_key.documents.arn
   message_retention_seconds         = 1209600
   kms_data_key_reuse_period_seconds = 300
-  tags = { Service = "corvis", Environment = var.environment, Purpose = "processing-dead-letter" }
+  tags                              = { Service = "corvis", Environment = var.environment, Purpose = "processing-dead-letter" }
 }
 
 resource "aws_sqs_queue" "processing" {
@@ -126,12 +126,12 @@ resource "aws_sqs_queue" "processing" {
   message_retention_seconds         = 1209600
   receive_wait_time_seconds         = 20
   kms_data_key_reuse_period_seconds = 300
-  redrive_policy = jsonencode({ deadLetterTargetArn = aws_sqs_queue.processing_dlq.arn, maxReceiveCount = 5 })
-  tags = { Service = "corvis", Environment = var.environment, Purpose = "processing" }
+  redrive_policy                    = jsonencode({ deadLetterTargetArn = aws_sqs_queue.processing_dlq.arn, maxReceiveCount = 5 })
+  tags                              = { Service = "corvis", Environment = var.environment, Purpose = "processing" }
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "processing_dlq" {
-  queue_url = aws_sqs_queue.processing_dlq.id
+  queue_url            = aws_sqs_queue.processing_dlq.id
   redrive_allow_policy = jsonencode({ redrivePermission = "byQueue", sourceQueueArns = [aws_sqs_queue.processing.arn] })
 }
 
