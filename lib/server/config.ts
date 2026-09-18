@@ -13,16 +13,12 @@ export type ServerConfig = {
   snowflakeRole?: string;
 
   objectStoreBucket?: string;
-  s3Region?: string;
-  s3Endpoint?: string;
-  s3KmsKeyId?: string;
-  awsAccessKeyId?: string;
-  awsSecretAccessKey?: string;
-  awsSessionToken?: string;
-  s3PresignTtlSeconds?: number;
-  malwareCleanTagKey?: string;
-  malwareCleanTagValue?: string;
-  malwareThreatTagValue?: string;
+  gcpAccessToken?: string;
+  gcsChunkSizeBytes?: number;
+  uploadAllowedOrigins: string[];
+  gcsMalwareMetadataKey: string;
+  gcsMalwareCleanValue: string;
+  gcsMalwareThreatValue: string;
 
   searchEndpoint?: string;
   searchApiToken?: string;
@@ -45,6 +41,9 @@ function positiveInteger(value?: string): number | undefined {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
+function csv(value?: string): string[] {
+  return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const environment = (env.NODE_ENV || "development") as ServerConfig["environment"];
@@ -62,16 +61,12 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     snowflakeWarehouse: env.CORVIS_SNOWFLAKE_WAREHOUSE,
     snowflakeRole: env.CORVIS_SNOWFLAKE_ROLE,
     objectStoreBucket: env.CORVIS_OBJECT_STORE_BUCKET,
-    s3Region: env.CORVIS_S3_REGION,
-    s3Endpoint: env.CORVIS_S3_ENDPOINT,
-    s3KmsKeyId: env.CORVIS_S3_KMS_KEY_ID,
-    awsAccessKeyId: env.CORVIS_AWS_ACCESS_KEY_ID,
-    awsSecretAccessKey: env.CORVIS_AWS_SECRET_ACCESS_KEY,
-    awsSessionToken: env.CORVIS_AWS_SESSION_TOKEN,
-    s3PresignTtlSeconds: positiveInteger(env.CORVIS_S3_PRESIGN_TTL_SECONDS) ?? 900,
-    malwareCleanTagKey: env.CORVIS_MALWARE_SCAN_TAG_KEY ?? "GuardDutyMalwareScanStatus",
-    malwareCleanTagValue: env.CORVIS_MALWARE_CLEAN_TAG_VALUE ?? "NO_THREATS_FOUND",
-    malwareThreatTagValue: env.CORVIS_MALWARE_THREAT_TAG_VALUE ?? "THREATS_FOUND",
+    gcpAccessToken: env.CORVIS_GCP_ACCESS_TOKEN,
+    gcsChunkSizeBytes: positiveInteger(env.CORVIS_GCS_CHUNK_SIZE_BYTES) ?? 8 * 1024 * 1024,
+    uploadAllowedOrigins: csv(env.CORVIS_UPLOAD_ALLOWED_ORIGINS),
+    gcsMalwareMetadataKey: env.CORVIS_MALWARE_SCAN_METADATA_KEY ?? "corvis-malware-status",
+    gcsMalwareCleanValue: env.CORVIS_MALWARE_CLEAN_VALUE ?? "clean",
+    gcsMalwareThreatValue: env.CORVIS_MALWARE_THREAT_VALUE ?? "threat",
     searchEndpoint: env.CORVIS_SEARCH_ENDPOINT,
     searchApiToken: env.CORVIS_SEARCH_API_TOKEN,
     aiEndpoint: env.CORVIS_AI_ENDPOINT,
@@ -86,6 +81,10 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     workerSecret: env.CORVIS_WORKER_SECRET,
   };
 
+  if (config.gcsChunkSizeBytes % (256 * 1024) !== 0) {
+    throw new Error("CORVIS_GCS_CHUNK_SIZE_BYTES must be a multiple of 256 KiB");
+  }
+
   if (environment === "production") {
     if (demoMode) throw new Error("CORVIS_DEMO_MODE must be disabled in production");
     const missing = [
@@ -98,10 +97,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_SNOWFLAKE_WAREHOUSE", config.snowflakeWarehouse],
       ["CORVIS_SNOWFLAKE_ROLE", config.snowflakeRole],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
-      ["CORVIS_S3_REGION", config.s3Region],
-      ["CORVIS_S3_KMS_KEY_ID", config.s3KmsKeyId],
-      ["CORVIS_AWS_ACCESS_KEY_ID", config.awsAccessKeyId],
-      ["CORVIS_AWS_SECRET_ACCESS_KEY", config.awsSecretAccessKey],
+      ["CORVIS_UPLOAD_ALLOWED_ORIGINS", config.uploadAllowedOrigins.length ? "configured" : undefined],
       ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
       ["CORVIS_AI_ENDPOINT", config.aiEndpoint],
       ["CORVIS_OBSERVABILITY_ENDPOINT", config.observabilityEndpoint],
