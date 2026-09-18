@@ -18,7 +18,16 @@ export async function POST(request: Request) {
       lastModified: body.lastModified,
       checksumSha256: body.checksumSha256,
       idempotencyKey: body.idempotencyKey || request.headers.get("idempotency-key") || randomUUID(),
+      origin: request.headers.get("origin") || undefined,
     });
-    return json({ uploadId: session.uploadId, documentId: session.documentId, artifactVersionId: session.artifactVersionId, ingestionId: session.ingestionId, partSize: session.partSize, completedParts: session.completedParts }, { status: 201 });
+    return json({
+      uploadId: session.uploadId,
+      documentId: session.documentId,
+      artifactVersionId: session.artifactVersionId,
+      ingestionId: session.ingestionId,
+      chunkSize: session.chunkSize,
+      uploadUrl: session.resumableUploadUrl,
+      state: session.state,
+    }, { status: 201 });
   } catch (error) { return apiError(error, id); }
 }
