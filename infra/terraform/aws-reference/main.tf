@@ -10,8 +10,14 @@ terraform {
 
 variable "name" { type = string }
 variable "environment" { type = string }
-variable "force_destroy" { type = bool default = false }
-variable "noncurrent_version_expiration_days" { type = number default = 3650 }
+variable "force_destroy" {
+  type    = bool
+  default = false
+}
+variable "noncurrent_version_expiration_days" {
+  type    = number
+  default = 3650
+}
 variable "cors_allowed_origins" {
   type        = list(string)
   description = "Exact HTTPS application origins permitted to upload directly to S3. Never use * in production."
