@@ -100,13 +100,12 @@ export class S3ControlClient {
     };
   }
 
-  private async signedFetch(method: string, key: string, options: { query?: URLSearchParams; headers?: Record<string, string>; body?: string | Buffer } = {}): Promise<Response> {
+  private async signedFetch(method: string, key: string, options: { query?: URLSearchParams; headers?: Record<string, string>; body?: string } = {}): Promise<Response> {
     const url = this.objectUrl(key, options.query);
     const body = options.body ?? "";
     const payloadHash = sha256(body);
     const headers = this.authorization(method, url, options.headers ?? {}, payloadHash);
-    const response = await fetch(url, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body, cache: "no-store" });
-    return response;
+    return fetch(url, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body, cache: "no-store" });
   }
 
   presignUploadPart(key: string, uploadId: string, partNumber: number, now = new Date()): string {
