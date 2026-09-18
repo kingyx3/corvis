@@ -1,12 +1,11 @@
 import type { UploadCallbacks, UploadPort, UploadResult } from "@/core/contracts";
 
-const PART_SIZE = 32 * 1024 * 1024;
-const CONCURRENCY = 3;
+const CHUNK_SIZE = 8 * 1024 * 1024;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createMockUploadPort(): UploadPort {
   return {
-    runtime: { mode: "mock", partSize: PART_SIZE, concurrency: CONCURRENCY },
+    runtime: { mode: "mock", transport: "mock", chunkSize: CHUNK_SIZE },
     async upload(file: File, callbacks: UploadCallbacks = {}, signal?: AbortSignal): Promise<UploadResult> {
       const documentId = `doc_${crypto.randomUUID().slice(0, 8)}`;
       let uploadedBytes = 0;
