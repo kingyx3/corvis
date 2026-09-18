@@ -18,14 +18,24 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: infra/terraform/aws-reference
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.13.3"
-      - run: terraform fmt -check -recursive
-      - run: terraform init -backend=false
-      - run: terraform validate
+      - name: Format
+        run: terraform fmt -check -recursive infra/terraform
+      - name: Validate Terraform roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t roots < <(find infra/terraform -type f -name '*.tf' -printf '%h\n' | sort -u)
+          if [ ${#roots[@]} -eq 0 ]; then
+            echo "No Terraform roots are implemented yet; issue #13 remains open."
+            exit 0
+          fi
+          for root in "${roots[@]}"; do
+            echo "Validating ${root}"
+            terraform -chdir="${root}" init -backend=false
+            terraform -chdir="${root}" validate
+          done

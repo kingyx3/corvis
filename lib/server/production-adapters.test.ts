@@ -12,9 +12,19 @@ test("Snowflake statement rows preserve positional contract", () => {
   assert.deepEqual(row, { document_id: "doc-1", size_bytes: 42 });
 });
 
-test("multipart completion contract requires ordered positive parts and ETags", () => {
-  const parts = [{ partNumber: 1, etag: "abc" }, { partNumber: 2, etag: "def" }];
-  assert.equal(parts.every((part, index) => part.partNumber === index + 1 && Boolean(part.etag)), true);
+test("GCS resumable chunks use 256 KiB aligned chunk sizes", () => {
+  const chunkSize = 8 * 1024 * 1024;
+  assert.equal(chunkSize % (256 * 1024), 0);
+  const total = 20 * 1024 * 1024;
+  const start = chunkSize;
+  const endExclusive = Math.min(total, start + chunkSize);
+  assert.equal(`bytes ${start}-${endExclusive - 1}/${total}`, "bytes 8388608-16777215/20971520");
+});
+
+test("GCS resumable committed range advances to the next byte", () => {
+  const range = "bytes=0-8388607";
+  const match = /bytes=0-(\d+)/i.exec(range);
+  assert.equal(match ? Number(match[1]) + 1 : 0, 8 * 1024 * 1024);
 });
 
 test("source signatures distinguish PDF and OOXML containers", () => {

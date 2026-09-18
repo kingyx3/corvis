@@ -10,7 +10,7 @@
 ## First response
 
 1. Establish incident commander and correlation/time window.
-2. Preserve audit/log/trace evidence; do not delete or rewrite source artifacts.
+2. Preserve audit/log/trace evidence; do not delete or rewrite retained source artifacts.
 3. For suspected tenant exposure, disable affected serving/retrieval path and rotate relevant credentials before restoring traffic.
 4. For pipeline failures, stop automatic retries if they amplify corruption; retain dead-letter jobs for replay.
 5. Identify customer scope from tenant IDs and serving/audit lineage, not from global identities.
@@ -18,10 +18,12 @@
 
 ## Upload failure
 
-- Check upload-session state and object-store multipart state.
-- Resume only missing parts; do not create a second document artifact for the same idempotency key.
-- Quarantine artifacts that fail checksum, type validation, or malware policy.
-- Abort abandoned multipart uploads per lifecycle policy.
+- Check the Corvis upload-session record and the authorized GCS resumable session/object state.
+- Query the GCS resumable session for the committed byte range before retrying; continue from the next committed byte rather than restarting blindly.
+- If the GCS resumable session has expired, abort the Corvis upload session and initiate a replacement session under the same logical file/idempotency flow; do not create duplicate document truth.
+- Verify final GCS object size/generation and retained storage checksum metadata before quarantine processing.
+- Quarantine artifacts that fail type/signature, checksum/integrity, or malware policy.
+- Clean up abandoned resumable sessions/objects according to lifecycle policy without deleting retained accepted source evidence.
 
 ## Processing failure
 
@@ -39,7 +41,7 @@
 ## Recovery
 
 - Restore structured metadata/canonical data from the approved backup path.
-- Reconcile immutable object-store source inventory against `DOCUMENT_ARTIFACT_VERSION`.
+- Reconcile immutable GCS source inventory against `DOCUMENT_ARTIFACT_VERSION`, including object generation and stored checksum metadata.
 - Replay derived layers only after tenant-policy tables and data-rights metadata are restored.
 - Validate row-access isolation before reopening customer traffic.
 - Record actual RPO/RTO and retain restore evidence.
