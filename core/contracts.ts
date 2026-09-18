@@ -70,8 +70,8 @@ export type UploadResult = { documentId: string };
 
 export type UploadRuntime = {
   mode: "mock" | "direct";
-  partSize: number;
-  concurrency: number;
+  transport: "mock" | "gcs-resumable";
+  chunkSize: number;
 };
 
 export interface UploadPort {
