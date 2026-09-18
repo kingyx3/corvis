@@ -2,20 +2,32 @@
 
 Customer-facing workspace for the Corvis private-markets data platform.
 
-## Product surface
+## Documentation authority
+
+This repository documents **implemented code, local development and code-level interfaces only**. It is not the source of truth for enterprise architecture, security policy, data semantics, production cloud design or readiness requirements.
+
+Authoritative Confluence documentation:
+
+- Enterprise Production Readiness Master Plan: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/1376262
+- Core Product — End-to-End Data & Semantic Architecture: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/688508
+- Platform Architecture & Data Lifecycle: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/360450
+- GCP Cloud Infrastructure & Deployment Standard: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/1507331
+
+GitHub issues track executable implementation work and link to their authoritative Confluence owners. Requirements and architecture should be changed in Confluence first rather than copied into GitHub.
+
+## Product surface currently represented in this repo
 
 - Reporting-cycle overview and fund-period status
 - Source document library with ingestion/extraction/review state
-- Large-file upload for PDF, Excel, Word, PowerPoint and CSV
-- Direct-to-object-storage multipart uploads
+- Large-file upload UI
 - Document processing / lineage view
 - Trusted observation review with source evidence
-- CSV export
-- Ask Corvis research workspace with cited evidence
+- CSV export surface
+- Ask Corvis research workspace UI
 
-The customer UI exposes fund-period snapshots, trusted observations and entitled source evidence. It never treats raw extraction JSON or physical Snowflake tables as product contracts.
+The customer UI is designed to expose fund-period snapshots, trusted observations and entitled source evidence. It must not treat raw extraction JSON or unrestricted physical Snowflake tables as product contracts.
 
-## Architecture: linked, not married
+## Code architecture: linked, not married
 
 Each capability owns one concern and depends on contracts rather than another module's implementation.
 
@@ -42,7 +54,7 @@ core/contracts.ts                    stable domain + port contracts
         └── app/page.tsx             shell + feature composition only
 ```
 
-Rules:
+Code-level rules:
 
 - Feature modules depend on `core` contracts and application services, not adapter internals.
 - Vendor/API details live in adapters.
@@ -61,9 +73,9 @@ npm run dev
 
 Then open `http://localhost:3000`.
 
-By default the frontend uses the mock upload adapter so the workflow remains interactive before backend services are connected.
+By default the frontend uses demo/mock adapters so workflows remain interactive before production services are connected.
 
-## Production upload port
+## Application API binding
 
 Set:
 
@@ -72,22 +84,20 @@ NEXT_PUBLIC_CORVIS_API_BASE=https://api.example.com
 NEXT_PUBLIC_CORVIS_MOCK_API=false
 ```
 
-The HTTP multipart adapter implements the current upload protocol:
+Production must fail closed rather than silently reverting to demo mode when required configuration is missing. The production backend, identity, GCS ingestion, Snowflake serving and other infrastructure contracts are specified in the authoritative Confluence pages above and tracked through linked GitHub issues.
+
+## Upload adapter currently implemented in the frontend
+
+The current HTTP adapter exposes an S3-style multipart-compatible application protocol:
 
 1. `POST /uploads/initiate`
-   - request: `fileName`, `contentType`, `sizeBytes`, `lastModified`
-   - response: `uploadId`, `documentId`, `partSize`
 2. `POST /uploads/{uploadId}/parts`
-   - request: `partNumber`, `contentLength`
-   - response: presigned object-storage `url` and optional headers
-3. Browser uploads each part directly to object storage and records the ETag.
+3. Browser uploads bytes directly to the returned object-storage URL.
 4. `POST /uploads/{uploadId}/complete`
-   - request: ordered `parts: [{ partNumber, etag }]`
-5. Backend finalizes the artifact, registers immutable source identity and emits the next pipeline event.
 
-Current defaults are 32 MB parts, concurrency 3 and exponential retry. Those are adapter configuration, not UI semantics.
+This describes the existing frontend adapter, not the production cloud architecture. The production standard is GCP/GCS and may normalize native GCS resumable-upload semantics behind the stable application port. Provider-specific concepts such as multipart ETags must not become domain contracts.
 
-## Platform lifecycle expected by the UI
+## Platform lifecycle consumed by the UI
 
 ```text
 registered
@@ -100,7 +110,7 @@ registered
   → published
 ```
 
-These are product lifecycle states, not a requirement that one monolithic worker execute every step. Each downstream process can be retried or replaced using durable upstream records and stable identifiers.
+These are product lifecycle states exposed through application contracts. Authoritative lifecycle/event semantics are maintained in Confluence.
 
 ## Current stack
 
@@ -109,14 +119,6 @@ These are product lifecycle states, not a requirement that one monolithic worker
 - TypeScript
 - No component framework dependency
 
-## Next backend contracts
+## Implementation tracking
 
-1. Authentication and tenant/workspace context.
-2. Upload/presigning adapter implementation.
-3. Document read-model + processing-event stream (SSE/WebSocket).
-4. Fund-period snapshot and consolidated-fact serving APIs.
-5. Permissioned evidence-reader/document-renderer endpoint.
-6. Semantic-query and retrieval ports for Ask Corvis.
-7. Audit telemetry, errors/retries and feature entitlements.
-
-When those services arrive, bind new adapters at the runtime composition root instead of rewriting product features.
+Open GitHub epics track repository work for identity, ingestion, orchestration, Snowflake, review, Ask Corvis, secure SDLC, SRE, admin/lifecycle, APIs, product quality, GCP/IaC and control-evidence automation. Each epic links back to the relevant Confluence source of truth.
