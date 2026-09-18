@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import type { RequestIdentity } from "@/core/enterprise";
 import { getServerConfig } from "@/lib/server/config";
-import { s3, type MultipartPart, type S3ControlClient } from "@/lib/server/s3";
+import { gcs, type GcsControlClient } from "@/lib/server/gcs";
 import { snowflake, type SnowflakeSqlApi } from "@/lib/server/snowflake";
 
 export type UploadSession = {
@@ -14,14 +14,15 @@ export type UploadSession = {
   fileName: string;
   contentType: string;
   sizeBytes: number;
-  partSize: number;
+  chunkSize: number;
   state: "initiated" | "uploading" | "quarantined" | "complete" | "aborted";
-  completedParts: { partNumber: number; etag: string }[];
   checksumSha256?: string;
+  storageChecksumCrc32c?: string;
+  storageChecksumMd5?: string;
   idempotencyKey: string;
   createdAt: string;
   objectKey?: string;
-  multipartUploadId?: string;
+  resumableUploadUrl?: string;
   storageVersionId?: string;
   contentValidated?: boolean;
   malwareScanStatus?: "pending" | "clean" | "threat" | "error";
@@ -29,15 +30,21 @@ export type UploadSession = {
 };
 
 export interface UploadSessionPort {
-  initiate(identity: RequestIdentity, input: { fileName: string; contentType: string; sizeBytes: number; lastModified?: number; checksumSha256?: string; idempotencyKey: string }): Promise<UploadSession>;
+  initiate(identity: RequestIdentity, input: {
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    lastModified?: number;
+    checksumSha256?: string;
+    idempotencyKey: string;
+    origin?: string;
+  }): Promise<UploadSession>;
   get(identity: RequestIdentity, uploadId: string): Promise<UploadSession>;
-  presignPart(identity: RequestIdentity, uploadId: string, partNumber: number, contentLength: number): Promise<{ url: string; headers?: Record<string,string> }>;
-  complete(identity: RequestIdentity, uploadId: string, parts: { partNumber: number; etag: string }[], idempotencyKey: string): Promise<UploadSession>;
+  complete(identity: RequestIdentity, uploadId: string, idempotencyKey: string): Promise<UploadSession>;
   abort(identity: RequestIdentity, uploadId: string): Promise<void>;
 }
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024 * 1024;
-const PART_SIZE = 32 * 1024 * 1024;
 const allowedExtensions = /\.(pdf|xlsx|xls|docx|pptx|csv)$/i;
 const allowedMime = new Set([
   "application/pdf",
@@ -64,18 +71,17 @@ export function validateSourceMagic(fileName: string, bytes: Buffer): boolean {
   return false;
 }
 
-function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number }): void {
+function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number; origin?: string }): void {
   if (!input.fileName || !allowedExtensions.test(input.fileName)) throw new Error("Unsupported file type");
   if (!allowedMime.has(input.contentType || "application/octet-stream")) throw new Error("Unsupported media type");
   if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > MAX_FILE_BYTES) throw new Error("Invalid file size");
-}
 
-function validateCompletedParts(session: UploadSession, parts: MultipartPart[]): MultipartPart[] {
-  const expectedCount = Math.ceil(session.sizeBytes / session.partSize);
-  const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
-  if (sorted.length !== expectedCount) throw new Error("Upload is missing one or more parts");
-  if (sorted.some((part, index) => part.partNumber !== index + 1 || !part.etag)) throw new Error("Invalid completed parts");
-  return sorted;
+  const config = getServerConfig();
+  if (config.environment === "production") {
+    if (!input.origin || !config.uploadAllowedOrigins.includes(input.origin)) throw new Error("Upload origin is not allowed");
+  } else if (input.origin && config.uploadAllowedOrigins.length && !config.uploadAllowedOrigins.includes(input.origin)) {
+    throw new Error("Upload origin is not allowed");
+  }
 }
 
 class DemoUploadSessions implements UploadSessionPort {
@@ -85,12 +91,17 @@ class DemoUploadSessions implements UploadSessionPort {
   async initiate(identity: RequestIdentity, input: Parameters<UploadSessionPort["initiate"]>[1]) {
     validateInitiate(input);
     const existingId = this.idempotency.get(`${identity.tenantId}:${input.idempotencyKey}`);
-    if (existingId) return this.get(identity, existingId);
+    if (existingId) {
+      const existing = await this.get(identity, existingId);
+      if (existing.state !== "aborted") return existing;
+    }
+    const config = getServerConfig();
     const session: UploadSession = {
       uploadId: randomUUID(), documentId: randomUUID(), artifactVersionId: randomUUID(), ingestionId: randomUUID(),
       tenantId: identity.tenantId, actorSubject: identity.subject, fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
-      partSize: PART_SIZE, state: "initiated", completedParts: [], checksumSha256: input.checksumSha256,
+      chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated", checksumSha256: input.checksumSha256,
       idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(), malwareScanStatus: "clean", contentValidated: true,
+      resumableUploadUrl: `/api/v1/uploads/${randomUUID()}/demo`,
     };
     this.sessions.set(session.uploadId, session);
     this.idempotency.set(`${identity.tenantId}:${input.idempotencyKey}`, session.uploadId);
@@ -101,16 +112,10 @@ class DemoUploadSessions implements UploadSessionPort {
     if (!session || session.tenantId !== identity.tenantId) throw new Error("Upload not found");
     return session;
   }
-  async presignPart(identity: RequestIdentity, uploadId: string, partNumber: number, contentLength: number) {
-    const session = await this.get(identity, uploadId);
-    if (!Number.isInteger(partNumber) || partNumber < 1 || contentLength <= 0 || contentLength > session.partSize) throw new Error("Invalid upload part");
-    return { url: `/api/v1/uploads/${uploadId}/demo-parts/${partNumber}`, headers: { "x-corvis-demo-upload": "true" } };
-  }
-  async complete(identity: RequestIdentity, uploadId: string, parts: { partNumber: number; etag: string }[], key: string) {
+  async complete(identity: RequestIdentity, uploadId: string, key: string) {
     const session = await this.get(identity, uploadId);
     if (key !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
     if (session.state === "complete") return session;
-    session.completedParts = validateCompletedParts(session, parts);
     session.state = "complete";
     session.releasedAt = new Date().toISOString();
     return session;
@@ -119,7 +124,7 @@ class DemoUploadSessions implements UploadSessionPort {
 }
 
 class ProductionUploadSessions implements UploadSessionPort {
-  constructor(private readonly store: S3ControlClient, private readonly db: SnowflakeSqlApi) {}
+  constructor(private readonly store: GcsControlClient, private readonly db: SnowflakeSqlApi) {}
 
   private async persist(session: UploadSession): Promise<void> {
     await this.store.putJson(sessionKey(session.tenantId, session.uploadId), session);
@@ -132,7 +137,7 @@ class ProductionUploadSessions implements UploadSessionPort {
   }
 
   private async registerInitiated(session: UploadSession): Promise<void> {
-    const objectUri = `s3://${this.store.bucket}/${session.objectKey}`;
+    const objectUri = `gs://${this.store.bucket}/${session.objectKey}`;
     await this.db.execute(`MERGE INTO PM_SOURCE.DOCUMENT t USING (SELECT ? TENANT_ID, ? DOCUMENT_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.DOCUMENT_ID=s.DOCUMENT_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,DOCUMENT_ID,DISPLAY_NAME,MEDIA_TYPE,STATUS,CREATED_AT,CREATED_BY) VALUES (?,?,?,?, 'uploading', TO_TIMESTAMP_TZ(?), ?)`, [session.tenantId,session.documentId,session.tenantId,session.documentId,session.fileName,session.contentType,session.createdAt,session.actorSubject]);
     await this.db.execute(`MERGE INTO PM_SOURCE.DOCUMENT_ARTIFACT_VERSION t USING (SELECT ? TENANT_ID, ? DOCUMENT_ARTIFACT_VERSION_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.DOCUMENT_ARTIFACT_VERSION_ID=s.DOCUMENT_ARTIFACT_VERSION_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,DOCUMENT_ARTIFACT_VERSION_ID,DOCUMENT_ID,INGESTION_ID,OBJECT_URI,SIZE_BYTES,SHA256,MALWARE_SCAN_STATUS,QUARANTINE_STATUS,CREATED_AT) VALUES (?,?,?,?,?,?,?,'pending','pending',TO_TIMESTAMP_TZ(?))`, [session.tenantId,session.artifactVersionId,session.tenantId,session.artifactVersionId,session.documentId,session.ingestionId,objectUri,session.sizeBytes,session.checksumSha256 ?? null,session.createdAt]);
   }
@@ -155,11 +160,11 @@ class ProductionUploadSessions implements UploadSessionPort {
   private async refreshScan(session: UploadSession): Promise<UploadSession> {
     if (session.state !== "quarantined" || !session.objectKey) return session;
     const config = getServerConfig();
-    const tags = await this.store.getTags(session.objectKey);
-    const status = tags[config.malwareCleanTagKey ?? "GuardDutyMalwareScanStatus"];
-    if (status === config.malwareCleanTagValue) {
+    const object = await this.store.getObjectMetadata(session.objectKey);
+    const status = object?.metadata?.[config.gcsMalwareMetadataKey];
+    if (status === config.gcsMalwareCleanValue) {
       await this.release(session);
-    } else if (status === config.malwareThreatTagValue) {
+    } else if (status === config.gcsMalwareThreatValue) {
       session.malwareScanStatus = "threat";
       await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT_ARTIFACT_VERSION SET MALWARE_SCAN_STATUS='threat', QUARANTINE_STATUS='quarantined' WHERE TENANT_ID=? AND DOCUMENT_ARTIFACT_VERSION_ID=?`, [session.tenantId, session.artifactVersionId]);
       await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS='quarantined' WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.tenantId, session.documentId]);
@@ -171,15 +176,27 @@ class ProductionUploadSessions implements UploadSessionPort {
   async initiate(identity: RequestIdentity, input: Parameters<UploadSessionPort["initiate"]>[1]): Promise<UploadSession> {
     validateInitiate(input);
     const prior = await this.store.getJson<{ uploadId: string }>(idempotencyKey(identity.tenantId, input.idempotencyKey));
-    if (prior?.uploadId) return this.get(identity, prior.uploadId);
+    if (prior?.uploadId) {
+      const existing = await this.get(identity, prior.uploadId).catch(() => null);
+      if (existing && existing.state !== "aborted") return existing;
+    }
+
+    const config = getServerConfig();
     const uploadId = randomUUID(); const documentId = randomUUID(); const artifactVersionId = randomUUID(); const ingestionId = randomUUID();
     const objectKey = `tenant=${safeName(identity.tenantId)}/document=${documentId}/artifact=${artifactVersionId}/original/${safeName(input.fileName)}`;
-    const multipartUploadId = await this.store.createMultipartUpload(objectKey, { tenant: identity.tenantId, document: documentId, artifact: artifactVersionId, ingestion: ingestionId });
+    const resumableUploadUrl = await this.store.createResumableUpload({
+      key: objectKey,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      origin: input.origin,
+      metadata: { tenant: identity.tenantId, document: documentId, artifact: artifactVersionId, ingestion: ingestionId },
+    });
     const session: UploadSession = {
       uploadId, documentId, artifactVersionId, ingestionId, tenantId: identity.tenantId, actorSubject: identity.subject,
-      fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes, partSize: PART_SIZE, state: "initiated",
-      completedParts: [], checksumSha256: input.checksumSha256, idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(),
-      objectKey, multipartUploadId, contentValidated: false, malwareScanStatus: "pending",
+      fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
+      chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated",
+      checksumSha256: input.checksumSha256, idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(),
+      objectKey, resumableUploadUrl, contentValidated: false, malwareScanStatus: "pending",
     };
     try {
       await this.persist(session);
@@ -187,42 +204,29 @@ class ProductionUploadSessions implements UploadSessionPort {
       await this.registerInitiated(session);
       return session;
     } catch (error) {
-      await this.store.abortMultipartUpload(objectKey, multipartUploadId).catch(() => undefined);
+      await this.store.cancelResumableUpload(resumableUploadUrl).catch(() => undefined);
       throw error;
     }
   }
 
   async get(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
-    const session = await this.load(identity, uploadId);
-    if (session.multipartUploadId && session.objectKey && ["initiated","uploading"].includes(session.state)) {
-      session.completedParts = await this.store.listParts(session.objectKey, session.multipartUploadId);
-      if (session.completedParts.length) session.state = "uploading";
-      await this.persist(session);
-    }
-    return this.refreshScan(session);
+    return this.refreshScan(await this.load(identity, uploadId));
   }
 
-  async presignPart(identity: RequestIdentity, uploadId: string, partNumber: number, contentLength: number) {
-    const session = await this.load(identity, uploadId);
-    if (!session.objectKey || !session.multipartUploadId || !["initiated","uploading"].includes(session.state)) throw new Error("Upload is not accepting parts");
-    const expectedCount = Math.ceil(session.sizeBytes / session.partSize);
-    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > expectedCount) throw new Error("Invalid upload part");
-    const expectedLength = partNumber === expectedCount ? session.sizeBytes - (partNumber - 1) * session.partSize : session.partSize;
-    if (contentLength !== expectedLength) throw new Error("Upload part length does not match session");
-    session.state = "uploading";
-    await this.persist(session);
-    return { url: this.store.presignUploadPart(session.objectKey, session.multipartUploadId, partNumber) };
-  }
-
-  async complete(identity: RequestIdentity, uploadId: string, parts: MultipartPart[], key: string): Promise<UploadSession> {
+  async complete(identity: RequestIdentity, uploadId: string, key: string): Promise<UploadSession> {
     const session = await this.load(identity, uploadId);
     if (key !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
     if (session.state === "complete" || session.state === "quarantined") return this.refreshScan(session);
-    if (!session.objectKey || !session.multipartUploadId) throw new Error("Upload storage state is incomplete");
-    const normalized = validateCompletedParts(session, parts);
-    const completed = await this.store.completeMultipartUpload(session.objectKey, session.multipartUploadId, normalized);
-    session.completedParts = normalized;
-    session.storageVersionId = completed.versionId;
+    if (!session.objectKey) throw new Error("Upload storage state is incomplete");
+
+    const object = await this.store.getObjectMetadata(session.objectKey);
+    if (!object) throw new Error("GCS upload has not completed");
+    const storedSize = Number(object.size ?? 0);
+    if (!Number.isFinite(storedSize) || storedSize !== session.sizeBytes) throw new Error("Uploaded object size does not match the authorized upload session");
+
+    session.storageVersionId = object.generation;
+    session.storageChecksumCrc32c = object.crc32c;
+    session.storageChecksumMd5 = object.md5Hash;
     const prefix = await this.store.getObjectPrefix(session.objectKey, 64);
     session.contentValidated = validateSourceMagic(session.fileName, prefix);
     session.state = "quarantined";
@@ -236,7 +240,10 @@ class ProductionUploadSessions implements UploadSessionPort {
 
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {
     const session = await this.load(identity, uploadId);
-    if (session.objectKey && session.multipartUploadId && !["complete","aborted"].includes(session.state)) await this.store.abortMultipartUpload(session.objectKey, session.multipartUploadId);
+    if (!["complete","aborted"].includes(session.state)) {
+      if (session.resumableUploadUrl) await this.store.cancelResumableUpload(session.resumableUploadUrl).catch(() => undefined);
+      if (session.objectKey) await this.store.deleteObject(session.objectKey).catch(() => undefined);
+    }
     session.state = "aborted";
     await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS='aborted' WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.tenantId, session.documentId]).catch(() => undefined);
     await this.persist(session);
@@ -245,6 +252,6 @@ class ProductionUploadSessions implements UploadSessionPort {
 
 let singleton: UploadSessionPort | undefined;
 export function uploads(): UploadSessionPort {
-  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(s3(), snowflake());
+  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(gcs(), snowflake());
   return singleton;
 }
