@@ -52,8 +52,25 @@ export default function CorvisApp() {
   }, []);
 
   useEffect(() => {
-    void refreshWorkspace();
-  }, [refreshWorkspace]);
+    let active = true;
+    Promise.allSettled([
+      workspacePort.listDocuments(),
+      workspacePort.listSnapshots(),
+      workspacePort.listObservations(),
+    ]).then(([documentsResult, snapshotsResult, observationsResult]) => {
+      if (!active) return;
+      const nextErrors: ModuleErrors = {};
+      if (documentsResult.status === "fulfilled") setDocs(documentsResult.value);
+      else nextErrors.documents = errorMessage(documentsResult.reason);
+      if (snapshotsResult.status === "fulfilled") setSnapshots(snapshotsResult.value);
+      else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
+      if (observationsResult.status === "fulfilled") setObservations(observationsResult.value);
+      else nextErrors.observations = errorMessage(observationsResult.reason);
+      setModuleErrors(nextErrors);
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
 
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
