@@ -1,0 +1,8 @@
+output "source_bucket" { value = google_storage_bucket.source.name }
+output "source_kms_key" { value = google_kms_crypto_key.source.id }
+output "artifact_registry_repository" { value = google_artifact_registry_repository.containers.name }
+output "document_registered_topic" { value = google_pubsub_topic.document_registered.id }
+output "dead_letter_topic" { value = google_pubsub_topic.processing_dead_letter.id }
+output "processing_queue" { value = google_cloud_tasks_queue.processing.id }
+output "api_service_account" { value = google_service_account.api.email }
+output "worker_service_account" { value = google_service_account.worker.email }
