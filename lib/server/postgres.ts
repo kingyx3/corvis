@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/lib/server/config";
+import { getServerConfig } from "./config.ts";
 
 export type PostgresPrimitive = string | number | boolean | null;
 export type PostgresRow = Record<string, unknown>;
