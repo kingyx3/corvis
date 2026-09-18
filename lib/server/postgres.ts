@@ -1,5 +1,3 @@
-import { getServerConfig } from "./config.ts";
-
 export type PostgresPrimitive = string | number | boolean | null;
 export type PostgresRow = Record<string, unknown>;
 
@@ -73,7 +71,8 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
   }
 }
 
-export function postgres(config = getServerConfig()): PostgresSqlApi {
-  if (!config.postgresDsn) throw new Error("CORVIS_POSTGRES_DSN is required for Postgres persistence");
-  return new PostgresHttpSqlApi({ dsn: config.postgresDsn });
+/** Compose this provider adapter from an explicit runtime binding. */
+export function postgres(dsn?: string): PostgresSqlApi {
+  if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required for Postgres persistence");
+  return new PostgresHttpSqlApi({ dsn });
 }
