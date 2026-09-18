@@ -15,6 +15,7 @@ When the same subject appears in both systems:
 
 ## Technical documents
 
+- [`MODULARITY.md`](MODULARITY.md) — module boundaries, dependency direction, failure isolation and the canonical customer-journey E2E contract.
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) — Cloudflare + GCP + Supabase topology, IaC ownership, lifecycle and cost controls.
 - [`DATA_PLATFORM.md`](DATA_PLATFORM.md) — GCS/Postgres/Snowflake boundaries, RLS, migrations and optional downstream CDC.
 - [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
