@@ -7,6 +7,10 @@ function parseRoles(value: string | null): Role[] {
   return (value || "").split(",").map((x) => x.trim()).filter((x): x is Role => allowed.has(x as Role));
 }
 
+function parseAuthMethod(value: string | null): RequestIdentity["authMethod"] {
+  return value === "saml" || value === "service_account" ? value : "oidc";
+}
+
 function safeEqual(actual: string | null, expected?: string): boolean {
   if (!actual || !expected) return false;
   const a = Buffer.from(actual);
@@ -53,11 +57,13 @@ export function resolveRequestIdentity(request: Request): RequestIdentity {
       workspaceIds: workspaceIds.length ? workspaceIds : [workspaceId],
       fundIds: split("x-corvis-entitled-funds"),
       documentIds: split("x-corvis-entitled-documents"),
-      datasetIds: split("x-corvis-entitled-datasets"),
       sourceDocumentAccessAllowed: request.headers.get("x-corvis-source-access") === "true",
+      internalAnalyticsAllowed: request.headers.get("x-corvis-internal-analytics") === "true",
+      modelTrainingAllowed: request.headers.get("x-corvis-model-training") === "true",
+      redistributionAllowed: request.headers.get("x-corvis-redistribution") === "true",
     },
-    authMethod: request.headers.get("x-corvis-auth-method") || "oidc",
-    sessionId: request.headers.get("x-corvis-session-id") || undefined,
+    authMethod: parseAuthMethod(request.headers.get("x-corvis-auth-method")),
+    sessionId: request.headers.get("x-corvis-session-id") || `session-${correlation}`,
   };
 }
 
