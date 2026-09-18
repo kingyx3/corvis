@@ -87,12 +87,32 @@ paths:
   /uploads/initiate:
     post:
       operationId: initiateUpload
+      description: Authorizes a source upload and creates a short-lived native Google Cloud Storage resumable session. The browser sends source bytes directly to GCS; Corvis does not proxy the file body.
       parameters:
         - in: header
           name: Idempotency-Key
           schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, contentType, sizeBytes]
+              properties:
+                fileName: { type: string }
+                contentType: { type: string }
+                sizeBytes: { type: integer, minimum: 1 }
+                lastModified: { type: integer }
+                checksumSha256: { type: string }
+                idempotencyKey: { type: string }
       responses:
-        '201': { description: Multipart upload session created or resumed }
+        '201':
+          description: GCS resumable upload session created or resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
   /uploads/{uploadId}:
     parameters:
       - in: path
@@ -102,31 +122,22 @@ paths:
     get:
       operationId: getUpload
       responses:
-        '200': { description: Upload session and completed parts }
+        '200': { description: Authorized upload session state and active resumable session URL when applicable }
     delete:
       operationId: abortUpload
       responses:
-        '204': { description: Upload aborted }
-  /uploads/{uploadId}/parts:
-    post:
-      operationId: presignUploadPart
-      parameters:
-        - in: path
-          name: uploadId
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Short-lived direct-to-object-store part URL }
+        '204': { description: Upload aborted and incomplete GCS session/object cleaned up where possible }
   /uploads/{uploadId}/complete:
     post:
       operationId: completeUpload
+      description: Verifies the completed GCS object, validates file signature and transitions it into quarantine/scan processing. Multipart ETags are not part of the Corvis contract.
       parameters:
         - in: path
           name: uploadId
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Artifact finalized and registered }
+        '200': { description: Artifact verified and registered/quarantined }
   /admin/readiness:
     get:
       operationId: getReadiness
@@ -138,6 +149,19 @@ components:
       type: openIdConnect
       openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
   schemas:
+    UploadSession:
+      type: object
+      required: [uploadId, documentId, artifactVersionId, ingestionId, chunkSize, state]
+      properties:
+        uploadId: { type: string }
+        documentId: { type: string }
+        artifactVersionId: { type: string }
+        ingestionId: { type: string }
+        chunkSize: { type: integer, minimum: 262144 }
+        uploadUrl:
+          type: string
+          description: Sensitive short-lived GCS resumable session URI; clients must not log or persist it beyond resumable-upload recovery needs.
+        state: { type: string, enum: [initiated, uploading, quarantined, complete, aborted] }
     ReviewDecision:
       type: object
       required: [observationId, decision, reasonCode, expectedVersion]
