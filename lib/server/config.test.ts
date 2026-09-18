@@ -10,21 +10,49 @@ test("production requires enterprise bindings", () => {
   assert.throws(() => getServerConfig({ NODE_ENV: "production" } as NodeJS.ProcessEnv), /Missing production configuration/);
 });
 
+test("production requires the Postgres primary data-plane binding", () => {
+  const env = productionEnvironment();
+  delete env.CORVIS_POSTGRES_DSN;
+  assert.throws(() => getServerConfig(env), /CORVIS_POSTGRES_DSN/);
+});
+
 test("GCS resumable chunk size must be a multiple of 256 KiB", () => {
   assert.throws(() => getServerConfig({ NODE_ENV: "test", CORVIS_GCS_CHUNK_SIZE_BYTES: "1000000" } as NodeJS.ProcessEnv), /multiple of 256 KiB/);
 });
 
-test("fully configured production environment is accepted", () => {
+test("fully configured production environment is accepted without Snowflake", () => {
+  const config = getServerConfig(productionEnvironment());
+  assert.equal(config.demoMode, false);
+  assert.equal(config.environment, "production");
+  assert.equal(config.trustedAuthProxySecret, "test-only-secret");
+  assert.equal(config.postgresDsn, "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require");
+  assert.equal(config.snowflakeDatabase, undefined);
+  assert.equal(config.objectStoreBucket, "corvis-prod");
+  assert.deepEqual(config.uploadAllowedOrigins, ["https://customer.example.com", "https://admin.example.com"]);
+  assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
+  assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
+  assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
+});
+
+test("optional Snowflake bindings remain available when downstream analytics is activated", () => {
   const config = getServerConfig({
+    ...productionEnvironment(),
+    CORVIS_SNOWFLAKE_SQL_API_URL: "https://account.snowflakecomputing.com",
+    CORVIS_SNOWFLAKE_OAUTH_TOKEN: "test-token",
+    CORVIS_SNOWFLAKE_DATABASE: "CORVIS_ANALYTICS",
+    CORVIS_SNOWFLAKE_WAREHOUSE: "CORVIS_ANALYTICS",
+    CORVIS_SNOWFLAKE_ROLE: "CORVIS_ANALYTICS_ROLE",
+  });
+  assert.equal(config.snowflakeDatabase, "CORVIS_ANALYTICS");
+});
+
+function productionEnvironment(): NodeJS.ProcessEnv {
+  return {
     NODE_ENV: "production",
     CORVIS_AUTH_ISSUER: "https://idp.example.com",
     CORVIS_AUTH_AUDIENCE: "corvis",
     CORVIS_TRUSTED_AUTH_PROXY_SECRET: "test-only-secret",
-    CORVIS_SNOWFLAKE_SQL_API_URL: "https://account.snowflakecomputing.com",
-    CORVIS_SNOWFLAKE_OAUTH_TOKEN: "test-token",
-    CORVIS_SNOWFLAKE_DATABASE: "CORVIS",
-    CORVIS_SNOWFLAKE_WAREHOUSE: "CORVIS_APP",
-    CORVIS_SNOWFLAKE_ROLE: "CORVIS_APP_ROLE",
+    CORVIS_POSTGRES_DSN: "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require",
     CORVIS_OBJECT_STORE_BUCKET: "corvis-prod",
     CORVIS_UPLOAD_ALLOWED_ORIGINS: "https://customer.example.com,https://admin.example.com",
     CORVIS_GCS_CHUNK_SIZE_BYTES: String(8 * 1024 * 1024),
@@ -35,14 +63,5 @@ test("fully configured production environment is accepted", () => {
     CORVIS_DATA_LIFECYCLE_ENDPOINT: "https://lifecycle.example.com",
     CORVIS_EXPORT_DELIVERY_ENDPOINT: "https://delivery.example.com",
     CORVIS_WORKER_SECRET: "worker-secret",
-  } as NodeJS.ProcessEnv);
-  assert.equal(config.demoMode, false);
-  assert.equal(config.environment, "production");
-  assert.equal(config.trustedAuthProxySecret, "test-only-secret");
-  assert.equal(config.snowflakeDatabase, "CORVIS");
-  assert.equal(config.objectStoreBucket, "corvis-prod");
-  assert.deepEqual(config.uploadAllowedOrigins, ["https://customer.example.com", "https://admin.example.com"]);
-  assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
-  assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
-  assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
-});
+  } as NodeJS.ProcessEnv;
+}
