@@ -25,18 +25,23 @@ export type ObservationRecord = {
   value: string;
   period: string;
   source: string;
+  sourceReferenceId?: string;
   confidence: number;
   state: "Approved" | "Needs review";
   delta: string;
+  version?: number;
 };
 
 export type FundSnapshot = {
+  id?: string;
+  version?: number;
   fund: string;
   period: string;
   status: "Published" | "Review";
   holdings: number;
   facts: number;
   changed: string;
+  blockingExceptions?: number;
 };
 
 export type ActivityRecord = {

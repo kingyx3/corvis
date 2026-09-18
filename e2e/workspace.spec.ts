@@ -1,0 +1,39 @@
+import { test, expect } from "@playwright/test";
+
+test("customer can navigate trusted workspace surfaces", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /portfolio|overview|reporting/i }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: /documents/i }).first().click();
+  await expect(page.getByRole("heading", { name: /documents/i })).toBeVisible();
+
+  await page.getByRole("button", { name: /data review/i }).first().click();
+  await expect(page.getByRole("heading", { name: /data review/i })).toBeVisible();
+
+  await page.getByRole("button", { name: /ask corvis/i }).first().click();
+  await expect(page.getByRole("heading", { name: /ask corvis/i })).toBeVisible();
+});
+
+test("upload dialog is accessible and reports lifecycle", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /documents/i }).first().click();
+  await page.getByRole("button", { name: /upload/i }).first().click();
+
+  const dialog = page.getByRole("dialog", { name: /upload documents/i });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /choose source documents/i })).toBeVisible();
+  await expect(dialog.getByText(/register.*interpret.*extract.*review.*reconcile.*publish/i)).toBeVisible();
+  await dialog.getByRole("button", { name: /close upload dialog/i }).click();
+  await expect(dialog).toBeHidden();
+});
+
+test("Ask Corvis uses the research port rather than hard-coded evidence", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /ask corvis/i }).first().click();
+  const box = page.getByPlaceholder(/ask about a fund/i);
+  await box.fill("What changed this quarter?");
+  await box.press("Control+Enter").catch(() => undefined);
+  await page.locator("form.ask-box button").click();
+  await expect(page.getByText(/demo response for: what changed this quarter/i)).toBeVisible();
+  await expect(page.getByText(/demo mode/i)).toBeVisible();
+});

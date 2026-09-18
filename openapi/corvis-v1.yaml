@@ -1,0 +1,157 @@
+openapi: 3.1.0
+info:
+  title: Corvis API
+  version: 1.0.0
+  description: Tenant-scoped customer contract. Internal extraction payloads and physical Snowflake tables are not API contracts.
+servers:
+  - url: /api/v1
+security:
+  - enterpriseSession: []
+paths:
+  /me:
+    get:
+      operationId: getSession
+      responses:
+        '200': { description: Authenticated tenant/workspace session }
+  /documents:
+    get:
+      operationId: listDocuments
+      responses:
+        '200': { description: Entitled documents }
+  /observations:
+    get:
+      operationId: listObservations
+      responses:
+        '200': { description: Entitled reviewed observations }
+  /snapshots:
+    get:
+      operationId: listSnapshots
+      responses:
+        '200': { description: Versioned fund-period snapshots }
+  /review:
+    post:
+      operationId: reviewObservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDecision'
+      responses:
+        '202': { description: Review event accepted }
+        '409': { description: Version conflict }
+  /snapshots/publish:
+    post:
+      operationId: publishSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnapshotPublication'
+      responses:
+        '202': { description: Publication command accepted }
+  /research:
+    post:
+      operationId: research
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '200': { description: Semantic and source-grounded answer }
+  /exports:
+    post:
+      operationId: createExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format: { type: string, enum: [parquet, csv, xlsx] }
+      responses:
+        '202': { description: Export job accepted }
+  /jobs:
+    get:
+      operationId: listProcessingJobs
+      responses:
+        '200': { description: Tenant-scoped processing jobs }
+  /uploads/initiate:
+    post:
+      operationId: initiateUpload
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string }
+      responses:
+        '201': { description: Multipart upload session created or resumed }
+  /uploads/{uploadId}:
+    parameters:
+      - in: path
+        name: uploadId
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getUpload
+      responses:
+        '200': { description: Upload session and completed parts }
+    delete:
+      operationId: abortUpload
+      responses:
+        '204': { description: Upload aborted }
+  /uploads/{uploadId}/parts:
+    post:
+      operationId: presignUploadPart
+      parameters:
+        - in: path
+          name: uploadId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Short-lived direct-to-object-store part URL }
+  /uploads/{uploadId}/complete:
+    post:
+      operationId: completeUpload
+      parameters:
+        - in: path
+          name: uploadId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Artifact finalized and registered }
+  /admin/readiness:
+    get:
+      operationId: getReadiness
+      responses:
+        '200': { description: Admin-only production binding readiness }
+components:
+  securitySchemes:
+    enterpriseSession:
+      type: openIdConnect
+      openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+  schemas:
+    ReviewDecision:
+      type: object
+      required: [observationId, decision, reasonCode, expectedVersion]
+      properties:
+        observationId: { type: string }
+        decision: { type: string, enum: [approve, reject, correct] }
+        reasonCode: { type: string }
+        correctedValue: { type: string }
+        expectedVersion: { type: integer, minimum: 1 }
+    SnapshotPublication:
+      type: object
+      required: [snapshotId, action, expectedVersion]
+      properties:
+        snapshotId: { type: string }
+        action: { type: string, enum: [publish, withdraw, supersede] }
+        expectedVersion: { type: integer, minimum: 1 }
+        reason: { type: string }
