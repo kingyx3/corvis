@@ -30,6 +30,9 @@ test("fully configured production environment is accepted", () => {
     CORVIS_AI_ENDPOINT: "https://ai.example.com",
     CORVIS_OBSERVABILITY_ENDPOINT: "https://telemetry.example.com/events",
     CORVIS_WEBHOOK_SIGNING_SECRET: "webhook-test-secret",
+    CORVIS_DATA_LIFECYCLE_ENDPOINT: "https://lifecycle.example.com",
+    CORVIS_EXPORT_DELIVERY_ENDPOINT: "https://delivery.example.com",
+    CORVIS_WORKER_SECRET: "worker-secret",
   } as NodeJS.ProcessEnv);
   assert.equal(config.demoMode, false);
   assert.equal(config.environment, "production");
@@ -37,4 +40,5 @@ test("fully configured production environment is accepted", () => {
   assert.equal(config.snowflakeDatabase, "CORVIS");
   assert.equal(config.s3Region, "ap-southeast-1");
   assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
+  assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
 });
