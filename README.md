@@ -1,122 +1,111 @@
 # Corvis
 
-Customer-facing workspace for the Corvis private-markets data platform.
+Corvis is a tenant-isolated private-markets data platform that turns confidential fund documents into reviewed, source-traceable fund-period data, APIs, exports and permissioned research.
 
-## Product surface
+## What is implemented
 
-- Reporting-cycle overview and fund-period status
-- Source document library with ingestion/extraction/review state
-- Large-file upload for PDF, Excel, Word, PowerPoint and CSV
-- Direct-to-object-storage multipart uploads
-- Document processing / lineage view
-- Trusted observation review with source evidence
-- CSV export
-- Ask Corvis research workspace with cited evidence
+- Customer workspace for reporting cycles, documents, trusted observations and Ask Corvis.
+- Versioned `/api/v1` routes with authenticated tenant/workspace context and server-side authorization.
+- Resumable direct-to-object-store multipart upload with durable sessions, idempotency, exact part validation and quarantine.
+- Immutable document/artifact identities and source references.
+- Snowflake `SOURCE → CANONICAL → CURATED → SEMANTIC → SERVING` schemas with tenant row policies and secure serving views.
+- Canonical funds, companies, holdings, instruments and vertical metric observations.
+- Auditable review/correction events, optimistic concurrency, critical-fact independent review and server-side publication gates.
+- Durable processing jobs/outbox events, bounded retry/dead-letter model and audited operator retry.
+- Permissioned retrieval + trusted-data research adapter: structured facts and source evidence remain separate permission boundaries.
+- Audit events, export jobs/manifests/checksums, signed-webhook primitives, retention/data-right/control-evidence schemas.
+- Structured telemetry forwarding, health/readiness endpoints and AWS reference IaC for KMS/S3/queues.
+- Deterministic CI with lint, typecheck, unit tests, build, Playwright, dependency audit and CodeQL.
 
-The customer UI exposes fund-period snapshots, trusted observations and entitled source evidence. It never treats raw extraction JSON or physical Snowflake tables as product contracts.
+Raw extraction-agent payloads and physical Snowflake tables are never customer product contracts.
 
 ## Architecture: linked, not married
 
-Each capability owns one concern and depends on contracts rather than another module's implementation.
-
 ```text
-core/contracts.ts                    stable domain + port contracts
+Browser / customer integrations
         │
-        ├── application/             use-case orchestration
-        │     └── upload-document.ts
+        ▼
+application + versioned API contracts
         │
-        ├── adapters/                replaceable infrastructure / demo bindings
-        │     ├── upload/http-multipart-upload.ts
-        │     ├── upload/mock-upload.ts
-        │     └── demo/catalog.ts
-        │
-        ├── runtime/services.ts      composition root for adapters
-        │
-        ├── features/                product capabilities
-        │     ├── overview/
-        │     ├── documents/
-        │     ├── review/
-        │     └── research/
-        │
-        ├── components/ui/           reusable presentation primitives
-        └── app/page.tsx             shell + feature composition only
+        ├── identity / authorization port
+        ├── upload / source-store port
+        ├── orchestration / event contracts
+        ├── canonical + serving repository port
+        ├── semantic-query port
+        ├── permissioned retrieval port
+        └── audit / telemetry / delivery ports
+                │
+                ▼
+replaceable production adapters
 ```
 
-Rules:
+Feature code depends on stable contracts. S3, Snowflake, search, AI, identity and telemetry are implementation adapters rather than business semantics.
 
-- Feature modules depend on `core` contracts and application services, not adapter internals.
-- Vendor/API details live in adapters.
-- `runtime/services.ts` selects adapters; replacing object storage or API transport should not change UI features.
-- Demo data is an adapter, not domain state.
-- Customer-facing modules consume serving/application contracts, not extraction schemas.
-- Search, source evidence and structured fact access remain independently permissioned.
-- Global entity identity never widens tenant access.
-
-## Run locally
+## Local development
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
-
-By default the frontend uses the mock upload adapter so the workflow remains interactive before backend services are connected.
-
-## Production upload port
-
-Set:
+Local demo behavior is **explicit opt-in**:
 
 ```bash
-NEXT_PUBLIC_CORVIS_API_BASE=https://api.example.com
-NEXT_PUBLIC_CORVIS_MOCK_API=false
+CORVIS_DEMO_MODE=true
+NEXT_PUBLIC_CORVIS_DEMO_MODE=true
 ```
 
-The HTTP multipart adapter implements the current upload protocol:
+Production rejects demo mode and missing required enterprise bindings.
 
-1. `POST /uploads/initiate`
-   - request: `fileName`, `contentType`, `sizeBytes`, `lastModified`
-   - response: `uploadId`, `documentId`, `partSize`
-2. `POST /uploads/{uploadId}/parts`
-   - request: `partNumber`, `contentLength`
-   - response: presigned object-storage `url` and optional headers
-3. Browser uploads each part directly to object storage and records the ETag.
-4. `POST /uploads/{uploadId}/complete`
-   - request: ordered `parts: [{ partNumber, etag }]`
-5. Backend finalizes the artifact, registers immutable source identity and emits the next pipeline event.
-
-Current defaults are 32 MB parts, concurrency 3 and exponential retry. Those are adapter configuration, not UI semantics.
-
-## Platform lifecycle expected by the UI
+## Production document flow
 
 ```text
-registered
-  → represented
-  → extracted
-  → reviewed
-  → canonicalized
-  → reconciled
-  → consolidated
-  → published
+initiate
+  → immutable document/artifact IDs
+  → presigned multipart upload
+  → resumable S3 part state
+  → exact file-signature validation
+  → quarantine
+  → malware clean disposition
+  → DocumentRegistered outbox event
+  → interpretation
+  → extraction
+  → review
+  → canonicalization
+  → reconciliation
+  → consolidation
+  → versioned fund-period snapshot
+  → semantic / serving layer
 ```
 
-These are product lifecycle states, not a requirement that one monolithic worker execute every step. Each downstream process can be retried or replaced using durable upstream records and stable identifiers.
+Source bytes remain in private versioned object storage. Snowflake is the structured system of record.
 
-## Current stack
+## Production data and AI rule
 
-- Next.js 16.3
-- React 19.3
-- TypeScript
-- No component framework dependency
+Quantitative research is grounded in tenant-scoped serving facts. Narrative evidence comes only from a source corpus filtered by tenant/workspace/document/fund entitlement **before retrieval**. Document text is treated as untrusted data and cannot authorize tools or permissions.
 
-## Next backend contracts
+## Verification
 
-1. Authentication and tenant/workspace context.
-2. Upload/presigning adapter implementation.
-3. Document read-model + processing-event stream (SSE/WebSocket).
-4. Fund-period snapshot and consolidated-fact serving APIs.
-5. Permissioned evidence-reader/document-renderer endpoint.
-6. Semantic-query and retrieval ports for Ask Corvis.
-7. Audit telemetry, errors/retries and feature entitlements.
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e
+npm audit --audit-level=high
+```
 
-When those services arrive, bind new adapters at the runtime composition root instead of rewriting product features.
+GitHub Actions also runs CodeQL. Reference infrastructure lives under `infra/terraform/aws-reference`.
+
+## Activation
+
+Source control cannot prove that an IdP policy, cloud account, Snowflake grant, malware scanner, backup restore or operational control is actually running. Production therefore stays fail-closed until live bindings and evidence are present.
+
+See:
+
+- `docs/ENTERPRISE_IMPLEMENTATION.md`
+- `docs/PRODUCTION_ACTIVATION.md`
+- `.env.example`
+- `db/migrations/`
+
+`GET /api/v1/admin/readiness` is the deployment binding gate; the Confluence Enterprise Control Register remains the operating-evidence authority.
