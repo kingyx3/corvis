@@ -1,0 +1,28 @@
+name: Lockfile Bootstrap
+
+on:
+  push:
+    branches:
+      - feat/enterprise-production-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    if: ${{ hashFiles('package-lock.json') == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --package-lock-only --ignore-scripts
+      - name: Commit lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "Commit deterministic npm lockfile"
+          git push origin HEAD:${GITHUB_REF_NAME}
