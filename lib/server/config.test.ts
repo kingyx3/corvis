@@ -15,10 +15,12 @@ test("fully configured production environment is accepted", () => {
     NODE_ENV: "production",
     CORVIS_AUTH_ISSUER: "https://idp.example.com",
     CORVIS_AUTH_AUDIENCE: "corvis",
+    CORVIS_TRUSTED_AUTH_PROXY_SECRET: "test-only-secret",
     CORVIS_SNOWFLAKE_DSN: "snowflake://account",
     CORVIS_OBJECT_STORE_BUCKET: "corvis-prod",
     CORVIS_SEARCH_ENDPOINT: "https://search.example.com",
   } as NodeJS.ProcessEnv);
   assert.equal(config.demoMode, false);
   assert.equal(config.environment, "production");
+  assert.equal(config.trustedAuthProxySecret, "test-only-secret");
 });
