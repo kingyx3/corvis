@@ -1,7 +1,7 @@
 import { getServerConfig } from "@/lib/server/config";
 
 type TokenResponse = { access_token?: string; expires_in?: number };
-type GcsObject = {
+export type GcsObject = {
   generation?: string;
   size?: string;
   contentType?: string;
@@ -51,11 +51,9 @@ export class GcsControlClient {
 
   private async authorizedFetch(url: string, init: RequestInit = {}): Promise<Response> {
     const token = await this.accessToken();
-    return fetch(url, {
-      ...init,
-      headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
-      cache: "no-store",
-    });
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return fetch(url, { ...init, headers, cache: "no-store" });
   }
 
   private metadataUrl(key: string): string {
@@ -83,11 +81,7 @@ export class GcsControlClient {
     const response = await this.authorizedFetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        name: input.key,
-        contentType: input.contentType,
-        metadata: input.metadata,
-      }),
+      body: JSON.stringify({ name: input.key, contentType: input.contentType, metadata: input.metadata }),
     });
     if (!response.ok) throw new Error(`GCS resumable upload initiation failed (${response.status})`);
     const location = response.headers.get("location");
