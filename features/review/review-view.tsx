@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { SourceEvidence } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
@@ -27,6 +27,7 @@ export function ReviewView({
   const scopedRows = hasSnapshotScopedRows ? rows.filter((row) => row.snapshotId === snapshot?.id) : rows;
   const visible = onlyReview ? scopedRows.filter((row) => row.state === "Needs review") : scopedRows;
   const needsReview = scopedRows.filter((row) => row.state === "Needs review").length;
+  const approved = scopedRows.filter((row) => row.state === "Approved").length;
   const publishBlocked = !snapshot?.id || !snapshot.version || needsReview > 0 || (snapshot.blockingExceptions || 0) > 0;
 
   const exportCsv = () => {
@@ -79,8 +80,6 @@ export function ReviewView({
     } catch (error) { setMessage(error instanceof Error ? error.message : "Publication failed"); }
     finally { setBusy(null); }
   };
-
-  const approved = useMemo(() => scopedRows.filter((row) => row.state === "Approved").length, [scopedRows]);
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">TRUSTED DATA</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions"><button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button><button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : "Publish snapshot"}</button></div></section>
