@@ -27,7 +27,7 @@ export function ReviewView({ observations, snapshot }: { observations: Observati
 
   const decide = async (row: ObservationRecord, decision: "approve" | "reject" | "correct") => {
     let correctedValue: string | undefined;
-    let reasonCode = decision === "approve" ? "reviewer_verified" : decision === "reject" ? "reviewer_rejected" : "reviewer_corrected";
+    const reasonCode = decision === "approve" ? "reviewer_verified" : decision === "reject" ? "reviewer_rejected" : "reviewer_corrected";
     if (decision === "correct") {
       correctedValue = window.prompt(`Correct ${row.metric} for ${row.company}`, row.value) ?? undefined;
       if (correctedValue == null || correctedValue.trim() === "") return;
