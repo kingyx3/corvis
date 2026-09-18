@@ -34,6 +34,7 @@ export default function CorvisApp() {
     return () => { active = false; };
   }, []);
 
+  const reviewSnapshot = snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const nav = useMemo(() => [
     { id: "overview" as View, label: "Overview", icon: "home" as IconName },
     { id: "documents" as View, label: "Documents", icon: "file" as IconName, badge: docs.filter((doc) => doc.status === "Review").length },
@@ -55,7 +56,7 @@ export default function CorvisApp() {
         {!loading && loadError && <section className="page-heading"><div><p className="eyebrow">WORKSPACE ERROR</p><h1>Unable to load this workspace</h1><p className="lede">{loadError}</p></div></section>}
         {!loading && !loadError && view === "overview" && <OverviewView snapshots={snapshots} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={setView} onUpload={() => setUploadOpen(true)}/>} 
         {!loading && !loadError && view === "documents" && <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc}/>} 
-        {!loading && !loadError && view === "review" && <ReviewView observations={observations}/>} 
+        {!loading && !loadError && view === "review" && <ReviewView observations={observations} snapshot={reviewSnapshot}/>} 
         {!loading && !loadError && view === "research" && <ResearchView suggestions={researchSuggestions}/>} 
       </div>
     </main>
