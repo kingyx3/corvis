@@ -53,7 +53,12 @@ function uploadPartWithProgress(
         reject(new Error(`Object storage rejected part (${xhr.status})`));
         return;
       }
-      resolve(xhr.getResponseHeader("etag")?.replaceAll('"', "") || `part-${crypto.randomUUID()}`);
+      const etag = xhr.getResponseHeader("etag")?.replaceAll('"', "");
+      if (!etag) {
+        reject(new Error("Object storage response did not expose an ETag"));
+        return;
+      }
+      resolve(etag);
     };
     const abort = () => xhr.abort();
     signal?.addEventListener("abort", abort, { once: true });
@@ -86,11 +91,15 @@ export function createHttpMultipartUploadPort(options: Options): UploadPort {
   return {
     runtime: { mode: "direct", partSize: fallbackPartSize, concurrency },
     async upload(file: File, callbacks: UploadCallbacks = {}, signal?: AbortSignal): Promise<UploadResult> {
+      if (file.size <= 0) throw new Error("Cannot upload an empty file");
+
       const initiated = await requestJson<InitiateResponse>("/uploads/initiate", {
         method: "POST",
         body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", sizeBytes: file.size, lastModified: file.lastModified }),
       });
       const partSize = initiated.partSize || fallbackPartSize;
+      if (!Number.isFinite(partSize) || partSize <= 0) throw new Error("Upload API returned an invalid part size");
+
       const partCount = Math.ceil(file.size / partSize);
       let uploadedBytes = 0;
       let nextPart = 1;
