@@ -8,6 +8,8 @@ This document owns the technical activation checks. Confluence owns the business
 
 Human-entered technical deployment inputs are configured in GitHub Environments (`dev`, `uat`, `prod`) and propagated by reviewed GitHub Actions wherever possible. Runtime secrets live in GCP Secret Manager; provider management credentials remain deployment-only GitHub secrets.
 
+Customer-provided GP portal/data-room/source credentials are not GitHub configuration. They are authorized through the authenticated Corvis customer/admin portal and stored as tenant-scoped runtime secrets. See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md).
+
 See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) and [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ## Required production bindings
@@ -25,6 +27,7 @@ Production must reject demo mode and require working bindings for:
 9. **Observability** — logs/metrics/traces, SLO alerts and owned operational dashboards are working.
 10. **Data lifecycle** — retention/deletion execution reaches every in-scope authoritative/derived system and returns completion evidence.
 11. **Export/webhook delivery** — governed asynchronous export delivery and signed webhook behavior are working where enabled.
+12. **Source connectors, where enabled** — customer-authorized connector setup, tenant-scoped secret storage, scoped discovery/download, idempotency, scheduling/retry, revocation and standard GCS/document-registration handoff are working. Browser automation must fail closed on unexpected authentication/security/provider changes and must never bypass MFA/CAPTCHA/access controls.
 
 Snowflake is **not** a production activation requirement unless the business architecture has separately approved and activated it as downstream analytics/sharing.
 
@@ -56,6 +59,21 @@ Required checks include:
 - export renderer/checksum/manifest/expiry tests;
 - deletion/retention execution test with legal/contractual hold behavior;
 - rollback test using the previous known-good application image and compatible database state.
+
+For each production source connector that is enabled, add UAT coverage for:
+
+- customer/admin connection setup and source-scope authorization;
+- managed secret persistence without plaintext credential leakage;
+- invalid/expired credentials and reauthorization/rotation;
+- cross-tenant credential isolation;
+- duplicate discovery/download idempotency and remote version replacement;
+- timeout/retry/backoff/dead-letter behavior;
+- revoke/pause/disconnect behavior;
+- source lineage into the standard GCS/document registry;
+- browser-flow/layout change safety for browser-automation connectors;
+- proof that credentials/session material never reaches logs, support payloads or AI/model prompts.
+
+Use synthetic/test source accounts in UAT. Real customer source credentials/data must not be placed in `dev` or general CI.
 
 If Snowflake is activated, add initial-snapshot reconciliation, rights-filtered share tests, CDC lag/failure behavior and proof that Snowflake failure does not block Postgres/application writes.
 
@@ -92,7 +110,8 @@ Minimum recurring evidence includes:
 - lineage completeness sample;
 - retention/deletion execution evidence;
 - critical-vendor/subprocessor review;
-- data-rights enforcement tests.
+- data-rights enforcement tests;
+- source-connector credential access/rotation/revocation and sync-health evidence where such connectors are in production.
 
 ## What cannot be completed from source control alone
 
@@ -102,6 +121,8 @@ Some trust/account/operating facts require authorized external ownership or huma
 - one-time GCP GitHub-OIDC Workload Identity bootstrap;
 - provider management-token creation;
 - IdP tenant/policy ownership;
+- customer authorization and credential/consent setup for external source portals;
+- source-provider terms/permission review where automation is used;
 - penetration testing;
 - backup/restore and incident exercises;
 - customer contract/data-right records;

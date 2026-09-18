@@ -108,6 +108,8 @@ GitHub Actions authenticates to GCP with OIDC Workload Identity Federation. Runt
 
 Accepted source evidence is private, versioned and protected from public access. Source upload is direct browser → GCS resumable upload after a Corvis authorization/initiation request; Cloudflare and the API must not proxy ordinary multi-GB source bodies.
 
+Approved portal/data-room connectors write acquired documents into the same GCS ingestion/document-registration path as customer uploads. They must not create a parallel source lake or extraction path. See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md).
+
 Suggested lifecycle defaults:
 
 - abandoned upload/quarantine scratch: 1–7 days;
@@ -121,6 +123,14 @@ Keep deployed images, one known-good rollback and a bounded recent history. Dele
 ### Secret Manager
 
 Runtime secrets belong in Secret Manager. Keep the current version plus at most one rollback version during rotation; destroy superseded secret values after the approved successful-rotation window unless recovery requires longer. Disabled old versions should not be treated as free archival storage.
+
+Customer-provided credentials/tokens for approved GP portals, data rooms or source repositories are **runtime tenant secrets**, not GitHub deployment secrets. Store them in Secret Manager with tenant/connection-scoped references and least-privilege access; Postgres stores connection metadata and the secret reference, never plaintext credential material.
+
+### Source connector workers
+
+Automated source acquisition should normally run in isolated Cloud Run Jobs/workers using dedicated service identities and durable scheduling/retry state. Prefer provider APIs/OAuth; use browser automation only for reviewed connectors where the customer is authorized and the source permits the automation. Never bypass MFA, CAPTCHA or source access controls. Connector-acquired files enter the standard GCS integrity/quarantine/document-registration pipeline before downstream extraction.
+
+See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) for credential setup, connector isolation, source lineage and browser-automation rules.
 
 ## Cloudflare
 
@@ -173,6 +183,8 @@ GitHub Actions should perform the following from reviewed code:
 7. deploy Cloud Run/Jobs referencing Secret Manager, not plaintext workflow output;
 8. run environment acceptance tests;
 9. publish deployment/evidence metadata.
+
+Customer-created source-portal credentials are intentionally outside this GitHub propagation flow: customers submit/authorize them through the authenticated Corvis application, and the runtime writes them to managed secret storage.
 
 See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) and [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
