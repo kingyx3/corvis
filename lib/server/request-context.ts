@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from "crypto";
-import type { RequestIdentity, Role } from "@/core/enterprise";
-import { getServerConfig } from "@/lib/server/config";
+import type { RequestIdentity, Role } from "../../core/enterprise.ts";
+import { getServerConfig } from "./config.ts";
 
 function parseRoles(value: string | null): Role[] {
   const allowed = new Set<Role>(["admin","reviewer","analyst","api_client","read_only"]);
@@ -28,40 +28,39 @@ export function resolveRequestIdentity(request: Request): RequestIdentity {
       roles: demoRoles.length ? demoRoles : ["admin"],
       entitlements: { workspaceIds: [workspaceId], sourceDocumentAccessAllowed: true },
       authMethod: "demo",
-      sessionId: correlation,
+      sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
     };
   }
 
-  // Production identity headers are accepted only from the approved auth gateway.
-  // Edge/load-balancer configuration MUST strip public x-corvis-* identity headers
-  // and inject x-corvis-gateway-secret plus verified OIDC/SAML claims.
   if (!safeEqual(request.headers.get("x-corvis-gateway-secret"), config.trustedAuthProxySecret)) {
-    throw new AuthenticationError();
+    throw new AuthenticationError("Untrusted identity gateway");
   }
 
   const subject = request.headers.get("x-corvis-auth-subject");
   const tenantId = request.headers.get("x-corvis-auth-tenant");
   const workspaceId = request.headers.get("x-corvis-auth-workspace");
   const roles = parseRoles(request.headers.get("x-corvis-auth-roles"));
-  const sessionId = request.headers.get("x-corvis-auth-session") || correlation;
-  if (!subject || !tenantId || !workspaceId || !roles.length) throw new AuthenticationError();
-
+  if (!subject || !tenantId || !workspaceId || roles.length === 0) throw new AuthenticationError("Missing authenticated request context");
+  const split = (name: string) => (request.headers.get(name) || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const workspaceIds = split("x-corvis-entitled-workspaces");
+  if (workspaceIds.length && !workspaceIds.includes(workspaceId)) throw new AuthenticationError("Workspace context not entitled");
   return {
-    subject, tenantId, workspaceId, roles,
+    subject,
+    tenantId,
+    workspaceId,
+    roles,
     entitlements: {
-      workspaceIds: (request.headers.get("x-corvis-entitled-workspaces") || workspaceId).split(",").filter(Boolean),
-      fundIds: request.headers.get("x-corvis-entitled-funds")?.split(",").filter(Boolean),
-      documentIds: request.headers.get("x-corvis-entitled-documents")?.split(",").filter(Boolean),
+      workspaceIds: workspaceIds.length ? workspaceIds : [workspaceId],
+      fundIds: split("x-corvis-entitled-funds"),
+      documentIds: split("x-corvis-entitled-documents"),
+      datasetIds: split("x-corvis-entitled-datasets"),
       sourceDocumentAccessAllowed: request.headers.get("x-corvis-source-access") === "true",
-      internalAnalyticsAllowed: request.headers.get("x-corvis-internal-analytics") === "true",
-      modelTrainingAllowed: request.headers.get("x-corvis-model-training") === "true",
-      redistributionAllowed: request.headers.get("x-corvis-redistribution") === "true",
     },
-    authMethod: request.headers.get("x-corvis-auth-method") === "service_account" ? "service_account" : request.headers.get("x-corvis-auth-method") === "saml" ? "saml" : "oidc",
-    sessionId,
+    authMethod: request.headers.get("x-corvis-auth-method") || "oidc",
+    sessionId: request.headers.get("x-corvis-session-id") || undefined,
   };
 }
 
 export class AuthenticationError extends Error {
-  constructor() { super("Authentication required"); this.name = "AuthenticationError"; }
+  constructor(message: string) { super(message); this.name = "AuthenticationError"; }
 }
