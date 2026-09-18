@@ -21,9 +21,16 @@ class DemoPlatform implements PlatformPort {
   async listDocuments() { return documents; }
   async listObservations() { return observations; }
   async listSnapshots() { return fundSnapshots; }
-  async review(_identity: RequestIdentity, _decision: ReviewDecision) { return { accepted: true as const, reviewEventId: randomUUID() }; }
-  async publish(_identity: RequestIdentity, _command: SnapshotPublication) { return { accepted: true as const, publicationEventId: randomUUID() }; }
-  async research(_identity: RequestIdentity, question: string): Promise<ResearchAnswer> {
+  async review(identity: RequestIdentity, decision: ReviewDecision) {
+    void identity; void decision;
+    return { accepted: true as const, reviewEventId: randomUUID() };
+  }
+  async publish(identity: RequestIdentity, command: SnapshotPublication) {
+    void identity; void command;
+    return { accepted: true as const, publicationEventId: randomUUID() };
+  }
+  async research(identity: RequestIdentity, question: string): Promise<ResearchAnswer> {
+    void identity;
     return {
       answer: `Demo-mode response for: ${question}. Production requires the semantic-query and permissioned-retrieval adapters.`,
       citations: [], semanticQueryIds: [], uncertainty: "Demo mode does not execute production semantic queries.",
