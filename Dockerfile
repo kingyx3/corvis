@@ -22,7 +22,6 @@ RUN addgroup -S corvis && adduser -S corvis -G corvis
 COPY --from=build --chown=corvis:corvis /app/package.json ./package.json
 COPY --from=build --chown=corvis:corvis /app/node_modules ./node_modules
 COPY --from=build --chown=corvis:corvis /app/.next ./.next
-COPY --from=build --chown=corvis:corvis /app/public ./public
 COPY --from=build --chown=corvis:corvis /app/next.config.ts ./next.config.ts
 USER corvis
 EXPOSE 3000
