@@ -1,0 +1,45 @@
+version: 1
+services:
+  web_api:
+    availability:
+      target: 0.999
+      window: 30d
+    latency_ms:
+      p95: 750
+      p99: 1500
+  upload_control_plane:
+    availability:
+      target: 0.999
+      window: 30d
+    initiation_latency_ms:
+      p95: 500
+  document_pipeline:
+    accepted_job_completion:
+      target: 0.995
+      window: 7d
+    dead_letter_rate:
+      max: 0.005
+      window: 24h
+    publication_freshness_minutes:
+      p95: 60
+  source_retrieval:
+    authorized_result_rate:
+      target: 1.0
+      window: 30d
+  data_lineage:
+    published_fact_source_reference_coverage:
+      target: 1.0
+      window: 24h
+recovery:
+  structured_data_rpo_minutes: 15
+  structured_data_rto_minutes: 120
+  source_artifact_rpo_minutes: 0
+alerts:
+  - condition: api_5xx_rate > 0.02 for 10m
+    severity: SEV2
+  - condition: cross_tenant_authorization_failure_detected == true
+    severity: SEV1
+  - condition: dead_letter_queue_depth > 0 for 15m
+    severity: SEV2
+  - condition: published_fact_source_reference_coverage < 1.0
+    severity: SEV2
