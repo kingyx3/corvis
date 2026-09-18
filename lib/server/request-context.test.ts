@@ -5,17 +5,18 @@ import { AuthenticationError, resolveRequestIdentity } from "./request-context.t
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;
 
 function withEnv(values: Record<string,string|undefined>, fn: () => void) {
-  const previous = Object.fromEntries(managedKeys.map((key) => [key, process.env[key]]));
+  const env = process.env as Record<string, string | undefined>;
+  const previous = Object.fromEntries(managedKeys.map((key) => [key, env[key]]));
   try {
     for (const [key,value] of Object.entries(values)) {
-      if (value == null) delete process.env[key];
-      else process.env[key] = value;
+      if (value == null) delete env[key];
+      else env[key] = value;
     }
     fn();
   } finally {
     for (const key of managedKeys) {
-      if (previous[key] == null) delete process.env[key];
-      else process.env[key] = previous[key];
+      if (previous[key] == null) delete env[key];
+      else env[key] = previous[key];
     }
   }
 }
