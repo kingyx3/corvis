@@ -21,6 +21,7 @@ type PostgresClientOptions = {
  * Product/domain modules must depend on their own repository ports rather than
  * this client. This adapter exists only as a shared transport primitive while
  * legacy Snowflake persistence is migrated one bounded module at a time.
+ * Keep runtime syntax erasable because Node 24 executes these TypeScript tests directly.
  */
 export class PostgresHttpSqlApi implements PostgresSqlApi {
   private readonly dsn: string;
