@@ -4,32 +4,53 @@ Corvis private-markets data platform.
 
 ## Documentation authority
 
-This repository documents **implemented code, local development and code-level interfaces only**. It is not the source of truth for enterprise architecture, security policy, data semantics, production cloud design or readiness requirements.
+Corvis deliberately separates business architecture from technical implementation.
 
-Authoritative Confluence documentation:
+**Confluence owns business-level truth:** product/business capabilities, canonical semantic requirements, customer rights, operating model, commercial decisions, risk/control requirements and production-readiness gates.
 
-- Enterprise Production Readiness Master Plan: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/1376262
-- Core Product — End-to-End Data & Semantic Architecture: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/688508
+**GitHub owns technical truth:** implementation architecture, cloud topology, infrastructure as code, database migrations, environment configuration, secret names, CI/CD, runtime adapters, runbooks and code-level interfaces.
+
+If the same subject appears in both places, Confluence defines the required outcome and GitHub defines how it is implemented. GitHub must not silently redefine business semantics, customer rights, security/control claims or commercial commitments.
+
+Start with [`docs/README.md`](docs/README.md) for the technical documentation index.
+
+Key Confluence business references:
+
+- Enterprise Production Readiness Plan: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/1376262
+- Core Product Architecture: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/688508
 - Platform Architecture & Data Lifecycle: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/360450
-- GCP Cloud Infrastructure & Deployment Standard: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/1507331
+- Canonical Data Model, Taxonomy & Lineage: https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/425985
 
-GitHub issues track executable implementation work and link to their authoritative Confluence owners. Requirements and architecture change in Confluence first rather than being copied into GitHub.
+## Current production architecture
 
-## Production target
+- **Cloudflare** — Terraform-managed public edge: authoritative DNS, TLS/proxy, DDoS/WAF/rate controls and safe caching.
+- **GCP Singapore** — Cloud Run/Jobs, GCS, Pub/Sub/Tasks/Scheduler, Secret Manager/KMS, Artifact Registry and platform telemetry.
+- **Supabase Postgres Singapore** — primary production operational/canonical/serving structured system of record.
+- **GCS** — immutable source-document and replayable-artifact lake.
+- **Snowflake** — optional downstream analytics / secure sharing only after an explicit activation decision; never the application write authority.
+- **No Corvis-managed AWS infrastructure by default.**
 
-The approved production topology is:
+Detailed technical implementation is in [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) and [`docs/DATA_PLATFORM.md`](docs/DATA_PLATFORM.md).
 
-- **GCP Singapore** — customer/admin/API/worker compute, Identity Platform, GCS, Pub/Sub, Cloud Tasks, Secret Manager, Cloud KMS, Artifact Registry and platform telemetry.
-- **Snowflake on AWS Singapore (`ap-southeast-1`)** — governed structured data, Snowflake Hybrid Tables for the default transactional control plane, semantic/serving models and Cortex Search.
-- **Cloudflare** — selective public edge for DNS/TLS/DDoS/WAF/rate limiting/safe caching/origin protection.
-- **No Corvis-managed AWS infrastructure by default.** Snowflake being hosted on AWS does not require an AWS account, S3, EC2/VPC or AWS Terraform provider for Corvis.
-- **Cloud SQL is a fallback**, not the default control plane; add it only if Hybrid Table benchmarks fail application requirements.
+## GitHub-first environment configuration
 
-Source binaries and replayable artifacts remain in GCS. Snowflake accesses approved GCS data through supported integrations rather than a duplicate S3 source lake.
+Canonical deployment environments are:
+
+```text
+dev
+uat
+prod
+```
+
+The old name `staging` is deprecated in favor of `uat`.
+
+Human-entered technical deployment configuration should be set in GitHub Environment variables/secrets and propagated by GitHub Actions to GCP, Cloudflare and Supabase wherever provider APIs/IaC allow. GCP runtime secrets ultimately live in Secret Manager; GitHub is the deployment control plane, not the application runtime secret store.
+
+See [`docs/GITHUB_ENVIRONMENTS.md`](docs/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
 
 ## Repository ownership
 
-The target monorepo ownership boundaries are:
+Target monorepo boundaries:
 
 ```text
 apps/
@@ -48,75 +69,64 @@ packages/
 infra/
   terraform/
     modules/
-      gcp/
       cloudflare/
-      snowflake/
+      gcp/
+      supabase/
+      snowflake/       # optional downstream only
     environments/
       dev/
-      staging/
+      uat/
       prod/
 db/
-  snowflake/
+  postgres/
+    migrations/
+  snowflake/           # optional downstream only
 ```
 
-The current physical layout is migrating incrementally toward these boundaries. Production application or infrastructure code must not live in an untracked external deployment project.
+The physical layout is migrating incrementally toward these boundaries. Production application or infrastructure code must not live in an untracked external deployment project.
 
 ## Public repository posture
 
 The repository is intentionally public for now, with an H2 2027 privacy review recorded in Confluence. Treat every committed byte and Git-history version as permanently public: never commit customer data, production credentials, private keys, real secrets, confidential control evidence or sensitive environment values.
 
-## Source upload implementation
+## Source upload
 
-Production source ingestion uses native **Google Cloud Storage resumable uploads**:
+Production ingestion uses native Google Cloud Storage resumable uploads:
 
 1. Browser calls `POST /api/v1/uploads/initiate`.
-2. Corvis authenticates/authorizes the caller, validates the exact browser origin, allocates tenant-scoped document/artifact/ingestion IDs and creates a GCS resumable session.
-3. Browser uploads source bytes directly to the returned GCS resumable session in aligned chunks. Cloudflare and application servers do not proxy the file body.
-4. Interrupted transfers query the GCS resumable session for the committed range and continue from the next byte.
-5. Browser calls `POST /api/v1/uploads/{uploadId}/complete`.
-6. Corvis verifies the final GCS object size/generation/storage checksums and file signature, then quarantines it.
-7. The approved scanner writes the configured object-metadata disposition. Only clean artifacts are released and emit `DocumentRegistered`.
+2. Corvis authenticates/authorizes the caller, validates origin and creates a tenant-scoped GCS resumable session.
+3. Browser uploads directly to GCS; Cloudflare and application servers do not proxy ordinary multi-GB file bodies.
+4. Interrupted transfers query committed range and resume.
+5. Corvis verifies final GCS size/generation/checksums and file signature, then quarantines the artifact.
+6. Only an approved clean malware disposition releases the artifact and allows `DocumentRegistered` processing.
 
 Multipart part numbers and S3 ETags are not Corvis domain/API contracts.
 
-## Structured data and product serving
+## Structured data
 
-Customer-facing modules consume governed application/serving contracts, not raw extraction payloads or unrestricted physical Snowflake tables. The logical data contract is:
+Customer-facing modules consume governed application/serving contracts, not raw extraction payloads or unrestricted physical database tables.
 
 ```text
 SOURCE → STAGING → CANONICAL → CURATED → SEMANTIC → SERVING
 ```
 
-Global economic identity never widens tenant access. Search/source-evidence access and structured-fact access remain independently permissioned.
+The logical layers are product/data contracts; current authoritative structured persistence is Postgres. Search indexes and any future Snowflake warehouse remain rebuildable/downstream.
 
-## Admin and feature flags
-
-The target admin application is a separate production surface. Feature flags use stable keys, server-authoritative evaluation, global/environment/tenant/workspace scopes where designed, audited mutation and emergency kill switches. Flags do not replace RBAC, resource entitlements or contractual data-rights checks.
-
-## Platform lifecycle
-
-```text
-registered
-  → represented
-  → extracted
-  → reviewed
-  → canonicalized
-  → reconciled
-  → consolidated
-  → published
-```
-
-These are product lifecycle states exposed through application contracts. Authoritative lifecycle/event semantics are maintained in Confluence.
+Global economic identity never widens tenant access. Source-evidence access and structured-fact access remain independently permissioned.
 
 ## Current implementation status
 
-The repository now contains meaningful production-oriented runtime code for Snowflake-backed serving/review/publication, permissioned retrieval, admin control APIs, exports/webhooks, jobs/outbox, control evidence and GCS resumable upload adapters. It is **not enterprise-production-ready merely because these adapters exist**. Live provider bindings, complete Terraform, direct Identity Platform verification/control-plane authorization, Hybrid Table migration, Pub/Sub/Tasks processing, full admin UI, broader API contracts, accessibility/E2E/performance coverage and operated control/SRE evidence remain tracked in open GitHub epics.
+The repository contains production-oriented foundations for GCS resumable ingestion, serving/review/publication, permissioned retrieval, admin/control APIs, exports/webhooks, jobs/outbox, control evidence and initial GCP Terraform.
 
-See:
+The repository is currently migrating legacy Snowflake-primary persistence code to the approved Postgres-primary implementation. Production is not enterprise-ready merely because adapters or infrastructure code exist; live provider bindings, production-equivalent UAT, direct identity verification/control-plane authorization, complete Postgres/RLS migration, Cloudflare/origin hardening, durable processing, admin UI, broader E2E/security coverage and operated control/SRE evidence remain tracked in GitHub issues.
 
-- `docs/ENTERPRISE_IMPLEMENTATION.md` for code-level implementation status.
-- `docs/PRODUCTION_ACTIVATION.md` for live provider/evidence gates.
-- `ops/RUNBOOK.md` and `ops/slos.yaml` for operational implementation artifacts.
+Technical status and activation:
+
+- [`docs/ENTERPRISE_IMPLEMENTATION.md`](docs/ENTERPRISE_IMPLEMENTATION.md)
+- [`docs/PRODUCTION_ACTIVATION.md`](docs/PRODUCTION_ACTIVATION.md)
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- [`ops/RUNBOOK.md`](ops/RUNBOOK.md)
+- [`ops/slos.yaml`](ops/slos.yaml)
 
 ## Local development
 
