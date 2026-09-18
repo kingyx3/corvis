@@ -30,34 +30,61 @@ services/
 
 packages/
   contracts/           stable shared application/domain contracts
-  ...                  reusable libraries and clients
+  domain/              domain model and validation
+  auth/                authentication/authorization helpers
+  feature-flags/       feature-capability evaluation contracts
+  observability/       logging/tracing/correlation helpers
+  shared/              shared non-domain utilities
 
 infra/
-  terraform/           GCP and supported Snowflake infrastructure as code
+  terraform/
+    modules/
+      gcp/
+      cloudflare/
+      snowflake/
+    environments/
+      dev/
+      staging/
+      prod/
 
 db/
   snowflake/           versioned Snowflake migrations, policies and serving objects
 ```
 
-The exact physical layout may be introduced incrementally from the current frontend-only structure, but these ownership boundaries are required. Production application or infrastructure code must not be maintained in an untracked external deployment project.
+The exact physical layout may be introduced incrementally from the current frontend-oriented structure, but these ownership boundaries are required. Production application or infrastructure code must not be maintained in an untracked external deployment project.
 
 ## Production deployment target
 
-Production is standardized on GCP with Snowflake on GCP:
+GCP is the primary application/infrastructure cloud, Snowflake runs on GCP, and Cloudflare is used selectively as the public edge:
 
-- `apps/customer-web` → Cloud Run
-- `apps/admin-web` → separate Cloud Run service
-- `services/api` → Cloud Run
-- `services/workers` → Cloud Run services and/or Cloud Run Jobs
+- Cloudflare → DNS, TLS edge, DDoS protection, WAF, rate limiting, safe CDN caching and routing/origin protection
+- `apps/customer-web` → Cloud Run behind Cloudflare
+- `apps/admin-web` → separate Cloud Run service behind Cloudflare with stricter controls
+- `services/api` → Cloud Run behind Cloudflare for public ingress
+- `services/workers` → Cloud Run services and/or Cloud Run Jobs; internal paths do not traverse Cloudflare
 - immutable source and replay artifacts → Google Cloud Storage
 - events/tasks → Pub/Sub / Cloud Tasks
 - secrets → Secret Manager
 - encryption keys → Cloud KMS
 - images → Artifact Registry
-- infrastructure → Terraform under `infra/terraform`
+- infrastructure → Terraform under `infra/terraform`, including GCP, Cloudflare and supported Snowflake configuration
 - governed structured data → Snowflake on GCP
 
-Deployment, identity, networking, storage, Snowflake integration and environment requirements are authoritative in Confluence rather than duplicated here.
+Cloudflare is intentionally **not** a second stateful application platform. R2, KV, D1, Durable Objects and Cloudflare Queues are excluded by default because they would duplicate GCS, Snowflake, Pub/Sub/Cloud Tasks or backend state. Introduce them only through an approved architecture decision with a quantified reliability/cost advantage.
+
+## Cost posture
+
+The implementation should minimize idle and duplicated infrastructure without weakening reliability or control requirements:
+
+- Cloud Run scales to zero by default where latency/SLOs permit; minimum instances require measured justification.
+- Use event-driven Pub/Sub/Cloud Tasks rather than wasteful polling.
+- Keep large source-document upload bytes off Cloudflare and API compute: browser → authorized API initiation → direct resumable GCS upload.
+- Cache versioned static assets aggressively at Cloudflare, but do not shared-cache authenticated tenant/admin/source-evidence/private-export responses unless isolation is provably safe.
+- Keep one authoritative object store (GCS) and one governed structured platform (Snowflake).
+- Snowflake workloads should use auto-suspend/right-sizing, workload separation and cost/query attribution.
+- Budgets/alerts should surface runaway compute, retries, abandoned uploads and unexpected edge/origin traffic.
+
+Deployment, identity, networking, storage, Cloudflare policy, Snowflake integration and environment requirements are authoritative in Confluence rather than duplicated here.
 
 ## Admin application and feature flags
 
@@ -69,7 +96,7 @@ Feature-flag implementation rules:
 - authorized admins can view/toggle supported flags globally and by tenant/workspace, with narrower scopes only where explicitly designed;
 - backend evaluation is authoritative—UI hiding is not enforcement;
 - customer UI, admin UI, API, workers, exports and AI/retrieval paths consume the same effective feature state where applicable;
-- production changes are audited with actor, target, old/new state and reason;
+- production changes are audited with actor, target/scope, old/new state, reason and correlation ID;
 - operationally critical flags can act as kill switches without redeployment;
 - feature flags do not replace RBAC, resource entitlements or contractual data-rights checks;
 - temporary rollout flags have an owner and retirement condition.
@@ -146,7 +173,7 @@ The current HTTP adapter exposes an S3-style multipart-compatible application pr
 3. Browser uploads bytes directly to the returned object-storage URL.
 4. `POST /uploads/{uploadId}/complete`
 
-This describes the existing frontend adapter, not the production cloud architecture. The production standard is GCP/GCS and may normalize native GCS resumable-upload semantics behind the stable application port. Provider-specific concepts such as multipart ETags must not become domain contracts.
+This describes the existing frontend adapter, not the production cloud architecture. The production standard is GCP/GCS and may normalize native GCS resumable-upload semantics behind the stable application port. The production upload path must bypass Cloudflare and API body proxying for ordinary large source files. Provider-specific concepts such as multipart ETags must not become domain contracts.
 
 ## Platform lifecycle consumed by the UI
 
@@ -172,4 +199,4 @@ These are product lifecycle states exposed through application contracts. Author
 
 ## Implementation tracking
 
-Open GitHub epics track repository work for identity, ingestion, orchestration, Snowflake, review, Ask Corvis, secure SDLC, SRE, admin/lifecycle/feature flags, APIs, product quality, GCP/IaC and control-evidence automation. Each epic links back to the relevant Confluence source of truth.
+Open GitHub epics track repository work for identity, ingestion, orchestration, Snowflake, review, Ask Corvis, secure SDLC/edge security, SRE/cost telemetry, admin/lifecycle/feature flags, APIs, product quality, GCP/Cloudflare IaC and control-evidence automation. Each epic links back to the relevant Confluence source of truth.
