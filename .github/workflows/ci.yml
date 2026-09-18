@@ -8,7 +8,7 @@ on:
 jobs:
   frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CORVIS_DEMO_MODE: "true"
       NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
@@ -22,5 +22,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E
+        run: npm run test:e2e
       - name: Dependency audit
         run: npm audit --audit-level=high
