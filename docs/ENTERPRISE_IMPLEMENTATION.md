@@ -1,67 +1,98 @@
 # Enterprise implementation status
 
-This document maps the enterprise architecture to executable repository components. The authoritative semantic/security/cloud architecture remains in Confluence; this file documents implementation boundaries only.
+This document maps Confluence-owned business/enterprise requirements to executable repository components. GitHub owns the technical implementation details; Confluence owns business semantics, customer rights, control requirements and readiness decisions.
+
+See [`README.md`](README.md) for the technical-doc authority rule.
 
 ## Implemented runtime
 
 ### Identity and tenant authorization
+
 - `core/enterprise.ts` defines roles, permissions, entitlements and source-access separation.
-- `lib/server/request-context.ts` accepts production identity only from a trusted gateway secret and rejects caller-supplied identity without that trust boundary.
-- Production configuration requires issuer/audience and fails closed when bindings are missing.
-- Direct Identity Platform token/session verification plus Corvis control-plane resolution remains tracked in GitHub issue #2.
+- `lib/server/request-context.ts` currently accepts production identity from a trusted gateway assertion boundary and rejects callers that do not satisfy that trust check.
+- Production configuration requires issuer/audience and fails closed when required bindings are missing.
+- Direct production IdP/session verification plus Postgres-backed membership/RBAC/entitlement resolution remains tracked in GitHub issue #2.
 
 ### Source ingestion
-- `lib/server/gcs.ts` implements GCS control operations using GCP workload identity and creates native resumable upload sessions.
+
+- `lib/server/gcs.ts` implements GCS control operations and native resumable upload sessions.
 - `lib/server/uploads.ts` implements tenant-scoped sessions, idempotent initiate/complete behavior, exact object-size verification, GCS generation/checksum capture, file-signature validation and quarantine.
-- `adapters/upload/http-gcs-resumable-upload.ts` sends browser bytes directly to GCS in resumable chunks, queries committed offsets and resumes after interruption.
-- Artifacts remain quarantined until the approved scanner writes the configured clean object-metadata disposition; only clean artifacts emit `DocumentRegistered`/processing state.
-- Cloudflare and the Corvis application API never proxy ordinary large source-document bodies.
-- Provider-integrated interruption/quarantine/E2E evidence remains tracked in issue #3.
+- `adapters/upload/http-gcs-resumable-upload.ts` sends browser bytes directly to GCS in resumable chunks and can query/resume committed offsets.
+- Artifacts remain quarantined until the approved scanner records a clean disposition; only clean artifacts may progress to `DocumentRegistered`.
+- Cloudflare and Corvis application services do not proxy ordinary large source-document bodies.
+- Initial GCP Terraform provisions the first private/versioned/CMEK GCS source foundation in `dev`.
+- Provider-integrated interruption/quarantine/UAT evidence remains tracked in issue #3.
 
 ### Structured data plane
-- `lib/server/snowflake.ts` implements the Snowflake SQL API adapter with OAuth and bound parameters.
-- `db/migrations/001_enterprise_core.sql` establishes tenant-scoped canonical/serving foundations.
-- `002_governance_delivery.sql` establishes rights, retention, deletion, jobs/outbox, webhooks and exports.
-- `003_serving_review_retrieval.sql` adds holdings/instruments, representations/classification, reconciliation, control evidence and secure serving read models.
-- `004_operational_controls.sql` adds operational control structures.
-- `lib/server/platform.ts` binds customer reads, review, publication, audit, export and job status to Snowflake.
-- The target AWS Singapore Snowflake account, Hybrid Table control-plane migration and complete authoritative layer model remain tracked in issue #5.
+
+**Target/current architecture:** Supabase Postgres Singapore is the sole operational/canonical/serving structured write authority. GCS remains source evidence. Snowflake is optional downstream only.
+
+**Repository migration state:** legacy Snowflake-primary code is still being replaced.
+
+- Production config now requires `CORVIS_POSTGRES_DSN` and no longer requires Snowflake bindings to start.
+- Existing Snowflake migrations contain useful domain structures but are not the target production dialect/security model.
+- `lib/server/snowflake.ts` and direct Snowflake calls still exist in multiple service paths.
+- Postgres schemas/migrations/RLS plus repository/adapter migration remain tracked in issue #28.
+
+Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 
 ### Review and publication
-- Review events are immutable and optimistic-concurrency protected.
-- Critical observations require independent reviewers before becoming approved.
-- Publication gates block unresolved review, material exceptions, incomplete critical review or incomplete source lineage.
-- Snapshot publication changes create durable outbox events.
-- The exception/reconciliation workbench and remaining production workflow coverage stay open in issue #6.
+
+- Review events and optimistic-concurrency foundations exist.
+- Critical-observation independent-review and publication-policy foundations exist.
+- Publication gates block unresolved review/material exceptions/incomplete lineage according to current policy primitives.
+- Snapshot publication changes create durable outbox foundations.
+- The exception/reconciliation workbench, persistence-bound four-eyes enforcement and complete UAT workflow coverage remain in issue #6.
 
 ### Retrieval and AI
-- `lib/server/research.ts` keeps structured facts and source retrieval separate.
-- Retrieval calls carry tenant/workspace/document/fund filters before search execution.
-- Source text is sanitized/marked as untrusted data and cannot authorize tools.
-- Research responses carry semantic-query IDs and source-reference citations.
-- `/api/v1/source-references/{id}` independently rechecks source permissions before exposing exact evidence coordinates/excerpts.
-- Deterministic semantic-query routing, streaming/error behavior and full evaluation coverage remain tracked in issue #7.
+
+- `lib/server/research.ts` keeps structured facts and source retrieval conceptually separate.
+- Retrieval carries tenant/workspace/document/fund filters before search execution.
+- Source text is treated as untrusted data and responses carry source-reference citations.
+- Semantic-query ID/hash foundations exist.
+- The current implementation still reads broad serving facts through the legacy Snowflake adapter; deterministic Postgres semantic-query routing, streaming/error behavior and full evaluation coverage remain in issue #7 and #28.
 
 ### Reliability and delivery
-- Processing jobs/outbox schemas, retry/dead-letter primitives and audited operator retry exist.
-- `lib/server/telemetry.ts` emits structured events locally and to the configured enterprise collector.
-- Export requests create versioned manifests/checksums and durable export jobs/outbox events.
-- Webhook signing/replay verification primitives are tested.
-- `/api/v1/admin/readiness` fails deployment readiness when required production bindings are absent/unhealthy.
-- Live Pub/Sub/Cloud Tasks consumers, SLO dashboards/alerts and recovery evidence remain open in issues #4 and #9.
 
-### Secure SDLC / infrastructure
+- Processing-job/outbox schemas and retry/dead-letter state primitives exist.
+- `lib/server/telemetry.ts` provides structured telemetry hooks.
+- Export job/manifest/checksum and webhook-signing/replay foundations exist.
+- `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
+- Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.
+- Live consumers, durable inbox/deduplication, UAT failure tests, SLO dashboards/alerts and recovery evidence remain in issues #4 and #9.
+
+### Admin, control and evidence
+
+- Admin API foundations exist for feature flags, deletion workflows, control evidence and readiness.
+- Data-lifecycle adapter and evidence foundations exist.
+- These paths still require migration from legacy Snowflake persistence to the Postgres control plane under #28.
+- The separate production admin application and full cross-channel control/entitlement implementation remain tracked in issue #10.
+- Recurring automated evidence collection/freshness/escalation remains tracked in issue #14.
+
+### Secure SDLC and infrastructure
+
 - deterministic lockfile + `npm ci`;
 - ESLint, TypeScript, unit tests, production build, Playwright and dependency audit in CI;
 - CodeQL and Dependabot;
-- Terraform validation discovers actual implemented Terraform roots; the obsolete AWS/S3 reference has been removed;
+- Terraform validation discovers implemented environment roots;
+- initial GCP `dev` foundation for APIs, KMS, GCS, Artifact Registry, Pub/Sub, Cloud Tasks and service identities;
+- obsolete Corvis-managed AWS/S3 reference infrastructure removed;
 - browser security headers and safe error boundaries.
-- Production GCP/Cloudflare/Snowflake Terraform remains tracked in issue #13.
+
+Remaining technical infrastructure is tracked primarily in issue #13: `uat`/`prod`, Cloud Run deployment, Cloudflare edge/origin, Supabase provisioning, Secret Manager/runtime identity, monitoring/budgets and release/rollback automation.
+
+Technical standards:
+
+- [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)
+- [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md)
+- [`DEPLOYMENT.md`](DEPLOYMENT.md)
 
 ## Adapter boundary
 
-Corvis product modules consume contracts, not vendor SDKs. Snowflake, GCS, identity gateways, search providers, AI providers and telemetry systems can be replaced behind adapters without changing fund/holding/observation/snapshot semantics.
+Corvis product modules consume stable contracts rather than vendor-specific implementation details. GCS, Postgres/Supabase, identity providers, search/model providers, Cloudflare and telemetry providers remain replaceable behind implementation boundaries provided they continue to satisfy business/data/security contracts.
 
-## Deployment activation is separate from implementation
+Snowflake is specifically **not** a required application adapter at launch; any remaining Snowflake implementation must become optional downstream analytics/sharing or be removed as #28 completes.
 
-Merging source code does not prove an IdP, GCS bucket, Snowflake account, search corpus, malware scanner, backup or operational control is active. `PRODUCTION_ACTIVATION.md` defines the live activation/evidence gate. Production configuration intentionally fails closed until those bindings exist.
+## Implementation is not activation
+
+Merging code does not prove an IdP, production GCS bucket, Postgres project/RLS policy, Cloudflare edge, malware scanner, backup or operational control is operating correctly. [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) defines the live technical activation/evidence checks; Confluence retains the final business/control readiness gate.
