@@ -14,7 +14,7 @@ export type ServerConfig = {
 
   objectStoreBucket?: string;
   gcpAccessToken?: string;
-  gcsChunkSizeBytes?: number;
+  gcsChunkSizeBytes: number;
   uploadAllowedOrigins: string[];
   gcsMalwareMetadataKey: string;
   gcsMalwareCleanValue: string;
