@@ -1,6 +1,6 @@
-export type View = "overview" | "documents" | "review" | "research";
+export type View = "overview" | "documents" | "review" | "research" | "admin";
 
-export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
+export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued" | "Registered" | "Failed" | "Deleted";
 export type DocumentQuality = "High" | "Medium" | "Pending";
 
 export type DocumentRecord = {
@@ -26,11 +26,15 @@ export type ObservationRecord = {
   period: string;
   source: string;
   confidence: number;
-  state: "Approved" | "Needs review";
+  state: "Approved" | "Needs review" | "Rejected";
   delta: string;
+  sourceReferenceId?: string;
+  snapshotId?: string;
+  materiality?: "material" | "normal";
 };
 
 export type FundSnapshot = {
+  id?: string;
   fund: string;
   period: string;
   status: "Published" | "Review";
@@ -44,6 +48,58 @@ export type ActivityRecord = {
   detail: string;
   time: string;
 };
+
+export type WorkspaceSession = {
+  name?: string;
+  email?: string;
+  tenantId: string;
+  workspaceName?: string;
+  roles: string[];
+};
+
+export type FeatureFlags = {
+  research: boolean;
+  exports: boolean;
+  review: boolean;
+  administration: boolean;
+};
+
+export type WorkspaceBootstrap = {
+  session: WorkspaceSession;
+  documents: DocumentRecord[];
+  observations: ObservationRecord[];
+  fundSnapshots: FundSnapshot[];
+  recentActivity: ActivityRecord[];
+  researchSuggestions: string[];
+  featureFlags: FeatureFlags;
+};
+
+export type ResearchCitation = {
+  type: "source" | "snapshot";
+  id: string;
+  label: string;
+  documentId?: string;
+  pageNumber?: number;
+};
+
+export type ResearchAnswer = {
+  answer: string;
+  citations: ResearchCitation[];
+  toolTrace?: Array<{ tool: string; resultCount: number }>;
+};
+
+export type ReadinessControl = { id: string; status: string; detail: string };
+export type ReadinessReport = { environment: string; demoMode: boolean; tenantId: string; controls: ReadinessControl[] };
+
+export interface PlatformPort {
+  bootstrap(signal?: AbortSignal): Promise<WorkspaceBootstrap>;
+  ask(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
+  reviewObservation(observationId: string, input: { decision: "approve" | "reject" | "correct"; correctedValue?: string; reason?: string }, signal?: AbortSignal): Promise<void>;
+  publishSnapshot(snapshotId: string, signal?: AbortSignal): Promise<void>;
+  createExport(snapshotId: string, format?: "csv" | "json", signal?: AbortSignal): Promise<{ url: string; sha256: string }>;
+  openSource(sourceReferenceId: string, signal?: AbortSignal): Promise<{ documentUrl: string; page_number?: string | number; pageNumber?: number }>;
+  readiness(signal?: AbortSignal): Promise<ReadinessReport>;
+}
 
 export type UploadStatus = "queued" | "uploading" | "finalizing" | "complete" | "error";
 

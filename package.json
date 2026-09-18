@@ -1,13 +1,21 @@
 {
   "name": "corvis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "security:secrets": "node scripts/secret-scan.mjs",
+    "readiness": "node scripts/readiness.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run security:secrets && npm run readiness && npm run build"
   },
   "dependencies": {
     "next": "16.3.5",
@@ -15,9 +23,11 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "typescript": "^5.9.0"
   }
 }
