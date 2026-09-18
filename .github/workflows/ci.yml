@@ -18,6 +18,12 @@ jobs:
         with:
           node-version: 24
       - run: npm install
+      - name: Capture lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
+          if-no-files-found: error
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
