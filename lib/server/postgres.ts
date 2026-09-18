@@ -23,12 +23,12 @@ type PostgresClientOptions = {
  * legacy Snowflake persistence is migrated one bounded module at a time.
  */
 export class PostgresHttpSqlApi implements PostgresSqlApi {
-  private readonly options: PostgresClientOptions;
+  private readonly dsn: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
 
   constructor(options: PostgresClientOptions) {
-    this.options = options;
+    this.dsn = options.dsn;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 10_000;
   }
@@ -55,7 +55,7 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(this.options.dsn, {
+      const response = await this.fetchImpl(this.dsn, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sql, parameters }),
