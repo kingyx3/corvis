@@ -7,10 +7,16 @@ const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SE
 function withEnv(values: Record<string,string|undefined>, fn: () => void) {
   const previous = Object.fromEntries(managedKeys.map((key) => [key, process.env[key]]));
   try {
-    for (const [key,value] of Object.entries(values)) value == null ? delete process.env[key] : process.env[key] = value;
+    for (const [key,value] of Object.entries(values)) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
     fn();
   } finally {
-    for (const key of managedKeys) previous[key] == null ? delete process.env[key] : process.env[key] = previous[key];
+    for (const key of managedKeys) {
+      if (previous[key] == null) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
   }
 }
 
