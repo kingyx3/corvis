@@ -60,8 +60,9 @@ class DemoUploadSessions implements UploadSessionPort {
     if (!Number.isInteger(partNumber) || partNumber < 1 || contentLength <= 0 || contentLength > session.partSize) throw new Error("Invalid upload part");
     return { url: `/api/v1/uploads/${uploadId}/demo-parts/${partNumber}`, headers: { "x-corvis-demo-upload": "true" } };
   }
-  async complete(identity: RequestIdentity, uploadId: string, parts: { partNumber: number; etag: string }[], _idempotencyKey: string) {
+  async complete(identity: RequestIdentity, uploadId: string, parts: { partNumber: number; etag: string }[], idempotencyKey: string) {
     const session = await this.get(identity, uploadId);
+    if (idempotencyKey !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
     if (session.state === "complete") return session;
     const unique = new Set(parts.map((p) => p.partNumber));
     if (!parts.length || unique.size !== parts.length || parts.some((p) => !p.etag || p.partNumber < 1)) throw new Error("Invalid completed parts");
