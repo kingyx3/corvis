@@ -3,9 +3,9 @@ import { documents, fundSnapshots, observations } from "@/adapters/demo/catalog"
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { AuditEvent, ExportManifest, ProcessingJob, RequestIdentity, ResearchAnswer, ReviewDecision, SnapshotPublication } from "@/core/enterprise";
 import { getServerConfig } from "@/lib/server/config";
+import { gcs } from "@/lib/server/gcs";
 import { evaluatePublicationGate } from "@/lib/server/publication-policy";
 import { researchService } from "@/lib/server/research";
-import { s3 } from "@/lib/server/s3";
 import { snowflake, type SnowflakeRow, type SnowflakeSqlApi } from "@/lib/server/snowflake";
 
 export interface PlatformPort {
@@ -164,7 +164,7 @@ export class SnowflakeProductionPlatform implements PlatformPort {
     const config = getServerConfig();
     const result: Record<string,"configured"|"missing"|"demo"> = {
       identity: config.authIssuer && config.trustedAuthProxySecret ? "configured" : "missing",
-      objectStore: config.objectStoreBucket && config.s3Region && config.s3KmsKeyId ? "configured" : "missing",
+      objectStore: config.objectStoreBucket && config.uploadAllowedOrigins.length ? "configured" : "missing",
       snowflake: "missing",
       orchestration: "configured",
       retrieval: config.searchEndpoint ? "configured" : "missing",
@@ -172,7 +172,7 @@ export class SnowflakeProductionPlatform implements PlatformPort {
       observability: config.observabilityEndpoint ? "configured" : "missing",
     };
     if (await this.db.health()) result.snowflake = "configured";
-    try { await s3().getJson("_corvis/health/nonexistent-probe.json"); } catch { result.objectStore = "missing"; }
+    try { await gcs().getJson("_corvis/health/nonexistent-probe.json"); } catch { result.objectStore = "missing"; }
     return result;
   }
 
