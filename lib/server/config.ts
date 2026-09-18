@@ -3,6 +3,7 @@ export type ServerConfig = {
   demoMode: boolean;
   authIssuer?: string;
   authAudience?: string;
+  trustedAuthProxySecret?: string;
   snowflakeDsn?: string;
   objectStoreBucket?: string;
   searchEndpoint?: string;
@@ -18,6 +19,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     demoMode,
     authIssuer: env.CORVIS_AUTH_ISSUER,
     authAudience: env.CORVIS_AUTH_AUDIENCE,
+    trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
     snowflakeDsn: env.CORVIS_SNOWFLAKE_DSN,
     objectStoreBucket: env.CORVIS_OBJECT_STORE_BUCKET,
     searchEndpoint: env.CORVIS_SEARCH_ENDPOINT,
@@ -28,6 +30,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     const missing = [
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
+      ["CORVIS_TRUSTED_AUTH_PROXY_SECRET", config.trustedAuthProxySecret],
       ["CORVIS_SNOWFLAKE_DSN", config.snowflakeDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
       ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
