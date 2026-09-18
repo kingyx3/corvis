@@ -32,6 +32,11 @@ export type ServerConfig = {
   observabilityEndpoint?: string;
   observabilityToken?: string;
   webhookSigningSecret?: string;
+  dataLifecycleEndpoint?: string;
+  dataLifecycleToken?: string;
+  exportDeliveryEndpoint?: string;
+  exportDeliveryToken?: string;
+  workerSecret?: string;
 };
 
 function truthy(value?: string) { return value === "1" || value === "true"; }
@@ -74,6 +79,11 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     observabilityEndpoint: env.CORVIS_OBSERVABILITY_ENDPOINT,
     observabilityToken: env.CORVIS_OBSERVABILITY_TOKEN,
     webhookSigningSecret: env.CORVIS_WEBHOOK_SIGNING_SECRET,
+    dataLifecycleEndpoint: env.CORVIS_DATA_LIFECYCLE_ENDPOINT,
+    dataLifecycleToken: env.CORVIS_DATA_LIFECYCLE_TOKEN,
+    exportDeliveryEndpoint: env.CORVIS_EXPORT_DELIVERY_ENDPOINT,
+    exportDeliveryToken: env.CORVIS_EXPORT_DELIVERY_TOKEN,
+    workerSecret: env.CORVIS_WORKER_SECRET,
   };
 
   if (environment === "production") {
@@ -96,6 +106,9 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_AI_ENDPOINT", config.aiEndpoint],
       ["CORVIS_OBSERVABILITY_ENDPOINT", config.observabilityEndpoint],
       ["CORVIS_WEBHOOK_SIGNING_SECRET", config.webhookSigningSecret],
+      ["CORVIS_DATA_LIFECYCLE_ENDPOINT", config.dataLifecycleEndpoint],
+      ["CORVIS_EXPORT_DELIVERY_ENDPOINT", config.exportDeliveryEndpoint],
+      ["CORVIS_WORKER_SECRET", config.workerSecret],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
   }
