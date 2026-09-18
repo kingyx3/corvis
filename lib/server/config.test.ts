@@ -28,10 +28,13 @@ test("fully configured production environment is accepted", () => {
     CORVIS_AWS_SECRET_ACCESS_KEY: "test-secret-key",
     CORVIS_SEARCH_ENDPOINT: "https://search.example.com",
     CORVIS_AI_ENDPOINT: "https://ai.example.com",
+    CORVIS_OBSERVABILITY_ENDPOINT: "https://telemetry.example.com/events",
+    CORVIS_WEBHOOK_SIGNING_SECRET: "webhook-test-secret",
   } as NodeJS.ProcessEnv);
   assert.equal(config.demoMode, false);
   assert.equal(config.environment, "production");
   assert.equal(config.trustedAuthProxySecret, "test-only-secret");
   assert.equal(config.snowflakeDatabase, "CORVIS");
   assert.equal(config.s3Region, "ap-southeast-1");
+  assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
 });
