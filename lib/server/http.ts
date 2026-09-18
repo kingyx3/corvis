@@ -1,4 +1,5 @@
 import { AuthorizationError } from "@/core/enterprise";
+import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { logEvent } from "@/lib/server/telemetry";
 
@@ -21,6 +22,14 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof AuthorizationError) {
     logEvent("warn", "api.authorization_denied", { correlationId }, { requiredPermission: error.requiredPermission });
     return json({ error: "forbidden", correlationId }, { status: 403 });
+  }
+  if (error instanceof ConflictError) {
+    logEvent("warn", "api.conflict", { correlationId }, { code: error.code });
+    return json({ error: error.code, correlationId }, { status: 409 });
+  }
+  if (error instanceof PublicationGateError) {
+    logEvent("warn", "snapshot.publication_blocked", { correlationId }, { reasons: error.reasons });
+    return json({ error: "publication_blocked", reasons: error.reasons, correlationId }, { status: 409 });
   }
   logEvent("error", "api.unhandled_error", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown", message: error instanceof Error ? error.message : "Unknown error" });
   return json({ error: "internal_error", correlationId }, { status: 500 });
