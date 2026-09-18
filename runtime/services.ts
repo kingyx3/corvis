@@ -3,9 +3,13 @@ import { createHttpMultipartUploadPort } from "@/adapters/upload/http-multipart-
 import { createMockUploadPort } from "@/adapters/upload/mock-upload";
 
 const apiBase = process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/, "");
-const useMock = !apiBase || process.env.NEXT_PUBLIC_CORVIS_MOCK_API === "true";
+const demoMode = process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true";
 
-export const uploadPort = useMock
+if (!demoMode && !apiBase) {
+  throw new Error("Corvis API base is required outside explicit demo mode. Set NEXT_PUBLIC_CORVIS_API_BASE or NEXT_PUBLIC_CORVIS_DEMO_MODE=true for local demos.");
+}
+
+export const uploadPort = demoMode
   ? createMockUploadPort()
   : createHttpMultipartUploadPort({ apiBase: apiBase! });
 
