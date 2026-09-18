@@ -54,9 +54,12 @@ export function assertDocumentAccess(identity: RequestIdentity, documentId: stri
 }
 
 export class AuthorizationError extends Error {
-  constructor(public readonly requiredPermission: string) {
+  readonly requiredPermission: string;
+
+  constructor(requiredPermission: string) {
     super("Access denied");
     this.name = "AuthorizationError";
+    this.requiredPermission = requiredPermission;
   }
 }
 
