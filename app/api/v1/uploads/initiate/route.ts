@@ -11,13 +11,14 @@ export async function POST(request: Request) {
     assertPermission(identity, "documents:write");
     const body = await request.json() as { fileName?: string; contentType?: string; sizeBytes?: number; lastModified?: number; checksumSha256?: string; idempotencyKey?: string };
     if (!body.fileName || !body.contentType || !body.sizeBytes) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });
+    const clientKey = body.idempotencyKey || request.headers.get("idempotency-key") || randomUUID();
     const session = await uploads().initiate(identity, {
       fileName: body.fileName,
       contentType: body.contentType,
       sizeBytes: body.sizeBytes,
       lastModified: body.lastModified,
       checksumSha256: body.checksumSha256,
-      idempotencyKey: body.idempotencyKey || request.headers.get("idempotency-key") || randomUUID(),
+      idempotencyKey: `${identity.subject}:${clientKey}`,
       origin: request.headers.get("origin") || undefined,
     });
     return json({
