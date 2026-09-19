@@ -179,3 +179,28 @@ Before an activated Snowflake replica serves analytics/sharing:
 - Tenant rights and source lineage survive every derived/replicated path.
 - Raw extraction payloads and physical database tables are not external customer contracts.
 - Database changes are versioned, reviewed and reproducible from Git.
+
+### Native Postgres runtime transport
+
+`CORVIS_POSTGRES_DSN` accepts the provider's `postgresql://` (or `postgres://`)
+connection string. The application now uses the PostgreSQL wire protocol for
+these bindings, including the migration CLI; it does not POST them to an HTTP
+endpoint. Existing explicit HTTPS SQL gateway bindings remain compatible.
+
+Each process shares a five-connection pool per configured DSN, with bounded
+connection/query timeouts, idle eviction and five-minute connection rotation.
+Queries remain parameterized. Failed transactions destroy their connection;
+queries are never automatically retried because their commit outcome may be
+unknown. Migration files must keep their existing single-call BEGIN/COMMIT
+contract. Statements are bounded to 30 seconds; large backfills belong in
+bounded batches outside the migration transaction.
+
+Remote and production connections require verified TLS. `sslmode=require` is
+strengthened to certificate/hostname verification; TLS downgrade and arbitrary
+connection-string options are rejected. For a provider-specific CA, mount the
+reviewed CA certificate and configure Node's `NODE_EXTRA_CA_CERTS` before process
+startup. Never disable certificate verification. Only non-production loopback
+connections can use plaintext for disposable CI. Use the provider's appropriate
+pooler/direct endpoint and size Cloud Run instance limits against the database
+connection budget. Keep the DSN in Secret Manager, not repository variables or
+logs. This adapter does not provision a Supabase project or establish UAT evidence.
