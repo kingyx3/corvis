@@ -69,7 +69,7 @@ test("identity lifecycle repository delegates one atomic database command with e
   assert.equal(result.expiredEntitlements, 3);
 });
 
-test("identity lifecycle SQL is idempotent, blocks subject remapping and atomically records audit evidence", async () => {
+test("identity lifecycle SQL is idempotent, blocks unsafe remapping/reactivation and atomically records audit evidence", async () => {
   const sql = (await readFile("db/postgres/migrations/011_identity_lifecycle_sync.sql", "utf8")).toLowerCase();
 
   assert.match(sql, /create table if not exists corvis_control\.identity_lifecycle_event/);
@@ -80,6 +80,8 @@ test("identity lifecycle SQL is idempotent, blocks subject remapping and atomica
 
   assert.match(sql, /if found then[\s\S]*v_existing_hash <> v_request_hash[\s\S]*identity lifecycle event replay conflict/);
   assert.match(sql, /v_existing_user_id <> p_user_id[\s\S]*identity subject is already mapped to a different user/);
+  assert.match(sql, /v_existing_status='disabled'[\s\S]*disabled identity requires explicit reactivation/);
+  assert.match(sql, /on conflict \(tenant_id,auth_method,subject\) do nothing/);
   assert.match(sql, /update corvis_control\.membership m[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
   assert.match(sql, /update corvis_control\.resource_entitlement e[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
   assert.match(sql, /update corvis_control\.identity_subject s[\s\S]*s\.user_id=p_user_id/);
