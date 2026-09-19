@@ -99,7 +99,7 @@ create or replace function corvis_control.complete_processing_stage_effect(
 returns boolean
 language plpgsql
 security invoker
-as $$;
+as $$
 begin
   update corvis_control.processing_stage_effect
   set state='complete',completed_at=coalesce(completed_at,now()),result=coalesce(p_result,'{}'::jsonb)
