@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
-import { ConflictError, PostgresProductionPlatform } from "./platform.ts";
+import { ConflictError, PostgresProductionPlatform, PublicationGateError } from "./platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
@@ -16,6 +16,7 @@ class FakeDb implements PostgresSqlApi {
   reviewResult: PostgresRow = { new_version: 3, next_state: "approved" };
   exceptionRows: PostgresRow[] = [];
   resolutionPreflight: PostgresRow | undefined;
+  snapshotBlockers = 0;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
@@ -27,7 +28,7 @@ class FakeDb implements PostgresSqlApi {
       return [{ observation_id: parameters[1], version: 2, review_state: "review_required", value_number: 100, risk_tier: "normal" }];
     }
     if (sql.includes("select * from corvis_serving.fund_period_snapshots")) {
-      return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: 0 }];
+      return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: this.snapshotBlockers }];
     }
     if (sql.includes("count(*) filter (where review_state<>'approved')")) {
       return [{ needs_review_count: 0, critical_count: 0, lineage_count: 1, total_count: 1 }];
@@ -196,6 +197,22 @@ test("source-authority resolution verifies the selected source against the sourc
   assert.match(db.calls[1]?.sql ?? "", /resolve_reconciliation_exception/);
 });
 
+test("stale reconciliation resolution fails optimistic version preflight", async () => {
+  const db = new FakeDb();
+  await assert.rejects(
+    new PostgresProductionPlatform(db).resolveReconciliation(identity, {
+      exceptionId,
+      expectedVersion: 7,
+      action: "accept_reconciliation",
+      reasonCode: "reviewed_conflict",
+    }),
+    (error: unknown) => error instanceof ConflictError && error.code === "reconciliation_exception_not_found_or_version_conflict",
+  );
+  assert.equal(db.calls.length, 1);
+  assert.match(db.calls[0]?.sql ?? "", /e\.version=\$3 and e\.status='open'/);
+  assert.equal(db.calls.some((call) => call.sql.includes("resolve_reconciliation_exception")), false);
+});
+
 test("source-authority resolution fails closed when source-document access is unavailable", async () => {
   const db = new FakeDb();
   const denied: RequestIdentity = {
@@ -215,13 +232,40 @@ test("source-authority resolution fails closed when source-document access is un
   assert.equal(db.calls.length, 0);
 });
 
-test("publication preflight reads the governed serving snapshot blocker count", async () => {
+test("publication preflight reads governed blockers and post-correction independent-review evidence", async () => {
   const db = new FakeDb();
   const result = await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 });
   assert.equal(result.accepted, true);
   assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.fund_period_snapshots/);
   assert.match(db.calls[1]?.sql ?? "", /review_state<>'approved'/);
+  const independentReview = db.calls.find((call) => call.sql.includes("independently_reviewed"));
+  assert.ok(independentReview);
+  assert.match(independentReview.sql, /r\.observation_version > coalesce/);
+  assert.match(independentReview.sql, /c\.decision='correct'/);
   assert.match(db.calls.at(-1)?.sql ?? "", /append_snapshot_transition/);
+});
+
+test("publication remains blocked while governed reconciliation exceptions are open", async () => {
+  const db = new FakeDb();
+  db.snapshotBlockers = 1;
+  await assert.rejects(
+    new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 }),
+    (error: unknown) => error instanceof PublicationGateError && error.reasons.includes("blocking_exceptions"),
+  );
+  assert.equal(db.calls.some((call) => call.sql.includes("append_snapshot_transition")), false);
+});
+
+test("withdraw and supersede transitions remain reversible-history commands without publish gating", async () => {
+  for (const action of ["withdraw", "supersede"] as const) {
+    const db = new FakeDb();
+    const result = await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action, expectedVersion: 1, reason: `${action}_test` });
+    assert.equal(result.accepted, true);
+    assert.equal(db.calls.length, 2);
+    assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.fund_period_snapshots/);
+    assert.match(db.calls[1]?.sql ?? "", /append_snapshot_transition/);
+    assert.equal(db.calls[1]?.parameters[4], action);
+    assert.equal(db.calls[1]?.parameters[6], `${action}_test`);
+  }
 });
 
 test("exports require the independent authoritative redistribution right", async () => {
