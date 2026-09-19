@@ -6,6 +6,7 @@ const customerHostname = process.env.CUSTOMER_HOSTNAME || "";
 const adminHostname = process.env.ADMIN_HOSTNAME || "";
 const apiHostname = process.env.API_HOSTNAME || "";
 const directLoadBalancerStatus = process.env.DIRECT_LOAD_BALANCER_BYPASS_STATUS || "";
+const directLoadBalancerExitCode = process.env.DIRECT_LOAD_BALANCER_BYPASS_EXIT_CODE || "";
 const directCloudRunStatus = process.env.DIRECT_CLOUD_RUN_BYPASS_STATUS || "";
 
 const checks = [];
@@ -46,7 +47,7 @@ function assertCloudflare(response, label) {
 }
 
 function assertSecurityHeaders(response, label) {
-  invariant(response.headers.get("x-content-type-options") === "nosniff", `${label} missing X-Content-Type-Options: nosniff`);
+  invariant(response.headers.get("x-content-type-options") === "nosniff", `${label} missing X-Content-Type-Options: nosn`);
   const hsts = response.headers.get("strict-transport-security") || "";
   invariant(/max-age=\d+/.test(hsts), `${label} missing HSTS`);
 }
@@ -78,7 +79,7 @@ await check("api-https-and-cache-isolation", async () => {
   invariant((response.headers.get("cache-control") || "").toLowerCase().includes("no-store"), "API health is not marked no-store");
   const cacheStatus = (response.headers.get("cf-cache-status") || "").toUpperCase();
   invariant(!["HIT", "STALE", "REVALIDATED", "UPDATING"].includes(cacheStatus), `API response was shared-cached (${cacheStatus})`);
-  return { status: response.status, cacheControl: response.headers.get("cache-control"), cloudflareCacheStatus: cacheStatus || "not-reported" };
+  return { status: response.status, cacheControl: response.headers.get("cache-control"), cloudflareCacheStatus: cacheStatus || "not-reported", originMtlsPathWorking: true };
 });
 
 await check("http-redirects-to-https", async () => {
@@ -130,10 +131,15 @@ await check("cloudflare-rate-limit-probe", async () => {
   return { statuses };
 });
 
-await check("direct-load-balancer-origin-bypass-blocked", async () => {
-  invariant(directLoadBalancerStatus, "direct load-balancer bypass probe did not run");
-  invariant(directLoadBalancerStatus === "403", `direct load-balancer request returned ${directLoadBalancerStatus} instead of Cloud Armor 403`);
-  return { status: Number(directLoadBalancerStatus), protection: "cloud-armor-default-deny" };
+await check("direct-load-balancer-origin-mtls-blocked", async () => {
+  invariant(directLoadBalancerExitCode, "direct load-balancer mTLS probe did not run");
+  invariant(directLoadBalancerStatus === "000", `direct load-balancer request reached HTTP with status ${directLoadBalancerStatus}; expected TLS rejection before HTTP`);
+  invariant(directLoadBalancerExitCode !== "0", "direct load-balancer TLS handshake unexpectedly succeeded without a client certificate");
+  return {
+    httpStatus: directLoadBalancerStatus,
+    curlExitCode: Number(directLoadBalancerExitCode),
+    protection: "cloudflare-authenticated-origin-pull-mtls",
+  };
 });
 
 await check("direct-cloud-run-origin-bypass-blocked", async () => {
@@ -146,7 +152,7 @@ const failed = checks.filter((entry) => entry.status === "fail");
 const skipped = checks.filter((entry) => entry.status === "skip");
 const passed = checks.filter((entry) => entry.status === "pass");
 const evidence = {
-  schemaVersion: "corvis.security-acceptance.v2",
+  schemaVersion: "corvis.security-acceptance.v3",
   environment,
   checkedAt: new Date().toISOString(),
   source: "github-actions",
