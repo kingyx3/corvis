@@ -13,11 +13,14 @@ class FakeDb implements PostgresSqlApi {
     display_name: "Revenue",
     data_type: "number",
     aggregation_behavior: "additive sum",
+    numeric_available: true,
   }];
   factRows: PostgresRow[] = [{
     observation_id: "00000000-0000-0000-0000-000000000001",
     fund_id: "fund-a",
     company_id: "company-a",
+    holding_id: "holding-a",
+    instrument_id: "instrument-a",
     metric_code: "revenue",
     value_number: 100,
     currency: "USD",
@@ -29,7 +32,7 @@ class FakeDb implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ kind: "query", sql, parameters });
-    if (sql.includes("select distinct o.metric_code")) return this.candidates;
+    if (sql.includes("bool_or(o.value_number is not null)")) return this.candidates;
     if (sql.includes("with scoped as")) return this.factRows;
     return [];
   }
@@ -82,7 +85,7 @@ test("research sends only the deterministic semantic result to the AI service an
 
     const queries = db.calls.filter((call) => call.kind === "query");
     assert.equal(queries.length, 2);
-    assert.match(queries[0]?.sql ?? "", /select distinct o\.metric_code/i);
+    assert.match(queries[0]?.sql ?? "", /bool_or\(o\.value_number is not null\)/i);
     assert.match(queries[1]?.sql ?? "", /with scoped as/i);
     assert.doesNotMatch(queries[1]?.sql ?? "", /limit 750/i);
     assert.equal(queries[1]?.parameters[3], "revenue");
@@ -141,7 +144,7 @@ test("research does not call source retrieval when source-document access is den
   }
 });
 
-test("source retrieval receives only the authoritative source-document subset and drops unexpected hits", async () => {
+test("source retrieval receives only the authoritative document subset and the governed fund scope", async () => {
   const db = new FakeDb();
   const originalAi = process.env.CORVIS_AI_ENDPOINT;
   const originalSearch = process.env.CORVIS_SEARCH_ENDPOINT;
@@ -169,11 +172,13 @@ test("source retrieval receives only the authoritative source-document subset an
         sourceDocumentIds: ["00000000-0000-0000-0000-000000000101"],
       },
     };
-    const result = await new PermissionedResearchService(db).answer(sourceScoped, "Show source evidence");
+    const result = await new PermissionedResearchService(db).answer(sourceScoped, "Show fund-a revenue source evidence");
     assert.equal(result.citations.length, 1);
     assert.equal(result.citations[0]?.documentId, "00000000-0000-0000-0000-000000000101");
-    assert.equal(result.computedResults?.[0]?.status, "unresolved");
-    assert.deepEqual((searchBody as { filters: { documentIds: string[] } }).filters.documentIds, sourceScoped.entitlements.sourceDocumentIds);
+    assert.equal(result.computedResults?.[0]?.status, "executed");
+    const filters = (searchBody as { filters: { documentIds: string[]; fundIds: string[] } }).filters;
+    assert.deepEqual(filters.documentIds, sourceScoped.entitlements.sourceDocumentIds);
+    assert.deepEqual(filters.fundIds, ["fund-a"]);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
