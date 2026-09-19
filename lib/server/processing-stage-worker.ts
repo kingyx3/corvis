@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { assertDocumentAccess, type ProcessingStage, type RequestIdentity } from "@/core/enterprise";
+import { assertDocumentAccess, type ProcessingStage, type RequestIdentity } from "../../core/enterprise.ts";
 import type {
   ProcessingStageDelivery,
   PostgresProcessingStageRepository,
