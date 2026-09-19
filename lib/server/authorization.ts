@@ -9,6 +9,10 @@ export type MembershipAuthorization = {
   workspaceIds: string[];
   fundIds: string[];
   documentIds: string[];
+  sourceDocumentIds: string[];
+  internalAnalyticsAllowed: boolean;
+  modelTrainingAllowed: boolean;
+  redistributionAllowed: boolean;
 };
 
 export type SessionRevocation = {
@@ -40,6 +44,10 @@ function text(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+function truthy(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 export class PostgresMembershipAuthorizationRepository implements MembershipAuthorizationRepository {
   private readonly db: PostgresSqlApi;
 
@@ -50,7 +58,42 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
   async resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null> {
     if (principal.authMethod === "demo") return null;
     const rows = await this.db.query(`select m.workspace_id::text as workspace_id, m.role_name,
-        e.resource_type, e.resource_id, e.permission as resource_permission
+        e.resource_type, e.resource_id, e.permission as resource_permission,
+        coalesce((select bool_and(dr.client_visible)
+          from corvis_control.data_rights dr
+          where dr.tenant_id=s.tenant_id
+            and dr.resource_type=e.resource_type
+            and dr.resource_id=e.resource_id
+            and dr.effective_from <= now()
+            and (dr.effective_to is null or dr.effective_to > now())), false) as resource_client_visible,
+        coalesce((select bool_and(dr.source_document_access_allowed)
+          from corvis_control.data_rights dr
+          where dr.tenant_id=s.tenant_id
+            and dr.resource_type='document'
+            and dr.resource_id=e.resource_id
+            and dr.effective_from <= now()
+            and (dr.effective_to is null or dr.effective_to > now())), false) as resource_source_access,
+        coalesce((select bool_and(dr.internal_analytics_allowed)
+          from corvis_control.data_rights dr
+          where dr.tenant_id=s.tenant_id
+            and dr.resource_type='workspace'
+            and dr.resource_id=m.workspace_id::text
+            and dr.effective_from <= now()
+            and (dr.effective_to is null or dr.effective_to > now())), false) as internal_analytics_allowed,
+        coalesce((select bool_and(dr.model_training_allowed)
+          from corvis_control.data_rights dr
+          where dr.tenant_id=s.tenant_id
+            and dr.resource_type='workspace'
+            and dr.resource_id=m.workspace_id::text
+            and dr.effective_from <= now()
+            and (dr.effective_to is null or dr.effective_to > now())), false) as model_training_allowed,
+        coalesce((select bool_and(dr.redistribution_allowed)
+          from corvis_control.data_rights dr
+          where dr.tenant_id=s.tenant_id
+            and dr.resource_type='workspace'
+            and dr.resource_id=m.workspace_id::text
+            and dr.effective_from <= now()
+            and (dr.effective_to is null or dr.effective_to > now())), false) as redistribution_allowed
       from corvis_control.identity_subject s
       join corvis_control.tenant t
         on t.tenant_id=s.tenant_id and t.status='active'
@@ -107,7 +150,17 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
     if (roles.length === 0) return null;
 
     const readableResourceIds = (resourceType: "fund" | "document") => [...new Set(requestedWorkspaceRows
-      .filter((row) => text(row.resource_type) === resourceType && text(row.resource_permission) === "read")
+      .filter((row) => text(row.resource_type) === resourceType
+        && text(row.resource_permission) === "read"
+        && truthy(row.resource_client_visible))
+      .map((row) => text(row.resource_id))
+      .filter(Boolean))];
+
+    const sourceDocumentIds = [...new Set(requestedWorkspaceRows
+      .filter((row) => text(row.resource_type) === "document"
+        && text(row.resource_permission) === "read"
+        && truthy(row.resource_client_visible)
+        && truthy(row.resource_source_access))
       .map((row) => text(row.resource_id))
       .filter(Boolean))];
 
@@ -116,6 +169,10 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       workspaceIds,
       fundIds: readableResourceIds("fund"),
       documentIds: readableResourceIds("document"),
+      sourceDocumentIds,
+      internalAnalyticsAllowed: requestedWorkspaceRows.some((row) => truthy(row.internal_analytics_allowed)),
+      modelTrainingAllowed: requestedWorkspaceRows.some((row) => truthy(row.model_training_allowed)),
+      redistributionAllowed: requestedWorkspaceRows.some((row) => truthy(row.redistribution_allowed)),
     };
   }
 }

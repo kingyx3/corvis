@@ -11,12 +11,12 @@ type ResolveAuthorizedOptions = {
 /**
  * Authentication and authorization deliberately cross separate boundaries.
  *
- * The signed gateway assertion establishes subject/tenant/workspace/session and
- * carries resource-scoped entitlements. In production, effective workspace
- * membership, application roles, implemented fine-grained resource rights and
- * session revocation state are re-resolved from Postgres before a route evaluates
- * permissions. This prevents a cryptographically valid but stale, revoked or
- * over-privileged claim from becoming the application authority.
+ * The signed gateway assertion establishes subject/tenant/workspace/session. In
+ * production, effective workspace membership, application roles, resource grants,
+ * contractual data rights and session/service-identity lifecycle state are
+ * re-resolved from Postgres before a route evaluates permissions. Signed resource
+ * or data-right claims can only be hints at the authentication boundary; they
+ * cannot widen authoritative Postgres access.
  */
 export async function resolveAuthorizedRequestIdentity(
   request: Request,
@@ -42,10 +42,14 @@ export async function resolveAuthorizedRequestIdentity(
     ...authenticated,
     roles: authorized.roles,
     entitlements: {
-      ...authenticated.entitlements,
       workspaceIds: authorized.workspaceIds,
       fundIds: authorized.fundIds,
       documentIds: authorized.documentIds,
+      sourceDocumentIds: authorized.sourceDocumentIds,
+      sourceDocumentAccessAllowed: authorized.sourceDocumentIds.length > 0,
+      internalAnalyticsAllowed: authorized.internalAnalyticsAllowed,
+      modelTrainingAllowed: authorized.modelTrainingAllowed,
+      redistributionAllowed: authorized.redistributionAllowed,
     },
   };
 }

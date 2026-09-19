@@ -16,6 +16,7 @@ export type Entitlements = {
   workspaceIds: string[];
   fundIds?: string[];
   documentIds?: string[];
+  sourceDocumentIds?: string[];
   sourceDocumentAccessAllowed: boolean;
   internalAnalyticsAllowed?: boolean;
   modelTrainingAllowed?: boolean;
@@ -47,10 +48,19 @@ export function assertWorkspace(identity: RequestIdentity, workspaceId: string):
 }
 
 export function assertDocumentAccess(identity: RequestIdentity, documentId: string, source = false): void {
-  if (source && !identity.entitlements.sourceDocumentAccessAllowed) throw new AuthorizationError("sources:read");
+  if (source) {
+    if (!identity.entitlements.sourceDocumentAccessAllowed) throw new AuthorizationError("sources:read");
+    if (identity.entitlements.sourceDocumentIds !== undefined && !identity.entitlements.sourceDocumentIds.includes(documentId)) {
+      throw new AuthorizationError("sources:read");
+    }
+  }
   if (identity.entitlements.documentIds !== undefined && !identity.entitlements.documentIds.includes(documentId)) {
     throw new AuthorizationError("documents:read");
   }
+}
+
+export function assertRedistributionAllowed(identity: RequestIdentity): void {
+  if (identity.entitlements.redistributionAllowed !== true) throw new AuthorizationError("data_rights:redistribution");
 }
 
 export class AuthorizationError extends Error {

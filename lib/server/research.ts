@@ -18,6 +18,7 @@ type SemanticQueryShape = {
   source: "corvis_serving.observations";
   reviewState: "approved";
   fundIds: string[];
+  documentIds: string[];
   limit: number;
 };
 
@@ -45,23 +46,29 @@ export class PermissionedResearchService {
       source: "corvis_serving.observations",
       reviewState: "approved",
       fundIds: [...(identity.entitlements.fundIds ?? [])].sort(),
+      documentIds: [...(identity.entitlements.documentIds ?? [])].sort(),
       limit: 750,
     };
   }
 
   private async semanticFacts(identity: RequestIdentity, shape: SemanticQueryShape): Promise<PostgresRow[]> {
-    return this.db.query(`select observation_id, fund_id, company_id, metric_code, value_number, value_string,
-        currency, economic_period, report_date, source_reference_id, version
-      from corvis_serving.observations
-      where tenant_id=$1
-        and review_state='approved'
-        and ($2::jsonb = '[]'::jsonb or fund_id in (select jsonb_array_elements_text($2::jsonb)))
-      order by updated_at desc
-      limit $3`, [identity.tenantId, JSON.stringify(shape.fundIds), shape.limit]);
+    if (shape.fundIds.length === 0 || shape.documentIds.length === 0) return [];
+    return this.db.query(`select o.observation_id, o.fund_id, o.company_id, o.metric_code, o.value_number, o.value_string,
+        o.currency, o.economic_period, o.report_date, o.source_reference_id, o.version
+      from corvis_serving.observations o
+      join corvis_source.source_reference r
+        on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+      where o.tenant_id=$1
+        and o.review_state='approved'
+        and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      order by o.updated_at desc
+      limit $4`, [identity.tenantId, JSON.stringify(shape.fundIds), JSON.stringify(shape.documentIds), shape.limit]);
   }
 
   private async search(identity: RequestIdentity, question: string): Promise<SearchHit[]> {
-    if (!identity.entitlements.sourceDocumentAccessAllowed) return [];
+    const sourceDocumentIds = identity.entitlements.sourceDocumentIds ?? [];
+    if (!identity.entitlements.sourceDocumentAccessAllowed || sourceDocumentIds.length === 0) return [];
     const config = getServerConfig();
     if (!config.searchEndpoint) throw new Error("Search endpoint is not configured");
     const response = await fetch(`${config.searchEndpoint.replace(/\/$/, "")}/search`, {
@@ -73,7 +80,7 @@ export class PermissionedResearchService {
         filters: {
           tenantId: identity.tenantId,
           workspaceId: identity.workspaceId,
-          documentIds: identity.entitlements.documentIds,
+          documentIds: sourceDocumentIds,
           fundIds: identity.entitlements.fundIds,
           sourceDocumentAccessAllowed: true,
         },
@@ -82,7 +89,9 @@ export class PermissionedResearchService {
     });
     if (!response.ok) throw new Error(`Permissioned search failed (${response.status})`);
     const body = await response.json() as SearchResponse;
-    return (body.hits ?? []).filter((hit) => hit.sourceReferenceId && hit.documentId).map((hit) => ({ ...hit, text: sanitizeSnippet(hit.text) }));
+    return (body.hits ?? [])
+      .filter((hit) => hit.sourceReferenceId && hit.documentId && sourceDocumentIds.includes(hit.documentId))
+      .map((hit) => ({ ...hit, text: sanitizeSnippet(hit.text) }));
   }
 
   async answer(identity: RequestIdentity, question: string): Promise<ResearchAnswer> {

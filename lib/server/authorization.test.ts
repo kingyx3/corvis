@@ -34,12 +34,14 @@ const principal = {
   sessionId: "session-123",
 };
 
-test("authoritative membership maps roles, workspaces, readable grants, and excludes revoked sessions", async () => {
+test("authoritative membership and data rights map roles, resources, source access and workspace rights", async () => {
+  const rights = { resource_client_visible: true, internal_analytics_allowed: true, model_training_allowed: false, redistribution_allowed: true };
   const db = new FakeDb([
-    { workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "fund", resource_id: "fund-a", resource_permission: "read" },
-    { workspace_id: principal.workspaceId, role_name: "viewer", resource_type: "document", resource_id: "doc-a", resource_permission: "read" },
-    { workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-write-only", resource_permission: "review" },
-    { workspace_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", role_name: "analyst", resource_type: "fund", resource_id: "fund-other-workspace", resource_permission: "read" },
+    { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "fund", resource_id: "fund-a", resource_permission: "read" },
+    { ...rights, workspace_id: principal.workspaceId, role_name: "viewer", resource_type: "document", resource_id: "doc-a", resource_permission: "read", resource_source_access: true },
+    { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-no-source", resource_permission: "read", resource_source_access: false },
+    { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-write-only", resource_permission: "review", resource_source_access: true },
+    { ...rights, workspace_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", role_name: "analyst", resource_type: "fund", resource_id: "fund-other-workspace", resource_permission: "read" },
   ]);
   const repository = new PostgresMembershipAuthorizationRepository(db);
   const result = await repository.resolve(principal);
@@ -47,11 +49,20 @@ test("authoritative membership maps roles, workspaces, readable grants, and excl
   assert.deepEqual(result?.roles, ["reviewer", "read_only"]);
   assert.deepEqual(result?.workspaceIds, [principal.workspaceId, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]);
   assert.deepEqual(result?.fundIds, ["fund-a"]);
-  assert.deepEqual(result?.documentIds, ["doc-a"]);
+  assert.deepEqual(result?.documentIds, ["doc-a", "doc-no-source"]);
+  assert.deepEqual(result?.sourceDocumentIds, ["doc-a"]);
+  assert.equal(result?.internalAnalyticsAllowed, true);
+  assert.equal(result?.modelTrainingAllowed, false);
+  assert.equal(result?.redistributionAllowed, true);
   assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId]);
   assert.match(db.lastSql, /s\.tenant_id=\$1::uuid/);
   assert.match(db.lastSql, /s\.subject=\$2/);
   assert.match(db.lastSql, /s\.auth_method=\$3/);
+  assert.match(db.lastSql, /from corvis_control\.data_rights dr/);
+  assert.match(db.lastSql, /bool_and\(dr\.client_visible\)/);
+  assert.match(db.lastSql, /bool_and\(dr\.source_document_access_allowed\)/);
+  assert.match(db.lastSql, /dr\.resource_type='workspace'/);
+  assert.match(db.lastSql, /dr\.resource_id=m\.workspace_id::text/);
   assert.match(db.lastSql, /from corvis_control\.session_revocation r/);
   assert.match(db.lastSql, /r\.tenant_id=s\.tenant_id/);
   assert.match(db.lastSql, /r\.auth_method=s\.auth_method/);
@@ -60,6 +71,20 @@ test("authoritative membership maps roles, workspaces, readable grants, and excl
   assert.match(db.lastSql, /m\.status='active'/);
   assert.match(db.lastSql, /m\.valid_until is null or m\.valid_until > now\(\)/);
   assert.match(db.lastSql, /e\.valid_until is null or e\.valid_until > now\(\)/);
+});
+
+test("missing or denied current data rights fail closed even when a resource entitlement exists", async () => {
+  const db = new FakeDb([
+    { workspace_id: principal.workspaceId, role_name: "analyst", resource_type: "fund", resource_id: "fund-a", resource_permission: "read", resource_client_visible: false },
+    { workspace_id: principal.workspaceId, role_name: "analyst", resource_type: "document", resource_id: "doc-a", resource_permission: "read", resource_client_visible: false, resource_source_access: true },
+  ]);
+  const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.deepEqual(result?.fundIds, []);
+  assert.deepEqual(result?.documentIds, []);
+  assert.deepEqual(result?.sourceDocumentIds, []);
+  assert.equal(result?.internalAnalyticsAllowed, false);
+  assert.equal(result?.modelTrainingAllowed, false);
+  assert.equal(result?.redistributionAllowed, false);
 });
 
 test("service-account authorization requires an active, unexpired and currently reviewed lifecycle grant", async () => {
@@ -107,6 +132,7 @@ test("missing fine-grained grants resolve to explicit empty allowlists", async (
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
   assert.deepEqual(result?.fundIds, []);
   assert.deepEqual(result?.documentIds, []);
+  assert.deepEqual(result?.sourceDocumentIds, []);
 });
 
 test("requested workspace must have an active membership", async () => {
