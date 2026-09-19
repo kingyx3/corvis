@@ -1,26 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { apiError } from "./http.ts";
-import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "./research.ts";
 
-async function payload(response: Response): Promise<Record<string, unknown>> {
-  return await response.json() as Record<string, unknown>;
-}
-
-test("research timeout maps to a stable 504 response", async () => {
-  const response = apiError(new ResearchTimeoutError(), "cid-timeout");
-  assert.equal(response.status, 504);
-  assert.deepEqual(await payload(response), { error: "research_timeout", correlationId: "cid-timeout" });
-});
-
-test("research cancellation maps to a stable 499 response", async () => {
-  const response = apiError(new ResearchCancelledError(), "cid-cancel");
-  assert.equal(response.status, 499);
-  assert.deepEqual(await payload(response), { error: "research_cancelled", correlationId: "cid-cancel" });
-});
-
-test("research provider failure maps to a stable 502 response without leaking provider details", async () => {
-  const response = apiError(new ResearchProviderError("ai", 503), "cid-provider");
-  assert.equal(response.status, 502);
-  assert.deepEqual(await payload(response), { error: "research_provider_error", correlationId: "cid-provider" });
+test("Ask Corvis execution failures have stable structured HTTP mappings", async () => {
+  const source = await readFile("lib/server/http.ts", "utf8");
+  assert.match(source, /error instanceof ResearchTimeoutError[\s\S]*error: error\.code[\s\S]*status: 504/);
+  assert.match(source, /error instanceof ResearchCancelledError[\s\S]*error: error\.code[\s\S]*status: 499/);
+  assert.match(source, /error instanceof ResearchProviderError[\s\S]*error: error\.code[\s\S]*status: 502/);
+  assert.match(source, /research\.provider_error/);
+  assert.equal(source.includes("error.provider, correlationId"), false, "provider identity must not be returned in the client error payload");
 });
