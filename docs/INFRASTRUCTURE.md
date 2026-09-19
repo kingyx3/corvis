@@ -169,6 +169,7 @@ See [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 - Prefer managed/serverless services before always-on infrastructure.
 - Keep Snowflake spend at zero until an activation trigger is approved.
 - Cost alerts and budgets are infrastructure code / deployment concerns; business spending thresholds remain governed in Confluence.
+- `modules/gcp-observability` (wired into the `uat`/`prod` environment roots) implements the alert policies from `ops/slos.yaml`'s `alerts:` list against Cloud Run, Pub/Sub dead-letter and Cloud Tasks queue metrics, a summary dashboard, and an optional monthly `google_billing_budget` gated on a bootstrap-provided billing account ID. Two of the four `ops/slos.yaml` alert conditions (`cross_tenant_authorization_failure_detected`, `published_fact_source_reference_coverage`) have no corresponding application telemetry yet and are explicitly not implemented — see the module's own top-of-file comment before treating those two as covered.
 
 ## Deployment responsibility
 
