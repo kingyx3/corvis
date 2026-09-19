@@ -26,7 +26,9 @@ jobs:
     env:
       CORVIS_ENVIRONMENT: ${{ inputs.environment }}
       CLOUDFLARE_ZONE_NAME: ${{ vars.CLOUDFLARE_ZONE_NAME }}
-      DIRECT_ORIGIN_PROBE_URLS: ${{ vars.GCP_DIRECT_ORIGIN_PROBE_URLS }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      GCP_REGION: asia-southeast1
     steps:
       - uses: actions/checkout@v7
 
@@ -34,7 +36,19 @@ jobs:
         with:
           node-version: 24
 
-      - name: Derive public hostnames
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Derive API hostname
         shell: bash
         run: |
           set -euo pipefail
@@ -44,14 +58,51 @@ jobs:
           fi
 
           case "${CORVIS_ENVIRONMENT}" in
-            prod) hostname_suffix="${CLOUDFLARE_ZONE_NAME}" ;;
-            uat) hostname_suffix="uat.${CLOUDFLARE_ZONE_NAME}" ;;
+            prod) api_hostname="api.${CLOUDFLARE_ZONE_NAME}" ;;
+            uat) api_hostname="api.uat.${CLOUDFLARE_ZONE_NAME}" ;;
             *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
           esac
 
-          echo "CUSTOMER_HOSTNAME=app.${hostname_suffix}" >> "${GITHUB_ENV}"
-          echo "ADMIN_HOSTNAME=admin.${hostname_suffix}" >> "${GITHUB_ENV}"
-          echo "API_HOSTNAME=api.${hostname_suffix}" >> "${GITHUB_ENV}"
+          echo "API_HOSTNAME=${api_hostname}" >> "${GITHUB_ENV}"
+
+      - name: Probe direct origin bypass paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          origin_ip="$(gcloud compute addresses describe "corvis-api-origin-${CORVIS_ENVIRONMENT}" \
+            --global \
+            --project="${GCP_PROJECT_ID}" \
+            --format='value(address)')"
+          if [[ -z "${origin_ip}" ]]; then
+            echo "Unable to derive the managed API origin IPv4 address."
+            exit 1
+          fi
+
+          cloud_run_url="$(gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --format='value(status.url)')"
+          if [[ -z "${cloud_run_url}" ]]; then
+            echo "Unable to derive the Cloud Run service URL."
+            exit 1
+          fi
+
+          load_balancer_status="$(curl --silent --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --max-time 15 \
+            --resolve "${API_HOSTNAME}:443:${origin_ip}" \
+            "https://${API_HOSTNAME}/api/v1/health" || true)"
+
+          cloud_run_status="$(curl --silent --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --max-time 15 \
+            "${cloud_run_url}/api/v1/health" || true)"
+
+          echo "DIRECT_LOAD_BALANCER_BYPASS_STATUS=${load_balancer_status}" >> "${GITHUB_ENV}"
+          echo "DIRECT_CLOUD_RUN_BYPASS_STATUS=${cloud_run_status}" >> "${GITHUB_ENV}"
 
       - name: Verify edge, transport and origin security
         run: node .github/scripts/security-acceptance.mjs
