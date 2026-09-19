@@ -8,18 +8,26 @@ terraform {
 }
 
 locals {
-  public_hostnames = toset([
-    var.customer_hostname,
-    var.admin_hostname,
-    var.api_hostname,
+  public_hostnames = toset(compact([
+    trimspace(var.customer_hostname),
+    trimspace(var.admin_hostname),
+    trimspace(var.api_hostname),
+  ]))
+
+  static_hostnames = compact([
+    trimspace(var.customer_hostname),
+    trimspace(var.admin_hostname),
   ])
 
+  quoted_public_hostnames = join(" ", [for hostname in local.public_hostnames : "\"${hostname}\""])
+  quoted_static_hostnames = join(" ", [for hostname in local.static_hostnames : "\"${hostname}\""])
+
   dynamic_host_expression = join(" ", [
-    "(http.host in {\"${var.customer_hostname}\" \"${var.admin_hostname}\" \"${var.api_hostname}\"}",
+    "(http.host in {${local.quoted_public_hostnames}}",
     "and not starts_with(http.request.uri.path, \"/_next/static/\"))",
   ])
 
-  static_host_expression = "(http.host in {\"${var.customer_hostname}\" \"${var.admin_hostname}\"} and starts_with(http.request.uri.path, \"/_next/static/\"))"
+  static_host_expression = length(local.static_hostnames) > 0 ? "(http.host in {${local.quoted_static_hostnames}} and starts_with(http.request.uri.path, \"/_next/static/\"))" : "(http.host eq \"__corvis_static_surface_disabled__\")"
 }
 
 resource "cloudflare_dns_record" "public" {
@@ -160,24 +168,28 @@ resource "cloudflare_ruleset" "cache" {
   kind        = "zone"
   phase       = "http_request_cache_settings"
 
-  rules = [
-    {
-      ref         = "bypass_dynamic_corvis_surfaces"
-      description = "Bypass Cloudflare cache for customer, admin and API dynamic traffic"
-      expression  = local.dynamic_host_expression
-      action      = "set_cache_settings"
-      action_parameters = {
-        cache = false
-      }
-    },
-    {
-      ref         = "cache_immutable_next_static"
-      description = "Cache immutable Next.js static assets only"
-      expression  = local.static_host_expression
-      action      = "set_cache_settings"
-      action_parameters = {
-        cache = true
-      }
-    },
-  ]
+  rules = concat(
+    [
+      {
+        ref         = "bypass_dynamic_corvis_surfaces"
+        description = "Bypass Cloudflare cache for customer, admin and API dynamic traffic"
+        expression  = local.dynamic_host_expression
+        action      = "set_cache_settings"
+        action_parameters = {
+          cache = false
+        }
+      },
+    ],
+    length(local.static_hostnames) > 0 ? [
+      {
+        ref         = "cache_immutable_next_static"
+        description = "Cache immutable Next.js static assets only"
+        expression  = local.static_host_expression
+        action      = "set_cache_settings"
+        action_parameters = {
+          cache = true
+        }
+      },
+    ] : [],
+  )
 }
