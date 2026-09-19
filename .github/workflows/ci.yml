@@ -29,3 +29,17 @@ jobs:
         run: npm run test:e2e
       - name: Dependency audit
         run: npm audit --audit-level=high
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build production container
+        run: docker build --pull --tag "corvis-ci:${GITHUB_SHA}" .
+      - name: Assert non-root standalone runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect "corvis-ci:${GITHUB_SHA}" --format '{{.Config.User}}')" = "corvis"
+          docker run --rm --entrypoint node "corvis-ci:${GITHUB_SHA}" --version
