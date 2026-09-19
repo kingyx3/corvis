@@ -9,18 +9,25 @@ variable "origin_ipv4_address" {
 }
 
 variable "customer_hostname" {
-  description = "Customer application hostname."
+  description = "Customer application hostname. Empty keeps that surface unpublished."
   type        = string
+  default     = ""
 }
 
 variable "admin_hostname" {
-  description = "Admin application hostname."
+  description = "Admin application hostname. Empty keeps that surface unpublished."
   type        = string
+  default     = ""
 }
 
 variable "api_hostname" {
   description = "Public API hostname."
   type        = string
+
+  validation {
+    condition     = trimspace(var.api_hostname) != ""
+    error_message = "api_hostname must be non-empty when the Cloudflare edge module is enabled."
+  }
 }
 
 variable "api_requests_per_minute" {

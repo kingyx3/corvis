@@ -13,12 +13,6 @@ variable "cloudflare_zone_name" {
   default     = ""
 }
 
-variable "origin_ipv4_address" {
-  description = "Derived external HTTPS load balancer IPv4 address."
-  type        = string
-  default     = ""
-}
-
 variable "enable_cloudflare_managed_waf" {
   description = "Explicit rollout control for plan-dependent Cloudflare managed/OWASP rulesets."
   type        = bool

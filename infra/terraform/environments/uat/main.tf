@@ -23,23 +23,17 @@ provider "google" {
 provider "cloudflare" {}
 
 locals {
-  edge_inputs = [
-    var.cloudflare_zone_name,
-    var.origin_ipv4_address,
-  ]
-  edge_any     = anytrue([for value in local.edge_inputs : trimspace(value) != ""])
-  edge_enabled = alltrue([for value in local.edge_inputs : trimspace(value) != ""])
-
-  customer_hostname = local.edge_enabled ? "app.uat.${trimspace(var.cloudflare_zone_name)}" : ""
-  admin_hostname    = local.edge_enabled ? "admin.uat.${trimspace(var.cloudflare_zone_name)}" : ""
-  api_hostname      = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  edge_requested      = trimspace(var.cloudflare_zone_name) != ""
+  api_runtime_enabled = trimspace(var.api_image) != ""
+  edge_enabled        = local.edge_requested && local.api_runtime_enabled
+  api_hostname        = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
 }
 
 resource "terraform_data" "edge_configuration_guard" {
   lifecycle {
     precondition {
-      condition     = !local.edge_any || local.edge_enabled
-      error_message = "Cloudflare edge configuration is partial. Configure zone name and the derived GCP load-balancer IPv4 together."
+      condition     = !local.edge_requested || local.api_runtime_enabled
+      error_message = "Cloudflare API edge activation requires an immutable API_IMAGE so the origin cannot point at a missing runtime."
     }
   }
 }
@@ -82,14 +76,51 @@ module "api_runtime" {
   api_service_account_email = module.foundation.api_service_account
 }
 
+resource "google_certificate_manager_dns_authorization" "api" {
+  count = local.edge_enabled ? 1 : 0
+
+  project     = var.project_id
+  name        = "corvis-api-uat"
+  location    = "global"
+  description = "DNS authorization for the Corvis UAT API origin certificate."
+  domain      = local.api_hostname
+
+  depends_on = [module.foundation]
+}
+
+resource "cloudflare_dns_record" "api_certificate_validation" {
+  count = local.edge_enabled ? 1 : 0
+
+  zone_id = local.cloudflare_zone_id
+  name    = trimsuffix(google_certificate_manager_dns_authorization.api[0].dns_resource_record[0].name, ".")
+  content = trimsuffix(google_certificate_manager_dns_authorization.api[0].dns_resource_record[0].data, ".")
+  type    = google_certificate_manager_dns_authorization.api[0].dns_resource_record[0].type
+  ttl     = 1
+  proxied = false
+  comment = "Google Certificate Manager DNS authorization for the Corvis UAT API origin"
+
+  depends_on = [terraform_data.edge_zone_guard]
+}
+
+module "api_origin" {
+  count = local.edge_enabled ? 1 : 0
+
+  source                 = "../../modules/gcp-serverless-origin"
+  project_id             = var.project_id
+  environment            = "uat"
+  cloud_run_service_name = module.api_runtime.api_service_name
+  hostname               = local.api_hostname
+  dns_authorization_id   = google_certificate_manager_dns_authorization.api[0].id
+
+  depends_on = [cloudflare_dns_record.api_certificate_validation]
+}
+
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 
   source              = "../../modules/cloudflare-edge"
   zone_id             = local.cloudflare_zone_id
-  origin_ipv4_address = var.origin_ipv4_address
-  customer_hostname   = local.customer_hostname
-  admin_hostname      = local.admin_hostname
+  origin_ipv4_address = module.api_origin[0].ipv4_address
   api_hostname        = local.api_hostname
   enable_managed_waf  = var.enable_cloudflare_managed_waf
 
