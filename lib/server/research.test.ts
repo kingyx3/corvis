@@ -99,13 +99,13 @@ test("research sends only the deterministic semantic result to the AI service an
       status?: string;
       shape?: Record<string, unknown>;
       result?: { rows?: Array<Record<string, unknown>>; factIds?: string[] };
-      rows?: unknown;
+      rows?: Array<Record<string, unknown>>;
     };
     assert.equal(semanticQuery.status, "executed");
     assert.equal(semanticQuery.shape?.metricCode, "revenue");
     assert.equal(semanticQuery.result?.rows?.length, 1);
     assert.deepEqual(semanticQuery.result?.factIds, ["00000000-0000-0000-0000-000000000001"]);
-    assert.equal(semanticQuery.rows, undefined);
+    assert.equal(semanticQuery.rows?.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
