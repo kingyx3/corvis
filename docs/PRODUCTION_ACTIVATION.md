@@ -33,7 +33,9 @@ Snowflake is **not** a production activation requirement unless the business arc
 
 ## Current readiness-endpoint limitation
 
-`GET /api/v1/admin/readiness` is useful as a repository/runtime diagnostic but is **not yet the final production gate**. The current implementation still lives in the legacy Snowflake-oriented production platform and reports Snowflake health. Issue #28 must migrate readiness to the Postgres-primary platform and issue #13 must add production environment/provider checks before `productionReady`-style output can be treated as deployment evidence.
+`GET /api/v1/admin/readiness` is a repository/runtime diagnostic over the Postgres-primary production platform. Its structured-data binding is healthy only when the authoritative Postgres adapter responds; optional Snowflake configuration is deliberately absent from the readiness contract.
+
+The endpoint is **not the final production gate**. It reports runtime binding/configuration health, not provider-side policy correctness or operating evidence. Issue #13 must still add/execute production-like environment/provider checks, and issue #28 must still complete provider-backed Postgres/RLS activation evidence, before `productionReady`-style output can be treated as deployment evidence.
 
 Do not enable external production traffic merely because the current endpoint returns configured states.
 
