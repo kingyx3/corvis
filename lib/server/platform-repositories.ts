@@ -158,8 +158,8 @@ export class PostgresReviewPublicationRepository {
 
   async publicationCounts(tenantId: string, fundId: string): Promise<PostgresRow> {
     const rows = await this.db.query(`select
-      count(*) filter (where review_state='review_required') as needs_review_count,
-      count(*) filter (where risk_tier='critical') as critical_count,
+      count(*) filter (where review_state<>'approved') as needs_review_count,
+      count(*) filter (where risk_tier='critical' and review_state='approved') as critical_count,
       count(*) filter (where source_reference_id is not null) as lineage_count,
       count(*) as total_count
       from corvis_facts.observation where tenant_id=$1 and fund_id=$2`, [tenantId,fundId]);
@@ -171,7 +171,13 @@ export class PostgresReviewPublicationRepository {
       select o.observation_id
       from corvis_facts.observation o
       join corvis_facts.review_event r on r.tenant_id=o.tenant_id and r.observation_id=o.observation_id
-      where o.tenant_id=$1 and o.fund_id=$2 and o.risk_tier='critical' and r.decision='approve'
+      where o.tenant_id=$1 and o.fund_id=$2 and o.risk_tier='critical' and o.review_state='approved'
+        and r.decision='approve'
+        and r.observation_version > coalesce((
+          select max(c.observation_version)
+          from corvis_facts.review_event c
+          where c.tenant_id=o.tenant_id and c.observation_id=o.observation_id and c.decision='correct'
+        ),0)
       group by o.observation_id having count(distinct r.actor_subject)>=2
     ) reviewed`, [tenantId,fundId]);
     return Number(rows[0]?.independently_reviewed ?? 0);
