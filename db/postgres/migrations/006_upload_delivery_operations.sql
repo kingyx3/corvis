@@ -29,12 +29,13 @@ create table if not exists corvis_control.webhook_delivery (
   event_id uuid not null,
   attempt integer not null check (attempt > 0),
   status_code integer,
-  state text not null check (state in ('complete','retryable','failed')),
+  state text not null check (state in ('delivering','complete','retryable','failed')),
   next_attempt_at timestamptz,
   created_at timestamptz not null default now(),
   completed_at timestamptz,
   last_error text,
   unique (tenant_id, delivery_id),
+  unique (tenant_id, webhook_id, event_id, attempt),
   foreign key (tenant_id, webhook_id) references corvis_control.webhook_subscription(tenant_id, webhook_id),
   foreign key (tenant_id, event_id) references corvis_control.outbox_event(tenant_id, event_id)
 );
