@@ -230,7 +230,13 @@ export class GovernedSemanticQueryService {
       )
         o.observation_id,o.fund_id,o.company_id,o.holding_id,o.instrument_id,o.metric_code,
         o.value_number,o.value_string,o.currency,o.economic_period,o.report_date,
-        o.source_reference_id,o.version,o.updated_at
+        o.source_reference_id,o.version,o.updated_at,
+        case
+          when o.instrument_id is not null then 'instrument'
+          when o.holding_id is not null then 'holding'
+          when o.company_id is not null then 'company'
+          else 'fund'
+        end as subject_type
       from corvis_serving.observations o
       join corvis_source.source_reference r
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -261,23 +267,23 @@ export class GovernedSemanticQueryService {
     ];
     if (shape.operation === "values") {
       return this.db.query(`${scoped}
-        select observation_id,fund_id,company_id,holding_id,instrument_id,metric_code,value_number,value_string,
+        select observation_id,fund_id,company_id,holding_id,instrument_id,subject_type,metric_code,value_number,value_string,
           currency,economic_period,report_date,source_reference_id,version
         from scoped
-        order by fund_id,company_id nulls first,holding_id nulls first,instrument_id nulls first,
+        order by fund_id,subject_type,company_id nulls first,holding_id nulls first,instrument_id nulls first,
           economic_period desc nulls last,report_date desc nulls last
         limit $7`, parameters);
     }
     const expression = aggregateExpression[shape.operation];
     const numericPredicate = shape.operation === "count" ? "" : "where value_number is not null";
     return this.db.query(`${scoped}
-      select fund_id,metric_code,economic_period,currency,
+      select fund_id,subject_type,metric_code,economic_period,currency,
         ${expression} as result_value,count(*)::bigint as row_count,
         jsonb_agg(observation_id::text order by observation_id::text) as source_observation_ids
       from scoped
       ${numericPredicate}
-      group by fund_id,metric_code,economic_period,currency
-      order by fund_id,economic_period desc nulls last,currency nulls first
+      group by fund_id,subject_type,metric_code,economic_period,currency
+      order by fund_id,subject_type,economic_period desc nulls last,currency nulls first
       limit $7`, parameters);
   }
 
