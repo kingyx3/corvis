@@ -6,6 +6,7 @@ import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
 import { AuthenticationError, type GatewayIdentityAssertion } from "./request-context.ts";
 
 function signedAssertion(secret = "trusted-secret"): string {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const payload: GatewayIdentityAssertion = {
     v: 1,
     sub: "idp|user-123",
@@ -19,8 +20,8 @@ function signedAssertion(secret = "trusted-secret"): string {
     },
     authMethod: "oidc",
     sessionId: "session-1",
-    iat: 1_800_000_000,
-    exp: 1_800_000_240,
+    iat: nowSeconds - 10,
+    exp: nowSeconds + 230,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
@@ -79,7 +80,7 @@ test("missing authoritative membership fails closed after successful authenticat
     });
     await assert.rejects(
       resolveAuthorizedRequestIdentity(request, { repository, requireAuthoritative: true }),
-      AuthenticationError,
+      (error: unknown) => error instanceof AuthenticationError && error.message === "No active authoritative authorization context",
     );
   });
 });
