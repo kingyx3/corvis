@@ -68,10 +68,12 @@ locals {
 }
 
 module "foundation" {
-  source             = "../../modules/gcp-foundation"
-  project_id         = var.project_id
-  environment        = "prod"
-  source_bucket_name = var.source_bucket_name
+  source                                        = "../../modules/gcp-foundation"
+  project_id                                    = var.project_id
+  environment                                   = "prod"
+  source_bucket_name                            = var.source_bucket_name
+  enforce_service_account_key_creation_disabled = true
+  enforce_service_account_key_upload_disabled   = true
 }
 
 module "cloudflare_edge" {
