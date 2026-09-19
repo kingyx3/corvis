@@ -88,12 +88,15 @@ jobs:
             exit 1
           fi
 
+          set +e
           load_balancer_status="$(curl --silent --show-error \
             --output /dev/null \
             --write-out '%{http_code}' \
             --max-time 15 \
             --resolve "${API_HOSTNAME}:443:${origin_ip}" \
-            "https://${API_HOSTNAME}/api/v1/health" || true)"
+            "https://${API_HOSTNAME}/api/v1/health")"
+          load_balancer_exit_code=$?
+          set -e
 
           cloud_run_status="$(curl --silent --show-error \
             --output /dev/null \
@@ -102,6 +105,7 @@ jobs:
             "${cloud_run_url}/api/v1/health" || true)"
 
           echo "DIRECT_LOAD_BALANCER_BYPASS_STATUS=${load_balancer_status}" >> "${GITHUB_ENV}"
+          echo "DIRECT_LOAD_BALANCER_BYPASS_EXIT_CODE=${load_balancer_exit_code}" >> "${GITHUB_ENV}"
           echo "DIRECT_CLOUD_RUN_BYPASS_STATUS=${cloud_run_status}" >> "${GITHUB_ENV}"
 
       - name: Verify edge, transport and origin security
