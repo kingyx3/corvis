@@ -36,6 +36,7 @@ class SemanticDb implements PostgresSqlApi {
     company_id: "company-a",
     holding_id: "holding-a",
     instrument_id: "instrument-a",
+    subject_type: "instrument",
     metric_code: "revenue",
     value_number: 100,
     currency: "USD",
@@ -83,6 +84,7 @@ test("metric questions execute a narrow governed query with deterministic period
   assert.match(factCall.sql, /coalesce\(o\.holding_id,''\)/i);
   assert.match(factCall.sql, /coalesce\(o\.instrument_id,''\)/i);
   assert.match(factCall.sql, /coalesce\(o\.economic_period,''\)/i);
+  assert.match(factCall.sql, /end as subject_type/i);
   assert.match(factCall.sql, /o\.metric_code=\$4/i);
   assert.doesNotMatch(factCall.sql, /limit 750/i);
   assert.match(factCall.sql, /from scoped[\s\S]*limit \$7/i);
@@ -90,10 +92,11 @@ test("metric questions execute a narrow governed query with deterministic period
   assert.equal(factCall.parameters[4], JSON.stringify(["2025q2", "q22025"]));
 });
 
-test("explicit sums aggregate the complete scoped set before applying the result limit", async () => {
+test("explicit sums aggregate the complete scoped set and never mix subject grains", async () => {
   const db = new SemanticDb();
   db.resultRows = [{
     fund_id: "fund-a",
+    subject_type: "company",
     metric_code: "revenue",
     economic_period: "Q2 2025",
     currency: "USD",
@@ -109,6 +112,7 @@ test("explicit sums aggregate the complete scoped set before applying the result
 
   assert.equal(result.status, "executed");
   assert.equal(result.shape.operation, "sum");
+  assert.equal(result.rows[0]?.subject_type, "company");
   assert.equal(result.rows[0]?.result_value, "250.0000000000");
   assert.deepEqual(result.factIds, [
     "00000000-0000-0000-0000-000000000001",
@@ -116,7 +120,7 @@ test("explicit sums aggregate the complete scoped set before applying the result
   ]);
   const aggregateSql = db.calls[1]?.sql ?? "";
   assert.match(aggregateSql, /sum\(value_number\) as result_value/i);
-  assert.match(aggregateSql, /group by fund_id,metric_code,economic_period,currency/i);
+  assert.match(aggregateSql, /group by fund_id,subject_type,metric_code,economic_period,currency/i);
   assert.match(aggregateSql, /group by[\s\S]*limit \$7/i);
   const scopedCte = aggregateSql.slice(0, aggregateSql.indexOf(")\n      select fund_id"));
   assert.doesNotMatch(scopedCte, /limit \$7/i, "source rows must not be truncated before aggregation");
