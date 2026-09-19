@@ -166,7 +166,11 @@ function factIds(rows: PostgresRow[]): string[] {
 }
 
 export class GovernedSemanticQueryService {
-  constructor(private readonly db: PostgresSqlApi) {}
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) {
+    this.db = db;
+  }
 
   private async metricCandidates(identity: RequestIdentity, fundIds: string[], documentIds: string[]): Promise<MetricCandidate[]> {
     if (fundIds.length === 0 || documentIds.length === 0) return [];
