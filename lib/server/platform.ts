@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { documents, fundSnapshots, observations } from "../../adapters/demo/catalog.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
-import type { AuditEvent, ExportManifest, ProcessingJob, RequestIdentity, ResearchAnswer, ReviewDecision, SnapshotPublication } from "../../core/enterprise.ts";
+import { assertRedistributionAllowed, type AuditEvent, type ExportManifest, type ProcessingJob, type RequestIdentity, type ResearchAnswer, type ReviewDecision, type SnapshotPublication } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository, PostgresReviewPublicationRepository, PostgresWorkspaceRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
@@ -73,7 +73,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]> {
-    const rows = await this.workspace.listDocuments(identity.tenantId);
+    const rows = await this.workspace.listDocuments(identity);
     return rows.map((row) => ({
       id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
       type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
@@ -82,7 +82,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async listObservations(identity: RequestIdentity): Promise<ObservationRecord[]> {
-    const rows = await this.workspace.listObservations(identity.tenantId);
+    const rows = await this.workspace.listObservations(identity);
     return rows.map((row) => {
       const rawConfidence = num(row,"confidence_score");
       const confidence = rawConfidence > 0 && rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
@@ -98,7 +98,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]> {
-    const rows = await this.workspace.listSnapshots(identity.tenantId);
+    const rows = await this.workspace.listSnapshots(identity);
     return rows.map((row) => ({
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
@@ -107,7 +107,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<{ accepted: true; reviewEventId: string }> {
-    const current = await this.reviewPublication.observation(identity.tenantId, decision.observationId);
+    const current = await this.reviewPublication.observation(identity, decision.observationId);
     if (!current) throw new Error("Observation not found");
     if (num(current,"version") !== decision.expectedVersion) throw new ConflictError("observation_version_conflict");
     if (decision.decision === "correct" && !decision.correctedValue) throw new Error("Corrected value is required");
@@ -117,7 +117,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }> {
-    const snapshot = await this.reviewPublication.snapshot(identity.tenantId, command.snapshotId, command.expectedVersion);
+    const snapshot = await this.reviewPublication.snapshot(identity, command.snapshotId, command.expectedVersion);
     if (!snapshot) throw new ConflictError("snapshot_not_found_or_version_conflict");
     if (command.action === "publish") {
       const fundId = text(snapshot,"fund_id");
@@ -157,6 +157,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   }
 
   async export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest> {
+    assertRedistributionAllowed(identity);
     const { snapshots, observationCount } = await this.operations.exportManifest(identity);
     const exportId = randomUUID();
     const generatedAt = new Date().toISOString();
