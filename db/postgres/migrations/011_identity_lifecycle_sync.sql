@@ -1,10 +1,11 @@
 -- Corvis human identity lifecycle synchronization v1
 -- Depends on identity_subject, membership, resource entitlements and audit events.
 --
--- The database owns joiner/mover/leaver reconciliation so a retry, partial
--- application failure or stale provider event cannot leave identity and access
--- state out of sync. Service-account issuance/review remains governed separately
--- by service_identity_grant.
+-- The database owns joiner/mover/leaver reconciliation so retries or partial
+-- application failures cannot leave identity and access state out of sync.
+-- Disabled identities are intentionally not reactivated by ordinary sync; a
+-- future rehire/reactivation flow must be explicit and separately governed.
+-- Service-account issuance/review remains governed by service_identity_grant.
 
 begin;
 
@@ -58,6 +59,7 @@ declare
   v_existing_hash text;
   v_existing_result jsonb;
   v_existing_user_id uuid;
+  v_existing_status text;
   v_revoked_memberships integer := 0;
   v_active_memberships integer := 0;
   v_expired_entitlements integer := 0;
@@ -122,7 +124,7 @@ begin
   end if;
 
   if p_operation='sync' then
-    select user_id into v_existing_user_id
+    select user_id,status into v_existing_user_id,v_existing_status
     from corvis_control.identity_subject
     where tenant_id=p_tenant_id and auth_method=p_auth_method and subject=p_subject
     for update;
@@ -130,13 +132,14 @@ begin
     if found and v_existing_user_id <> p_user_id then
       raise exception 'identity subject is already mapped to a different user';
     end if;
+    if found and v_existing_status='disabled' then
+      raise exception 'disabled identity requires explicit reactivation';
+    end if;
 
     insert into corvis_control.identity_subject
       (tenant_id,user_id,auth_method,subject,status,created_at,disabled_at)
     values (p_tenant_id,p_user_id,p_auth_method,p_subject,'active',now(),null)
-    on conflict (tenant_id,auth_method,subject) do update
-      set status='active', disabled_at=null
-      where corvis_control.identity_subject.user_id=excluded.user_id;
+    on conflict (tenant_id,auth_method,subject) do nothing;
 
     update corvis_control.membership m
     set status='revoked',
