@@ -5,7 +5,7 @@ import test from "node:test";
 async function source(file: string) { return readFile(file, "utf8"); }
 
 test("control evidence stays tamper-evident, tenant-safe and cannot self-promote without objective evidence", async () => {
-  const migration = (await source("db/postgres/migrations/015_control_evidence_lifecycle.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/016_control_evidence_lifecycle.sql")).toLowerCase();
 
   for (const table of ["control_definition", "control_evidence_requirement", "control_evidence_record", "control_evidence_escalation"]) {
     assert.match(migration, new RegExp(`alter table corvis_control\\.${table} enable row level security`));

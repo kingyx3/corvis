@@ -5,7 +5,7 @@ import test from "node:test";
 async function source(file: string) { return readFile(file, "utf8"); }
 
 test("flag governance and deletion-evidence tables enable RLS and carry no broad mutation policy", async () => {
-  const migration = (await source("db/postgres/migrations/016_flag_governance_and_deletion_evidence.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/017_flag_governance_and_deletion_evidence.sql")).toLowerCase();
 
   for (const table of ["feature_flag_emergency_stop", "legal_hold", "deletion_execution_evidence"]) {
     assert.match(migration, new RegExp(`alter table corvis_control\\.${table} enable row level security`));
