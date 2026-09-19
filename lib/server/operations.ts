@@ -7,6 +7,12 @@ import { postgres, type PostgresSqlApi } from "./postgres.ts";
 function bearer(token?: string): Record<string,string> { return token ? { authorization: `Bearer ${token}` } : {}; }
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
+type Readiness = Record<string, "configured" | "missing" | "demo">;
+type EvidenceDependencies = {
+  db?: PostgresSqlApi;
+  readiness?: () => Promise<Readiness>;
+};
+
 export async function listFeatureFlags(identity: RequestIdentity) {
   return controlDb().query(`select flag_key, enabled, configuration as config, updated_at, updated_by
     from corvis_control.feature_flag where tenant_id=$1 order by flag_key`, [identity.tenantId]);
@@ -24,8 +30,8 @@ export async function setFeatureFlag(identity: RequestIdentity, key: string, ena
   [identity.tenantId,key,enabled,JSON.stringify(config ?? {}),identity.subject]);
 }
 
-export async function listControlEvidence(identity: RequestIdentity) {
-  return controlDb().query(`select * from corvis_control.control_evidence
+export async function listControlEvidence(identity: RequestIdentity, db: PostgresSqlApi = controlDb()) {
+  return db.query(`select * from corvis_control.control_evidence
     where tenant_id=$1 order by generated_at desc limit 500`, [identity.tenantId]);
 }
 
@@ -97,17 +103,17 @@ export async function retryProcessingJob(identity: RequestIdentity, jobId: strin
   return { ok:true, version:newVersion };
 }
 
-export async function getSourceReference(identity: RequestIdentity, sourceReferenceId: string) {
-  const rows=await controlDb().query(`select source_reference_id,document_id,page_number,sheet_name,cell_range,bbox,excerpt
+export async function getSourceReference(identity: RequestIdentity, sourceReferenceId: string, db: PostgresSqlApi = controlDb()) {
+  const rows=await db.query(`select source_reference_id,document_id,page_number,sheet_name,cell_range,bbox,excerpt
     from corvis_serving.source_references
     where tenant_id=$1 and source_reference_id=$2::uuid limit 1`, [identity.tenantId,sourceReferenceId]);
   return rows[0];
 }
 
-export async function generateControlEvidence(identity: RequestIdentity) {
-  const db = controlDb();
+export async function generateControlEvidence(identity: RequestIdentity, dependencies: EvidenceDependencies = {}) {
+  const db = dependencies.db ?? controlDb();
   const evidenceId = randomUUID();
-  const readiness = await platform().readiness();
+  const readiness = dependencies.readiness ? await dependencies.readiness() : await platform().readiness();
   const counts = await db.query(`select
     (select count(*) from corvis_control.audit_event where tenant_id=$1) as audit_events,
     (select count(*) from corvis_control.processing_job where tenant_id=$1 and state in ('failed','dead_letter')) as failed_jobs,
