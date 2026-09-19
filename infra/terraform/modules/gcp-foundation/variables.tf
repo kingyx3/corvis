@@ -25,6 +25,18 @@ variable "artifact_registry_repository" {
   default = "corvis"
 }
 
+variable "enforce_service_account_key_creation_disabled" {
+  description = "Enforce the project organization policy that blocks creation of user-managed service-account keys."
+  type        = bool
+  default     = false
+}
+
+variable "enforce_service_account_key_upload_disabled" {
+  description = "Enforce the project organization policy that blocks upload of external public keys to service accounts."
+  type        = bool
+  default     = false
+}
+
 variable "labels" {
   type    = map(string)
   default = {}
