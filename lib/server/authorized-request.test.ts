@@ -28,15 +28,16 @@ function signedAssertion(secret = "trusted-secret"): string {
 }
 
 async function withEnv<T>(fn: () => Promise<T>): Promise<T> {
-  const previousNodeEnv = process.env.NODE_ENV;
-  const previousSecret = process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET;
+  const env = process.env as Record<string, string | undefined>;
+  const previousNodeEnv = env.NODE_ENV;
+  const previousSecret = env.CORVIS_TRUSTED_AUTH_PROXY_SECRET;
   try {
-    process.env.NODE_ENV = "test";
-    process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = "trusted-secret";
+    env.NODE_ENV = "test";
+    env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = "trusted-secret";
     return await fn();
   } finally {
-    if (previousNodeEnv == null) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
-    if (previousSecret == null) delete process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET; else process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = previousSecret;
+    if (previousNodeEnv == null) delete env.NODE_ENV; else env.NODE_ENV = previousNodeEnv;
+    if (previousSecret == null) delete env.CORVIS_TRUSTED_AUTH_PROXY_SECRET; else env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = previousSecret;
   }
 }
 
