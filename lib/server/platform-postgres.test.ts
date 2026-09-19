@@ -29,7 +29,7 @@ class FakeDb implements PostgresSqlApi {
     if (sql.includes("select * from corvis_serving.fund_period_snapshots")) {
       return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: 0 }];
     }
-    if (sql.includes("count(*) filter (where review_state='review_required')")) {
+    if (sql.includes("count(*) filter (where review_state<>'approved')")) {
       return [{ needs_review_count: 0, critical_count: 0, lineage_count: 1, total_count: 1 }];
     }
     if (sql.includes("independently_reviewed")) return [{ independently_reviewed: 0 }];
@@ -220,6 +220,7 @@ test("publication preflight reads the governed serving snapshot blocker count", 
   const result = await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 });
   assert.equal(result.accepted, true);
   assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.fund_period_snapshots/);
+  assert.match(db.calls[1]?.sql ?? "", /review_state<>'approved'/);
   assert.match(db.calls.at(-1)?.sql ?? "", /append_snapshot_transition/);
 });
 
