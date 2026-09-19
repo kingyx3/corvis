@@ -48,6 +48,12 @@ resource "cloudflare_zone_setting" "ssl" {
   value      = "strict"
 }
 
+resource "cloudflare_zone_setting" "authenticated_origin_pulls" {
+  zone_id    = var.zone_id
+  setting_id = "tls_client_auth"
+  value      = "on"
+}
+
 resource "cloudflare_zone_setting" "tls_1_3" {
   zone_id    = var.zone_id
   setting_id = "tls_1_3"
