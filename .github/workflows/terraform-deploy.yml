@@ -1,0 +1,96 @@
+name: Terraform deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target GitHub Environment
+        required: true
+        type: choice
+        options: [dev, uat, prod]
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_source_bucket_name: ${{ vars.GCS_SOURCE_BUCKET_NAME }}
+      TF_STATE_BUCKET: ${{ vars.GCP_PROJECT_ID }}-corvis-tf-state
+      TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
+    steps:
+      - name: Guard apply source
+        if: inputs.action == 'apply' && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "Terraform apply is allowed only from main."
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+
+      - name: Bootstrap protected remote state bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${TF_VAR_project_id}" >/dev/null 2>&1; then
+            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
+              --project="${TF_VAR_project_id}" \
+              --location="asia-southeast1" \
+              --uniform-bucket-level-access
+          fi
+          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
+            --versioning \
+            --uniform-bucket-level-access \
+            --public-access-prevention=enforced
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          terraform -chdir="${TF_ROOT}" init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=corvis/${{ inputs.environment }}"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Terraform validate
+        run: terraform -chdir="${TF_ROOT}" validate
+
+      - name: Terraform plan
+        run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve tfplan
