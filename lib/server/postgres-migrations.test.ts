@@ -15,6 +15,20 @@ async function migrations(): Promise<string> {
   return (await Promise.all(migrationFiles.map((path) => readFile(path, "utf8")))).join("\n");
 }
 
+function regexEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function tenantBearingTables(sql: string): string[] {
+  const tables = new Set<string>();
+  const pattern = /create table if not exists\s+([a-z0-9_.]+)\s*\(([\s\S]*?)\n\);/gi;
+  for (const match of sql.matchAll(pattern)) {
+    const [, table, body] = match;
+    if (table && /\btenant_id\b/i.test(body ?? "")) tables.add(table.toLowerCase());
+  }
+  return [...tables].sort();
+}
+
 test("Postgres migrations do not reintroduce Snowflake-only DDL", async () => {
   const sql = (await migrations()).toUpperCase();
   for (const token of ["ROW ACCESS POLICY", "PARSE_JSON(", "CURRENT_ROLE()", "COUNT_IF(", "SECURE VIEW"]) {
@@ -22,28 +36,29 @@ test("Postgres migrations do not reintroduce Snowflake-only DDL", async () => {
   }
 });
 
-test("Postgres tenant data enables RLS and has no broad client mutation policies", async () => {
+test("every tenant-bearing Postgres table enables RLS and has an explicit read policy", async () => {
   const sql = (await migrations()).toLowerCase();
-  for (const table of [
-    "corvis_control.tenant",
-    "corvis_control.workspace",
-    "corvis_control.membership",
-    "corvis_control.processing_job",
-    "corvis_control.outbox_event",
-    "corvis_control.data_rights",
-    "corvis_control.webhook_subscription",
-    "corvis_control.webhook_delivery",
-    "corvis_source.document",
-    "corvis_facts.observation",
-    "corvis_facts.holding",
-    "corvis_facts.observation_correction",
-    "corvis_consolidated.fund_period_snapshot",
-    "corvis_consolidated.snapshot_publication_event",
-    "corvis_serving.export_job",
-  ]) {
-    assert.match(sql, new RegExp(`alter table ${table.replace(".", "\\.")} enable row level security`));
+  const tables = tenantBearingTables(sql);
+  assert.ok(tables.length >= 20, `expected broad tenant table coverage, found only ${tables.length}`);
+
+  for (const table of tables) {
+    const escaped = regexEscape(table);
+    assert.match(sql, new RegExp(`alter\\s+table\\s+${escaped}\\s+enable\\s+row\\s+level\\s+security\\s*;`), `${table} must enable RLS`);
+    assert.match(sql, new RegExp(`create\\s+policy\\s+[a-z0-9_]+\\s+on\\s+${escaped}\\s+for\\s+select\\s+using\\s*\\(`), `${table} must define a SELECT policy`);
   }
-  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false);
+
+  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false, "client-facing migrations must not add broad mutation policies");
+});
+
+test("RLS helpers bind access to active, effective auth.uid membership", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /create or replace function corvis_control\.has_tenant_access\(row_tenant_id uuid\)/);
+  assert.match(sql, /where m\.tenant_id = row_tenant_id[\s\S]*m\.user_id = auth\.uid\(\)/);
+  assert.match(sql, /create or replace function corvis_control\.has_workspace_access\(row_tenant_id uuid, row_workspace_id uuid\)/);
+  assert.match(sql, /m\.workspace_id = row_workspace_id[\s\S]*m\.user_id = auth\.uid\(\)/);
+  assert.match(sql, /m\.status = 'active'/);
+  assert.match(sql, /m\.valid_from <= now\(\)/);
+  assert.match(sql, /m\.valid_until is null or m\.valid_until > now\(\)/);
 });
 
 test("Postgres serving views remain tenant-keyed", async () => {
