@@ -28,6 +28,26 @@ resource "google_project_service" "required" {
   disable_on_destroy = false
 }
 
+resource "google_project_organization_policy" "disable_service_account_key_creation" {
+  count      = var.enforce_service_account_key_creation_disabled ? 1 : 0
+  project    = var.project_id
+  constraint = "iam.disableServiceAccountKeyCreation"
+
+  boolean_policy {
+    enforced = true
+  }
+}
+
+resource "google_project_organization_policy" "disable_service_account_key_upload" {
+  count      = var.enforce_service_account_key_upload_disabled ? 1 : 0
+  project    = var.project_id
+  constraint = "iam.disableServiceAccountKeyUpload"
+
+  boolean_policy {
+    enforced = true
+  }
+}
+
 resource "google_kms_key_ring" "corvis" {
   project    = var.project_id
   name       = "corvis-${var.environment}"
@@ -147,12 +167,14 @@ resource "google_service_account" "api" {
   project      = var.project_id
   account_id   = "corvis-api-${var.environment}"
   display_name = "Corvis API ${var.environment}"
+  description  = "Keyless runtime identity for the Corvis API. Human/user-managed keys are prohibited in production."
 }
 
 resource "google_service_account" "worker" {
   project      = var.project_id
   account_id   = "corvis-worker-${var.environment}"
   display_name = "Corvis worker ${var.environment}"
+  description  = "Keyless runtime identity for Corvis background processing. Human/user-managed keys are prohibited in production."
 }
 
 resource "google_project_iam_member" "api_log_writer" {
@@ -171,6 +193,12 @@ resource "google_storage_bucket_iam_member" "api_source_writer" {
   bucket = google_storage_bucket.source.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.api.email}"
+
+  condition {
+    title       = "api_upload_prefix_only"
+    description = "The API may create objects only in the controlled uploads prefix."
+    expression  = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.source.name}/objects/uploads/')"
+  }
 }
 
 resource "google_storage_bucket_iam_member" "worker_source_reader" {
