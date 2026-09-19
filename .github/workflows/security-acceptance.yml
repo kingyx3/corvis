@@ -1,0 +1,48 @@
+name: Security acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Production-like environment to verify
+        required: true
+        type: choice
+        options: [uat, prod]
+        default: uat
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-acceptance-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+      CUSTOMER_HOSTNAME: ${{ vars.CUSTOMER_HOSTNAME }}
+      ADMIN_HOSTNAME: ${{ vars.ADMIN_HOSTNAME }}
+      API_HOSTNAME: ${{ vars.API_HOSTNAME }}
+      DIRECT_ORIGIN_PROBE_URLS: ${{ vars.GCP_DIRECT_ORIGIN_PROBE_URLS }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Verify edge, transport and origin security
+        run: node .github/scripts/security-acceptance.mjs
+
+      - name: Upload sanitized security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
+          path: security-acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 30
