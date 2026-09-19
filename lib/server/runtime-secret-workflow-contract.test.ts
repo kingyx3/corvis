@@ -42,5 +42,5 @@ test("runtime secret docs preserve provider ownership of Postgres credentials", 
 
   assert.match(docs, /controlled supabase\/postgres activation path/);
   assert.match(docs, /must not be committed, persisted in terraform state/);
-  assert.match(docs, /audit.*metadata only/s);
+  assert.ok(docs.includes("audit verifies that both terraform-managed containers exist and each has an enabled version. it reads version metadata only"));
 });
