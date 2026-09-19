@@ -1,6 +1,23 @@
-import { randomUUID, timingSafeEqual } from "crypto";
-import type { RequestIdentity, Role } from "../../core/enterprise.ts";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import type { Entitlements, RequestIdentity, Role } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+
+const ASSERTION_VERSION = 1;
+const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;
+const CLOCK_SKEW_SECONDS = 30;
+
+export type GatewayIdentityAssertion = {
+  v: 1;
+  sub: string;
+  tenantId: string;
+  workspaceId: string;
+  roles: Role[];
+  entitlements: Entitlements;
+  authMethod: "oidc" | "saml" | "service_account";
+  sessionId: string;
+  iat: number;
+  exp: number;
+};
 
 function parseRoles(value: string | null): Role[] {
   const allowed = new Set<Role>(["admin","reviewer","analyst","api_client","read_only"]);
@@ -11,35 +28,103 @@ function parseAuthMethod(value: string | null): RequestIdentity["authMethod"] {
   return value === "saml" || value === "service_account" ? value : "oidc";
 }
 
-function safeEqual(actual: string | null, expected?: string): boolean {
-  if (!actual || !expected) return false;
-  const a = Buffer.from(actual);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+function safeEqualBytes(actual: Buffer, expected: Buffer): boolean {
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-export function resolveRequestIdentity(request: Request): RequestIdentity {
-  const config = getServerConfig();
-  const correlation = request.headers.get("x-correlation-id") || randomUUID();
-
-  if (config.demoMode && config.environment !== "production") {
-    const demoRoles = parseRoles(request.headers.get("x-corvis-demo-roles"));
-    const workspaceId = request.headers.get("x-corvis-demo-workspace") || "workspace_demo";
-    return {
-      subject: request.headers.get("x-corvis-demo-subject") || "demo-user",
-      tenantId: request.headers.get("x-corvis-demo-tenant") || "tenant_demo",
-      workspaceId,
-      roles: demoRoles.length ? demoRoles : ["admin"],
-      entitlements: { workspaceIds: [workspaceId], sourceDocumentAccessAllowed: true },
-      authMethod: "demo",
-      sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
-    };
+function asStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new AuthenticationError(`Invalid identity assertion ${field}`);
   }
+  return value;
+}
 
-  if (!safeEqual(request.headers.get("x-corvis-gateway-secret"), config.trustedAuthProxySecret)) {
-    throw new AuthenticationError("Untrusted identity gateway");
+function parseAssertionPayload(value: unknown, nowSeconds: number): GatewayIdentityAssertion {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new AuthenticationError("Invalid identity assertion payload");
+  const body = value as Record<string, unknown>;
+  if (body.v !== ASSERTION_VERSION) throw new AuthenticationError("Unsupported identity assertion version");
+  for (const field of ["sub","tenantId","workspaceId","sessionId"] as const) {
+    if (typeof body[field] !== "string" || !body[field]) throw new AuthenticationError(`Invalid identity assertion ${field}`);
   }
+  if (!Array.isArray(body.roles) || body.roles.length === 0) throw new AuthenticationError("Identity assertion has no roles");
+  const allowedRoles = new Set<Role>(["admin","reviewer","analyst","api_client","read_only"]);
+  const roles = body.roles.map((role) => {
+    if (typeof role !== "string" || !allowedRoles.has(role as Role)) throw new AuthenticationError("Identity assertion contains an invalid role");
+    return role as Role;
+  });
+  const authMethod = body.authMethod;
+  if (authMethod !== "oidc" && authMethod !== "saml" && authMethod !== "service_account") throw new AuthenticationError("Invalid identity assertion auth method");
+  if (!Number.isInteger(body.iat) || !Number.isInteger(body.exp)) throw new AuthenticationError("Invalid identity assertion timestamps");
+  const iat = Number(body.iat); const exp = Number(body.exp);
+  if (iat > nowSeconds + CLOCK_SKEW_SECONDS) throw new AuthenticationError("Identity assertion issued in the future");
+  if (exp < nowSeconds - CLOCK_SKEW_SECONDS) throw new AuthenticationError("Identity assertion expired");
+  if (exp <= iat || exp - iat > MAX_ASSERTION_LIFETIME_SECONDS) throw new AuthenticationError("Identity assertion lifetime is invalid");
+  if (!body.entitlements || typeof body.entitlements !== "object" || Array.isArray(body.entitlements)) throw new AuthenticationError("Invalid identity assertion entitlements");
+  const rawEntitlements = body.entitlements as Record<string, unknown>;
+  const entitlements: Entitlements = {
+    workspaceIds: asStringArray(rawEntitlements.workspaceIds, "workspaceIds"),
+    fundIds: rawEntitlements.fundIds === undefined ? undefined : asStringArray(rawEntitlements.fundIds, "fundIds"),
+    documentIds: rawEntitlements.documentIds === undefined ? undefined : asStringArray(rawEntitlements.documentIds, "documentIds"),
+    sourceDocumentAccessAllowed: rawEntitlements.sourceDocumentAccessAllowed === true,
+    internalAnalyticsAllowed: rawEntitlements.internalAnalyticsAllowed === true,
+    modelTrainingAllowed: rawEntitlements.modelTrainingAllowed === true,
+    redistributionAllowed: rawEntitlements.redistributionAllowed === true,
+  };
+  const workspaceId = String(body.workspaceId);
+  if (!entitlements.workspaceIds.includes(workspaceId)) throw new AuthenticationError("Workspace context not entitled");
+  return {
+    v: 1,
+    sub: String(body.sub),
+    tenantId: String(body.tenantId),
+    workspaceId,
+    roles,
+    entitlements,
+    authMethod,
+    sessionId: String(body.sessionId),
+    iat,
+    exp,
+  };
+}
 
+/**
+ * Production identity crosses one narrow cryptographic assertion boundary.
+ * The gateway must first authenticate the IdP/session and resolve the effective
+ * Corvis authorization context; clients cannot independently set tenant/roles.
+ */
+export function verifyGatewayIdentityAssertion(assertion: string | null, secret?: string, now = new Date()): RequestIdentity {
+  if (!assertion || !secret) throw new AuthenticationError("Missing signed identity assertion");
+  const separator = assertion.lastIndexOf(".");
+  if (separator <= 0 || separator === assertion.length - 1) throw new AuthenticationError("Malformed identity assertion");
+  const encodedPayload = assertion.slice(0, separator);
+  const encodedSignature = assertion.slice(separator + 1);
+  let signature: Buffer;
+  let payloadBytes: Buffer;
+  try {
+    signature = Buffer.from(encodedSignature, "base64url");
+    payloadBytes = Buffer.from(encodedPayload, "base64url");
+  } catch {
+    throw new AuthenticationError("Malformed identity assertion encoding");
+  }
+  const expected = createHmac("sha256", secret).update(encodedPayload).digest();
+  if (!safeEqualBytes(signature, expected)) throw new AuthenticationError("Invalid identity assertion signature");
+  let parsed: unknown;
+  try { parsed = JSON.parse(payloadBytes.toString("utf8")); }
+  catch { throw new AuthenticationError("Malformed identity assertion payload"); }
+  const verified = parseAssertionPayload(parsed, Math.floor(now.getTime() / 1000));
+  return {
+    subject: verified.sub,
+    tenantId: verified.tenantId,
+    workspaceId: verified.workspaceId,
+    roles: verified.roles,
+    entitlements: verified.entitlements,
+    authMethod: verified.authMethod,
+    sessionId: verified.sessionId,
+  };
+}
+
+function legacyTrustedGatewayIdentity(request: Request, secret?: string): RequestIdentity {
+  const supplied = request.headers.get("x-corvis-gateway-secret");
+  if (!supplied || !secret || !safeEqualBytes(Buffer.from(supplied), Buffer.from(secret))) throw new AuthenticationError("Untrusted identity gateway");
   const subject = request.headers.get("x-corvis-auth-subject");
   const tenantId = request.headers.get("x-corvis-auth-tenant");
   const workspaceId = request.headers.get("x-corvis-auth-workspace");
@@ -63,8 +148,35 @@ export function resolveRequestIdentity(request: Request): RequestIdentity {
       redistributionAllowed: request.headers.get("x-corvis-redistribution") === "true",
     },
     authMethod: parseAuthMethod(request.headers.get("x-corvis-auth-method")),
-    sessionId: request.headers.get("x-corvis-session-id") || `session-${correlation}`,
+    sessionId: request.headers.get("x-corvis-session-id") || `session-${randomUUID()}`,
   };
+}
+
+export function resolveRequestIdentity(request: Request): RequestIdentity {
+  const config = getServerConfig();
+  const correlation = request.headers.get("x-correlation-id") || randomUUID();
+
+  if (config.demoMode && config.environment !== "production") {
+    const demoRoles = parseRoles(request.headers.get("x-corvis-demo-roles"));
+    const workspaceId = request.headers.get("x-corvis-demo-workspace") || "workspace_demo";
+    return {
+      subject: request.headers.get("x-corvis-demo-subject") || "demo-user",
+      tenantId: request.headers.get("x-corvis-demo-tenant") || "tenant_demo",
+      workspaceId,
+      roles: demoRoles.length ? demoRoles : ["admin"],
+      entitlements: { workspaceIds: [workspaceId], sourceDocumentAccessAllowed: true },
+      authMethod: "demo",
+      sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
+    };
+  }
+
+  const assertion = request.headers.get("x-corvis-identity-assertion");
+  if (assertion) return verifyGatewayIdentityAssertion(assertion, config.trustedAuthProxySecret);
+  if (config.environment === "production") throw new AuthenticationError("Signed identity assertion is required in production");
+
+  // Temporary non-production compatibility path only. Production deliberately
+  // rejects independently mutable business-identity headers.
+  return legacyTrustedGatewayIdentity(request, config.trustedAuthProxySecret);
 }
 
 export class AuthenticationError extends Error {
