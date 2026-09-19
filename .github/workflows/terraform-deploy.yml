@@ -31,17 +31,46 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
-      TF_VAR_source_bucket_name: ${{ vars.GCS_SOURCE_BUCKET_NAME }}
-      TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_customer_hostname: ${{ vars.CUSTOMER_HOSTNAME }}
-      TF_VAR_admin_hostname: ${{ vars.ADMIN_HOSTNAME }}
-      TF_VAR_api_hostname: ${{ vars.API_HOSTNAME }}
+      TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_origin_ipv4_address: ${{ vars.GCP_ORIGIN_IPV4_ADDRESS }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_STATE_BUCKET: ${{ vars.GCP_PROJECT_ID }}-corvis-tf-state
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
+      - name: Validate deployment roots
+        shell: bash
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TF_VAR_project_id}" ]]; then
+            echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
+            exit 1
+          fi
+          if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
+            echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
+            exit 1
+          fi
+
+          edge_any=false
+          if [[ -n "${TF_VAR_cloudflare_zone_name}" || -n "${TF_VAR_origin_ipv4_address}" ]]; then
+            edge_any=true
+          fi
+          if [[ "${edge_any}" == "true" ]]; then
+            if [[ -z "${TF_VAR_cloudflare_zone_name}" || -z "${TF_VAR_origin_ipv4_address}" ]]; then
+              echo "Cloudflare edge configuration requires both CLOUDFLARE_ZONE_NAME and GCP_ORIGIN_IPV4_ADDRESS."
+              exit 1
+            fi
+            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+              echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."
+              exit 1
+            fi
+          fi
+
       - name: Guard apply source
         if: inputs.action == 'apply' && github.ref != 'refs/heads/main'
         shell: bash
@@ -56,7 +85,7 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
@@ -74,7 +103,7 @@ jobs:
           if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${TF_VAR_project_id}" >/dev/null 2>&1; then
             gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
               --project="${TF_VAR_project_id}" \
-              --location="asia-southeast1" \
+              --location="${GCP_REGION}" \
               --uniform-bucket-level-access
           fi
           gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \

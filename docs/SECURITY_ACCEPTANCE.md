@@ -19,20 +19,23 @@ Cloudflare DDoS managed protection is provider-managed and remains enabled indep
 
 `uat` and `prod` instantiate the module only when the complete edge tuple is available. Supplying only some edge inputs fails Terraform planning rather than applying a partially secured edge.
 
+The Cloudflare zone ID is resolved by the provider from `CLOUDFLARE_ZONE_NAME`; do not store a duplicate zone ID in GitHub. Public hostnames are deterministic: prod uses `app/admin/api.<zone>` and UAT uses `app/admin/api.uat.<zone>`.
+
 ## Deployment inputs
 
-The normal GitHub Environment inputs remain documented in `GITHUB_ENVIRONMENTS.md`. Security acceptance additionally consumes these derived/operational values:
+The normal GitHub Environment inputs remain documented in `GITHUB_ENVIRONMENTS.md`. Security acceptance additionally consumes these operational values:
 
 | Name | Purpose | Ownership |
 | --- | --- | --- |
-| `GCP_ORIGIN_IPV4_ADDRESS` | External HTTPS load-balancer address used by proxied Cloudflare A records | Derived from the GCP load-balancer deployment; do not hand-copy if deployment output can publish it |
-| `CLOUDFLARE_MANAGED_WAF_ENABLED` | `true` only when the zone plan supports the Cloudflare/OWASP managed rulesets | Environment rollout control; baseline custom WAF still applies when false |
-| `GCP_DIRECT_ORIGIN_PROBE_URLS` | Semicolon-separated exact direct-origin URLs used only by the security acceptance probe | Derived from public Cloud Run/LB deployment outputs; never contains credentials |
-| `CORVIS_POSTGRES_DSN_SECRET_NAME` | GCP Secret Manager secret name containing the derived runtime Postgres DSN | Derived/published by the database deployment path; the DSN itself is never stored in GitHub |
+| `GCP_ORIGIN_IPV4_ADDRESS` | External HTTPS load-balancer address used by proxied Cloudflare A records | Derived from the GCP load-balancer deployment; temporary GitHub variable only until Terraform can wire the output directly |
+| `CLOUDFLARE_MANAGED_WAF_ENABLED` | `true` only when the zone plan supports the Cloudflare/OWASP managed rulesets | Explicit rollout/capability decision; baseline custom WAF still applies when false |
+| `GCP_DIRECT_ORIGIN_PROBE_URLS` | Semicolon-separated exact direct-origin URLs used only by the security acceptance probe | Derived from public Cloud Run/LB deployment outputs; temporary GitHub variable until those outputs are queryable directly |
+
+The Postgres DSN itself remains a runtime secret in GCP Secret Manager. Its secret name is deterministic: `corvis-${environment}-postgres-dsn`, so GitHub does not carry a separate secret-name variable.
 
 `CLOUDFLARE_API_TOKEN` remains an environment-scoped deployment secret. It is read by the Cloudflare Terraform provider and must never be copied into runtime services.
 
-The Postgres acceptance job authenticates to GCP with the same GitHub OIDC/WIF trust used by deployment, reads the runtime DSN from Secret Manager for the duration of the job, masks it immediately and never uploads or logs it.
+The Postgres acceptance job authenticates to GCP with the same GitHub OIDC/WIF trust used by deployment, derives the `corvis-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com` service-account email, reads the runtime DSN from Secret Manager for the duration of the job, masks it immediately and never uploads or logs it.
 
 ## GCP origin requirement
 

@@ -1,24 +1,10 @@
 variable "project_id" { type = string }
 variable "source_bucket_name" { type = string }
 
-variable "cloudflare_zone_id" {
-  type    = string
-  default = ""
-}
-
-variable "customer_hostname" {
-  type    = string
-  default = ""
-}
-
-variable "admin_hostname" {
-  type    = string
-  default = ""
-}
-
-variable "api_hostname" {
-  type    = string
-  default = ""
+variable "cloudflare_zone_name" {
+  description = "Cloudflare zone name. The provider resolves the zone ID at plan/apply time."
+  type        = string
+  default     = ""
 }
 
 variable "origin_ipv4_address" {
@@ -28,6 +14,7 @@ variable "origin_ipv4_address" {
 }
 
 variable "enable_cloudflare_managed_waf" {
-  type    = bool
-  default = false
+  description = "Explicit rollout control for plan-dependent Cloudflare managed/OWASP rulesets."
+  type        = bool
+  default     = false
 }
