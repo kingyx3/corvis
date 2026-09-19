@@ -32,6 +32,7 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_VAR_api_image: ${{ vars.API_IMAGE }}
       TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_origin_ipv4_address: ${{ vars.GCP_ORIGIN_IPV4_ADDRESS }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
@@ -53,6 +54,10 @@ jobs:
           fi
           if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
             echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
+            exit 1
+          fi
+          if [[ "${{ inputs.environment }}" != "dev" && -n "${TF_VAR_api_image}" && ! "${TF_VAR_api_image}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "API_IMAGE must be an immutable digest reference ending in @sha256:<64 hex chars>."
             exit 1
           fi
 
