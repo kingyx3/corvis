@@ -132,7 +132,7 @@ await check("direct-origin-bypass-blocked", async () => {
       const response = await request(url);
       invariant([403, 404].includes(response.status), `direct origin ${url} remained reachable with status ${response.status}`);
       results.push({ url, outcome: `blocked-${response.status}` });
-    } catch (error) {
+    } catch {
       results.push({ url, outcome: "network-blocked" });
     }
   }
