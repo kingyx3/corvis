@@ -61,6 +61,7 @@ test("privileged and evidence routes preserve their specific authorization bound
     ["app/api/v1/admin/deletion-requests/[requestId]/execute/route.ts", "admin:manage"],
     ["app/api/v1/admin/feature-flags/route.ts", "admin:manage"],
     ["app/api/v1/admin/readiness/route.ts", "admin:manage"],
+    ["app/api/v1/admin/session-revocations/route.ts", "admin:manage"],
     ["app/api/v1/jobs/[jobId]/retry/route.ts", "admin:manage"],
     ["app/api/v1/exports/route.ts", "exports:create"],
     ["app/api/v1/research/route.ts", "research:query"],
@@ -142,3 +143,21 @@ test("Postgres tenant authorization remains keyed to auth.uid and tenant/workspa
   assert.match(sql, /m\.valid_until is null or m\.valid_until > now\(\)/);
   assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false, "client-side broad mutation policies must remain absent");
 });
+
+test("authoritative session revocation is tenant-scoped, server-managed, and checked on every production authorization lookup", async () => {
+  const migration = (await source("db/postgres/migrations/008_session_revocation.sql")).toLowerCase();
+  const authorization = await source("lib/server/authorization.ts");
+
+  assert.match(migration, /create table if not exists corvis_control\.session_revocation/);
+  assert.match(migration, /primary key \(tenant_id, auth_method, subject, session_id\)/);
+  assert.match(migration, /alter table corvis_control\.session_revocation enable row level security/);
+  assert.match(migration, /alter table corvis_control\.session_revocation force row level security/);
+  assert.equal(/create policy[^;]+session_revocation/.test(migration), false, "session revocation must stay server-managed with no client policy");
+
+  assert.match(authorization, /from corvis_control\.session_revocation r/);
+  assert.match(authorization, /r\.tenant_id=s\.tenant_id/);
+  assert.match(authorization, /r\.auth_method=s\.auth_method/);
+  assert.match(authorization, /r\.subject=s\.subject/);
+  assert.match(authorization, /r\.session_id=\$4/);
+}
+);
