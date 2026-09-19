@@ -2,7 +2,7 @@ import type { RequestIdentity, Role } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
-export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod">;
+export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId">;
 
 export type MembershipAuthorization = {
   roles: Role[];
@@ -11,8 +11,21 @@ export type MembershipAuthorization = {
   documentIds: string[];
 };
 
+export type SessionRevocation = {
+  tenantId: string;
+  authMethod: Exclude<RequestIdentity["authMethod"], "demo">;
+  subject: string;
+  sessionId: string;
+  revokedBySubject: string;
+  reason: string;
+};
+
 export interface MembershipAuthorizationRepository {
   resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null>;
+}
+
+export interface SessionRevocationRepository {
+  revoke(command: SessionRevocation): Promise<void>;
 }
 
 const ROLE_MAP: Record<string, Role | undefined> = {
@@ -55,10 +68,19 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
         and s.subject=$2
         and s.auth_method=$3
         and s.status='active'
+        and not exists (
+          select 1
+          from corvis_control.session_revocation r
+          where r.tenant_id=s.tenant_id
+            and r.auth_method=s.auth_method
+            and r.subject=s.subject
+            and r.session_id=$4
+        )
         and m.status='active'
         and m.valid_from <= now()
         and (m.valid_until is null or m.valid_until > now())
-      order by m.workspace_id, m.role_name, e.resource_type, e.resource_id`, [principal.tenantId, principal.subject, principal.authMethod]);
+      order by m.workspace_id, m.role_name, e.resource_type, e.resource_id`,
+    [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId]);
 
     const workspaceIds = [...new Set(rows.map((row) => text(row.workspace_id)).filter(Boolean))];
     if (!workspaceIds.includes(principal.workspaceId)) return null;
@@ -83,9 +105,31 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
   }
 }
 
-let singleton: MembershipAuthorizationRepository | undefined;
+export class PostgresSessionRevocationRepository implements SessionRevocationRepository {
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) {
+    this.db = db;
+  }
+
+  async revoke(command: SessionRevocation): Promise<void> {
+    await this.db.execute(`insert into corvis_control.session_revocation
+        (tenant_id,auth_method,subject,session_id,revoked_by_subject,reason)
+      values ($1::uuid,$2,$3,$4,$5,$6)
+      on conflict (tenant_id,auth_method,subject,session_id) do nothing`,
+    [command.tenantId, command.authMethod, command.subject, command.sessionId, command.revokedBySubject, command.reason]);
+  }
+}
+
+let membershipSingleton: MembershipAuthorizationRepository | undefined;
+let revocationSingleton: SessionRevocationRepository | undefined;
 
 export function membershipAuthorizationRepository(dsn = getServerConfig().postgresDsn): MembershipAuthorizationRepository {
-  if (!singleton) singleton = new PostgresMembershipAuthorizationRepository(postgres(dsn));
-  return singleton;
+  if (!membershipSingleton) membershipSingleton = new PostgresMembershipAuthorizationRepository(postgres(dsn));
+  return membershipSingleton;
+}
+
+export function sessionRevocationRepository(dsn = getServerConfig().postgresDsn): SessionRevocationRepository {
+  if (!revocationSingleton) revocationSingleton = new PostgresSessionRevocationRepository(postgres(dsn));
+  return revocationSingleton;
 }
