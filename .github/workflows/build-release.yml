@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   id-token: write
   attestations: write
   packages: write
@@ -46,6 +47,11 @@ jobs:
           fi
 
       - uses: actions/checkout@v7
+
+      - name: Verify effective release governance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
