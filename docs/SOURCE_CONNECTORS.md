@@ -2,6 +2,58 @@
 
 This document is the technical source of truth for automated acquisition of authorized customer documents from GP portals, data rooms and similar external repositories. Confluence owns the business/source-right requirements; GitHub owns connector implementation, credential handling, runtime isolation and operational behavior.
 
+## Implementation status
+
+**Landed:** `db/postgres/migrations/018_source_connectors.sql` defines the
+tenant-scoped connection/run/acquisition schema (RLS on every table;
+`source_connection` is server-only with no client SELECT policy at all,
+and its `secret_reference` column is constrained to a format that binds
+the tenant id directly into the Secret Manager resource name). `lib/server/source-connectors.ts`
+implements the connection lifecycle (create with mandatory scope
+confirmation, list with the secret reference always redacted, test,
+pause/resume, revoke, reauthorize) behind a `SecretStore` port so credential
+material is written through the port before Postgres ever sees anything but
+a reference, and reauthorization revokes the prior secret. `lib/server/source-connector-sync.ts`
+implements one discovery-and-acquisition cycle behind a `ConnectorDriver`
+port: it fails closed before ever calling the driver for anything but an
+`active` connection, computes the idempotent `acquisitionKey` from remote
+id + remote version + content hash (so a genuine remote content
+replacement is retained as a new acquisition rather than either being
+skipped or overwriting the prior one), classifies every driver error into
+one of the contracted classes and moves a non-retryable class
+(`auth`/`reauthorization`/`permission`/`provider_change`/`validation`) to
+`reauthorization_required` or `suspended` rather than retrying it forever,
+and records a per-document failure as a rejection without aborting the
+whole run. All of this is covered by `lib/server/source-connectors.test.ts`,
+`lib/server/source-connector-sync.test.ts` and
+`lib/server/source-connectors-contract.test.ts` (cross-tenant isolation,
+secret redaction, idempotent duplicate/replacement discovery, error-class
+routing, and the migration's own RLS/constraint contract).
+
+**Not yet implemented — the next integration step, in order:**
+1. A real `SecretStore` implementation (GCP Secret Manager or an approved
+   equivalent). No live secret-manager client exists in this repository
+   today (unlike Postgres/GCS, which the app already talks to directly),
+   and shipping one that has never been exercised against a real project
+   would be worse than leaving the port unimplemented. `SecretStore` is the
+   exact seam it plugs into.
+2. `app/api/v1/source-connections/**` customer/admin routes (create, list,
+   test, pause, resume, revoke, reauthorize) calling the module above,
+   gated the same way other admin-only surfaces are.
+3. At least one real `ConnectorDriver` for an approved representative
+   provider, and an `IngestSink` implementation that feeds an accepted
+   download into the existing upload/document-registration pipeline
+   (`lib/server/uploads.ts`) instead of a parallel path.
+4. Scheduling (Cloud Scheduler/Cloud Tasks or equivalent) that calls
+   `runConnectionSync` for each due `active` connection using
+   `source_connection.next_scheduled_at`.
+5. Provider-specific UAT fixtures per the "Testing" section below, run
+   against synthetic/test portal accounts.
+
+Building 1–4 unlocks the customer-facing `Connect source` flow this
+document otherwise describes; until then this is a tested, reusable
+foundation, not a working connector.
+
 ## Goal
 
 Corvis may provide customer-configured source connectors that automatically collect authorized investment-reporting documents and feed them into the same immutable ingestion and extraction pipeline used for customer uploads.
