@@ -1,11 +1,14 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "./authorization.ts";
+import { enforceRateLimit, type RateLimiter } from "./rate-limit.ts";
 import { AuthenticationError, resolveRequestIdentity } from "./request-context.ts";
 
 type ResolveAuthorizedOptions = {
   repository?: MembershipAuthorizationRepository;
   requireAuthoritative?: boolean;
+  rateLimiter?: RateLimiter;
+  now?: number;
 };
 
 /**
@@ -23,6 +26,16 @@ export async function resolveAuthorizedRequestIdentity(
   options: ResolveAuthorizedOptions = {},
 ): Promise<RequestIdentity> {
   const authenticated = resolveRequestIdentity(request);
+
+  // Every route that reaches this point has an authenticated tenant and
+  // subject (a user or a service account), so this is the narrowest place
+  // that still covers the whole authenticated app/api/v1 surface without
+  // threading rate limiting through each route handler individually.
+  enforceRateLimit(`${authenticated.tenantId}:${authenticated.subject}`, {
+    limiter: options.rateLimiter,
+    now: options.now,
+  });
+
   const config = getServerConfig();
   const requireAuthoritative = options.requireAuthoritative ?? config.environment === "production";
 

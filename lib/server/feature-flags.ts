@@ -260,6 +260,42 @@ export async function isFeatureEnabled(
   return evaluateFeatureFlag(await loadFeatureFlagSnapshot(identity, db), identity, key, channel).enabled;
 }
 
+/**
+ * Thrown by `assertFeatureEnabled` so a denied evaluation propagates through
+ * a route's existing `catch (error) { return apiError(error, id); }` instead
+ * of every call site re-implementing the same enabled/blocked branch.
+ */
+export class FeatureFlagDeniedError extends Error {
+  readonly key: string;
+  readonly channel: FeatureFlagChannel;
+  readonly decisionReason: FeatureFlagDecisionReason;
+  constructor(decision: FeatureFlagDecision) {
+    super(`Feature flag "${decision.key}" is not enabled for channel "${decision.channel}" (${decision.reason}).`);
+    this.name = "FeatureFlagDeniedError";
+    this.key = decision.key;
+    this.channel = decision.channel;
+    this.decisionReason = decision.reason;
+  }
+}
+
+/**
+ * Real call-site enforcement of a flag: the actual emergency kill switch,
+ * not just the governance API that reads/writes its rollout state. Every
+ * channel (customer UI, admin UI, API, workers, exports, AI/retrieval)
+ * should reach this same evaluator so a kill switch lands identically
+ * everywhere; `app/api/v1/exports/route.ts` gates parquet delivery through
+ * it as the first wired call site (issue #10).
+ */
+export async function assertFeatureEnabled(
+  identity: RequestIdentity,
+  key: string,
+  channel: FeatureFlagChannel,
+  db: PostgresSqlApi = controlDb(),
+): Promise<void> {
+  const decision = evaluateFeatureFlag(await loadFeatureFlagSnapshot(identity, db), identity, key, channel);
+  if (!decision.enabled) throw new FeatureFlagDeniedError(decision);
+}
+
 export async function resolveChannelFeatureFlags(
   identity: RequestIdentity,
   channel: FeatureFlagChannel,

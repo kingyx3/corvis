@@ -42,6 +42,19 @@ test("fully configured production environment is accepted without Snowflake", ()
   assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
 });
 
+test("the per-tenant rate limit defaults to 600 requests per minute and is env-configurable", () => {
+  assert.equal(getServerConfig({ NODE_ENV: "test" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute, 600);
+  assert.equal(
+    getServerConfig({ NODE_ENV: "test", CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "120" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute,
+    120,
+  );
+  // Non-numeric/invalid overrides fall back to the default rather than disabling the limit.
+  assert.equal(
+    getServerConfig({ NODE_ENV: "test", CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "not-a-number" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute,
+    600,
+  );
+});
+
 test("optional Snowflake bindings remain available when downstream analytics is activated", () => {
   const config = getServerConfig({
     ...productionEnvironment(),

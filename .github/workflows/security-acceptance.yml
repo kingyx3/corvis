@@ -84,6 +84,18 @@ jobs:
           path: security-acceptance-evidence.json
           if-no-files-found: error
           retention-days: 30
+      # Best effort: turns this job's evidence artifact into a control_evidence_record
+      # row (issue #14). CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN and CORVIS_CONTROL_TENANT_ID
+      # are not provisioned for this environment yet, so scripts/collect-control-evidence.ts
+      # skips cleanly (exit 0) until they are; continue-on-error keeps a real collection
+      # error from failing this otherwise-passing security-acceptance run.
+      - name: Record control evidence
+        if: always()
+        continue-on-error: true
+        env:
+          CORVIS_POSTGRES_DSN: ${{ secrets.CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN }}
+          CORVIS_CONTROL_TENANT_ID: ${{ vars.CORVIS_CONTROL_TENANT_ID }}
+        run: node scripts/collect-control-evidence.ts security-acceptance-evidence.json
 
   postgres-rls:
     runs-on: ubuntu-latest
@@ -96,6 +108,9 @@ jobs:
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
@@ -132,6 +147,18 @@ jobs:
           path: postgres-rls-security-acceptance-evidence.json
           if-no-files-found: warn
           retention-days: 30
+      # Best effort: turns this job's evidence artifact into a control_evidence_record
+      # row (issue #14). CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN and CORVIS_CONTROL_TENANT_ID
+      # are not provisioned for this environment yet, so scripts/collect-control-evidence.ts
+      # skips cleanly (exit 0) until they are; continue-on-error keeps a real collection
+      # error from failing this otherwise-passing security-acceptance run.
+      - name: Record control evidence
+        if: always()
+        continue-on-error: true
+        env:
+          CORVIS_POSTGRES_DSN: ${{ secrets.CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN }}
+          CORVIS_CONTROL_TENANT_ID: ${{ vars.CORVIS_CONTROL_TENANT_ID }}
+        run: node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
 
   record-known-good-release:
     needs: [edge, postgres-rls]
