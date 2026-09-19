@@ -19,6 +19,6 @@ provider "google" {
 module "foundation" {
   source             = "../../modules/gcp-foundation"
   project_id         = var.project_id
-  environment        = "dev"
+  environment        = "prod"
   source_bucket_name = var.source_bucket_name
 }
