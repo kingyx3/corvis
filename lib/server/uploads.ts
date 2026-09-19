@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "crypto";
-import type { RequestIdentity } from "@/core/enterprise";
-import { getServerConfig } from "@/lib/server/config";
-import { gcs, type GcsControlClient } from "@/lib/server/gcs";
-import { snowflake, type SnowflakeSqlApi } from "@/lib/server/snowflake";
+import type { RequestIdentity } from "../../core/enterprise.ts";
+import { getServerConfig } from "./config.ts";
+import { gcs, type GcsControlClient } from "./gcs.ts";
+import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
 export type UploadSession = {
   uploadId: string;
@@ -123,8 +123,14 @@ class DemoUploadSessions implements UploadSessionPort {
   async abort(identity: RequestIdentity, uploadId: string) { const s = await this.get(identity, uploadId); s.state = "aborted"; }
 }
 
-class ProductionUploadSessions implements UploadSessionPort {
-  constructor(private readonly store: GcsControlClient, private readonly db: SnowflakeSqlApi) {}
+export class ProductionUploadSessions implements UploadSessionPort {
+  private readonly store: GcsControlClient;
+  private readonly db: PostgresSqlApi;
+
+  constructor(store: GcsControlClient, db: PostgresSqlApi) {
+    this.store = store;
+    this.db = db;
+  }
 
   private async persist(session: UploadSession): Promise<void> {
     await this.store.putJson(sessionKey(session.tenantId, session.uploadId), session);
@@ -138,22 +144,26 @@ class ProductionUploadSessions implements UploadSessionPort {
 
   private async registerInitiated(session: UploadSession): Promise<void> {
     const objectUri = `gs://${this.store.bucket}/${session.objectKey}`;
-    await this.db.execute(`MERGE INTO PM_SOURCE.DOCUMENT t USING (SELECT ? TENANT_ID, ? DOCUMENT_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.DOCUMENT_ID=s.DOCUMENT_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,DOCUMENT_ID,DISPLAY_NAME,MEDIA_TYPE,STATUS,CREATED_AT,CREATED_BY) VALUES (?,?,?,?, 'uploading', TO_TIMESTAMP_TZ(?), ?)`, [session.tenantId,session.documentId,session.tenantId,session.documentId,session.fileName,session.contentType,session.createdAt,session.actorSubject]);
-    await this.db.execute(`MERGE INTO PM_SOURCE.DOCUMENT_ARTIFACT_VERSION t USING (SELECT ? TENANT_ID, ? DOCUMENT_ARTIFACT_VERSION_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.DOCUMENT_ARTIFACT_VERSION_ID=s.DOCUMENT_ARTIFACT_VERSION_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,DOCUMENT_ARTIFACT_VERSION_ID,DOCUMENT_ID,INGESTION_ID,OBJECT_URI,SIZE_BYTES,SHA256,MALWARE_SCAN_STATUS,QUARANTINE_STATUS,CREATED_AT) VALUES (?,?,?,?,?,?,?,'pending','pending',TO_TIMESTAMP_TZ(?))`, [session.tenantId,session.artifactVersionId,session.tenantId,session.artifactVersionId,session.documentId,session.ingestionId,objectUri,session.sizeBytes,session.checksumSha256 ?? null,session.createdAt]);
+    await this.db.execute(`insert into corvis_source.document
+        (tenant_id,document_id,display_name,media_type,status,created_at,created_by)
+      values ($1,$2::uuid,$3,$4,'uploading',$5::timestamptz,$6)
+      on conflict (tenant_id,document_id) do nothing`,
+    [session.tenantId,session.documentId,session.fileName,session.contentType,session.createdAt,session.actorSubject]);
+    await this.db.execute(`insert into corvis_source.document_artifact_version
+        (tenant_id,document_artifact_version_id,document_id,ingestion_id,object_uri,size_bytes,sha256,malware_scan_status,quarantine_status,created_at)
+      values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,'pending','pending',$8::timestamptz)
+      on conflict (tenant_id,document_artifact_version_id) do nothing`,
+    [session.tenantId,session.artifactVersionId,session.documentId,session.ingestionId,objectUri,session.sizeBytes,session.checksumSha256 ?? null,session.createdAt]);
   }
 
   private async release(session: UploadSession): Promise<void> {
     if (session.state === "complete") return;
-    const now = new Date().toISOString();
     session.state = "complete";
     session.malwareScanStatus = "clean";
-    session.releasedAt = now;
-    await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT_ARTIFACT_VERSION SET STORAGE_VERSION=?, MALWARE_SCAN_STATUS='clean', QUARANTINE_STATUS='released' WHERE TENANT_ID=? AND DOCUMENT_ARTIFACT_VERSION_ID=?`, [session.storageVersionId ?? null, session.tenantId, session.artifactVersionId]);
-    await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS='queued' WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.tenantId, session.documentId]);
-    const jobId = `registered:${session.documentId}`;
-    await this.db.execute(`MERGE INTO PM_CONTROL.PROCESSING_JOB t USING (SELECT ? TENANT_ID, ? JOB_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.JOB_ID=s.JOB_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,JOB_ID,DOCUMENT_ID,STAGE,STATE,ATTEMPT,MAX_ATTEMPTS,CORRELATION_ID,VERSION,CREATED_AT,UPDATED_AT) VALUES (?,?,?,'registered','queued',0,5,?,1,TO_TIMESTAMP_TZ(?),TO_TIMESTAMP_TZ(?))`, [session.tenantId,jobId,session.tenantId,jobId,session.documentId,session.ingestionId,now,now]);
-    const eventId = `document-registered:${session.documentId}`;
-    await this.db.execute(`MERGE INTO PM_CONTROL.OUTBOX_EVENT t USING (SELECT ? TENANT_ID, ? EVENT_ID) s ON t.TENANT_ID=s.TENANT_ID AND t.EVENT_ID=s.EVENT_ID WHEN NOT MATCHED THEN INSERT (TENANT_ID,EVENT_ID,EVENT_TYPE,AGGREGATE_TYPE,AGGREGATE_ID,PAYLOAD,CREATED_AT) SELECT ?,?,'DocumentRegistered','document',?,PARSE_JSON(?),TO_TIMESTAMP_TZ(?)`, [session.tenantId,eventId,session.tenantId,eventId,session.documentId,JSON.stringify({ documentId: session.documentId, artifactVersionId: session.artifactVersionId, ingestionId: session.ingestionId }),now]);
+    session.releasedAt = new Date().toISOString();
+    const rows = await this.db.query(`select corvis_source.release_clean_artifact($1::uuid,$2::uuid,$3::uuid,$4,$5) as job_id`,
+      [session.tenantId,session.documentId,session.artifactVersionId,session.storageVersionId ?? null,session.ingestionId]);
+    if (!rows[0]?.job_id) throw new Error("Artifact release did not create processing state");
     await this.persist(session);
   }
 
@@ -166,8 +176,11 @@ class ProductionUploadSessions implements UploadSessionPort {
       await this.release(session);
     } else if (status === config.gcsMalwareThreatValue) {
       session.malwareScanStatus = "threat";
-      await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT_ARTIFACT_VERSION SET MALWARE_SCAN_STATUS='threat', QUARANTINE_STATUS='quarantined' WHERE TENANT_ID=? AND DOCUMENT_ARTIFACT_VERSION_ID=?`, [session.tenantId, session.artifactVersionId]);
-      await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS='quarantined' WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.tenantId, session.documentId]);
+      await this.db.execute(`update corvis_source.document_artifact_version
+        set malware_scan_status='threat',quarantine_status='quarantined'
+        where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
+      await this.db.execute(`update corvis_source.document set status='quarantined'
+        where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
       await this.persist(session);
     }
     return session;
@@ -231,8 +244,12 @@ class ProductionUploadSessions implements UploadSessionPort {
     session.contentValidated = validateSourceMagic(session.fileName, prefix);
     session.state = "quarantined";
     session.malwareScanStatus = session.contentValidated ? "pending" : "error";
-    await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT_ARTIFACT_VERSION SET STORAGE_VERSION=?, MALWARE_SCAN_STATUS=?, QUARANTINE_STATUS='quarantined' WHERE TENANT_ID=? AND DOCUMENT_ARTIFACT_VERSION_ID=?`, [session.storageVersionId ?? null, session.contentValidated ? "pending" : "invalid_content", session.tenantId, session.artifactVersionId]);
-    await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS=? WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.contentValidated ? "quarantined" : "rejected", session.tenantId, session.documentId]);
+    await this.db.execute(`update corvis_source.document_artifact_version
+      set storage_generation=$1,malware_scan_status=$2,quarantine_status='quarantined'
+      where tenant_id=$3 and document_artifact_version_id=$4::uuid`,
+    [session.storageVersionId ?? null,session.contentValidated ? "pending" : "invalid_content",session.tenantId,session.artifactVersionId]);
+    await this.db.execute(`update corvis_source.document set status=$1
+      where tenant_id=$2 and document_id=$3::uuid`, [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
     await this.persist(session);
     if (!session.contentValidated) throw new Error("File content does not match the permitted document type");
     return this.refreshScan(session);
@@ -245,13 +262,14 @@ class ProductionUploadSessions implements UploadSessionPort {
       if (session.objectKey) await this.store.deleteObject(session.objectKey).catch(() => undefined);
     }
     session.state = "aborted";
-    await this.db.execute(`UPDATE PM_SOURCE.DOCUMENT SET STATUS='aborted' WHERE TENANT_ID=? AND DOCUMENT_ID=?`, [session.tenantId, session.documentId]).catch(() => undefined);
+    await this.db.execute(`update corvis_source.document set status='aborted'
+      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
     await this.persist(session);
   }
 }
 
 let singleton: UploadSessionPort | undefined;
 export function uploads(): UploadSessionPort {
-  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(gcs(), snowflake());
+  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(gcs(), postgres(getServerConfig().postgresDsn));
   return singleton;
 }
