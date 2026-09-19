@@ -38,13 +38,18 @@ export async function POST(request: Request) {
       start(controller) {
         const emit = (event: ResearchStreamEvent) => {
           if (closed) return;
-          try { controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)); }
-          catch { closed = true; }
+          try {
+            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          } catch {
+            closed = true;
+            request.signal.removeEventListener("abort", onRequestAbort);
+            if (!execution.signal.aborted) execution.abort();
+          }
         };
         const close = () => {
+          request.signal.removeEventListener("abort", onRequestAbort);
           if (closed) return;
           closed = true;
-          request.signal.removeEventListener("abort", onRequestAbort);
           try { controller.close(); } catch { /* response reader already closed */ }
         };
 
