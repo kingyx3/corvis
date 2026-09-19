@@ -4,26 +4,48 @@ This is the canonical setup checklist for repository deployment configuration.
 
 ## Policy
 
-Corvis uses three GitHub Environments: `dev`, `uat`, and `prod`.
+Corvis uses GitHub Environments `dev`, `uat`, and `prod`.
 
-Keep GitHub configuration as a **small set of external trust roots only**. Anything deterministic from those roots, the selected environment, Terraform outputs, provider lookups, or fixed architecture defaults must be derived in code instead of copied into another GitHub variable.
+Keep GitHub configuration to **external trust roots and genuine operator decisions only**. Anything deterministic from those roots, the selected environment, Terraform/provider lookups, deployed-resource outputs, or fixed architecture defaults must be derived in code instead of copied into another GitHub variable.
 
-GitHub is the deployment/configuration control plane, not the long-term runtime secret store. Runtime secrets belong in GCP Secret Manager. Customer-provided GP portal, data-room, and source-repository credentials are tenant runtime secrets configured through the authenticated product, never GitHub deployment secrets.
+GitHub is the deployment/configuration control plane, not the long-term runtime secret store. Runtime secrets belong in GCP Secret Manager. Customer source credentials are tenant runtime secrets configured through the authenticated product, never GitHub deployment secrets.
 
-## Current required GitHub Environment variables
+## Active GitHub variables
 
-The currently implemented GCP deployment requires exactly two custom variables per environment:
+### Required in every environment
 
 | Variable | Purpose | Why it remains a root |
 | --- | --- | --- |
-| `GCP_PROJECT_ID` | Target GCP project | Externally assigned/global identifier; cannot be safely inferred from the environment name. |
-| `GCP_WIF_PROVIDER` | Full Workload Identity Provider resource name | One-time GCP trust-bootstrap output required before GitHub can authenticate to GCP. |
+| `GCP_PROJECT_ID` | Target GCP project | Externally assigned/global identifier; cannot be safely inferred from `dev`/`uat`/`prod`. |
+| `GCP_WIF_PROVIDER` | Full Workload Identity Provider resource name | Required before GitHub can authenticate to GCP; the project number inside the resource name is not available until trust is established. |
 
-Do not add separate variables for values that can be derived from these roots.
+### Cloudflare edge (`uat` / `prod` only)
 
-## Values derived by the deployment workflow
+| Variable | Purpose | Why it remains |
+| --- | --- | --- |
+| `CLOUDFLARE_ZONE_NAME` | Registered Corvis Cloudflare zone | External domain ownership. Prefer one repository-level variable if UAT and prod share the same root zone. |
+| `GCP_ORIGIN_IPV4_ADDRESS` | GCP external HTTPS load-balancer address | Temporary deployment output until the load-balancer resource is managed in the same Terraform graph and can be wired directly. |
+| `CLOUDFLARE_MANAGED_WAF_ENABLED` | Enables plan-dependent Cloudflare/OWASP managed rulesets | Intentional rollout/capability decision, not a value that can be inferred safely. Defaults to `false`. |
 
-The Terraform deploy workflow derives the following values automatically:
+### Security acceptance (`uat` / `prod` only)
+
+| Variable | Purpose | Why it remains |
+| --- | --- | --- |
+| `GCP_DIRECT_ORIGIN_PROBE_URLS` | Semicolon-separated direct-origin URLs used to prove Cloudflare bypass is blocked | Temporary deployment output until public origin service URLs are queryable from managed GCP resources. |
+
+No GitHub variable is required for the Postgres DSN secret name. Security acceptance derives the contract `corvis-${environment}-postgres-dsn`.
+
+## Active GitHub secrets
+
+| Secret | Scope | Purpose |
+| --- | --- | --- |
+| `CLOUDFLARE_API_TOKEN` | `uat` / `prod` when edge deployment is enabled | Least-privilege deployment credential for Cloudflare DNS/zone/rules configuration. |
+
+There are **no custom GCP credential secrets**. GCP CI/CD uses GitHub OIDC -> Workload Identity Federation. `GITHUB_TOKEN` is supplied automatically by GitHub Actions and must not be created manually.
+
+## Values derived automatically
+
+The deployment and acceptance workflows derive these instead of storing them in GitHub:
 
 | Derived value | Derivation |
 | --- | --- |
@@ -33,56 +55,36 @@ The Terraform deploy workflow derives the following values automatically:
 | Terraform state bucket | `${GCP_PROJECT_ID}-corvis-tf-state` |
 | Terraform root | `infra/terraform/environments/${environment}` |
 | Artifact Registry repository | Terraform module default `corvis` |
-| Runtime API/worker service accounts | Terraform resources derived from project + environment |
+| Cloudflare zone ID | Provider lookup by `CLOUDFLARE_ZONE_NAME` using `CLOUDFLARE_API_TOKEN` |
+| Prod hostnames | `app.${zone}`, `admin.${zone}`, `api.${zone}` |
+| UAT hostnames | `app.uat.${zone}`, `admin.uat.${zone}`, `api.uat.${zone}` |
+| Postgres DSN secret name | `corvis-${environment}-postgres-dsn` |
+| API/worker service-account names | Terraform resources derived from project + environment |
 
-The one-time GCP bootstrap must therefore create the deploy service account with account ID `corvis-deploy` and grant the configured Workload Identity Provider permission to impersonate it.
+Cloud Run service URLs, future load-balancer outputs, image digests and runtime endpoints should likewise flow from Terraform/build outputs rather than becoming GitHub variables.
 
-### GitHub variables that should not be maintained
+## GitHub values to remove or avoid creating
 
-Remove these from `dev`, `uat`, and `prod` if they were previously created:
+Remove these if they already exist; they are fixed, derived, or provider-resolvable:
 
 - `GCP_REGION`
 - `GCP_DEPLOY_SERVICE_ACCOUNT`
 - `GCS_SOURCE_BUCKET_NAME`
 - `ARTIFACT_REGISTRY_REPOSITORY`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_ZONE_ID`
+- `CUSTOMER_HOSTNAME`
+- `ADMIN_HOSTNAME`
+- `API_HOSTNAME`
+- `CORVIS_POSTGRES_DSN_SECRET_NAME`
 
-They are fixed or derived and should have one source of truth in code.
+Do not store plaintext DSNs or generated runtime secrets as GitHub variables.
 
-## Current required GitHub Environment secrets
+## Conditional future provider roots
 
-**None.**
+Only add a provider credential when that integration is actually enabled and federation/provider lookup cannot replace it. Examples include `SUPABASE_ACCESS_TOKEN`, an upstream OIDC client secret, or a direct external AI/search/email provider API key.
 
-GCP deployment uses GitHub OIDC -> Workload Identity Federation and must not use a service-account JSON key. `GITHUB_TOKEN` is provided automatically by GitHub Actions and must not be created manually.
-
-## Conditional provider roots
-
-Only add provider-specific roots when the corresponding integration is actually implemented. Prefer Terraform/provider lookups and deterministic naming before adding another GitHub value.
-
-### Cloudflare
-
-Expected minimum roots when Cloudflare deployment is enabled:
-
-- variable: `CLOUDFLARE_ZONE_NAME` -- registered Corvis root domain; hostnames should be derived from it and the environment;
-- secret: `CLOUDFLARE_API_TOKEN` -- least-privilege deployment credential that cannot be derived.
-
-Do not persist `CLOUDFLARE_ZONE_ID` or `CLOUDFLARE_ACCOUNT_ID` in GitHub when the provider/API can resolve them from the zone/account context. Add an ID only if the implemented provider path proves it cannot be looked up reliably.
-
-Customer, admin, and API hostnames should be deterministic outputs of the DNS design rather than three independent GitHub variables.
-
-### Supabase
-
-Expected minimum roots when Supabase provisioning is enabled:
-
-- secret: `SUPABASE_ACCESS_TOKEN` -- management credential that cannot be derived;
-- variable: `SUPABASE_ORG_ID` -- keep only if the management API/provider cannot unambiguously resolve the intended organization from the authenticated account.
-
-Derive the project name from `environment`; keep the Singapore region in code; generate/bootstrap the database password rather than asking a human to maintain a second copy in GitHub. Persist the runtime database secret in GCP Secret Manager and tightly restrict Terraform state if provisioning requires the bootstrap password to pass through Terraform.
-
-### External identity, AI, search, observability, email, and anti-bot providers
-
-Add a GitHub secret only when the enabled provider requires a non-federated static credential that cannot be generated or stored directly in the runtime secret store. Examples include a provider API key or upstream OIDC client secret.
-
-Endpoints, audiences, service URLs, account IDs, resource IDs, and other non-secret values should come from deployment outputs, provider lookups, or fixed code defaults wherever possible.
+For Supabase, derive the project name from the environment, keep the Singapore region in code, generate the database bootstrap password through the deployment path where supported, and write the runtime DSN to GCP Secret Manager. Do not pre-create unused GitHub secrets.
 
 ## Secrets that must not be entered manually into GitHub
 
@@ -96,90 +98,30 @@ Generate, derive, or collect these through deployment/runtime flows and store th
 - Snowflake runtime OAuth/access material
 - customer GP portal/data-room/source credentials, OAuth refresh tokens, passwords, and session secrets
 
-Prefer IAM/OIDC/service identity over static internal tokens.
-
-## Credentials explicitly prohibited in GitHub
-
-Do not add:
-
-- `GCP_SERVICE_ACCOUNT_KEY`
-- `GOOGLE_APPLICATION_CREDENTIALS` containing JSON
-- static GCP access tokens for CI
-- AWS access key/secret key for the baseline application deployment
-- plaintext database DSNs in repository variables
-- customer source-portal credentials or session tokens
-
-## Runtime configuration propagation
-
-```text
-GitHub Environment
-  GCP_PROJECT_ID
-  GCP_WIF_PROVIDER
-        |
-        v
-GitHub Actions
-  |- derive region, service-account email, bucket names and Terraform root
-  |- OIDC -> GCP Workload Identity Federation
-  |- Terraform -> GCP and enabled external providers
-  |- provider/resource lookups -> IDs and URLs
-  |- generated runtime secrets -> GCP Secret Manager
-  `- Cloud Run/Jobs -> Secret Manager references + derived non-secret config
-
-Customer administrator
-        |
-        v
-Corvis runtime
-  |- connection metadata -> Postgres
-  `- source credential/token material -> GCP Secret Manager
-```
-
-## Derived runtime values
-
-The deployment pipeline should derive rather than manually configure:
-
-- `CORVIS_OBJECT_STORE_BUCKET` from the Terraform source-bucket output;
-- `CORVIS_UPLOAD_ALLOWED_ORIGINS` from customer/admin HTTPS hostnames;
-- `CORVIS_POSTGRES_DSN` from provisioned database connection information plus the generated database secret, then write it to Secret Manager;
-- Cloud Run service URLs and internal adapter endpoints from deployment outputs;
-- image URLs/digests from build output;
-- Cloudflare origin targets from deployed GCP origin/load-balancer outputs;
-- Snowflake non-secret database/warehouse names from the environment-specific analytics convention when Snowflake is activated.
-
-Defaults such as `CORVIS_GCS_CHUNK_SIZE_BYTES=8388608` stay in code unless an environment genuinely needs an override.
+Explicitly prohibited GitHub credentials include GCP service-account JSON keys, `GOOGLE_APPLICATION_CREDENTIALS` JSON, static GCP access tokens, plaintext database DSNs, and customer source credentials.
 
 ## One-time setup outside GitHub
 
 1. Create/own the GCP projects and attach billing.
 2. In each project, create the `corvis-deploy` service account.
 3. Create the GitHub Workload Identity Pool/provider and authorize the repository/environment identity to impersonate `corvis-deploy`.
-4. Create GitHub Environments `dev`, `uat`, and `prod`.
-5. Set only `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` in each environment.
-6. Register/own the domain and any external provider accounts only when those integrations are being activated.
-7. Add the minimum conditional provider roots described above; do not pre-create unused secrets.
+4. Create GitHub Environments `dev`, `uat`, and `prod` and set `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
+5. Register/own the Cloudflare zone. When edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the current origin IPv4 output, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`.
+6. Add `GCP_DIRECT_ORIGIN_PROBE_URLS` only when running production-like security acceptance and until those URLs can be derived from managed GCP resources.
 
 ## Production protections
 
-Recommended `prod` rules:
+For `prod`, require reviewed deployments once multiple operators exist, deploy only from approved refs, keep provider secrets environment-scoped, prevent untrusted PR code from receiving secrets, allow one infrastructure writer at a time, require plan-before-apply, and retain post-deploy acceptance evidence.
 
-- required reviewer/approval once multiple operators exist;
-- deployments only from the protected default branch or approved release refs;
-- no pull-request code from untrusted forks receives provider secrets;
-- one infrastructure writer per environment;
-- plan before apply;
-- explicit migration/infrastructure ordering;
-- post-deploy acceptance checks before a release is considered healthy.
-
-## Checklist
-
-For each environment:
+## Per-environment checklist
 
 - [ ] GitHub Environment exists.
-- [ ] `GCP_PROJECT_ID` is configured.
-- [ ] `GCP_WIF_PROVIDER` is configured.
+- [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured.
 - [ ] `corvis-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com` exists and is impersonable by the GitHub WIF identity.
 - [ ] obsolete derived GitHub variables are removed.
 - [ ] no custom GCP credential secret exists in GitHub.
-- [ ] Terraform plan succeeds using derived names.
+- [ ] Cloudflare roots exist only where edge deployment is enabled.
+- [ ] Terraform plan succeeds using derived names and provider lookups.
 - [ ] runtime secrets are in GCP Secret Manager, not GitHub.
 - [ ] deployed workloads use workload identity/Secret Manager references.
-- [ ] acceptance tests pass.
+- [ ] production-like acceptance tests pass before release.

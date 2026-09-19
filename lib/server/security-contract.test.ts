@@ -13,6 +13,16 @@ async function routeFiles(root: string): Promise<string[]> {
   return found.sort();
 }
 
+async function sourceFiles(root: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) found.push(...await sourceFiles(full));
+    else if (entry.isFile() && /\.(?:ts|tsx|js|jsx)$/.test(entry.name)) found.push(full.replaceAll("\\", "/"));
+  }
+  return found.sort();
+}
+
 async function source(file: string) {
   return readFile(file, "utf8");
 }
@@ -75,6 +85,27 @@ test("privileged and evidence routes preserve their specific authorization bound
 
   const uploadComplete = await source("app/api/v1/uploads/[uploadId]/complete/route.ts");
   assert.match(uploadComplete, /current\.actorSubject !== identity\.subject && !identity\.roles\.includes\(["']admin["']\)/, "upload completion must stay uploader-scoped except for admins");
+});
+
+test("browser and client adapter code cannot manufacture trusted identity gateway headers", async () => {
+  const files = [...await sourceFiles("app"), ...await sourceFiles("adapters")];
+  const forbidden = [
+    "x-corvis-gateway-secret",
+    "x-corvis-auth-subject",
+    "x-corvis-auth-tenant",
+    "x-corvis-auth-workspace",
+    "x-corvis-auth-roles",
+    "x-corvis-entitled-workspaces",
+    "x-corvis-entitled-documents",
+    "x-corvis-source-access",
+  ];
+
+  for (const file of files) {
+    const text = (await source(file)).toLowerCase();
+    for (const header of forbidden) {
+      assert.equal(text.includes(header), false, `${file} must not set or embed trusted identity header ${header}`);
+    }
+  }
 });
 
 test("all API routes are covered by the central browser CSRF/CORS boundary", async () => {

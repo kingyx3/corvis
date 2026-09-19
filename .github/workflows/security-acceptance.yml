@@ -1,0 +1,136 @@
+name: Security acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Production-like environment to verify
+        required: true
+        type: choice
+        options: [uat, prod]
+        default: uat
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: security-acceptance-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  edge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+      CLOUDFLARE_ZONE_NAME: ${{ vars.CLOUDFLARE_ZONE_NAME }}
+      DIRECT_ORIGIN_PROBE_URLS: ${{ vars.GCP_DIRECT_ORIGIN_PROBE_URLS }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Derive public hostnames
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_ZONE_NAME}" ]]; then
+            echo "CLOUDFLARE_ZONE_NAME is required for edge security acceptance."
+            exit 1
+          fi
+
+          case "${CORVIS_ENVIRONMENT}" in
+            prod) hostname_suffix="${CLOUDFLARE_ZONE_NAME}" ;;
+            uat) hostname_suffix="uat.${CLOUDFLARE_ZONE_NAME}" ;;
+            *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
+          esac
+
+          echo "CUSTOMER_HOSTNAME=app.${hostname_suffix}" >> "${GITHUB_ENV}"
+          echo "ADMIN_HOSTNAME=admin.${hostname_suffix}" >> "${GITHUB_ENV}"
+          echo "API_HOSTNAME=api.${hostname_suffix}" >> "${GITHUB_ENV}"
+
+      - name: Verify edge, transport and origin security
+        run: node .github/scripts/security-acceptance.mjs
+
+      - name: Upload sanitized edge security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
+          path: security-acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  postgres-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-{0}-postgres-dsn', inputs.environment) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Verify live Postgres RLS tenant isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          dsn="$(gcloud secrets versions access latest \
+            --project="${GCP_PROJECT_ID}" \
+            --secret="${POSTGRES_DSN_SECRET_NAME}")"
+          echo "::add-mask::${dsn}"
+
+          result="pass"
+          if ! PGCONNECT_TIMEOUT=15 psql "${dsn}" \
+              -X \
+              -v ON_ERROR_STOP=1 \
+              -f db/postgres/security_acceptance.sql; then
+            result="fail"
+          fi
+          unset dsn
+
+          checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg environment "${CORVIS_ENVIRONMENT}" \
+            --arg checkedAt "${checked_at}" \
+            --arg result "${result}" \
+            '{schemaVersion:"corvis.postgres-rls-security-acceptance.v1", environment:$environment, checkedAt:$checkedAt, source:"github-actions", result:$result, checks:["two-tenant-workspace-read-isolation","two-tenant-feature-flag-read-isolation","two-tenant-control-evidence-read-isolation","two-tenant-source-document-read-isolation","two-tenant-export-read-isolation","authenticated-control-mutation-denied"]}' \
+            > postgres-rls-security-acceptance-evidence.json
+
+          if [[ "${result}" != "pass" ]]; then
+            exit 1
+          fi
+
+      - name: Upload sanitized Postgres RLS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-rls-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
+          path: postgres-rls-security-acceptance-evidence.json
+          if-no-files-found: warn
+          retention-days: 30

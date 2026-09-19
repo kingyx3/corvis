@@ -32,6 +32,10 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
+      TF_VAR_origin_ipv4_address: ${{ vars.GCP_ORIGIN_IPV4_ADDRESS }}
+      TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
       GCP_REGION: asia-southeast1
@@ -43,13 +47,28 @@ jobs:
           GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
         run: |
           set -euo pipefail
-          if [ -z "${TF_VAR_project_id}" ]; then
+          if [[ -z "${TF_VAR_project_id}" ]]; then
             echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
             exit 1
           fi
-          if [ -z "${GCP_WIF_PROVIDER}" ]; then
+          if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
             echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
             exit 1
+          fi
+
+          edge_any=false
+          if [[ -n "${TF_VAR_cloudflare_zone_name}" || -n "${TF_VAR_origin_ipv4_address}" ]]; then
+            edge_any=true
+          fi
+          if [[ "${edge_any}" == "true" ]]; then
+            if [[ -z "${TF_VAR_cloudflare_zone_name}" || -z "${TF_VAR_origin_ipv4_address}" ]]; then
+              echo "Cloudflare edge configuration requires both CLOUDFLARE_ZONE_NAME and GCP_ORIGIN_IPV4_ADDRESS."
+              exit 1
+            fi
+            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+              echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."
+              exit 1
+            fi
           fi
 
       - name: Guard apply source
