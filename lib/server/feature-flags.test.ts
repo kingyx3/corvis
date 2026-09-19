@@ -3,7 +3,9 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import {
   FEATURE_FLAG_REGISTRY,
+  FeatureFlagDeniedError,
   FeatureFlagGovernanceError,
+  assertFeatureEnabled,
   enabledFeatureKeys,
   evaluateChannelFeatureFlags,
   evaluateFeatureFlag,
@@ -115,6 +117,59 @@ test("a passing flag with no gate and no blocker is enabled and carries its conf
   const decision = evaluateFeatureFlag(on, identity(), "ui.delivery_workspace", "customer_ui");
   assert.equal(decision.enabled, true);
   assert.deepEqual(decision.config, config);
+});
+
+// Dispatches on the SQL text so a single fake can answer both of
+// loadFeatureFlagSnapshot's parallel queries (feature_flag rows and the
+// tenant's emergency-stop row) with independently-configured results,
+// unlike the single-fixed-rows FakeDb above.
+class SnapshotFakeDb implements PostgresSqlApi {
+  readonly flagRows: PostgresRow[];
+  readonly stopRows: PostgresRow[];
+  constructor(flagRows: PostgresRow[] = [], stopRows: PostgresRow[] = []) {
+    this.flagRows = flagRows;
+    this.stopRows = stopRows;
+  }
+  async query(sql: string) {
+    return sql.includes("feature_flag_emergency_stop") ? this.stopRows : this.flagRows;
+  }
+  async execute() {}
+  async health() { return true; }
+}
+
+test("assertFeatureEnabled resolves when the real, wired call site's flag evaluates enabled", async () => {
+  const db = new SnapshotFakeDb([
+    { flag_key: "exports.parquet_delivery", enabled: true, kill_switch: false, configuration: {} },
+  ]);
+  const caller = identity({ entitlements: { workspaceIds: [WORKSPACE], sourceDocumentAccessAllowed: true, redistributionAllowed: true } });
+  await assert.doesNotReject(assertFeatureEnabled(caller, "exports.parquet_delivery", "export", db));
+});
+
+test("assertFeatureEnabled throws FeatureFlagDeniedError carrying the real evaluation reason when denied", async () => {
+  // Registered, entitlement-satisfied, but never configured for this tenant
+  // (the exact "an emergency kill switch never reaches real code" gap this
+  // wiring closes: the flag defaults closed, not open, when unconfigured).
+  const db = new SnapshotFakeDb([]);
+  const caller = identity({ entitlements: { workspaceIds: [WORKSPACE], sourceDocumentAccessAllowed: true, redistributionAllowed: true } });
+  await assert.rejects(
+    assertFeatureEnabled(caller, "exports.parquet_delivery", "export", db),
+    (error: unknown) =>
+      error instanceof FeatureFlagDeniedError &&
+      error.key === "exports.parquet_delivery" &&
+      error.channel === "export" &&
+      error.decisionReason === "not_configured",
+  );
+});
+
+test("assertFeatureEnabled's kill switch denies even a caller who is otherwise fully entitled", async () => {
+  const db = new SnapshotFakeDb([
+    { flag_key: "exports.parquet_delivery", enabled: true, kill_switch: true, kill_switch_reason: "incident-42", configuration: {} },
+  ]);
+  const caller = identity({ entitlements: { workspaceIds: [WORKSPACE], sourceDocumentAccessAllowed: true, redistributionAllowed: true } });
+  await assert.rejects(
+    assertFeatureEnabled(caller, "exports.parquet_delivery", "export", db),
+    (error: unknown) => error instanceof FeatureFlagDeniedError && error.decisionReason === "kill_switch",
+  );
 });
 
 test("evaluateChannelFeatureFlags and enabledFeatureKeys aggregate a whole channel deterministically", () => {

@@ -1,6 +1,6 @@
 import { AuthorizationError } from "@/core/enterprise";
 import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecycle";
-import { FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
+import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
 import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { RateLimitError } from "@/lib/server/rate-limit";
@@ -60,6 +60,10 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof FeatureFlagGovernanceError) {
     logEvent("warn", "feature_flag.governance_denied", { correlationId }, { code: error.code });
     return json({ error: error.code, correlationId }, { status: 422 });
+  }
+  if (error instanceof FeatureFlagDeniedError) {
+    logEvent("warn", "feature_flag.denied", { correlationId }, { key: error.key, channel: error.channel, reason: error.decisionReason });
+    return json({ error: "feature_disabled", flagKey: error.key, reason: error.decisionReason, correlationId }, { status: 403 });
   }
   if (error instanceof WebhookSubscriptionError) {
     logEvent("warn", "webhook_subscription.denied", { correlationId }, { code: error.code });
