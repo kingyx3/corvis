@@ -14,6 +14,7 @@ const delivery: ProcessingStageDelivery = {
 test("transport configuration is fail-closed until every real GCP binding is present", () => {
   assert.equal(processingTransportConfig({} as NodeJS.ProcessEnv), undefined);
   assert.equal(processingTransportConfig({
+    NODE_ENV: "test",
     CORVIS_GCP_PROJECT_ID: "project", CORVIS_PROCESSING_TOPIC_NAME: "topic", CORVIS_PROCESSING_QUEUE_NAME: "queue",
     CORVIS_PROCESSING_WORKER_URL: "https://worker.example/run", CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT: "worker@example.iam.gserviceaccount.com",
   } as NodeJS.ProcessEnv)?.region, "asia-southeast1");
