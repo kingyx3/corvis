@@ -27,6 +27,10 @@ class FakeDb implements PostgresSqlApi {
   async health(): Promise<boolean> { return true; }
 }
 
+class UnhealthyDb extends FakeDb {
+  async health(): Promise<boolean> { return false; }
+}
+
 const identity: RequestIdentity = {
   subject: "oidc|reviewer-1",
   tenantId: "00000000-0000-0000-0000-000000000010",
@@ -44,12 +48,49 @@ const identity: RequestIdentity = {
   sessionId: "session-1",
 };
 
+async function withReadinessEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = { ...process.env };
+  try {
+    process.env.NODE_ENV = "test";
+    process.env.CORVIS_DEMO_MODE = "false";
+    process.env.CORVIS_AUTH_ISSUER = "https://idp.example";
+    process.env.CORVIS_AUTH_AUDIENCE = "corvis";
+    process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = "test-secret";
+    process.env.CORVIS_OBJECT_STORE_BUCKET = "corvis-source-uat";
+    process.env.CORVIS_UPLOAD_ALLOWED_ORIGINS = "https://uat.example";
+    process.env.CORVIS_SEARCH_ENDPOINT = "https://search.example";
+    process.env.CORVIS_AI_ENDPOINT = "https://ai.example";
+    process.env.CORVIS_OBSERVABILITY_ENDPOINT = "https://otel.example";
+    return await fn();
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+  }
+}
+
 test("production platform source contains no direct Snowflake persistence", async () => {
   const source = await readFile("lib/server/platform.ts", "utf8");
   assert.equal(source.includes("@/lib/server/snowflake"), false);
   assert.equal(source.includes("./snowflake"), false);
   assert.equal(source.includes("SnowflakeProductionPlatform"), false);
   assert.match(source, /PostgresProductionPlatform/);
+});
+
+test("readiness is Postgres-primary and ignores optional Snowflake bindings", { concurrency: false }, async () => {
+  await withReadinessEnv(async () => {
+    process.env.CORVIS_SNOWFLAKE_DSN = "snowflake://optional-downstream";
+    const readiness = await new PostgresProductionPlatform(new FakeDb()).readiness();
+    assert.equal(readiness.postgres, "configured");
+    assert.equal("snowflake" in readiness, false);
+    assert.deepEqual(Object.keys(readiness).sort(), ["ai", "identity", "objectStore", "observability", "orchestration", "postgres", "retrieval"]);
+  });
+});
+
+test("readiness fails the authoritative structured-data binding when Postgres health fails", { concurrency: false }, async () => {
+  await withReadinessEnv(async () => {
+    const readiness = await new PostgresProductionPlatform(new UnhealthyDb()).readiness();
+    assert.equal(readiness.postgres, "missing");
+  });
 });
 
 test("workspace reads use the Postgres serving contract and explicit document allowlist", async () => {
