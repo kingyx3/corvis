@@ -1,4 +1,4 @@
-import type { ActivityRecord, DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
+import type { ActivityRecord, DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
 
 export const documents: DocumentRecord[] = [
   { id: "doc-adv-viii-q2", name: "Advent International GPE VIII — Q2 2026.pdf", fund: "Advent International GPE VIII", period: "Q2 2026", type: "Quarterly report", pages: 124, size: "86.4 MB", status: "Published", uploaded: "18 Sep, 08:31", quality: "High", observations: 486 },
