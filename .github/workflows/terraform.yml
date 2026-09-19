@@ -5,11 +5,13 @@ on:
     paths:
       - "infra/terraform/**"
       - ".github/workflows/terraform.yml"
+      - ".github/workflows/terraform-deploy.yml"
   push:
     branches: [main]
     paths:
       - "infra/terraform/**"
       - ".github/workflows/terraform.yml"
+      - ".github/workflows/terraform-deploy.yml"
 
 permissions:
   contents: read
