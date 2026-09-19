@@ -2,6 +2,10 @@ locals {
   source_range_chunks = chunklist(var.allowed_source_ranges, 10)
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 resource "google_compute_global_address" "api" {
   project      = var.project_id
   name         = "corvis-api-origin-${var.environment}"
@@ -119,6 +123,36 @@ resource "google_certificate_manager_certificate_map_entry" "api" {
   certificates = [google_certificate_manager_certificate.api.id]
 }
 
+resource "google_certificate_manager_trust_config" "cloudflare_origin_pull" {
+  project     = var.project_id
+  name        = "corvis-cloudflare-origin-pull-${var.environment}"
+  location    = "global"
+  description = "Trust Cloudflare's published Authenticated Origin Pull client CA for the Corvis API origin."
+
+  trust_stores {
+    trust_anchors {
+      pem_certificate = file("${path.module}/cloudflare-authenticated-origin-pull-ca.pem")
+    }
+  }
+}
+
+resource "google_network_security_server_tls_policy" "cloudflare_origin_pull" {
+  project     = var.project_id
+  name        = "corvis-api-origin-${var.environment}"
+  location    = "global"
+  description = "Require a valid Cloudflare Authenticated Origin Pull client certificate."
+  allow_open  = false
+
+  mtls_policy {
+    client_validation_mode         = "REJECT_INVALID"
+    client_validation_trust_config = "projects/${data.google_project.current.number}/locations/global/trustConfigs/${google_certificate_manager_trust_config.cloudflare_origin_pull.name}"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "google_compute_ssl_policy" "api" {
   project         = var.project_id
   name            = "corvis-api-${var.environment}"
@@ -127,13 +161,17 @@ resource "google_compute_ssl_policy" "api" {
 }
 
 resource "google_compute_target_https_proxy" "api" {
-  project         = var.project_id
-  name            = "corvis-api-${var.environment}"
-  url_map         = google_compute_url_map.api.id
-  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.api.id}"
-  ssl_policy      = google_compute_ssl_policy.api.id
+  project           = var.project_id
+  name              = "corvis-api-${var.environment}"
+  url_map           = google_compute_url_map.api.id
+  certificate_map   = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.api.id}"
+  ssl_policy        = google_compute_ssl_policy.api.id
+  server_tls_policy = google_network_security_server_tls_policy.cloudflare_origin_pull.id
 
-  depends_on = [google_certificate_manager_certificate_map_entry.api]
+  depends_on = [
+    google_certificate_manager_certificate_map_entry.api,
+    google_network_security_server_tls_policy.cloudflare_origin_pull,
+  ]
 }
 
 resource "google_compute_target_http_proxy" "redirect" {
