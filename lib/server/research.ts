@@ -99,6 +99,7 @@ export class PermissionedResearchService {
           id: semanticQueryId,
           status: semantic.status,
           shape: semantic.shape,
+          rows: semantic.rows,
           result: { rows: semantic.rows, factIds: semantic.factIds },
         },
         retrieval: hits.map((hit) => ({
