@@ -20,6 +20,9 @@ export interface ProcessingStageEffectPort {
   execute(input: ProcessingStageEffectInput): Promise<Record<string, unknown> | void>;
 }
 
+type StageRepository = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "fail">;
+type EffectRepository = Pick<PostgresProcessingStageEffectRepository, "begin" | "complete">;
+
 export type ProcessingStageWorkerResult =
   | { outcome: "duplicate" }
   | { outcome: "busy"; state: string }
@@ -40,8 +43,8 @@ function errorText(error: unknown): string {
 export async function runProcessingStageDelivery(input: {
   identity: RequestIdentity;
   delivery: ProcessingStageDelivery;
-  stages: PostgresProcessingStageRepository;
-  effects: PostgresProcessingStageEffectRepository;
+  stages: StageRepository;
+  effects: EffectRepository;
   handler: ProcessingStageEffectPort;
 }): Promise<ProcessingStageWorkerResult> {
   const { identity, delivery, stages, effects, handler } = input;
