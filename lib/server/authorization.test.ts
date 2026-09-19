@@ -6,7 +6,12 @@ import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.
 class FakeDb implements PostgresSqlApi {
   lastSql = "";
   lastParameters: PostgresPrimitive[] = [];
-  constructor(private readonly rows: PostgresRow[]) {}
+  private readonly rows: PostgresRow[];
+
+  constructor(rows: PostgresRow[]) {
+    this.rows = rows;
+  }
+
   async query(sql: string, parameters: PostgresPrimitive[] = []) {
     this.lastSql = sql;
     this.lastParameters = parameters;
