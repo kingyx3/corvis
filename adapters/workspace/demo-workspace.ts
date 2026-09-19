@@ -18,9 +18,23 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async listReconciliationExceptions() {
       return [];
     },
-    async research(question) {
+    async research(question, signal) {
+      signal?.throwIfAborted();
       assertDemoModuleAvailable("research");
       return demoCustomerJourneyStore.research(question);
+    },
+    async researchStream(question, onEvent, signal) {
+      signal?.throwIfAborted();
+      assertDemoModuleAvailable("research");
+      onEvent({ type: "progress", phase: "planning" });
+      signal?.throwIfAborted();
+      onEvent({ type: "progress", phase: "retrieval" });
+      signal?.throwIfAborted();
+      onEvent({ type: "progress", phase: "generation" });
+      const data = await demoCustomerJourneyStore.research(question);
+      signal?.throwIfAborted();
+      onEvent({ type: "result", data });
+      return data;
     },
     async sourceEvidence(sourceReferenceId) {
       return demoCustomerJourneyStore.sourceEvidence(sourceReferenceId);

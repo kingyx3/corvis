@@ -28,6 +28,7 @@ export type ServerConfig = {
   searchApiToken?: string;
   aiEndpoint?: string;
   aiApiToken?: string;
+  researchTimeoutMs: number;
 
   observabilityEndpoint?: string;
   observabilityToken?: string;
@@ -76,6 +77,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     searchApiToken: env.CORVIS_SEARCH_API_TOKEN,
     aiEndpoint: env.CORVIS_AI_ENDPOINT,
     aiApiToken: env.CORVIS_AI_API_TOKEN,
+    researchTimeoutMs: Math.min(positiveInteger(env.CORVIS_RESEARCH_TIMEOUT_MS) ?? 30_000, 120_000),
     observabilityEndpoint: env.CORVIS_OBSERVABILITY_ENDPOINT,
     observabilityToken: env.CORVIS_OBSERVABILITY_TOKEN,
     webhookSigningSecret: env.CORVIS_WEBHOOK_SIGNING_SECRET,

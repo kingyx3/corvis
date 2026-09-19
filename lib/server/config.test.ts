@@ -20,6 +20,13 @@ test("GCS resumable chunk size must be a multiple of 256 KiB", () => {
   assert.throws(() => getServerConfig({ NODE_ENV: "test", CORVIS_GCS_CHUNK_SIZE_BYTES: "1000000" } as NodeJS.ProcessEnv), /multiple of 256 KiB/);
 });
 
+test("Ask Corvis deadline defaults to 30 seconds and is capped at 120 seconds", () => {
+  assert.equal(getServerConfig({ NODE_ENV: "test" } as NodeJS.ProcessEnv).researchTimeoutMs, 30_000);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "45000" } as NodeJS.ProcessEnv).researchTimeoutMs, 45_000);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "999999" } as NodeJS.ProcessEnv).researchTimeoutMs, 120_000);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "invalid" } as NodeJS.ProcessEnv).researchTimeoutMs, 30_000);
+});
+
 test("fully configured production environment is accepted without Snowflake", () => {
   const config = getServerConfig(productionEnvironment());
   assert.equal(config.demoMode, false);
@@ -30,6 +37,7 @@ test("fully configured production environment is accepted without Snowflake", ()
   assert.equal(config.objectStoreBucket, "corvis-prod");
   assert.deepEqual(config.uploadAllowedOrigins, ["https://customer.example.com", "https://admin.example.com"]);
   assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
+  assert.equal(config.researchTimeoutMs, 30_000);
   assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
   assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
 });

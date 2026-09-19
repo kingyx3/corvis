@@ -180,6 +180,11 @@ export type ResearchAnswer = {
   modelVersion?: string;
   uncertainty?: string;
 };
+export type ResearchProgressPhase = "planning" | "retrieval" | "generation";
+export type ResearchStreamEvent =
+  | { type: "progress"; phase: ResearchProgressPhase }
+  | { type: "result"; data: ResearchAnswer }
+  | { type: "error"; code: "research_timeout" | "research_cancelled" | "research_provider_error" | "research_failed" };
 
 export type ExportManifest = {
   exportId: string; tenantId: string; generatedAt: string; schemaVersion: string; taxonomyVersion: string;

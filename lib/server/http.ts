@@ -1,5 +1,6 @@
 import { AuthorizationError } from "@/core/enterprise";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
+import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { logEvent } from "@/lib/server/telemetry";
 
@@ -30,6 +31,18 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof PublicationGateError) {
     logEvent("warn", "snapshot.publication_blocked", { correlationId }, { reasons: error.reasons });
     return json({ error: "publication_blocked", reasons: error.reasons, correlationId }, { status: 409 });
+  }
+  if (error instanceof ResearchTimeoutError) {
+    logEvent("warn", "research.timeout", { correlationId });
+    return json({ error: error.code, correlationId }, { status: 504 });
+  }
+  if (error instanceof ResearchCancelledError) {
+    logEvent("info", "research.cancelled", { correlationId });
+    return json({ error: error.code, correlationId }, { status: 499 });
+  }
+  if (error instanceof ResearchProviderError) {
+    logEvent("error", "research.provider_error", { correlationId }, { provider: error.provider, status: error.status ?? null });
+    return json({ error: error.code, correlationId }, { status: 502 });
   }
   logEvent("error", "api.unhandled_error", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown", message: error instanceof Error ? error.message : "Unknown error" });
   return json({ error: "internal_error", correlationId }, { status: 500 });
