@@ -1,0 +1,13 @@
+{
+  "releaseGovernancePassed": true,
+  "migrationsCurrent": true,
+  "runtimeSecretsReady": true,
+  "sourceConnectivity": true,
+  "deliveryConnectivity": true,
+  "tenantIsolationVerified": true,
+  "lineageComplete": true,
+  "backfillReconciled": true,
+  "rollbackVerified": true,
+  "unresolvedExceptions": 0,
+  "undocumentedManualInterventions": 0
+}

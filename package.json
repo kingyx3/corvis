@@ -10,6 +10,7 @@
     "lint": "eslint . --max-warnings=0",
     "test": "node --test core/*.test.ts lib/server/*.test.ts control-loop/*.test.ts",
     "test:e2e": "playwright test",
+    "customer:preflight": "node scripts/customer-implementation.ts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

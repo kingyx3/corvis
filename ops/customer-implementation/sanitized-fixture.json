@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1",
+  "customerKey": "allocator-demo",
+  "environment": "uat",
+  "tenantId": "00000000-0000-4000-8000-000000000101",
+  "workspaceId": "00000000-0000-4000-8000-000000000102",
+  "release": {
+    "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "migrationVersion": 22
+  },
+  "rights": {
+    "fundIds": ["fund-demo"],
+    "sourceDocumentAccessAllowed": true,
+    "redistributionAllowed": true
+  },
+  "providers": {
+    "postgresSecretName": "corvis-postgres-dsn-uat",
+    "objectBucket": "corvis-uat-source-example",
+    "sourceConnectionIds": [],
+    "deliveryWebhookIds": []
+  },
+  "cutover": {
+    "rollbackImageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "owner": "customer-operations",
+    "changeReference": "UAT-DEMO-001"
+  }
+}
