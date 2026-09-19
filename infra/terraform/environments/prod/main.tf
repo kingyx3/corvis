@@ -76,6 +76,14 @@ module "foundation" {
   enforce_service_account_key_upload_disabled   = true
 }
 
+module "api_runtime" {
+  source                    = "../../modules/cloud-run-runtime"
+  project_id                = var.project_id
+  environment               = "prod"
+  api_image                 = var.api_image
+  api_service_account_email = module.foundation.api_service_account
+}
+
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 

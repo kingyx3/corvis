@@ -1,6 +1,12 @@
 variable "project_id" { type = string }
 variable "source_bucket_name" { type = string }
 
+variable "api_image" {
+  description = "Immutable production API image reference. Empty keeps the API runtime unprovisioned until image promotion is configured."
+  type        = string
+  default     = ""
+}
+
 variable "cloudflare_zone_name" {
   description = "Cloudflare zone name. The provider resolves the zone ID at plan/apply time."
   type        = string
