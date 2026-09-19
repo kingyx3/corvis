@@ -3,13 +3,17 @@
 import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
 import type { DocumentRecord, UploadProgress } from "@/core/contracts";
 import { Icon } from "@/components/ui/icon";
+import { useFocusTrap } from "@/components/ui/use-focus-trap";
 import { formatBytes } from "@/lib/format";
 import { uploadDocument, uploadRuntime } from "@/runtime/services";
 
 export function UploadModal({ onClose, onCompleted }: { onClose: () => void; onCompleted: (record: DocumentRecord) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [queue, setQueue] = useState<Record<string, UploadProgress>>({});
   const [dragging, setDragging] = useState(false);
+
+  useFocusTrap(dialogRef, onClose);
 
   const addFiles = async (files: File[]) => {
     const accepted = files.filter((file) => /\.(pdf|xlsx|xls|docx|pptx|csv)$/i.test(file.name));
@@ -30,7 +34,7 @@ export function UploadModal({ onClose, onCompleted }: { onClose: () => void; onC
   const items = Object.entries(queue);
   const allDone = items.length > 0 && items.every(([, item]) => item.status === "complete");
 
-  return <div className="modal-backdrop"><div className="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+  return <div className="modal-backdrop"><div ref={dialogRef} className="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title" tabIndex={-1}>
     <div className="modal-head"><div><p className="eyebrow">SOURCE INGESTION</p><h2 id="upload-title">Upload documents</h2><p>Files are registered immediately, then processed independently by downstream modules.</p></div><button className="icon-button" onClick={onClose} aria-label="Close upload dialog"><Icon name="close"/></button></div>
     <button type="button" className={`drop-zone ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop} onClick={() => inputRef.current?.click()} aria-label="Choose source documents to upload"><div className="drop-icon"><Icon name="upload" size={24}/></div><strong>Drop files here, or choose files</strong><span>PDF, Excel, Word, PowerPoint or CSV · large files supported</span></button><input ref={inputRef} type="file" hidden multiple accept=".pdf,.xlsx,.xls,.docx,.pptx,.csv" onChange={onChange}/>
     <div className="upload-architecture"><Icon name="shield"/><span>Large files upload directly to Google Cloud Storage using resumable {Math.round(uploadRuntime.chunkSize / 1024 / 1024)} MB chunks; application servers do not proxy file bodies.</span><b>{uploadRuntime.mode === "mock" ? "Demo transport" : "GCS resumable"}</b></div>
