@@ -6,20 +6,20 @@ This document owns the executable technical security-acceptance contract for the
 
 `infra/terraform/modules/cloudflare-edge` manages the baseline public-edge controls for production-like environments:
 
-- proxied customer/admin/API DNS records pointing at the GCP external HTTPS load balancer;
+- proxied DNS for each currently provisioned public Corvis surface pointing at the Terraform-managed GCP external HTTPS load balancer;
 - Full (strict) origin TLS, TLS 1.3 and HTTP-to-HTTPS redirect settings;
 - zone-level custom WAF rules that block non-standard ports and unsafe TRACE/CONNECT methods;
 - per-IP API rate limiting;
 - deterministic WAF/rate-limit probe rules used only to prove enforcement in UAT;
-- cache bypass for dynamic customer/admin/API traffic;
-- caching only for immutable `/_next/static/` assets;
+- cache bypass for dynamic Corvis traffic;
+- caching only for immutable `/_next/static/` assets when a customer/admin web surface is provisioned;
 - optional Cloudflare Managed + OWASP managed rulesets when the selected Cloudflare plan supports them.
 
 Cloudflare DDoS managed protection is provider-managed and remains enabled independently of these custom rules.
 
-`uat` and `prod` instantiate the module only when the complete edge tuple is available. Supplying only some edge inputs fails Terraform planning rather than applying a partially secured edge.
+The current production-like edge publishes the API hostname only. Customer/admin hostnames remain absent until their independent runtime boundaries are provisioned; they must not be pointed at the API service merely to make DNS appear complete.
 
-The Cloudflare zone ID is resolved by the provider from `CLOUDFLARE_ZONE_NAME`; do not store a duplicate zone ID in GitHub. Public hostnames are deterministic: prod uses `app/admin/api.<zone>` and UAT uses `app/admin/api.uat.<zone>`.
+The Cloudflare zone ID is resolved by the provider from `CLOUDFLARE_ZONE_NAME`; do not store a duplicate zone ID in GitHub. The API hostname is deterministic: prod uses `api.<zone>` and UAT uses `api.uat.<zone>`.
 
 ## Deployment inputs
 
@@ -27,9 +27,10 @@ The normal GitHub Environment inputs remain documented in `GITHUB_ENVIRONMENTS.m
 
 | Name | Purpose | Ownership |
 | --- | --- | --- |
-| `GCP_ORIGIN_IPV4_ADDRESS` | External HTTPS load-balancer address used by proxied Cloudflare A records | Derived from the GCP load-balancer deployment; temporary GitHub variable only until Terraform can wire the output directly |
 | `CLOUDFLARE_MANAGED_WAF_ENABLED` | `true` only when the zone plan supports the Cloudflare/OWASP managed rulesets | Explicit rollout/capability decision; baseline custom WAF still applies when false |
-| `GCP_DIRECT_ORIGIN_PROBE_URLS` | Semicolon-separated exact direct-origin URLs used only by the security acceptance probe | Derived from public Cloud Run/LB deployment outputs; temporary GitHub variable until those outputs are queryable directly |
+| `GCP_DIRECT_ORIGIN_PROBE_URLS` | Semicolon-separated exact direct-origin URLs used only by the security acceptance probe | Temporary deployment output until those URLs can be derived from managed GCP resources |
+
+The load-balancer IPv4 address is Terraform-owned and wired directly into proxied Cloudflare DNS. It is not a human-managed GitHub input.
 
 The Postgres DSN itself remains a runtime secret in GCP Secret Manager. Its secret name is deterministic: `corvis-${environment}-postgres-dsn`, so GitHub does not carry a separate secret-name variable.
 
@@ -39,14 +40,17 @@ The Postgres acceptance job authenticates to GCP with the same GitHub OIDC/WIF t
 
 ## GCP origin requirement
 
-Cloudflare is not an origin security boundary unless bypassing it is blocked. Public Cloud Run services must therefore be deployed behind the GCP external Application Load Balancer with Cloud Run ingress restricted to **internal and Cloud Load Balancers**. Direct internet traffic to a `run.app` endpoint must not reach the application.
+Cloudflare is not an origin security boundary unless bypassing it is blocked. The API is therefore deployed behind the GCP global external Application Load Balancer with a serverless NEG targeting Cloud Run, while Cloud Run ingress remains restricted to **internal and Cloud Load Balancers**. Direct internet traffic to the default `run.app` route must not reach the application.
 
-When the public customer/admin/API Cloud Run resources are added under issue #13, their Terraform definitions must set the equivalent of:
+The load-balancer backend is additionally protected by Cloud Armor. Terraform resolves Cloudflare's current IPv4 and IPv6 proxy ranges from the Cloudflare provider at plan/apply time, allows those ranges, and applies a default `403` deny to every other source. Do not replace this with a manually maintained GitHub CIDR list or a broad internet allow rule.
 
-- `ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"`; and
-- disable the default `run.app` URL where compatible with the service's invocation model.
+Cloud Run permits unauthenticated invocation at its IAM transport layer because the external Application Load Balancer does not present an end-user Cloud Run identity. That does **not** replace Corvis authentication or authorization: the Cloud Run ingress restriction blocks direct public service ingress, Cloud Armor restricts the load-balancer backend to Cloudflare, and server-side Corvis identity/tenant/RLS/data-right controls still execute independently on every protected application request.
 
-Do not disable a default URL for a worker/service that is intentionally invoked through a Google product that requires that URL. The direct-origin negative test remains mandatory for every public customer/admin/API origin.
+The API origin certificate is managed by Google Certificate Manager with DNS authorization. The authorization record is published unproxied in Cloudflare while the application API record remains proxied.
+
+Do not weaken Cloud Run ingress, Cloud Armor, RLS, authorization or application authentication to restore availability. A missing/invalid edge or origin dependency must fail closed.
+
+Cloudflare-to-origin mTLS remains a separate Confluence launch gate until implemented and evidenced. Cloud Armor source restriction materially reduces bypass exposure but does not satisfy the mTLS gate by itself.
 
 ## Executable UAT evidence
 
@@ -56,7 +60,7 @@ Run **Security acceptance** from GitHub Actions against `uat` after the Cloudfla
 
 `.github/scripts/security-acceptance.mjs` fails unless it proves:
 
-1. customer/admin/API HTTPS traffic traverses Cloudflare;
+1. each configured public HTTPS endpoint traverses Cloudflare;
 2. HSTS and `nosniff` are present on public application responses;
 3. API responses are `no-store` and are not observed as shared-cache hits;
 4. plain HTTP redirects to HTTPS;
