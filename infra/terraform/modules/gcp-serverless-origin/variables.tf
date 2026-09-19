@@ -30,3 +30,13 @@ variable "dns_authorization_id" {
   description = "Certificate Manager DNS authorization resource ID for hostname."
   type        = string
 }
+
+variable "cloudflare_origin_cidrs" {
+  description = "Current Cloudflare proxy egress CIDRs permitted to reach the API origin."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.cloudflare_origin_cidrs) > 0
+    error_message = "cloudflare_origin_cidrs must contain at least one Cloudflare proxy range; origin exposure fails closed."
+  }
+}
