@@ -112,7 +112,22 @@ export type SnapshotPublication = {
 };
 
 export type SourceCitation = { sourceReferenceId: string; documentId: string; page?: number; label: string };
-export type ResearchAnswer = { answer: string; citations: SourceCitation[]; semanticQueryIds: string[]; modelVersion?: string; uncertainty?: string };
+export type SemanticComputedResult = {
+  semanticQueryId: string;
+  status: "executed" | "unresolved" | "unsupported";
+  metricCode?: string;
+  operation: "values" | "sum" | "average" | "minimum" | "maximum" | "count";
+  rows: Array<Record<string, unknown>>;
+  reason?: string;
+};
+export type ResearchAnswer = {
+  answer: string;
+  citations: SourceCitation[];
+  semanticQueryIds: string[];
+  computedResults?: SemanticComputedResult[];
+  modelVersion?: string;
+  uncertainty?: string;
+};
 
 export type ExportManifest = {
   exportId: string; tenantId: string; generatedAt: string; schemaVersion: string; taxonomyVersion: string;

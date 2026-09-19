@@ -28,6 +28,7 @@ test("data rights are server-managed, current, deny-by-default and resolved at t
 test("serving, review, research and export paths retain explicit resource/data-right predicates", async () => {
   const repositories = await source("lib/server/platform-repositories.ts");
   const research = await source("lib/server/research.ts");
+  const semanticQuery = await source("lib/server/semantic-query.ts");
   const platform = await source("lib/server/platform.ts");
   const enterprise = await source("core/enterprise.ts");
 
@@ -36,7 +37,11 @@ test("serving, review, research and export paths retain explicit resource/data-r
   assert.match(repositories, /r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
   assert.match(repositories, /o\.observation_id=\$2::uuid[\s\S]*o\.fund_id in[\s\S]*r\.document_id::text in/);
 
-  assert.match(research, /documentIds: \[\.\.\.\(identity\.entitlements\.documentIds \?\? \[\]\)\]\.sort\(\)/);
+  assert.match(semanticQuery, /const entitledFundIds = \[\.\.\.\(identity\.entitlements\.fundIds \?\? \[\]\)\]\.sort\(\)/);
+  assert.match(semanticQuery, /const documentIds = \[\.\.\.\(identity\.entitlements\.documentIds \?\? \[\]\)\]\.sort\(\)/);
+  assert.match(semanticQuery, /o\.tenant_id=\$1[\s\S]*o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)[\s\S]*r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
+  assert.match(semanticQuery, /and o\.metric_code=\$4/);
+
   assert.match(research, /const sourceDocumentIds = identity\.entitlements\.sourceDocumentIds \?\? \[\]/);
   assert.match(research, /sourceDocumentIds\.includes\(hit\.documentId\)/);
 
