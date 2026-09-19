@@ -23,8 +23,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E
         run: npm run test:e2e
       - name: Dependency audit

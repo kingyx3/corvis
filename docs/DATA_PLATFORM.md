@@ -64,6 +64,30 @@ Version-controlled SQL owns:
 
 Terraform may create/manage the Supabase project and provider-supported project settings, but SQL migrations are the authoritative database contract.
 
+### Migration replay and lineage assurance
+
+`db/postgres/migrate.ts` (backed by `lib/server/postgres-migration-runner.ts`) is a
+deterministic, forward-only replay tool: it discovers every versioned migration,
+refuses a version gap, duplicate version, or drift between an already-applied
+migration's recorded checksum and its current repository content, and records
+every applied version in a runner-owned `corvis_migration.schema_migration`
+ledger inside the same transaction as the migration's own DDL. `--dry-run`
+produces the full replay plan without contacting a database; `--apply` replays
+only pending migrations against `CORVIS_POSTGRES_DSN` and is safe to re-run
+against an up-to-date database (it then executes no migration SQL). Deployment
+workflows are expected to call this tool rather than applying SQL by hand.
+
+`lib/server/postgres-lineage.ts` walks a published fund-period snapshot back
+through consolidated facts, canonical observations, source references and
+retained GCS artifact evidence, reporting every broken hop explicitly instead
+of inferring reproducibility. This proves the repository-side half of
+historical-snapshot reproducibility and lineage reconciliation.
+
+**Still provider-gated, not covered by the above:** actually running replay
+against a provisioned UAT/prod Supabase project, backup/restore and PITR
+exercises, and representative large-dataset/performance tests. Those require
+#13's environment provisioning and are tracked there, not simulated here.
+
 ## Application adapter boundary
 
 Application/domain code must not depend on Supabase SDK-specific semantics, direct physical table assumptions or Snowflake SQL as product contracts. Repository/service adapters own persistence details.

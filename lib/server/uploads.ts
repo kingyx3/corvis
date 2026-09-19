@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { gcs, type GcsControlClient } from "./gcs.ts";
+import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
 export type UploadSession = {
@@ -27,6 +27,22 @@ export type UploadSession = {
   contentValidated?: boolean;
   malwareScanStatus?: "pending" | "clean" | "threat" | "error";
   releasedAt?: string;
+  purgedAt?: string;
+};
+
+export type UploadLifecycleOptions = {
+  now?: Date;
+  limit?: number;
+  abandonedAfterMs?: number;
+  quarantineRetentionMs?: number;
+};
+
+export type UploadLifecycleSweep = {
+  scanned: number;
+  abandoned: number;
+  quarantinePurged: number;
+  retained: number;
+  skipped: number;
 };
 
 export interface UploadSessionPort {
@@ -42,9 +58,15 @@ export interface UploadSessionPort {
   get(identity: RequestIdentity, uploadId: string): Promise<UploadSession>;
   complete(identity: RequestIdentity, uploadId: string, idempotencyKey: string): Promise<UploadSession>;
   abort(identity: RequestIdentity, uploadId: string): Promise<void>;
+  sweep(tenantId: string, options?: UploadLifecycleOptions): Promise<UploadLifecycleSweep>;
 }
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024 * 1024;
+/** An authorized resumable session may not be completed after this age. */
+export const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+/** Quarantined bytes without a clean disposition are purged after this age. */
+export const QUARANTINE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_SWEEP_SESSIONS = 500;
 const allowedExtensions = /\.(pdf|xlsx|xls|docx|pptx|csv)$/i;
 const allowedMime = new Set([
   "application/pdf",
@@ -59,7 +81,8 @@ const allowedMime = new Set([
 
 function safeName(value: string): string { return value.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 180) || "document"; }
 function keyHash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
-function sessionKey(tenantId: string, uploadId: string): string { return `_corvis/upload-sessions/tenant=${encodeURIComponent(tenantId)}/${uploadId}.json`; }
+function sessionPrefix(tenantId: string): string { return `_corvis/upload-sessions/tenant=${encodeURIComponent(tenantId)}/`; }
+function sessionKey(tenantId: string, uploadId: string): string { return `${sessionPrefix(tenantId)}${uploadId}.json`; }
 function idempotencyKey(tenantId: string, key: string): string { return `_corvis/upload-idempotency/tenant=${encodeURIComponent(tenantId)}/${keyHash(key)}.json`; }
 
 export function validateSourceMagic(fileName: string, bytes: Buffer): boolean {
@@ -69,6 +92,54 @@ export function validateSourceMagic(fileName: string, bytes: Buffer): boolean {
   if (lower.endsWith(".xls")) return bytes.subarray(0, 8).equals(Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]));
   if (lower.endsWith(".csv")) return !bytes.includes(0x00);
   return false;
+}
+
+function emptySweep(): UploadLifecycleSweep {
+  return { scanned: 0, abandoned: 0, quarantinePurged: 0, retained: 0, skipped: 0 };
+}
+
+function ageMs(session: UploadSession, now: number): number {
+  const createdAt = Date.parse(session.createdAt);
+  return Number.isFinite(createdAt) ? now - createdAt : Number.POSITIVE_INFINITY;
+}
+
+/** Object identity the initiating call bound to the resumable session. */
+export function expectedObjectMetadata(session: UploadSession): Record<string, string> {
+  const expected: Record<string, string> = {
+    tenant: session.tenantId,
+    document: session.documentId,
+    artifact: session.artifactVersionId,
+    ingestion: session.ingestionId,
+  };
+  if (session.checksumSha256) expected.sha256 = session.checksumSha256;
+  return expected;
+}
+
+/**
+ * Fail closed unless the stored object is still exactly the object this session
+ * authorized: declared size, bound lineage metadata and, once verified, the same
+ * generation and storage checksums.
+ */
+export function assertObjectMatchesSession(session: UploadSession, object: GcsObject): void {
+  const storedSize = Number(object.size ?? 0);
+  if (!Number.isFinite(storedSize) || storedSize !== session.sizeBytes) {
+    throw new Error("Uploaded object size does not match the authorized upload session");
+  }
+  for (const [key, value] of Object.entries(expectedObjectMetadata(session))) {
+    const declared = object.metadata?.[key];
+    if (declared !== undefined && declared !== value) {
+      throw new Error("Uploaded object lineage does not match the authorized upload session");
+    }
+  }
+  if (session.storageVersionId && object.generation !== session.storageVersionId) {
+    throw new Error("Uploaded object generation changed after verification");
+  }
+  if (session.storageChecksumCrc32c && object.crc32c !== session.storageChecksumCrc32c) {
+    throw new Error("Uploaded object checksum changed after verification");
+  }
+  if (session.storageChecksumMd5 && object.md5Hash !== session.storageChecksumMd5) {
+    throw new Error("Uploaded object checksum changed after verification");
+  }
 }
 
 function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number; origin?: string }): void {
@@ -121,13 +192,28 @@ class DemoUploadSessions implements UploadSessionPort {
     return session;
   }
   async abort(identity: RequestIdentity, uploadId: string) { const s = await this.get(identity, uploadId); s.state = "aborted"; }
+  async sweep(tenantId: string, options: UploadLifecycleOptions = {}): Promise<UploadLifecycleSweep> {
+    const now = (options.now ?? new Date()).getTime();
+    const abandonedAfterMs = options.abandonedAfterMs ?? UPLOAD_SESSION_TTL_MS;
+    const summary = emptySweep();
+    for (const session of this.sessions.values()) {
+      if (session.tenantId !== tenantId) continue;
+      summary.scanned += 1;
+      if (session.state === "complete") { summary.retained += 1; continue; }
+      if (session.state === "aborted" || session.purgedAt || ageMs(session, now) <= abandonedAfterMs) { summary.skipped += 1; continue; }
+      session.state = "aborted";
+      session.purgedAt = new Date(now).toISOString();
+      summary.abandoned += 1;
+    }
+    return summary;
+  }
 }
 
 export class ProductionUploadSessions implements UploadSessionPort {
-  private readonly store: GcsControlClient;
+  private readonly store: UploadObjectStore;
   private readonly db: PostgresSqlApi;
 
-  constructor(store: GcsControlClient, db: PostgresSqlApi) {
+  constructor(store: UploadObjectStore, db: PostgresSqlApi) {
     this.store = store;
     this.db = db;
   }
@@ -140,6 +226,10 @@ export class ProductionUploadSessions implements UploadSessionPort {
     const session = await this.store.getJson<UploadSession>(sessionKey(identity.tenantId, uploadId));
     if (!session || session.tenantId !== identity.tenantId) throw new Error("Upload not found");
     return session;
+  }
+
+  private assertUploader(identity: RequestIdentity, session: UploadSession): void {
+    if (session.actorSubject !== identity.subject && !identity.roles.includes("admin")) throw new Error("Upload not found");
   }
 
   private async registerInitiated(session: UploadSession): Promise<void> {
@@ -169,10 +259,19 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   private async refreshScan(session: UploadSession): Promise<UploadSession> {
     if (session.state !== "quarantined" || !session.objectKey) return session;
+    // A rejected signature or purged bytes can never become releasable later.
+    if (!session.contentValidated || session.purgedAt) return session;
     const config = getServerConfig();
     const object = await this.store.getObjectMetadata(session.objectKey);
-    const status = object?.metadata?.[config.gcsMalwareMetadataKey];
+    if (!object) return session;
+    const status = object.metadata?.[config.gcsMalwareMetadataKey];
     if (status === config.gcsMalwareCleanValue) {
+      try {
+        assertObjectMatchesSession(session, object);
+      } catch (error) {
+        await this.quarantineIntegrityFailure(session);
+        throw error;
+      }
       await this.release(session);
     } else if (status === config.gcsMalwareThreatValue) {
       session.malwareScanStatus = "threat";
@@ -184,6 +283,31 @@ export class ProductionUploadSessions implements UploadSessionPort {
       await this.persist(session);
     }
     return session;
+  }
+
+  private async quarantineIntegrityFailure(session: UploadSession): Promise<void> {
+    session.malwareScanStatus = "error";
+    session.contentValidated = false;
+    await this.db.execute(`update corvis_source.document_artifact_version
+      set malware_scan_status='integrity_failed',quarantine_status='quarantined'
+      where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
+    await this.db.execute(`update corvis_source.document set status='quarantined'
+      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
+    await this.persist(session);
+  }
+
+  private async purgeObject(session: UploadSession, now: number): Promise<void> {
+    if (session.resumableUploadUrl) await this.store.cancelResumableUpload(session.resumableUploadUrl).catch(() => undefined);
+    if (session.objectKey) await this.store.deleteObject(session.objectKey).catch(() => undefined);
+    session.purgedAt = new Date(now).toISOString();
+  }
+
+  private async expire(session: UploadSession): Promise<void> {
+    await this.purgeObject(session, Date.now());
+    session.state = "aborted";
+    await this.db.execute(`update corvis_source.document set status='aborted'
+      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
+    await this.persist(session);
   }
 
   async initiate(identity: RequestIdentity, input: Parameters<UploadSessionPort["initiate"]>[1]): Promise<UploadSession> {
@@ -202,7 +326,10 @@ export class ProductionUploadSessions implements UploadSessionPort {
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
       origin: input.origin,
-      metadata: { tenant: identity.tenantId, document: documentId, artifact: artifactVersionId, ingestion: ingestionId },
+      metadata: {
+        tenant: identity.tenantId, document: documentId, artifact: artifactVersionId, ingestion: ingestionId,
+        ...(input.checksumSha256 ? { sha256: input.checksumSha256 } : {}),
+      },
     });
     const session: UploadSession = {
       uploadId, documentId, artifactVersionId, ingestionId, tenantId: identity.tenantId, actorSubject: identity.subject,
@@ -228,14 +355,19 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   async complete(identity: RequestIdentity, uploadId: string, key: string): Promise<UploadSession> {
     const session = await this.load(identity, uploadId);
+    this.assertUploader(identity, session);
     if (key !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
     if (session.state === "complete" || session.state === "quarantined") return this.refreshScan(session);
+    if (session.state === "aborted") throw new Error("Upload session is no longer active");
+    if (ageMs(session, Date.now()) > UPLOAD_SESSION_TTL_MS) {
+      await this.expire(session);
+      throw new Error("Upload session has expired");
+    }
     if (!session.objectKey) throw new Error("Upload storage state is incomplete");
 
     const object = await this.store.getObjectMetadata(session.objectKey);
     if (!object) throw new Error("GCS upload has not completed");
-    const storedSize = Number(object.size ?? 0);
-    if (!Number.isFinite(storedSize) || storedSize !== session.sizeBytes) throw new Error("Uploaded object size does not match the authorized upload session");
+    assertObjectMatchesSession(session, object);
 
     session.storageVersionId = object.generation;
     session.storageChecksumCrc32c = object.crc32c;
@@ -257,14 +389,59 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {
     const session = await this.load(identity, uploadId);
-    if (!["complete","aborted"].includes(session.state)) {
-      if (session.resumableUploadUrl) await this.store.cancelResumableUpload(session.resumableUploadUrl).catch(() => undefined);
-      if (session.objectKey) await this.store.deleteObject(session.objectKey).catch(() => undefined);
-    }
+    this.assertUploader(identity, session);
+    if (!["complete","aborted"].includes(session.state)) await this.purgeObject(session, Date.now());
     session.state = "aborted";
     await this.db.execute(`update corvis_source.document set status='aborted'
       where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
     await this.persist(session);
+  }
+
+  /**
+   * Bounded lifecycle maintenance for one tenant: abandoned resumable sessions
+   * and quarantined bytes without a clean disposition are purged deterministically
+   * and idempotently, while released source evidence and every registry row are
+   * retained.
+   */
+  async sweep(tenantId: string, options: UploadLifecycleOptions = {}): Promise<UploadLifecycleSweep> {
+    const now = (options.now ?? new Date()).getTime();
+    const limit = Math.min(Math.max(1, options.limit ?? 100), MAX_SWEEP_SESSIONS);
+    const abandonedAfterMs = options.abandonedAfterMs ?? UPLOAD_SESSION_TTL_MS;
+    const quarantineRetentionMs = options.quarantineRetentionMs ?? QUARANTINE_RETENTION_MS;
+    const summary = emptySweep();
+
+    for (const key of await this.store.listObjects(sessionPrefix(tenantId), limit)) {
+      const session = await this.store.getJson<UploadSession>(key);
+      if (!session?.uploadId || session.tenantId !== tenantId) { summary.skipped += 1; continue; }
+      summary.scanned += 1;
+
+      // Accepted source evidence is retained: never cancelled, never deleted.
+      if (session.state === "complete") { summary.retained += 1; continue; }
+      if (session.purgedAt) { summary.skipped += 1; continue; }
+
+      if (session.state === "quarantined") {
+        const unreleasable = session.malwareScanStatus === "threat" || session.contentValidated === false;
+        if (!unreleasable && ageMs(session, now) <= quarantineRetentionMs) { summary.skipped += 1; continue; }
+        await this.purgeObject(session, now);
+        await this.db.execute(`update corvis_source.document_artifact_version
+          set quarantine_status='purged'
+          where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
+        await this.persist(session);
+        summary.quarantinePurged += 1;
+        continue;
+      }
+
+      if (session.state === "aborted") { await this.purgeObject(session, now); await this.persist(session); summary.abandoned += 1; continue; }
+      if (ageMs(session, now) <= abandonedAfterMs) { summary.skipped += 1; continue; }
+
+      await this.purgeObject(session, now);
+      session.state = "aborted";
+      await this.db.execute(`update corvis_source.document set status='aborted'
+        where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
+      await this.persist(session);
+      summary.abandoned += 1;
+    }
+    return summary;
   }
 }
 

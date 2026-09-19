@@ -86,14 +86,14 @@ export default function CorvisApp() {
   const scopedUnavailable = (title: string, detail: string) => <section className="page-heading" role="alert"><div><p className="eyebrow">MODULE UNAVAILABLE</p><h1>{title}</h1><p className="lede">{detail}</p><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button></div></section>;
 
   return <div className="app-shell">
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Workspace navigation">
       <div className="brand"><span className="brand-mark">C</span><span>CORVIS</span></div>
-      <nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav>
+      <nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} aria-current={view === item.id ? "page" : undefined} aria-label={item.label} onClick={() => setView(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav>
       <div className="sidebar-section"><p>WORKSPACE</p><button><span className="workspace-dot">N</span><span>Current workspace</span><span className="down-caret">⌄</span></button></div>
       <div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><button className="profile"><span className="avatar">U</span><span><strong>Signed-in user</strong><small>Enterprise session</small></span><span className="down-caret">⌄</span></button></div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === view)?.label}</strong></div><div className="top-actions"><button className="global-search"><Icon name="search" size={16}/>Search funds, companies, documents <kbd>⌘K</kbd></button><button className="icon-button"><Icon name="dots"/></button></div></header>
+      <header className="topbar" role="banner"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === view)?.label}</strong></div><div className="top-actions"><button className="global-search"><Icon name="search" size={16}/>Search funds, companies, documents <kbd>⌘K</kbd></button><button className="icon-button" aria-label="More workspace options"><Icon name="dots"/></button></div></header>
       <div className={`content ${view === "research" ? "research-content" : ""}`}>
         {loading && <section className="page-heading"><div><p className="eyebrow">WORKSPACE</p><h1>Loading trusted data…</h1></div></section>}
         {!loading && degradedModules.length > 0 && <div className="lineage-note" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available while the affected module is repaired.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}

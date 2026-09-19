@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/lib/server/config";
+import { getServerConfig } from "./config.ts";
 
 type TokenResponse = { access_token?: string; expires_in?: number };
 export type GcsObject = {
@@ -15,11 +15,34 @@ type GcsOptions = {
   accessToken?: string;
 };
 
+/**
+ * Control-plane surface the upload lifecycle depends on. Keeping it structural
+ * lets the ingestion failure paths be exercised against an in-memory store
+ * without a live provider binding.
+ */
+export interface UploadObjectStore {
+  readonly bucket: string;
+  createResumableUpload(input: {
+    key: string;
+    contentType: string;
+    sizeBytes: number;
+    metadata: Record<string, string>;
+    origin?: string;
+  }): Promise<string>;
+  cancelResumableUpload(uploadUrl: string): Promise<void>;
+  putJson(key: string, value: unknown): Promise<void>;
+  getJson<T>(key: string): Promise<T | null>;
+  getObjectMetadata(key: string): Promise<GcsObject | null>;
+  getObjectPrefix(key: string, bytes?: number): Promise<Buffer>;
+  deleteObject(key: string): Promise<void>;
+  listObjects(prefix: string, limit?: number): Promise<string[]>;
+}
+
 function encodeObjectName(value: string): string {
   return encodeURIComponent(value);
 }
 
-export class GcsControlClient {
+export class GcsControlClient implements UploadObjectStore {
   readonly bucket: string;
   private staticToken?: string;
   private cachedToken?: { value: string; expiresAt: number };
@@ -126,6 +149,24 @@ export class GcsControlClient {
     });
     if (!response.ok && response.status !== 206) throw new Error(`GCS object validation read failed (${response.status})`);
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  async listObjects(prefix: string, limit = 1000): Promise<string[]> {
+    const names: string[] = [];
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+      url.searchParams.set("prefix", prefix);
+      url.searchParams.set("fields", "items/name,nextPageToken");
+      url.searchParams.set("maxResults", String(Math.min(1000, Math.max(1, limit - names.length))));
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const response = await this.authorizedFetch(url.toString());
+      if (!response.ok) throw new Error(`GCS object listing failed (${response.status})`);
+      const body = await response.json() as { items?: { name?: string }[]; nextPageToken?: string };
+      for (const item of body.items ?? []) if (item.name) names.push(item.name);
+      pageToken = body.nextPageToken;
+    } while (pageToken && names.length < limit);
+    return names.slice(0, limit);
   }
 
   async deleteObject(key: string): Promise<void> {

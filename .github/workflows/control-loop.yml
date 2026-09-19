@@ -1,0 +1,119 @@
+name: Control loop
+
+# Schedules are specified in the issue as Asia/Singapore (UTC+8, no DST), and
+# GitHub Actions cron is always UTC, so every schedule below is shifted back
+# 8 hours (and one calendar day, where that crosses midnight) from the
+# Asia/Singapore time it is meant to represent:
+#   daily   17 2 * * *   (02:17 Asia/Singapore)  -> 17 18 * * *  (18:17 UTC, previous day)
+#   weekly  23 3 * * 0   (03:23 Asia/Singapore, Sun) -> 23 19 * * 6 (19:23 UTC, Sat)
+#   monthly 31 4 * * 0   (04:31 Asia/Singapore, Sun, local day-of-month 1-7) -> 31 20 * * 6 (20:31 UTC, Sat)
+# The monthly day-of-month gate is evaluated against the Asia/Singapore date
+# inside the job (see "Resolve run mode" below), not the UTC date, since a
+# Saturday-evening UTC run can already be the first Sunday of the next
+# Asia/Singapore month.
+on:
+  schedule:
+    - cron: "17 18 * * *"
+    - cron: "23 19 * * 6"
+    - cron: "31 20 * * 6"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run mode for a manual dry-run
+        required: true
+        type: choice
+        options: [daily, weekly, monthly, manual]
+        default: manual
+
+permissions:
+  contents: write
+  issues: read
+
+concurrency:
+  group: control-loop
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve run mode
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "${{ github.event.schedule }}" in
+            "17 18 * * *") echo "mode=daily" >> "$GITHUB_OUTPUT" ;;
+            "23 19 * * 6")
+              # A Saturday-evening UTC weekly slot always lands in the
+              # matching Asia/Singapore Sunday.
+              echo "mode=weekly" >> "$GITHUB_OUTPUT"
+              ;;
+            "31 20 * * 6")
+              day_of_month=$(TZ=Asia/Singapore date +%-d)
+              if [ "$day_of_month" -le 7 ]; then
+                echo "mode=monthly" >> "$GITHUB_OUTPUT"
+              else
+                echo "mode=weekly" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *) echo "unrecognized schedule: ${{ github.event.schedule }}" >&2; exit 1 ;;
+          esac
+
+      - name: Changed paths since last commit
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "paths<<EOF"
+            git diff --name-only HEAD~1 HEAD 2>/dev/null || true
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run control loop
+        id: run
+        env:
+          CONTROL_LOOP_CHANGED_PATHS: ${{ steps.changed.outputs.paths }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node control-loop/cli.ts --mode "${{ steps.resolve.outputs.mode }}" --evidence control-loop-report.json
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-loop-report-${{ steps.resolve.outputs.mode }}
+          path: control-loop-report.json
+          retention-days: 90
+
+      - name: Commit updated watermark
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain -- control-loop/state)" ]; then
+            git config user.name "corvis-control-loop"
+            git config user.email "control-loop@users.noreply.github.com"
+            git add control-loop/state
+            git commit -m "chore(control-loop): update ${{ steps.resolve.outputs.mode }} run watermark [skip ci]"
+            git push
+          else
+            echo "no watermark change to commit"
+          fi
