@@ -2,19 +2,38 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
-import { PostgresProductionPlatform } from "./platform.ts";
+import { ConflictError, PostgresProductionPlatform } from "./platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 
+const exceptionId = "00000000-0000-0000-0000-000000000601";
+const snapshotId = "00000000-0000-0000-0000-000000000401";
+const allowedSourceId = "00000000-0000-0000-0000-000000000501";
+
 class FakeDb implements PostgresSqlApi {
   calls: Call[] = [];
+  reviewResult: PostgresRow = { new_version: 3, next_state: "approved" };
+  exceptionRows: PostgresRow[] = [];
+  resolutionPreflight: PostgresRow | undefined;
+
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
+    if (sql.includes("corvis_serving.reconciliation_exceptions")) return this.exceptionRows;
+    if (sql.includes("from corvis_consolidated.reconciliation_exception e")) return this.resolutionPreflight ? [this.resolutionPreflight] : [];
+    if (sql.includes("resolve_reconciliation_exception")) return [{ new_version: 2, next_status: "resolved" }];
+    if (sql.includes("apply_review_decision")) return [this.reviewResult];
     if (sql.includes("from corvis_facts.observation o")) {
       return [{ observation_id: parameters[1], version: 2, review_state: "review_required", value_number: 100, risk_tier: "normal" }];
     }
-    if (sql.includes("apply_review_decision")) return [{ new_version: 3, next_state: "approved" }];
+    if (sql.includes("select * from corvis_serving.fund_period_snapshots")) {
+      return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: 0 }];
+    }
+    if (sql.includes("count(*) filter (where review_state='review_required')")) {
+      return [{ needs_review_count: 0, critical_count: 0, lineage_count: 1, total_count: 1 }];
+    }
+    if (sql.includes("independently_reviewed")) return [{ independently_reviewed: 0 }];
+    if (sql.includes("append_snapshot_transition")) return [{ new_version: 2 }];
     if (sql.includes("corvis_serving.documents")) return [{
       document_id: "00000000-0000-0000-0000-000000000101",
       display_name: "Q2 report.pdf", fund_name: "Fund A", report_period: "2026 Q2",
@@ -113,8 +132,9 @@ test("empty resource allowlists fail closed before a broad Postgres read", async
   assert.equal(db.calls.length, 0);
 });
 
-test("review preflight is constrained by authoritative fund and document allowlists", async () => {
+test("review returns the persistence-authoritative next state for four-eyes workflows", async () => {
   const db = new FakeDb();
+  db.reviewResult = { new_version: 3, next_state: "review_required" };
   const result = await new PostgresProductionPlatform(db).review(identity, {
     observationId: "00000000-0000-0000-0000-000000000201",
     decision: "approve",
@@ -122,10 +142,85 @@ test("review preflight is constrained by authoritative fund and document allowli
     expectedVersion: 2,
   });
   assert.equal(result.accepted, true);
+  assert.equal(result.newVersion, 3);
+  assert.equal(result.nextState, "review_required");
   assert.match(db.calls[0]?.sql ?? "", /o\.fund_id in/);
   assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
   assert.match(db.calls[1]?.sql ?? "", /apply_review_decision/);
   assert.equal(db.calls.some((call) => /set\s+value_/i.test(call.sql)), false);
+});
+
+test("reconciliation workbench returns only fund-scoped exceptions and entitled source evidence", async () => {
+  const db = new FakeDb();
+  db.exceptionRows = [{
+    exception_id: exceptionId,
+    snapshot_id: snapshotId,
+    snapshot_version: 1,
+    fund_id: "fund-a",
+    report_period: "2026 Q2",
+    exception_type: "source_authority",
+    summary: "Two quarterly reports disagree",
+    materiality: "material",
+    status: "open",
+    version: 1,
+    context: { variance: 10 },
+    source_references: [{ sourceReferenceId: allowedSourceId, documentId: identity.entitlements.sourceDocumentIds?.[0], page: 4, excerpt: "Revenue 100" }],
+    created_at: "2026-09-19T00:00:00Z",
+  }];
+  const result = await new PostgresProductionPlatform(db).listReconciliationExceptions(identity, snapshotId, 1);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.type, "source_authority");
+  assert.deepEqual(result[0]?.allowedActions, ["select_source"]);
+  assert.equal(result[0]?.sourceReferences[0]?.sourceReferenceId, allowedSourceId);
+  assert.match(db.calls[0]?.sql ?? "", /e\.fund_id in/);
+  assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
+  assert.equal(db.calls[0]?.parameters[3], JSON.stringify(identity.entitlements.fundIds));
+  assert.equal(db.calls[0]?.parameters[4], JSON.stringify(identity.entitlements.sourceDocumentIds));
+});
+
+test("source-authority resolution verifies the selected source against the source-document allowlist", async () => {
+  const db = new FakeDb();
+  db.resolutionPreflight = { exception_id: exceptionId, exception_type: "source_authority", version: 1, status: "open" };
+  const result = await new PostgresProductionPlatform(db).resolveReconciliation(identity, {
+    exceptionId,
+    expectedVersion: 1,
+    action: "select_source",
+    reasonCode: "authoritative_quarterly_report",
+    selectedSourceReferenceId: allowedSourceId,
+  });
+  assert.equal(result.status, "resolved");
+  assert.match(db.calls[0]?.sql ?? "", /r\.source_reference_id=\$5::uuid/);
+  assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
+  assert.equal(db.calls[0]?.parameters[4], allowedSourceId);
+  assert.equal(db.calls[0]?.parameters[5], JSON.stringify(identity.entitlements.sourceDocumentIds));
+  assert.match(db.calls[1]?.sql ?? "", /resolve_reconciliation_exception/);
+});
+
+test("source-authority resolution fails closed when source-document access is unavailable", async () => {
+  const db = new FakeDb();
+  const denied: RequestIdentity = {
+    ...identity,
+    entitlements: { ...identity.entitlements, sourceDocumentAccessAllowed: false, sourceDocumentIds: [] },
+  };
+  await assert.rejects(
+    new PostgresProductionPlatform(db).resolveReconciliation(denied, {
+      exceptionId,
+      expectedVersion: 1,
+      action: "select_source",
+      reasonCode: "authoritative_quarterly_report",
+      selectedSourceReferenceId: allowedSourceId,
+    }),
+    (error: unknown) => error instanceof ConflictError && error.code === "reconciliation_exception_not_found_or_version_conflict",
+  );
+  assert.equal(db.calls.length, 0);
+});
+
+test("publication preflight reads the governed serving snapshot blocker count", async () => {
+  const db = new FakeDb();
+  const result = await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 });
+  assert.equal(result.accepted, true);
+  assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.fund_period_snapshots/);
+  assert.match(db.calls.at(-1)?.sql ?? "", /append_snapshot_transition/);
 });
 
 test("exports require the independent authoritative redistribution right", async () => {
