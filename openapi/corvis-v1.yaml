@@ -16,18 +16,30 @@ paths:
   /documents:
     get:
       operationId: listDocuments
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
       responses:
-        '200': { description: Entitled documents }
+        '200': { description: 'Entitled documents. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /observations:
     get:
       operationId: listObservations
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
       responses:
-        '200': { description: Entitled reviewed observations }
+        '200': { description: 'Entitled reviewed observations. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /snapshots:
     get:
       operationId: listSnapshots
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
       responses:
-        '200': { description: Versioned fund-period snapshots }
+        '200': { description: 'Versioned fund-period snapshots. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /review:
     post:
       operationId: reviewObservation
@@ -148,6 +160,29 @@ components:
     enterpriseSession:
       type: openIdConnect
       openIdConnectUrl: https://idp.example.com/.well-known/openid-configuration
+  parameters:
+    limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      description: Maximum items per page. Presence of this parameter (or `cursor`) activates pagination.
+    cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+      description: Opaque continuation token from a previous page's `nextCursor`. Presence of this parameter (or `limit`) activates pagination.
+  responses:
+    InvalidCursor:
+      description: The `cursor` was malformed, tampered with, or `limit` was not a positive integer.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, enum: [invalid_cursor] }
+              correlationId: { type: string }
   schemas:
     UploadSession:
       type: object

@@ -1,6 +1,7 @@
 import { AuthorizationError } from "@/core/enterprise";
 import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecycle";
 import { FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
+import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
@@ -33,6 +34,10 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof PublicationGateError) {
     logEvent("warn", "snapshot.publication_blocked", { correlationId }, { reasons: error.reasons });
     return json({ error: "publication_blocked", reasons: error.reasons, correlationId }, { status: 409 });
+  }
+  if (error instanceof InvalidCursorError) {
+    logEvent("warn", "api.invalid_pagination", { correlationId });
+    return json({ error: "invalid_cursor", correlationId }, { status: 400 });
   }
   if (error instanceof LegalHoldError) {
     logEvent("warn", "deletion.blocked_by_legal_hold", { correlationId }, { holds: error.holds });
