@@ -3,12 +3,12 @@ import { assertDocumentAccess, assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { getSourceReference } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 export async function GET(request: Request, context: { params: Promise<{ sourceReferenceId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "sources:read");
     const { sourceReferenceId } = await context.params;
     const row = await getSourceReference(identity, sourceReferenceId);
