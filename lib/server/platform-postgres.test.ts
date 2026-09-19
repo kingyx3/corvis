@@ -51,7 +51,7 @@ const identity: RequestIdentity = {
 async function withReadinessEnv<T>(fn: () => Promise<T>): Promise<T> {
   const previous = { ...process.env };
   try {
-    process.env.NODE_ENV = "test";
+    Object.assign(process.env, { NODE_ENV: "test" });
     process.env.CORVIS_DEMO_MODE = "false";
     process.env.CORVIS_AUTH_ISSUER = "https://idp.example";
     process.env.CORVIS_AUTH_AUDIENCE = "corvis";
