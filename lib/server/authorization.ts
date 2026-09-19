@@ -68,6 +68,21 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
         and s.subject=$2
         and s.auth_method=$3
         and s.status='active'
+        and (
+          s.auth_method <> 'service_account'
+          or exists (
+            select 1
+            from corvis_control.service_identity_grant g
+            where g.tenant_id=s.tenant_id
+              and g.auth_method=s.auth_method
+              and g.subject=s.subject
+              and g.status='active'
+              and g.valid_from <= now()
+              and g.valid_until > now()
+              and g.reviewed_at <= now()
+              and g.next_review_at > now()
+          )
+        )
         and not exists (
           select 1
           from corvis_control.session_revocation r
