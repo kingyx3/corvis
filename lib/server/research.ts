@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
-import type { RequestIdentity, ResearchAnswer, SourceCitation } from "@/core/enterprise";
-import { getServerConfig } from "@/lib/server/config";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "@/lib/server/postgres";
+import type { RequestIdentity, ResearchAnswer, SourceCitation } from "../../core/enterprise.ts";
+import { getServerConfig } from "./config.ts";
+import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 type SearchHit = {
   sourceReferenceId: string;
