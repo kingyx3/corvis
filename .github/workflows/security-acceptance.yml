@@ -189,3 +189,62 @@ jobs:
           path: postgres-rls-security-acceptance-evidence.json
           if-no-files-found: warn
           retention-days: 30
+
+  record-known-good-release:
+    needs: [edge, postgres-rls]
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+    steps:
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Record accepted digest as known-good rollback target
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(gcloud run services describe "corvis-api-${{ inputs.environment }}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --format='value(spec.template.spec.containers.image)')"
+          expected_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api@sha256:"
+          if [[ ! "${image}" =~ ^${expected_prefix}[0-9a-f]{64}$ ]]; then
+            echo "Accepted Cloud Run revision is not pinned to the expected Artifact Registry digest."
+            exit 1
+          fi
+
+          accepted_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg schemaVersion "corvis.known-good-release.v1" \
+            --arg environment "${{ inputs.environment }}" \
+            --arg image "${image}" \
+            --arg acceptedAt "${accepted_at}" \
+            --arg acceptanceWorkflowSha "${GITHUB_SHA}" \
+            --arg acceptanceRunId "${GITHUB_RUN_ID}" \
+            '{schemaVersion:$schemaVersion,environment:$environment,image:$image,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' \
+            > known-good.json
+
+          destination="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
+          gcloud storage cp known-good.json "${destination}"
+
+          {
+            echo "### Known-good rollback target"
+            echo "- Environment: `${{ inputs.environment }}`"
+            echo "- Accepted image: `${image}`"
+            echo "- Manifest: `${destination}`"
+          } >> "${GITHUB_STEP_SUMMARY}"
