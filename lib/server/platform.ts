@@ -55,7 +55,12 @@ function documentStatus(value: string): DocumentRecord["status"] {
   return "Queued";
 }
 function quality(value: string): DocumentRecord["quality"] { const q = value.toLowerCase(); return q === "high" ? "High" : q === "medium" ? "Medium" : "Pending"; }
-function reviewState(value: string): ObservationRecord["state"] { return value.toLowerCase() === "approved" ? "Approved" : "Needs review"; }
+function reviewState(value: string): ObservationRecord["state"] {
+  const state = value.toLowerCase();
+  if (state === "approved") return "Approved";
+  if (state === "rejected") return "Rejected";
+  return "Needs review";
+}
 function checksum(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function objectValue(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
