@@ -28,11 +28,14 @@ class SemanticDb implements PostgresSqlApi {
     display_name: "Revenue",
     data_type: "number",
     aggregation_behavior: "additive sum",
+    numeric_available: true,
   }];
   resultRows: PostgresRow[] = [{
     observation_id: "00000000-0000-0000-0000-000000000001",
     fund_id: "fund-a",
     company_id: "company-a",
+    holding_id: "holding-a",
+    instrument_id: "instrument-a",
     metric_code: "revenue",
     value_number: 100,
     currency: "USD",
@@ -44,7 +47,7 @@ class SemanticDb implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
-    if (sql.includes("select distinct o.metric_code")) return this.candidates;
+    if (sql.includes("bool_or(o.value_number is not null)")) return this.candidates;
     if (sql.includes("with scoped as")) return this.resultRows;
     return [];
   }
@@ -59,6 +62,7 @@ test("metric questions execute a narrow governed query with deterministic period
 
   assert.equal(result.status, "executed");
   assert.equal(result.shape.metricCode, "revenue");
+  assert.equal(result.shape.metricDataType, "number");
   assert.equal(result.shape.operation, "values");
   assert.deepEqual(result.shape.fundIds, ["fund-a"]);
   assert.deepEqual(result.shape.economicPeriodTokens, ["2025q2", "q22025"]);
@@ -67,7 +71,7 @@ test("metric questions execute a narrow governed query with deterministic period
 
   assert.equal(db.calls.length, 2);
   const candidateCall = db.calls[0];
-  assert.match(candidateCall.sql, /select distinct o\.metric_code/i);
+  assert.match(candidateCall.sql, /bool_or\(o\.value_number is not null\) as numeric_available/i);
   assert.match(candidateCall.sql, /o\.tenant_id=\$1/i);
   assert.match(candidateCall.sql, /r\.document_id::text in/i);
   assert.equal(candidateCall.parameters[0], identity.tenantId);
@@ -76,13 +80,17 @@ test("metric questions execute a narrow governed query with deterministic period
 
   const factCall = db.calls[1];
   assert.match(factCall.sql, /with scoped as/i);
+  assert.match(factCall.sql, /coalesce\(o\.holding_id,''\)/i);
+  assert.match(factCall.sql, /coalesce\(o\.instrument_id,''\)/i);
+  assert.match(factCall.sql, /coalesce\(o\.economic_period,''\)/i);
   assert.match(factCall.sql, /o\.metric_code=\$4/i);
   assert.doesNotMatch(factCall.sql, /limit 750/i);
+  assert.match(factCall.sql, /from scoped[\s\S]*limit \$7/i);
   assert.equal(factCall.parameters[3], "revenue");
   assert.equal(factCall.parameters[4], JSON.stringify(["2025q2", "q22025"]));
 });
 
-test("explicit sums use the database aggregate result only when metric semantics permit addition", async () => {
+test("explicit sums aggregate the complete scoped set before applying the result limit", async () => {
   const db = new SemanticDb();
   db.resultRows = [{
     fund_id: "fund-a",
@@ -106,8 +114,12 @@ test("explicit sums use the database aggregate result only when metric semantics
     "00000000-0000-0000-0000-000000000001",
     "00000000-0000-0000-0000-000000000003",
   ]);
-  assert.match(db.calls[1]?.sql ?? "", /sum\(value_number\) as result_value/i);
-  assert.match(db.calls[1]?.sql ?? "", /group by fund_id,metric_code,economic_period,currency/i);
+  const aggregateSql = db.calls[1]?.sql ?? "";
+  assert.match(aggregateSql, /sum\(value_number\) as result_value/i);
+  assert.match(aggregateSql, /group by fund_id,metric_code,economic_period,currency/i);
+  assert.match(aggregateSql, /group by[\s\S]*limit \$7/i);
+  const scopedCte = aggregateSql.slice(0, aggregateSql.indexOf(")\n      select fund_id"));
+  assert.doesNotMatch(scopedCte, /limit \$7/i, "source rows must not be truncated before aggregation");
 });
 
 test("unsupported aggregation fails closed before reading fact values", async () => {
@@ -117,6 +129,7 @@ test("unsupported aggregation fails closed before reading fact values", async ()
     display_name: "IRR",
     data_type: "percentage",
     aggregation_behavior: "non_additive",
+    numeric_available: true,
   }];
 
   const result = await new GovernedSemanticQueryService(db).execute(identity, "What is total IRR?");
@@ -128,11 +141,29 @@ test("unsupported aggregation fails closed before reading fact values", async ()
   assert.equal(db.calls.length, 1);
 });
 
+test("numeric operations fail closed when the authorized metric has no numeric values", async () => {
+  const db = new SemanticDb();
+  db.candidates = [{
+    metric_code: "status",
+    display_name: "Status",
+    data_type: "text",
+    aggregation_behavior: "non_additive",
+    numeric_available: false,
+  }];
+
+  const result = await new GovernedSemanticQueryService(db).execute(identity, "What is maximum status?");
+
+  assert.equal(result.status, "unsupported");
+  assert.equal(result.shape.metricCode, "status");
+  assert.deepEqual(result.rows, []);
+  assert.equal(db.calls.length, 1);
+});
+
 test("ambiguous metric aliases fail closed instead of selecting an arbitrary metric", async () => {
   const db = new SemanticDb();
   db.candidates = [
-    { metric_code: "fund_nav", display_name: "NAV", data_type: "number", aggregation_behavior: "non_additive" },
-    { metric_code: "company_nav", display_name: "NAV", data_type: "number", aggregation_behavior: "non_additive" },
+    { metric_code: "fund_nav", display_name: "NAV", data_type: "number", aggregation_behavior: "non_additive", numeric_available: true },
+    { metric_code: "company_nav", display_name: "NAV", data_type: "number", aggregation_behavior: "non_additive", numeric_available: true },
   ];
 
   const result = await new GovernedSemanticQueryService(db).execute(identity, "What was NAV?");
