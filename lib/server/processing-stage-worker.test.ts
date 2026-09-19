@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "@/core/enterprise";
-import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
+import type {
+  ProcessingStageClaim,
+  ProcessingStageDelivery,
+  PostgresProcessingStageRepository,
+} from "./orchestration-stage.ts";
 import { runProcessingStageDelivery, type ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+
+type StageRepo = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "fail">;
 
 const identity: RequestIdentity = {
   subject: "worker:document-pipeline",
@@ -30,7 +36,7 @@ const delivery: ProcessingStageDelivery = {
   payloadSha256: "abc123",
 };
 
-function claimedStages(overrides: Record<string, unknown> = {}) {
+function claimedStages(overrides: Partial<ProcessingStageClaim> = {}): StageRepo {
   return {
     async claim() {
       return {
@@ -38,17 +44,17 @@ function claimedStages(overrides: Record<string, unknown> = {}) {
         duplicateComplete: false,
         leaseToken: "00000000-0000-0000-0000-000000000222",
         attempt: 1,
-        inboxState: "processing" as const,
+        inboxState: "processing",
         jobVersion: 2,
         jobState: "running",
         ...overrides,
       };
     },
     async complete() {
-      return { completed: true, completedJobVersion: 3, nextJobId: "represented:x", nextStage: "represented" as const };
+      return { completed: true, completedJobVersion: 3, nextJobId: "represented:x", nextStage: "represented" };
     },
     async fail() {
-      return { nextState: "retryable" as const, jobVersion: 3, inboxAttempt: 1, nextAttemptAt: "2026-09-19T10:00:00Z" };
+      return { nextState: "retryable", jobVersion: 3, inboxAttempt: 1, nextAttemptAt: "2026-09-19T10:00:00Z" };
     },
   };
 }
@@ -57,7 +63,7 @@ test("worker requires a service-account identity before claiming delivery", asyn
   let claimed = false;
   const stages = claimedStages();
   const originalClaim = stages.claim;
-  stages.claim = async () => { claimed = true; return originalClaim(); };
+  stages.claim = async (input) => { claimed = true; return originalClaim(input); };
   await assert.rejects(() => runProcessingStageDelivery({
     identity: { ...identity, authMethod: "oidc" },
     delivery,
@@ -124,7 +130,7 @@ test("crash/redelivery reuses the same deterministic idempotency key", async () 
   const stages = claimedStages();
   stages.fail = async () => {
     failCalls += 1;
-    return { nextState: "retryable" as const, jobVersion: 3, inboxAttempt: 1, nextAttemptAt: "2026-09-19T10:00:00Z" };
+    return { nextState: "retryable", jobVersion: 3, inboxAttempt: 1, nextAttemptAt: "2026-09-19T10:00:00Z" };
   };
   const effects = {
     async begin() { effectAttempts += 1; return { shouldExecute: true, alreadyComplete: false, attempt: effectAttempts }; },
@@ -154,7 +160,7 @@ test("handler failure delegates authoritative retry/dead-letter transition", asy
   const stages = claimedStages();
   stages.fail = async (input) => {
     failedError = input.error;
-    return { nextState: "dead_letter" as const, jobVersion: 4, inboxAttempt: 5, nextAttemptAt: undefined };
+    return { nextState: "dead_letter", jobVersion: 4, inboxAttempt: 5, nextAttemptAt: undefined };
   };
   const result = await runProcessingStageDelivery({
     identity,
