@@ -175,8 +175,23 @@ export class PostgresProductionPlatform implements PlatformPort {
   jobs(identity: RequestIdentity): Promise<ProcessingJob[]> { return this.operations.jobs(identity); }
 }
 
-export class ConflictError extends Error { constructor(public readonly code: string) { super(code); this.name = "ConflictError"; } }
-export class PublicationGateError extends Error { constructor(public readonly reasons: string[]) { super("Publication blocked"); this.name = "PublicationGateError"; } }
+export class ConflictError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.name = "ConflictError";
+    this.code = code;
+  }
+}
+
+export class PublicationGateError extends Error {
+  readonly reasons: string[];
+  constructor(reasons: string[]) {
+    super("Publication blocked");
+    this.name = "PublicationGateError";
+    this.reasons = reasons;
+  }
+}
 
 let singleton: PlatformPort | undefined;
 export function platform(): PlatformPort {
