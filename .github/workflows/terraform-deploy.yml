@@ -31,10 +31,27 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
-      TF_VAR_source_bucket_name: ${{ vars.GCS_SOURCE_BUCKET_NAME }}
-      TF_STATE_BUCKET: ${{ vars.GCP_PROJECT_ID }}-corvis-tf-state
+      TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
+      - name: Validate deployment roots
+        shell: bash
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TF_VAR_project_id}" ]; then
+            echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
+            exit 1
+          fi
+          if [ -z "${GCP_WIF_PROVIDER}" ]; then
+            echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
+            exit 1
+          fi
+
       - name: Guard apply source
         if: inputs.action == 'apply' && github.ref != 'refs/heads/main'
         shell: bash
@@ -49,7 +66,7 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
@@ -67,7 +84,7 @@ jobs:
           if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${TF_VAR_project_id}" >/dev/null 2>&1; then
             gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
               --project="${TF_VAR_project_id}" \
-              --location="asia-southeast1" \
+              --location="${GCP_REGION}" \
               --uniform-bucket-level-access
           fi
           gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
