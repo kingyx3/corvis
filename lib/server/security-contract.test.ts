@@ -65,6 +65,7 @@ test("privileged and evidence routes preserve their specific authorization bound
     ["app/api/v1/jobs/[jobId]/retry/route.ts", "admin:manage"],
     ["app/api/v1/exports/route.ts", "exports:create"],
     ["app/api/v1/research/route.ts", "research:query"],
+    ["app/api/v1/research/stream/route.ts", "research:query"],
     ["app/api/v1/review/route.ts", "observations:review"],
     ["app/api/v1/snapshots/publish/route.ts", "snapshots:publish"],
     ["app/api/v1/source-references/[sourceReferenceId]/route.ts", "sources:read"],
