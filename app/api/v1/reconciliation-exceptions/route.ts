@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "observations:review");
+    assertPermission(identity, "reconciliations:read");
     const url = new URL(request.url);
     const snapshotId = url.searchParams.get("snapshotId") ?? "";
     const snapshotVersion = Number(url.searchParams.get("snapshotVersion"));
