@@ -16,6 +16,40 @@ resource "google_compute_region_network_endpoint_group" "api" {
   }
 }
 
+resource "google_compute_security_policy" "origin" {
+  project     = var.project_id
+  name        = "corvis-api-origin-${var.environment}"
+  description = "Allow Cloudflare proxy egress to the Corvis API origin and deny direct-origin bypass."
+
+  rule {
+    action   = "allow"
+    priority = 1000
+
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = var.cloudflare_origin_cidrs
+      }
+    }
+
+    description = "Allow current Cloudflare proxy egress ranges."
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = 2147483647
+
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+
+    description = "Deny all non-Cloudflare direct-origin traffic."
+  }
+}
+
 resource "google_compute_backend_service" "api" {
   project               = var.project_id
   name                  = "corvis-api-${var.environment}"
@@ -23,6 +57,7 @@ resource "google_compute_backend_service" "api" {
   protocol              = "HTTP"
   timeout_sec           = 30
   enable_cdn            = false
+  security_policy       = google_compute_security_policy.origin.id
 
   backend {
     group = google_compute_region_network_endpoint_group.api.id
@@ -115,6 +150,10 @@ resource "google_compute_global_forwarding_rule" "http" {
   target                = google_compute_target_http_proxy.redirect.id
 }
 
+# The external Application Load Balancer does not authenticate as an end user.
+# Cloud Run IAM therefore permits invocation while the service ingress setting
+# continues to reject direct internet run.app traffic. Cloud Armor independently
+# restricts the load-balancer backend to Cloudflare proxy egress addresses.
 resource "google_cloud_run_v2_service_iam_member" "load_balancer_invoker" {
   project  = var.project_id
   location = var.region
