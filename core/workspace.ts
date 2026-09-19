@@ -4,6 +4,7 @@ import type {
   ReconciliationResolutionCommand,
   ReconciliationResolutionOutcome,
   ResearchAnswer,
+  ResearchStreamEvent,
   ReviewDecision,
   ReviewOutcome,
   SnapshotPublication,
@@ -24,7 +25,8 @@ export interface WorkspacePort {
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
-  research(question: string): Promise<ResearchAnswer>;
+  research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
+  researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;
   sourceEvidence(sourceReferenceId: string): Promise<SourceEvidence>;
   review(command: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
