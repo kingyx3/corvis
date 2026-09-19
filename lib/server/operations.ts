@@ -12,6 +12,74 @@ type EvidenceDependencies = {
   readiness?: () => Promise<Readiness>;
 };
 
+// Queue/worker saturation thresholds, mirrored from ops/slos.yaml so both stay
+// visibly in sync rather than drifting apart as independently-chosen magic numbers.
+//   - document_pipeline.dead_letter_rate: { max: 0.005, window: 24h }
+//   - alerts: "dead_letter_queue_depth > 0 for 15m" (severity SEV2)
+export const DEAD_LETTER_RATE_MAX = 0.005;
+export const DEAD_LETTER_BACKLOG_AGE_SECONDS_MAX = 15 * 60;
+
+export type QueueSaturationSeverity = "none" | "warning" | "breach";
+
+export type QueueSaturationCounts = {
+  /** Jobs currently sitting in the `dead_letter` state (current backlog depth). */
+  deadLetterJobs: number;
+  /** Total processing_job rows for the tenant, used as the rate denominator. */
+  totalJobs: number;
+  /** Age, in seconds, of the oldest job still in `dead_letter` state, or null when the backlog is empty. */
+  oldestDeadLetterAgeSeconds: number | null;
+};
+
+export type QueueSaturationThresholds = {
+  deadLetterRateMax: number;
+  backlogAgeSecondsMax: number;
+};
+
+export const DEFAULT_QUEUE_SATURATION_THRESHOLDS: QueueSaturationThresholds = {
+  deadLetterRateMax: DEAD_LETTER_RATE_MAX,
+  backlogAgeSecondsMax: DEAD_LETTER_BACKLOG_AGE_SECONDS_MAX,
+};
+
+export type QueueSaturationSignal = {
+  severity: QueueSaturationSeverity;
+  reasons: string[];
+  deadLetterRate: number;
+  oldestDeadLetterAgeSeconds: number | null;
+};
+
+// Pure, independently-testable saturation signal: turns raw dead-letter counts into a
+// severity an operator can act on, instead of just a count that requires reading tea leaves.
+// Two independent signals, each mirroring one line of ops/slos.yaml, either of which can
+// escalate severity on its own:
+//   1. dead-letter rate vs. document_pipeline.dead_letter_rate.max (a "warning" band at half
+//      that threshold gives operators lead time before the SLO itself breaches).
+//   2. oldest dead-lettered job's age vs. the "dead_letter_queue_depth > 0 for 15m" alert,
+//      i.e. a sustained backlog rather than a single point-in-time count.
+export function evaluateQueueSaturation(
+  counts: QueueSaturationCounts,
+  thresholds: QueueSaturationThresholds = DEFAULT_QUEUE_SATURATION_THRESHOLDS,
+): QueueSaturationSignal {
+  const deadLetterRate = counts.totalJobs > 0 ? counts.deadLetterJobs / counts.totalJobs : 0;
+  const reasons: string[] = [];
+  let severity: QueueSaturationSeverity = "none";
+
+  const warningRate = thresholds.deadLetterRateMax / 2;
+  if (deadLetterRate > thresholds.deadLetterRateMax) {
+    severity = "breach";
+    reasons.push(`dead-letter rate ${deadLetterRate.toFixed(4)} exceeds SLO max ${thresholds.deadLetterRateMax}`);
+  } else if (deadLetterRate > warningRate) {
+    severity = "warning";
+    reasons.push(`dead-letter rate ${deadLetterRate.toFixed(4)} is above half the SLO max ${thresholds.deadLetterRateMax}`);
+  }
+
+  if (counts.oldestDeadLetterAgeSeconds !== null && counts.oldestDeadLetterAgeSeconds > thresholds.backlogAgeSecondsMax) {
+    severity = "breach";
+    reasons.push(`oldest dead-lettered job is ${counts.oldestDeadLetterAgeSeconds}s old, exceeding the ${thresholds.backlogAgeSecondsMax}s sustained-backlog alert window`);
+  }
+
+  return { severity, reasons, deadLetterRate, oldestDeadLetterAgeSeconds: counts.oldestDeadLetterAgeSeconds };
+}
+
 export async function listFeatureFlags(identity: RequestIdentity) {
   return controlDb().query(`select flag_key, enabled, configuration as config, updated_at, updated_by
     from corvis_control.feature_flag where tenant_id=$1 order by flag_key`, [identity.tenantId]);
@@ -85,10 +153,31 @@ export async function generateControlEvidence(identity: RequestIdentity, depende
     (select count(*) from corvis_control.audit_event where tenant_id=$1) as audit_events,
     (select count(*) from corvis_control.processing_job where tenant_id=$1 and state in ('failed','dead_letter')) as failed_jobs,
     (select count(*) from corvis_control.deletion_request where tenant_id=$1 and state='completed') as completed_deletions,
-    (select count(*) from corvis_consolidated.fund_period_snapshot where tenant_id=$1 and status='published') as published_snapshots`,
+    (select count(*) from corvis_consolidated.fund_period_snapshot where tenant_id=$1 and status='published') as published_snapshots,
+    (select count(*) from corvis_control.processing_job where tenant_id=$1 and state='dead_letter') as dead_letter_jobs,
+    (select count(*) from corvis_control.processing_job where tenant_id=$1) as total_jobs,
+    (select extract(epoch from (now() - min(updated_at)))
+       from corvis_control.processing_job where tenant_id=$1 and state='dead_letter') as oldest_dead_letter_age_seconds`,
   [identity.tenantId]);
-  const payload = { readiness, counts: counts[0] ?? {}, generatedAt: new Date().toISOString() };
-  const result = Object.values(readiness).every((value) => value === "configured") ? "pass" : "attention_required";
+  const countsRow = counts[0] ?? {};
+  // Denominator judgement call: the processing_job table has no reliable "job left the
+  // window" boundary (jobs stay dead-lettered indefinitely rather than aging out), so we
+  // approximate ops/slos.yaml's 24h-windowed dead_letter_rate with an all-time rate — the
+  // dead-letter count over every job ever recorded for the tenant. This is a coarser signal
+  // than a true rolling-window rate, but it only needs existing columns and it degrades
+  // safely toward the real SLO as the tenant's job history saturates a rolling day.
+  const rawOldestAge = countsRow.oldest_dead_letter_age_seconds;
+  const queueSaturation = evaluateQueueSaturation({
+    deadLetterJobs: Number(countsRow.dead_letter_jobs ?? 0),
+    totalJobs: Number(countsRow.total_jobs ?? 0),
+    // now() - updated_at, not created_at: updated_at reflects the job's last state
+    // transition (i.e. when it entered dead_letter), which is what "how long has this
+    // job been stuck" should measure, not how long ago it was originally created.
+    oldestDeadLetterAgeSeconds: rawOldestAge === null || rawOldestAge === undefined ? null : Number(rawOldestAge),
+  });
+  const payload = { readiness, counts: countsRow, queueSaturation, generatedAt: new Date().toISOString() };
+  const readinessOk = Object.values(readiness).every((value) => value === "configured");
+  const result = readinessOk && queueSaturation.severity !== "breach" ? "pass" : "attention_required";
   await db.execute(`insert into corvis_control.control_evidence
       (tenant_id,evidence_id,control_code,evidence_type,evidence_payload,result,generated_at,generated_by)
     values ($1,$2::uuid,'ENTERPRISE_RUNTIME','automated_runtime_snapshot',$3::jsonb,$4,now(),$5)`,
