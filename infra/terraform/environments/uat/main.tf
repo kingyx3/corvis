@@ -53,13 +53,13 @@ module "foundation" {
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 
-  source             = "../../modules/cloudflare-edge"
-  zone_id            = var.cloudflare_zone_id
+  source              = "../../modules/cloudflare-edge"
+  zone_id             = var.cloudflare_zone_id
   origin_ipv4_address = var.origin_ipv4_address
-  customer_hostname  = var.customer_hostname
-  admin_hostname     = var.admin_hostname
-  api_hostname       = var.api_hostname
-  enable_managed_waf = var.enable_cloudflare_managed_waf
+  customer_hostname   = var.customer_hostname
+  admin_hostname      = var.admin_hostname
+  api_hostname        = var.api_hostname
+  enable_managed_waf  = var.enable_cloudflare_managed_waf
 
   depends_on = [terraform_data.edge_configuration_guard]
 }
