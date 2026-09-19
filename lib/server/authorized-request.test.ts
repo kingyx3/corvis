@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import type { AuthorizationPrincipal, MembershipAuthorizationRepository } from "./authorization.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
+import { RateLimitError, RateLimiter } from "./rate-limit.ts";
 import { AuthenticationError, type GatewayIdentityAssertion } from "./request-context.ts";
 
-function signedAssertion(secret = "trusted-secret"): string {
+function signedAssertion(overrides: Partial<GatewayIdentityAssertion> = {}, secret = "trusted-secret"): string {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const payload: GatewayIdentityAssertion = {
     v: 1,
@@ -26,6 +27,7 @@ function signedAssertion(secret = "trusted-secret"): string {
     sessionId: "session-1",
     iat: nowSeconds - 10,
     exp: nowSeconds + 230,
+    ...overrides,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
@@ -118,6 +120,64 @@ test("explicit empty Postgres resource/data-right grants do not fall back to sig
     assert.equal(identity.entitlements.internalAnalyticsAllowed, false);
     assert.equal(identity.entitlements.modelTrainingAllowed, false);
     assert.equal(identity.entitlements.redistributionAllowed, false);
+  });
+});
+
+test("requests under the per-tenant/service-account rate limit pass through untouched", { concurrency: false }, async () => {
+  const rateLimiter = new RateLimiter(2, 60_000);
+  await withEnv(async () => {
+    const request = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion() },
+    });
+    const first = await resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_000 });
+    const second = await resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_100 });
+    assert.equal(first.tenantId, "11111111-1111-1111-1111-111111111111");
+    assert.equal(second.tenantId, "11111111-1111-1111-1111-111111111111");
+  });
+});
+
+test("a request over the rate limit is rejected with a RateLimitError carrying Retry-After seconds", { concurrency: false }, async () => {
+  const rateLimiter = new RateLimiter(1, 60_000);
+  await withEnv(async () => {
+    const request = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion() },
+    });
+    await resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_000 });
+    await assert.rejects(
+      resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_000 + 5_000 }),
+      (error: unknown) => error instanceof RateLimitError && error.retryAfterSeconds === 55,
+    );
+  });
+});
+
+test("the rate limit budget resets once the fixed window has elapsed", { concurrency: false }, async () => {
+  const rateLimiter = new RateLimiter(1, 60_000);
+  await withEnv(async () => {
+    const request = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion() },
+    });
+    await resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_000 });
+    await assert.rejects(resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_010_000 }), RateLimitError);
+    const afterWindow = await resolveAuthorizedRequestIdentity(request, { rateLimiter, now: 1_000_000 + 60_000 });
+    assert.equal(afterWindow.tenantId, "11111111-1111-1111-1111-111111111111");
+  });
+});
+
+test("distinct tenant/service-account pairings do not share a rate limit budget", { concurrency: false }, async () => {
+  const rateLimiter = new RateLimiter(1, 60_000);
+  await withEnv(async () => {
+    const requestForTenantA = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion() },
+    });
+    const requestForServiceAccountB = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion({ sub: "service-account|other" }) },
+    });
+    // Exhaust tenant A / subject "idp|user-123"'s single-request budget...
+    await resolveAuthorizedRequestIdentity(requestForTenantA, { rateLimiter, now: 1_000_000 });
+    await assert.rejects(resolveAuthorizedRequestIdentity(requestForTenantA, { rateLimiter, now: 1_000_000 }), RateLimitError);
+    // ...a different service account under the same limiter still has budget.
+    const identity = await resolveAuthorizedRequestIdentity(requestForServiceAccountB, { rateLimiter, now: 1_000_000 });
+    assert.equal(identity.subject, "service-account|other");
   });
 });
 

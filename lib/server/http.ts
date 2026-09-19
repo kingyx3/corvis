@@ -3,6 +3,7 @@ import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecy
 import { FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
 import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
+import { RateLimitError } from "@/lib/server/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
@@ -28,6 +29,13 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof AuthorizationError) {
     logEvent("warn", "api.authorization_denied", { correlationId }, { requiredPermission: error.requiredPermission });
     return json({ error: "forbidden", correlationId }, { status: 403 });
+  }
+  if (error instanceof RateLimitError) {
+    logEvent("warn", "api.rate_limited", { correlationId }, { retryAfterSeconds: error.retryAfterSeconds });
+    return json({ error: "rate_limited", correlationId }, {
+      status: 429,
+      headers: { "retry-after": String(error.retryAfterSeconds) },
+    });
   }
   if (error instanceof ConflictError) {
     logEvent("warn", "api.conflict", { correlationId }, { code: error.code });

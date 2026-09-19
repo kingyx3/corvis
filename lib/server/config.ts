@@ -32,6 +32,10 @@ export type ServerConfig = {
 
   observabilityEndpoint?: string;
   observabilityToken?: string;
+  // Per-tenant/per-service-account request budget enforced on app/api/v1
+  // routes, layered underneath Cloudflare's edge rate limiting rather than
+  // replacing it. Requests share a fixed one-minute window per identity.
+  rateLimitRequestsPerMinute: number;
   dataLifecycleEndpoint?: string;
   dataLifecycleToken?: string;
   exportDeliveryEndpoint?: string;
@@ -79,6 +83,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     researchTimeoutMs: Math.min(positiveInteger(env.CORVIS_RESEARCH_TIMEOUT_MS) ?? 30_000, 120_000),
     observabilityEndpoint: env.CORVIS_OBSERVABILITY_ENDPOINT,
     observabilityToken: env.CORVIS_OBSERVABILITY_TOKEN,
+    rateLimitRequestsPerMinute: positiveInteger(env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE) ?? 600,
     dataLifecycleEndpoint: env.CORVIS_DATA_LIFECYCLE_ENDPOINT,
     dataLifecycleToken: env.CORVIS_DATA_LIFECYCLE_TOKEN,
     exportDeliveryEndpoint: env.CORVIS_EXPORT_DELIVERY_ENDPOINT,
