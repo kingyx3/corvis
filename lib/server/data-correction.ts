@@ -20,7 +20,7 @@ function stable(value: unknown): string {
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>).sort(([a],[b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`).join(",")}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "null";
 }
 function requestHash(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
 function required(value: string, name: string, max = 2000): string {
@@ -30,7 +30,9 @@ function required(value: string, name: string, max = 2000): string {
 }
 
 export class PostgresDataCorrectionRepository {
-  constructor(private readonly db: PostgresSqlApi) {}
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) { this.db = db; }
 
   list(identity: RequestIdentity): Promise<PostgresRow[]> {
     return this.db.query(`select incident_id,idempotency_key,fund_id,report_period,metric_code,snapshot_id,snapshot_version,
