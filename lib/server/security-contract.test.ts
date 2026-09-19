@@ -95,7 +95,8 @@ test("outbound webhook delivery is replay-safe and bounded", async () => {
 
   assert.match(delivery, /d\.state in \('delivering','complete'\)/, "claimed/completed webhook deliveries must not be redelivered concurrently");
   assert.match(delivery, /on conflict \(tenant_id,webhook_id,event_id,attempt\) do nothing/, "duplicate delivery claims must be idempotent");
-  assert.match(delivery, /prior_attempts[^\n]*<5|prior_attempts\??0\)\+1/, "webhook attempts must be bounded");
+  assert.match(delivery, /coalesce\(\(select max\(d\.attempt\)[\s\S]*?\),0\)<5/, "webhook delivery selection must stop after five attempts");
+  assert.match(delivery, /attempt>=5\?["']failed["']:["']retryable["']/, "the fifth failed attempt must become terminal");
   assert.match(delivery, /webhookHeaders\(config\.webhookSigningSecret,envelope\)/, "every outbound delivery must be signed");
   assert.match(sql, /unique \(tenant_id, webhook_id, event_id, attempt\)/, "database must enforce unique delivery attempts per tenant/webhook/event");
 });
