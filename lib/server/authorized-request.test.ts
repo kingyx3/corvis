@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import type { MembershipAuthorizationRepository } from "./authorization.ts";
+import type { AuthorizationPrincipal, MembershipAuthorizationRepository } from "./authorization.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
 import { AuthenticationError, type GatewayIdentityAssertion } from "./request-context.ts";
 
@@ -47,8 +47,10 @@ async function withEnv<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 test("authoritative Postgres roles and implemented resource grants override signed claims", { concurrency: false }, async () => {
+  let resolvedPrincipal: AuthorizationPrincipal | undefined;
   const repository: MembershipAuthorizationRepository = {
-    async resolve() {
+    async resolve(principal) {
+      resolvedPrincipal = principal;
       return {
         roles: ["read_only"],
         workspaceIds: [
@@ -73,6 +75,7 @@ test("authoritative Postgres roles and implemented resource grants override sign
     ]);
     assert.deepEqual(identity.entitlements.fundIds, ["fund-db"]);
     assert.deepEqual(identity.entitlements.documentIds, ["doc-db"]);
+    assert.equal(resolvedPrincipal?.sessionId, "session-1");
   });
 });
 
@@ -97,7 +100,7 @@ test("explicit empty Postgres resource grants do not fall back to signed claims"
   });
 });
 
-test("missing authoritative membership fails closed after successful authentication", { concurrency: false }, async () => {
+test("missing authoritative membership or revoked session fails closed after successful authentication", { concurrency: false }, async () => {
   const repository: MembershipAuthorizationRepository = { async resolve() { return null; } };
   await withEnv(async () => {
     const request = new Request("https://corvis.example/api/v1/me", {

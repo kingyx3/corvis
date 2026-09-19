@@ -13,10 +13,10 @@ type ResolveAuthorizedOptions = {
  *
  * The signed gateway assertion establishes subject/tenant/workspace/session and
  * carries resource-scoped entitlements. In production, effective workspace
- * membership, application roles, and implemented fine-grained resource rights
- * are re-resolved from Postgres before a route evaluates permissions. This
- * prevents a cryptographically valid but stale/over-privileged claim from
- * becoming the application authority.
+ * membership, application roles, implemented fine-grained resource rights and
+ * session revocation state are re-resolved from Postgres before a route evaluates
+ * permissions. This prevents a cryptographically valid but stale, revoked or
+ * over-privileged claim from becoming the application authority.
  */
 export async function resolveAuthorizedRequestIdentity(
   request: Request,
@@ -34,6 +34,7 @@ export async function resolveAuthorizedRequestIdentity(
     tenantId: authenticated.tenantId,
     workspaceId: authenticated.workspaceId,
     authMethod: authenticated.authMethod,
+    sessionId: authenticated.sessionId,
   });
   if (!authorized) throw new AuthenticationError("No active authoritative authorization context");
 
