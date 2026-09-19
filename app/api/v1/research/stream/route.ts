@@ -30,7 +30,8 @@ export async function POST(request: Request) {
     const onRequestAbort = () => {
       if (!execution.signal.aborted) execution.abort();
     };
-    request.signal.addEventListener("abort", onRequestAbort, { once: true });
+    if (request.signal.aborted) onRequestAbort();
+    else request.signal.addEventListener("abort", onRequestAbort, { once: true });
 
     let closed = false;
     const stream = new ReadableStream<Uint8Array>({
