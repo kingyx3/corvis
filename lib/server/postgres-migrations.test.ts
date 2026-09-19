@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const migrationFiles = [
-  "db/postgres/migrations/001_control_plane.sql",
-  "db/postgres/migrations/002_source_canonical_serving.sql",
-  "db/postgres/migrations/003_operations_delivery_governance.sql",
-  "db/postgres/migrations/004_actor_subject_and_research.sql",
-  "db/postgres/migrations/005_identity_review_publication.sql",
-  "db/postgres/migrations/006_upload_delivery_operations.sql",
-];
+const migrationDirectory = "db/postgres/migrations";
+const versionedMigrationPattern = /^\d{3}_[a-z0-9_]+\.sql$/i;
+
+async function migrationFiles(): Promise<string[]> {
+  const entries = await readdir(migrationDirectory, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && versionedMigrationPattern.test(entry.name))
+    .map((entry) => `${migrationDirectory}/${entry.name}`)
+    .sort();
+}
 
 async function migrations(): Promise<string> {
-  return (await Promise.all(migrationFiles.map((path) => readFile(path, "utf8")))).join("\n");
+  const files = await migrationFiles();
+  return (await Promise.all(files.map((path) => readFile(path, "utf8")))).join("\n");
 }
 
 function regexEscape(value: string): string {
@@ -28,6 +31,28 @@ function tenantBearingTables(sql: string): string[] {
   }
   return [...tables].sort();
 }
+
+test("migration contract suite discovers every versioned SQL migration in deterministic sequence", async () => {
+  const entries = await readdir(migrationDirectory, { withFileTypes: true });
+  const allSqlFiles = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".sql"))
+    .map((entry) => `${migrationDirectory}/${entry.name}`)
+    .sort();
+  const files = await migrationFiles();
+
+  assert.deepEqual(files, allSqlFiles, "every SQL file in the Postgres migration directory must use the versioned migration naming contract");
+  assert.ok(files.length >= 7, `expected all current Postgres migrations to be covered, found only ${files.length}`);
+
+  const numbers = files.map((file) => {
+    const name = file.slice(file.lastIndexOf("/") + 1);
+    return Number(name.slice(0, 3));
+  });
+  assert.deepEqual(
+    numbers,
+    Array.from({ length: numbers.length }, (_, index) => index + 1),
+    "Postgres migration numbers must remain contiguous so deploy workflows cannot silently skip a version",
+  );
+});
 
 test("Postgres migrations do not reintroduce Snowflake-only DDL", async () => {
   const sql = (await migrations()).toUpperCase();
