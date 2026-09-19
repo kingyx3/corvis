@@ -74,6 +74,14 @@ module "foundation" {
   source_bucket_name = var.source_bucket_name
 }
 
+module "api_runtime" {
+  source                    = "../../modules/cloud-run-runtime"
+  project_id                = var.project_id
+  environment               = "uat"
+  api_image                 = var.api_image
+  api_service_account_email = module.foundation.api_service_account
+}
+
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 
