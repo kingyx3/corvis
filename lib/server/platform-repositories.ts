@@ -149,7 +149,7 @@ export class PostgresReviewPublicationRepository {
   async snapshot(identity: RequestIdentity, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
     if (fundIds.length === 0) return undefined;
-    const rows = await this.db.query(`select * from corvis_consolidated.fund_period_snapshot
+    const rows = await this.db.query(`select * from corvis_serving.fund_period_snapshots
       where tenant_id=$1 and snapshot_id=$2::uuid and version=$3
         and fund_id in (select jsonb_array_elements_text($4::jsonb))
       limit 1`, [identity.tenantId,snapshotId,version,jsonIds(fundIds)]);
