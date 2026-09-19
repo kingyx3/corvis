@@ -46,14 +46,16 @@ function object(value: unknown): Record<string, unknown> {
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a],[b]) => a.localeCompare(b)).map(([key,entry]) => `${JSON.stringify(key)}:${stable(entry)}`).join(",")}}`;
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "null";
 }
 function sha256(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function text(row: PostgresRow, key: string): string { return row[key] == null ? "" : String(row[key]); }
 
 export class PostgresProcessingTransportRepository implements TransportRepository {
-  constructor(private readonly db: PostgresSqlApi) {}
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) { this.db = db; }
 
   async claim(limit = 50): Promise<TransportEvent[]> {
     const rows = await this.db.query("select * from corvis_control.claim_processing_transport_events($1,$2)", [limit,60]);
@@ -113,7 +115,13 @@ async function metadataToken(fetchImpl: typeof fetch): Promise<string> {
 }
 
 export class GcpProcessingTransportAdapter implements ProcessingTransportAdapter {
-  constructor(private readonly config: ProcessingTransportConfig, private readonly fetchImpl: typeof fetch = fetch) {}
+  private readonly config: ProcessingTransportConfig;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(config: ProcessingTransportConfig, fetchImpl: typeof fetch = fetch) {
+    this.config = config;
+    this.fetchImpl = fetchImpl;
+  }
   private async token(): Promise<string> { return metadataToken(this.fetchImpl); }
 
   async publish(delivery: ProcessingStageDelivery): Promise<void> {
