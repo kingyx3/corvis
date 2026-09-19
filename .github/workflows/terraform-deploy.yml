@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   id-token: write
 
 concurrency:
@@ -84,6 +85,13 @@ jobs:
           exit 1
 
       - uses: actions/checkout@v7
+
+      - name: Verify effective release governance
+        if: inputs.action == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
+        run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
