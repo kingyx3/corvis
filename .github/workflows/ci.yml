@@ -43,3 +43,34 @@ jobs:
           set -euo pipefail
           test "$(docker image inspect "corvis-ci:${GITHUB_SHA}" --format '{{.Config.User}}')" = "corvis"
           docker run --rm --entrypoint node "corvis-ci:${GITHUB_SHA}" --version
+
+  rate-limit-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-disposable-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ci-disposable-only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Apply isolated rate-limit migration and acceptance checks
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/postgres/migrations/020_distributed_api_rate_limit.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate_limit.sql
+      - name: Verify concurrent independent database connections
+        run: node db/postgres/tests/rate-limit-concurrency.mjs

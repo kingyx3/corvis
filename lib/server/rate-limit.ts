@@ -1,10 +1,9 @@
 import { getServerConfig } from "./config.ts";
 
 /**
- * Application-layer per-tenant/per-service-account request budget for
+ * Development/test process-local request budget for
  * app/api/v1. This sits underneath Cloudflare's edge rate limiting; it does
- * not replace it, but bounds how much backend capacity any single
- * tenant/service-account pairing can consume regardless of edge behavior.
+ * not replace it. Production uses distributed-rate-limit.ts and Postgres.
  *
  * A fixed-window counter is used (not a sliding window) for simplicity and
  * predictable, easily-tested reset semantics: a window opens on first use of
@@ -63,7 +62,7 @@ export class RateLimiter {
 
 let sharedLimiter: RateLimiter | undefined;
 
-/** The process-wide limiter used by request handling in production. */
+/** The process-wide limiter used by development/test request handling. */
 export function tenantRateLimiter(): RateLimiter {
   if (!sharedLimiter) {
     sharedLimiter = new RateLimiter(getServerConfig().rateLimitRequestsPerMinute, RATE_LIMIT_WINDOW_MS);

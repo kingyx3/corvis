@@ -1,7 +1,8 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "./authorization.ts";
-import { enforceRateLimit, type RateLimiter } from "./rate-limit.ts";
+import type { RateLimiter } from "./rate-limit.ts";
+import { enforceRequestRateLimit } from "./distributed-rate-limit.ts";
 import { AuthenticationError, resolveRequestIdentity } from "./request-context.ts";
 
 type ResolveAuthorizedOptions = {
@@ -31,7 +32,7 @@ export async function resolveAuthorizedRequestIdentity(
   // subject (a user or a service account), so this is the narrowest place
   // that still covers the whole authenticated app/api/v1 surface without
   // threading rate limiting through each route handler individually.
-  enforceRateLimit(`${authenticated.tenantId}:${authenticated.subject}`, {
+  await enforceRequestRateLimit(authenticated.tenantId, authenticated.subject, {
     limiter: options.rateLimiter,
     now: options.now,
   });
