@@ -32,7 +32,7 @@ function assertPermission(sourceText: string, permission: string, file: string) 
   assert.match(sourceText, new RegExp(`assertPermission\\(identity,\\s*[\"']${escaped}[\"']\\)`), `${file} must enforce ${permission}`);
 }
 
-test("every non-public v1 route resolves authenticated identity and enforces a role permission", async () => {
+test("every non-public v1 route resolves authoritative identity and enforces a role permission", async () => {
   const files = await routeFiles("app/api/v1");
   assert.ok(files.length > 10, "expected the v1 API surface to be discovered");
 
@@ -47,7 +47,7 @@ test("every non-public v1 route resolves authenticated identity and enforces a r
     const text = await source(file);
     if (publicRoutes.has(file)) continue;
 
-    assert.match(text, /resolveRequestIdentity\(request\)/, `${file} must authenticate the request`);
+    assert.match(text, /resolveAuthorizedRequestIdentity\(request\)/, `${file} must resolve authoritative request authorization`);
     if (!identityOnlyRoutes.has(file)) {
       assert.match(text, /assertPermission\(identity,/, `${file} must enforce a role permission`);
     }
