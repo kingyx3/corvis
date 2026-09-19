@@ -29,3 +29,6 @@ yarn-error.log*
 pnpm-debug.log*
 .DS_Store
 *.tsbuildinfo
+
+# Ephemeral local agent worktrees
+.claude/worktrees/
