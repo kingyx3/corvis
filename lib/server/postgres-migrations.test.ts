@@ -36,7 +36,7 @@ test("Postgres migrations do not reintroduce Snowflake-only DDL", async () => {
   }
 });
 
-test("every tenant-bearing Postgres table enables RLS and has an explicit read policy", async () => {
+test("every tenant-bearing Postgres table enables RLS, including server-only deny-by-default tables", async () => {
   const sql = (await migrations()).toLowerCase();
   const tables = tenantBearingTables(sql);
   assert.ok(tables.length >= 20, `expected broad tenant table coverage, found only ${tables.length}`);
@@ -44,7 +44,17 @@ test("every tenant-bearing Postgres table enables RLS and has an explicit read p
   for (const table of tables) {
     const escaped = regexEscape(table);
     assert.match(sql, new RegExp(`alter\\s+table\\s+${escaped}\\s+enable\\s+row\\s+level\\s+security\\s*;`), `${table} must enable RLS`);
-    assert.match(sql, new RegExp(`create\\s+policy\\s+[a-z0-9_]+\\s+on\\s+${escaped}\\s+for\\s+select\\s+using\\s*\\(`), `${table} must define a SELECT policy`);
+  }
+
+  // Some control tables (for example idempotency state) are intentionally
+  // server-only. RLS with no client SELECT policy is stronger than making them
+  // tenant-readable, so the exhaustive contract requires RLS rather than a
+  // policy on every table.
+  const selectPolicies = [...sql.matchAll(/create\s+policy\s+([a-z0-9_]+)\s+on\s+([a-z0-9_.]+)\s+for\s+select\s+using\s*\(([\s\S]*?)\);/g)];
+  assert.ok(selectPolicies.length >= 15, `expected broad explicit SELECT-policy coverage, found only ${selectPolicies.length}`);
+  for (const [, policy, table, expression] of selectPolicies) {
+    assert.match(expression ?? "", /corvis_control\.has_tenant_access|corvis_control\.has_workspace_access|auth\.uid\(\)/, `${policy} on ${table} must derive access from tenant/workspace membership or auth.uid()`);
+    assert.equal(/\btrue\b/.test(expression ?? ""), false, `${policy} on ${table} must not be allow-all`);
   }
 
   assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false, "client-facing migrations must not add broad mutation policies");
