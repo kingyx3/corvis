@@ -13,11 +13,8 @@ import {
  *
  *   node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
  *
- * The control-evidence Postgres database is not provisioned in CI yet, so a
- * missing CORVIS_POSTGRES_DSN or CORVIS_CONTROL_TENANT_ID is treated as a
- * clean, zero-exit-code skip rather than a failure — this script only ever
- * fails the calling step once those are configured and a real collection
- * error occurs.
+ * Required release evidence: missing configuration, malformed artifacts or a
+ * collection failure fail the job and prevent known-good release promotion.
  */
 
 function sourceRunUri(): string | undefined {
@@ -45,15 +42,14 @@ async function main(): Promise<void> {
   const tenantId = process.env.CORVIS_CONTROL_TENANT_ID;
   if (!dsn || !tenantId) {
     const missing = [!dsn && "CORVIS_POSTGRES_DSN", !tenantId && "CORVIS_CONTROL_TENANT_ID"].filter(Boolean).join(", ");
-    console.log(
-      `::notice::Skipping control-evidence collection: ${missing} not configured for this environment yet. ` +
-        "This artifact still uploads normally; nothing else depends on this step.",
-    );
-    return;
+    throw new Error(`Required control-evidence configuration missing: ${missing}`);
   }
 
   const raw = await readEvidenceFile(evidencePath);
   const evidence = parseSecurityAcceptanceEvidence(raw);
+  if (!process.env.CORVIS_ENVIRONMENT || evidence.environment !== process.env.CORVIS_ENVIRONMENT) {
+    throw new Error("Evidence environment does not match the acceptance environment");
+  }
   const collectedBy = process.env.CORVIS_CONTROL_EVIDENCE_COLLECTED_BY || "ci:security-acceptance";
 
   const outcome = await collectSecurityAcceptanceEvidence({
@@ -66,6 +62,9 @@ async function main(): Promise<void> {
   console.log(
     `Recorded control evidence ${outcome.sourceKey} revision ${outcome.revision} (${outcome.result}) for ${outcome.controlCode}.`,
   );
+  if (outcome.result !== "pass") {
+    throw new Error("Non-passing evidence was retained; release acceptance is blocked");
+  }
   if (outcome.promotedVersion != null) {
     console.log(`Promoted ${outcome.controlCode} to implementation version ${outcome.promotedVersion}.`);
   }

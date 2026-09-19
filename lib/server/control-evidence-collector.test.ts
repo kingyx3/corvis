@@ -80,11 +80,11 @@ test("parseSecurityAcceptanceEvidence accepts both known schemas and rejects eve
   assert.throws(() => parseSecurityAcceptanceEvidence({ ...edgeEvidence(), summary: {} }), ControlEvidenceCollectionError);
 });
 
-test("securityAcceptanceResult reads the result field or derives it from the failure count", () => {
+test("securityAcceptanceResult uses individual checks rather than trusting a summary", () => {
   assert.equal(securityAcceptanceResult(postgresRlsEvidence({ result: "pass" })), "pass");
   assert.equal(securityAcceptanceResult(postgresRlsEvidence({ result: "fail" })), "fail");
   assert.equal(securityAcceptanceResult(edgeEvidence({ summary: { passed: 2, failed: 0 } })), "pass");
-  assert.equal(securityAcceptanceResult(edgeEvidence({ summary: { passed: 1, failed: 1 } })), "fail");
+  assert.equal(securityAcceptanceResult(edgeEvidence({ checks: [{ name: "tls", status: "fail" }], summary: { passed: 0, failed: 1 } })), "fail");
 });
 
 test("computePayloadDigest is a deterministic hex sha256 that chains off the previous digest", () => {
@@ -165,7 +165,7 @@ test("chains a second revision off the first revision's digest instead of starti
 test("a failing evidence file is still recorded but never attempts to promote the control", async () => {
   const db = new FakeDb();
   const outcome = await collectSecurityAcceptanceEvidence(
-    { tenantId: TENANT_ID, evidence: edgeEvidence({ summary: { passed: 0, failed: 1 } }), collectedBy: "ci:security-acceptance" },
+    { tenantId: TENANT_ID, evidence: edgeEvidence({ checks: [{ name: "tls", status: "fail" }], summary: { passed: 0, failed: 1 } }), collectedBy: "ci:security-acceptance" },
     db,
   );
 
@@ -209,4 +209,39 @@ test("requires a tenant id and a collector identity", async () => {
     () => collectSecurityAcceptanceEvidence({ tenantId: TENANT_ID, evidence: postgresRlsEvidence(), collectedBy: "" }, db),
     ControlEvidenceCollectionError,
   );
+});
+
+const edgeNames = ["customer-edge-https", "admin-edge-https", "api-https-and-cache-isolation",
+  "http-redirects-to-https", "csrf-cors-cross-site-block", "cloudflare-waf-probe",
+  "cloudflare-rate-limit-probe", "direct-load-balancer-origin-mtls-blocked",
+  "direct-cloud-run-origin-bypass-blocked"];
+function v3Evidence(): SecurityAcceptanceEdgeEvidence {
+  return edgeEvidence({ schemaVersion: "corvis.security-acceptance.v3",
+    checks: edgeNames.map((name) => ({ name, status: "pass" })),
+    summary: { passed: 9, failed: 0, skipped: 0 } });
+}
+
+test("current v3 producer schema is accepted and skipped runtime checks block promotion", async () => {
+  const evidence = v3Evidence();
+  assert.equal(securityAcceptanceResult(parseSecurityAcceptanceEvidence(evidence)), "pass");
+  const skipped = { ...evidence, checks: evidence.checks.map((check, index) => index === 0 ? { ...check, status: "skip" as const } : check),
+    summary: { passed: 8, failed: 0, skipped: 1 } };
+  const db = new FakeDb();
+  const result = await collectSecurityAcceptanceEvidence({ tenantId: TENANT_ID, evidence: skipped, collectedBy: "ci" }, db);
+  assert.equal(result.result, "fail");
+  assert.equal(result.promotedVersion, null);
+  assert.ok(!db.calls.some((call) => call.sql.includes("promote_control_implementation")));
+});
+
+test("empty, incomplete, duplicate and contradictory evidence cannot pass validation", () => {
+  const evidence = v3Evidence();
+  for (const invalid of [
+    { ...evidence, checks: [] },
+    { ...evidence, checks: evidence.checks.slice(1), summary: { passed: 8, failed: 0 } },
+    { ...evidence, checks: [...evidence.checks, evidence.checks[0]] },
+    { ...evidence, summary: { passed: 9, failed: -1 } },
+    { ...evidence, checkedAt: "invalid" },
+    { ...evidence, source: "unattributed" },
+    { ...postgresRlsEvidence(), checks: [""] },
+  ]) assert.throws(() => parseSecurityAcceptanceEvidence(invalid), ControlEvidenceCollectionError);
 });

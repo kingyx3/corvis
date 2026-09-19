@@ -19,12 +19,12 @@ import { evidenceSource } from "./control-evidence-registry.ts";
 export type SecurityAcceptanceCheckResult = "pass" | "fail";
 
 export type SecurityAcceptanceEdgeEvidence = {
-  schemaVersion: "corvis.security-acceptance.v1";
+  schemaVersion: "corvis.security-acceptance.v1" | "corvis.security-acceptance.v3";
   environment: string;
   checkedAt: string;
   source: string;
-  checks: ReadonlyArray<{ name: string; status: SecurityAcceptanceCheckResult; startedAt?: string; detail?: unknown }>;
-  summary: { passed: number; failed: number };
+  checks: ReadonlyArray<{ name: string; status: SecurityAcceptanceCheckResult | "skip"; startedAt?: string; detail?: unknown }>;
+  summary: { passed: number; failed: number; skipped?: number };
 };
 
 export type SecurityAcceptancePostgresRlsEvidence = {
@@ -41,6 +41,7 @@ export type SecurityAcceptanceEvidenceFile = SecurityAcceptanceEdgeEvidence | Se
 /** Maps each accepted evidence schema to the registry's sourceKey it satisfies. */
 const SCHEMA_SOURCE_KEYS: Record<SecurityAcceptanceEvidenceFile["schemaVersion"], string> = {
   "corvis.security-acceptance.v1": "security-acceptance.edge",
+  "corvis.security-acceptance.v3": "security-acceptance.edge",
   "corvis.postgres-rls-security-acceptance.v1": "security-acceptance.postgres-rls",
 };
 
@@ -53,7 +54,7 @@ export function parseSecurityAcceptanceEvidence(raw: unknown): SecurityAcceptanc
   }
   const value = raw as Record<string, unknown>;
   const schemaVersion = value.schemaVersion;
-  if (schemaVersion !== "corvis.security-acceptance.v1" && schemaVersion !== "corvis.postgres-rls-security-acceptance.v1") {
+  if (schemaVersion !== "corvis.security-acceptance.v1" && schemaVersion !== "corvis.security-acceptance.v3" && schemaVersion !== "corvis.postgres-rls-security-acceptance.v1") {
     throw new ControlEvidenceCollectionError(`Unsupported security-acceptance evidence schemaVersion: ${JSON.stringify(schemaVersion)}`);
   }
   if (typeof value.checkedAt !== "string" || !value.checkedAt) {
@@ -62,17 +63,47 @@ export function parseSecurityAcceptanceEvidence(raw: unknown): SecurityAcceptanc
   if (typeof value.environment !== "string" || !value.environment) {
     throw new ControlEvidenceCollectionError("Evidence is missing a string environment");
   }
-  if (!Array.isArray(value.checks)) {
-    throw new ControlEvidenceCollectionError("Evidence is missing a checks array");
+  if (Number.isNaN(Date.parse(value.checkedAt as string))) {
+    throw new ControlEvidenceCollectionError("Evidence checkedAt is invalid");
+  }
+  if (value.source !== "github-actions") {
+    throw new ControlEvidenceCollectionError("Evidence source must be github-actions");
+  }
+  if (!Array.isArray(value.checks) || value.checks.length === 0) {
+    throw new ControlEvidenceCollectionError("Evidence must contain nonempty checks");
   }
   if (schemaVersion === "corvis.postgres-rls-security-acceptance.v1") {
     if (value.result !== "pass" && value.result !== "fail") {
       throw new ControlEvidenceCollectionError("Postgres RLS evidence is missing a pass/fail result");
     }
+    if (value.checks.some((check) => typeof check !== "string" || !check.trim()) ||
+        new Set(value.checks).size !== value.checks.length) {
+      throw new ControlEvidenceCollectionError("Postgres RLS checks must be unique nonempty names");
+    }
   } else {
+    const names = new Set<string>();
+    const counts = { pass: 0, fail: 0, skip: 0 };
+    for (const check of value.checks) {
+      if (!check || typeof check.name !== "string" || !check.name.trim() || names.has(check.name) ||
+          !["pass", "fail", "skip"].includes(check.status)) {
+        throw new ControlEvidenceCollectionError("Invalid or duplicate edge check");
+      }
+      names.add(check.name);
+      counts[check.status as keyof typeof counts] += 1;
+    }
     const summary = value.summary as Record<string, unknown> | undefined;
-    if (!summary || typeof summary.failed !== "number") {
-      throw new ControlEvidenceCollectionError("Edge evidence is missing a numeric summary.failed");
+    if (!summary || summary.passed !== counts.pass || summary.failed !== counts.fail ||
+        (summary.skipped ?? 0) !== counts.skip) {
+      throw new ControlEvidenceCollectionError("Edge summary does not match individual checks");
+    }
+    if (schemaVersion === "corvis.security-acceptance.v3") {
+      const required = ["customer-edge-https", "admin-edge-https", "api-https-and-cache-isolation",
+        "http-redirects-to-https", "csrf-cors-cross-site-block", "cloudflare-waf-probe",
+        "cloudflare-rate-limit-probe", "direct-load-balancer-origin-mtls-blocked",
+        "direct-cloud-run-origin-bypass-blocked"];
+      if (required.some((name) => !names.has(name))) {
+        throw new ControlEvidenceCollectionError("Edge evidence is missing required checks");
+      }
     }
   }
   return value as unknown as SecurityAcceptanceEvidenceFile;
@@ -82,7 +113,7 @@ export function parseSecurityAcceptanceEvidence(raw: unknown): SecurityAcceptanc
 export function securityAcceptanceResult(evidence: SecurityAcceptanceEvidenceFile): SecurityAcceptanceCheckResult {
   return evidence.schemaVersion === "corvis.postgres-rls-security-acceptance.v1"
     ? evidence.result
-    : evidence.summary.failed === 0
+    : evidence.checks.length > 0 && evidence.checks.every((check) => check.status === "pass")
       ? "pass"
       : "fail";
 }
@@ -154,7 +185,8 @@ export async function collectSecurityAcceptanceEvidence(
   input: CollectSecurityAcceptanceEvidenceInput,
   db: PostgresSqlApi = controlDb(),
 ): Promise<CollectSecurityAcceptanceEvidenceOutcome> {
-  const { tenantId, evidence, collectedBy } = input;
+  const { tenantId, collectedBy } = input;
+  const evidence = parseSecurityAcceptanceEvidence(input.evidence);
   if (!tenantId) throw new ControlEvidenceCollectionError("tenantId is required to record control evidence");
   if (!collectedBy) throw new ControlEvidenceCollectionError("collectedBy is required to record control evidence");
 
