@@ -30,28 +30,29 @@ export function ReviewView({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
-  const [exceptions, setExceptions] = useState<ReconciliationException[]>([]);
-  const [exceptionsLoaded, setExceptionsLoaded] = useState(false);
+  const [exceptionState, setExceptionState] = useState<{ key: string; items: ReconciliationException[] }>({ key: "", items: [] });
   const [selectedSources, setSelectedSources] = useState<Record<string, string>>({});
   const snapshotId = snapshot?.id;
   const snapshotVersion = snapshot?.version;
+  const exceptionKey = snapshotId && snapshotVersion ? `${snapshotId}:${snapshotVersion}` : "";
 
   useEffect(() => {
+    if (!snapshotId || !snapshotVersion || !exceptionKey) return;
     let active = true;
-    setExceptions([]);
-    setExceptionsLoaded(false);
-    setSelectedSources({});
-    if (!snapshotId || !snapshotVersion) {
-      setExceptionsLoaded(true);
-      return () => { active = false; };
-    }
     void workspacePort.listReconciliationExceptions(snapshotId, snapshotVersion)
-      .then((items) => { if (active) setExceptions(items); })
-      .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded"); })
-      .finally(() => { if (active) setExceptionsLoaded(true); });
+      .then((items) => {
+        if (active) setExceptionState({ key: exceptionKey, items });
+      })
+      .catch((error) => {
+        if (!active) return;
+        setExceptionState({ key: exceptionKey, items: [] });
+        setMessage(error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded");
+      });
     return () => { active = false; };
-  }, [snapshotId, snapshotVersion]);
+  }, [snapshotId, snapshotVersion, exceptionKey]);
 
+  const exceptions = exceptionState.key === exceptionKey ? exceptionState.items : [];
+  const exceptionsLoaded = !exceptionKey || exceptionState.key === exceptionKey;
   const hasSnapshotScopedRows = Boolean(snapshot?.id && rows.some((row) => row.snapshotId === snapshot.id));
   const scopedRows = hasSnapshotScopedRows ? rows.filter((row) => row.snapshotId === snapshot?.id) : rows;
   const visible = onlyReview ? scopedRows.filter((row) => row.state === "Needs review") : scopedRows;
@@ -129,9 +130,12 @@ export function ReviewView({
         selectedSourceReferenceId,
         note,
       });
-      setExceptions((current) => current.map((exception) => exception.exceptionId === item.exceptionId
-        ? { ...exception, status: "resolved", version: outcome.newVersion, resolvedAt: new Date().toISOString() }
-        : exception));
+      setExceptionState((current) => current.key !== exceptionKey ? current : {
+        key: current.key,
+        items: current.items.map((exception) => exception.exceptionId === item.exceptionId
+          ? { ...exception, status: "resolved", version: outcome.newVersion, resolvedAt: new Date().toISOString() }
+          : exception),
+      });
       setMessage(`Reconciliation exception resolved: ${actionLabel(action)}.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Reconciliation resolution failed"); }
     finally { setBusy(null); }
