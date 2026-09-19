@@ -166,3 +166,22 @@ Some trust/account/operating facts require authorized external ownership or huma
 - final production-readiness approval.
 
 These are deliberate external evidence/ownership gates. Everything else that providers safely expose through API/IaC should be driven from GitHub rather than maintained manually in multiple consoles.
+
+### Release governance pre-flight
+
+Build release image and Terraform apply now read GitHub's effective `main`
+rules and the exact release commit's check runs before acquiring provider
+credentials. Required checks are `frontend`, `container`, `rate-limit-postgres`,
+`Analyze TypeScript`, `secret-history`, and `forbidden-artifacts`, all bound to
+the GitHub Actions integration and required with strict up-to-date enforcement.
+Require at least one approval, stale-review dismissal and last-push approval,
+plus deletion/force-push protection, in active applicable rulesets without bypass
+actors. Missing or unreadable bypass metadata fails closed. Release commits
+must belong to main history; a similarly named check from another app does not
+satisfy the gate.
+
+Configure those settings in the existing Protect Main ruleset; this pre-flight
+only verifies them. The repository's earlier zero-check/zero-review/bypass
+configuration remains a release blocker until actually corrected. No extra
+repository secret is required: the workflow uses its read-only GitHub token.
+An administrator must ensure that token can read the full ruleset metadata.
