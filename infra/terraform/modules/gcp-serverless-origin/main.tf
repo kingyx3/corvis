@@ -1,5 +1,5 @@
 locals {
-  source_range_chunks = chunklist(var.allowed_source_ranges, 10)
+  source_range_chunks       = chunklist(var.allowed_source_ranges, 10)
   cloudflare_origin_pull_ca = <<-EOT
 -----BEGIN CERTIFICATE-----
 MIIGCjCCA/KgAwIBAgIIV5G6lVbCLmEwDQYJKoZIhvcNAQENBQAwgZAxCzAJBgNV
