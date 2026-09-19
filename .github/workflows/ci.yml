@@ -74,3 +74,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate_limit.sql
       - name: Verify concurrent independent database connections
         run: node db/postgres/tests/rate-limit-concurrency.mjs
+      - run: npm ci
+      - name: Verify native application Postgres adapter
+        env:
+          CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
+        run: node db/postgres/tests/native-adapter.mjs

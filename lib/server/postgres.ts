@@ -1,3 +1,5 @@
+import { NativePostgresSqlApi } from "./postgres-native.ts";
+
 export type PostgresPrimitive = string | number | boolean | null;
 export type PostgresRow = Record<string, unknown>;
 
@@ -74,8 +76,21 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
   }
 }
 
-/** Compose this provider adapter from an explicit runtime binding. */
+const nativeClients = new Map<string, NativePostgresSqlApi>();
+
+/** Native provider DSNs use the Postgres wire protocol; legacy HTTPS gateways
+ * remain supported explicitly, never inferred from a failed native connection.
+ */
 export function postgres(dsn?: string): PostgresSqlApi {
   if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required for Postgres persistence");
+  if (/^postgres(?:ql)?:\/\//.test(dsn)) {
+    let client = nativeClients.get(dsn);
+    if (!client) {
+      client = new NativePostgresSqlApi(dsn);
+      nativeClients.set(dsn, client);
+    }
+    return client;
+  }
+  if (!dsn.startsWith("https://")) throw new Error("Unsupported Postgres transport");
   return new PostgresHttpSqlApi({ dsn });
 }
