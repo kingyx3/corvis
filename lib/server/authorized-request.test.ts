@@ -15,7 +15,8 @@ function signedAssertion(secret = "trusted-secret"): string {
     roles: ["admin"],
     entitlements: {
       workspaceIds: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
-      documentIds: ["doc-a"],
+      fundIds: ["fund-from-assertion"],
+      documentIds: ["doc-from-assertion"],
       sourceDocumentAccessAllowed: false,
     },
     authMethod: "oidc",
@@ -45,7 +46,7 @@ async function withEnv<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-test("authoritative Postgres roles override roles carried by the signed assertion", { concurrency: false }, async () => {
+test("authoritative Postgres roles and implemented resource grants override signed claims", { concurrency: false }, async () => {
   const repository: MembershipAuthorizationRepository = {
     async resolve() {
       return {
@@ -54,6 +55,8 @@ test("authoritative Postgres roles override roles carried by the signed assertio
           "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
           "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         ],
+        fundIds: ["fund-db"],
+        documentIds: ["doc-db"],
       };
     },
   };
@@ -68,7 +71,29 @@ test("authoritative Postgres roles override roles carried by the signed assertio
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     ]);
-    assert.deepEqual(identity.entitlements.documentIds, ["doc-a"]);
+    assert.deepEqual(identity.entitlements.fundIds, ["fund-db"]);
+    assert.deepEqual(identity.entitlements.documentIds, ["doc-db"]);
+  });
+});
+
+test("explicit empty Postgres resource grants do not fall back to signed claims", { concurrency: false }, async () => {
+  const repository: MembershipAuthorizationRepository = {
+    async resolve() {
+      return {
+        roles: ["analyst"],
+        workspaceIds: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+        fundIds: [],
+        documentIds: [],
+      };
+    },
+  };
+  await withEnv(async () => {
+    const request = new Request("https://corvis.example/api/v1/me", {
+      headers: { "x-corvis-identity-assertion": signedAssertion() },
+    });
+    const identity = await resolveAuthorizedRequestIdentity(request, { repository, requireAuthoritative: true });
+    assert.deepEqual(identity.entitlements.fundIds, []);
+    assert.deepEqual(identity.entitlements.documentIds, []);
   });
 });
 

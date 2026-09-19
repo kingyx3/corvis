@@ -28,23 +28,34 @@ const principal = {
   authMethod: "oidc" as const,
 };
 
-test("authoritative membership maps active database roles and all active workspaces", async () => {
+test("authoritative membership maps roles, workspaces, and readable resource grants", async () => {
   const db = new FakeDb([
-    { workspace_id: principal.workspaceId, role_name: "reviewer" },
-    { workspace_id: principal.workspaceId, role_name: "viewer" },
-    { workspace_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", role_name: "analyst" },
+    { workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "fund", resource_id: "fund-a", resource_permission: "read" },
+    { workspace_id: principal.workspaceId, role_name: "viewer", resource_type: "document", resource_id: "doc-a", resource_permission: "read" },
+    { workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-write-only", resource_permission: "review" },
+    { workspace_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", role_name: "analyst", resource_type: "fund", resource_id: "fund-other-workspace", resource_permission: "read" },
   ]);
   const repository = new PostgresMembershipAuthorizationRepository(db);
   const result = await repository.resolve(principal);
 
   assert.deepEqual(result?.roles, ["reviewer", "read_only"]);
   assert.deepEqual(result?.workspaceIds, [principal.workspaceId, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]);
+  assert.deepEqual(result?.fundIds, ["fund-a"]);
+  assert.deepEqual(result?.documentIds, ["doc-a"]);
   assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod]);
   assert.match(db.lastSql, /s\.tenant_id=\$1::uuid/);
   assert.match(db.lastSql, /s\.subject=\$2/);
   assert.match(db.lastSql, /s\.auth_method=\$3/);
   assert.match(db.lastSql, /m\.status='active'/);
-  assert.match(db.lastSql, /m\.valid_to is null or m\.valid_to > now\(\)/);
+  assert.match(db.lastSql, /m\.valid_until is null or m\.valid_until > now\(\)/);
+  assert.match(db.lastSql, /e\.valid_until is null or e\.valid_until > now\(\)/);
+});
+
+test("missing fine-grained grants resolve to explicit empty allowlists", async () => {
+  const db = new FakeDb([{ workspace_id: principal.workspaceId, role_name: "analyst", resource_type: null, resource_id: null, resource_permission: null }]);
+  const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.deepEqual(result?.fundIds, []);
+  assert.deepEqual(result?.documentIds, []);
 });
 
 test("requested workspace must have an active membership", async () => {

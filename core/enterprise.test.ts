@@ -76,3 +76,8 @@ test("document entitlement does not become a wildcard when a scoped list is pres
     assert.throws(() => assertDocumentAccess(base, documentId, false));
   }
 });
+
+test("an explicit empty document entitlement list denies every document", () => {
+  const noDocuments = { ...base, entitlements: { ...base.entitlements, documentIds: [] } };
+  assert.throws(() => assertDocumentAccess(noDocuments, "doc-a", false));
+});

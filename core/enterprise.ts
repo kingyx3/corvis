@@ -48,7 +48,7 @@ export function assertWorkspace(identity: RequestIdentity, workspaceId: string):
 
 export function assertDocumentAccess(identity: RequestIdentity, documentId: string, source = false): void {
   if (source && !identity.entitlements.sourceDocumentAccessAllowed) throw new AuthorizationError("sources:read");
-  if (identity.entitlements.documentIds?.length && !identity.entitlements.documentIds.includes(documentId)) {
+  if (identity.entitlements.documentIds !== undefined && !identity.entitlements.documentIds.includes(documentId)) {
     throw new AuthorizationError("documents:read");
   }
 }
