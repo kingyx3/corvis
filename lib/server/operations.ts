@@ -4,7 +4,6 @@ import { getServerConfig } from "./config.ts";
 import { platform } from "./platform.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
-function bearer(token?: string): Record<string,string> { return token ? { authorization: `Bearer ${token}` } : {}; }
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
 type Readiness = Record<string, "configured" | "missing" | "demo">;
@@ -49,40 +48,8 @@ export async function createDeletionRequest(identity: RequestIdentity, scope: un
   return id;
 }
 
-export async function executeDeletionRequest(identity: RequestIdentity, requestId: string) {
-  const db = controlDb();
-  const rows = await db.query(`select scope,state from corvis_control.deletion_request
-    where tenant_id=$1 and deletion_request_id=$2::uuid limit 1`, [identity.tenantId,requestId]);
-  const request = rows[0];
-  if (!request) throw new Error("Deletion request not found");
-  if (!["requested","approved","retryable"].includes(String(request.state))) throw new Error("Deletion request is not executable");
-  const config = getServerConfig();
-  if (!config.dataLifecycleEndpoint) throw new Error("Data lifecycle adapter is not configured");
-  await db.execute(`update corvis_control.deletion_request set
-      state='executing', approved_by=coalesce(approved_by,$1), approved_at=coalesce(approved_at,now()),
-      execution_attempts=execution_attempts+1, last_error=null
-    where tenant_id=$2 and deletion_request_id=$3::uuid`, [identity.subject,identity.tenantId,requestId]);
-  try {
-    const response = await fetch(`${config.dataLifecycleEndpoint.replace(/\/$/,"")}/delete`, {
-      method:"POST",
-      headers:{"content-type":"application/json",...bearer(config.dataLifecycleToken)},
-      body:JSON.stringify({ tenantId:identity.tenantId, requestId, scope:request.scope }),
-      cache:"no-store",
-    });
-    if (!response.ok) throw new Error(`Lifecycle adapter rejected deletion (${response.status})`);
-    const evidence = await response.json() as { evidence?: unknown };
-    await db.execute(`update corvis_control.deletion_request set
-        state='completed', completed_at=now(), completion_evidence=$1::jsonb
-      where tenant_id=$2 and deletion_request_id=$3::uuid`,
-    [JSON.stringify(evidence.evidence ?? {adapterStatus:"completed"}),identity.tenantId,requestId]);
-    return evidence.evidence ?? { adapterStatus: "completed" };
-  } catch (error) {
-    await db.execute(`update corvis_control.deletion_request set state='retryable',last_error=$1
-      where tenant_id=$2 and deletion_request_id=$3::uuid`,
-    [error instanceof Error ? error.message : "unknown",identity.tenantId,requestId]);
-    throw error;
-  }
-}
+// Execution moved to ./data-lifecycle.ts: it adds default-deny retention/legal-hold
+// checks and an immutable per-attempt evidence ledger ahead of the same adapter call.
 
 export async function retryProcessingJob(identity: RequestIdentity, jobId: string): Promise<
   | { ok: true; version: number }
