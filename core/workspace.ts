@@ -1,5 +1,13 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
-import type { ResearchAnswer, ReviewDecision, SnapshotPublication } from "@/core/enterprise";
+import type {
+  ReconciliationException,
+  ReconciliationResolutionCommand,
+  ReconciliationResolutionOutcome,
+  ResearchAnswer,
+  ReviewDecision,
+  ReviewOutcome,
+  SnapshotPublication,
+} from "@/core/enterprise";
 
 export type SourceEvidence = {
   sourceReferenceId: string;
@@ -15,8 +23,10 @@ export interface WorkspacePort {
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;
+  listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string): Promise<ResearchAnswer>;
   sourceEvidence(sourceReferenceId: string): Promise<SourceEvidence>;
-  review(command: ReviewDecision): Promise<void>;
+  review(command: ReviewDecision): Promise<ReviewOutcome>;
+  resolveReconciliation(command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(command: SnapshotPublication): Promise<void>;
 }

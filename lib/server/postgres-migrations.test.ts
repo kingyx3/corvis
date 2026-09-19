@@ -115,6 +115,24 @@ test("review corrections and publication transitions preserve immutable history"
   assert.equal(/update corvis_facts\.observation\s+set\s+value_/i.test(sql), false);
 });
 
+test("reconciliation exceptions are versioned, attributable and enforced at publication persistence", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /create table if not exists corvis_consolidated\.reconciliation_exception/);
+  assert.match(sql, /unique \(tenant_id, snapshot_id, snapshot_version, exception_key\)/);
+  assert.match(sql, /create table if not exists corvis_consolidated\.reconciliation_resolution_event/);
+  assert.match(sql, /before_state jsonb not null/);
+  assert.match(sql, /after_state jsonb not null/);
+  assert.match(sql, /create or replace function corvis_consolidated\.resolve_reconciliation_exception/);
+  assert.match(sql, /p_action <> 'select_source'/);
+  assert.match(sql, /p_selected_source_reference_id = any\(current_row\.competing_source_reference_ids\)/);
+  assert.match(sql, /insert into corvis_consolidated\.reconciliation_resolution_event[\s\S]*update corvis_consolidated\.reconciliation_exception/);
+  assert.match(sql, /create or replace view corvis_serving\.reconciliation_exceptions as/);
+  assert.match(sql, /e\.status='open'/);
+  assert.match(sql, /if effective_blockers > 0 then raise exception 'blocking reconciliation exceptions remain'/);
+  assert.match(sql, /count\(distinct r\.actor_subject\)[\s\S]*< 2/);
+  assert.equal(/update corvis_facts\.observation\s+set\s+value_/i.test(sql), false, "resolution must not rewrite immutable source observation values");
+});
+
 test("artifact release and job retry atomically emit durable work", async () => {
   const sql = (await migrations()).toLowerCase();
   assert.match(sql, /create or replace function corvis_source\.release_clean_artifact/);

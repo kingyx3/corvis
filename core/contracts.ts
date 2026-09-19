@@ -29,7 +29,7 @@ export type ObservationRecord = {
   source: string;
   sourceReferenceId?: string;
   confidence: number;
-  state: "Approved" | "Needs review";
+  state: "Approved" | "Needs review" | "Rejected";
   delta: string;
   version?: number;
 };

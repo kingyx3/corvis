@@ -104,6 +104,58 @@ export type ReviewDecision = {
   expectedVersion: number;
 };
 
+export type ReviewOutcome = {
+  accepted: true;
+  reviewEventId: string;
+  newVersion: number;
+  nextState: "approved" | "review_required" | "rejected";
+};
+
+export type ReconciliationExceptionType = "source_authority" | "materiality" | "reconciliation_conflict";
+export type ReconciliationResolutionAction = "select_source" | "mark_immaterial" | "accept_reconciliation";
+export type ReconciliationSourceReference = {
+  sourceReferenceId: string;
+  documentId: string;
+  page?: number;
+  sheetName?: string;
+  cellRange?: string;
+  excerpt?: string;
+};
+export type ReconciliationException = {
+  exceptionId: string;
+  snapshotId: string;
+  snapshotVersion: number;
+  fundId: string;
+  reportPeriod: string;
+  type: ReconciliationExceptionType;
+  subjectType?: string;
+  subjectId?: string;
+  metricCode?: string;
+  summary: string;
+  materiality: "unknown" | "immaterial" | "material";
+  context: Record<string, unknown>;
+  status: "open" | "resolved";
+  version: number;
+  allowedActions: ReconciliationResolutionAction[];
+  sourceReferences: ReconciliationSourceReference[];
+  createdAt: string;
+  resolvedAt?: string;
+};
+export type ReconciliationResolutionCommand = {
+  exceptionId: string;
+  expectedVersion: number;
+  action: ReconciliationResolutionAction;
+  reasonCode: string;
+  selectedSourceReferenceId?: string;
+  note?: string;
+};
+export type ReconciliationResolutionOutcome = {
+  accepted: true;
+  resolutionEventId: string;
+  newVersion: number;
+  status: "resolved";
+};
+
 export type SnapshotPublication = {
   snapshotId: string;
   action: "publish" | "withdraw" | "supersede";
