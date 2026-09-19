@@ -15,7 +15,7 @@ export async function listFeatureFlags(identity: RequestIdentity) {
 export async function setFeatureFlag(identity: RequestIdentity, key: string, enabled: boolean, config: unknown) {
   await controlDb().execute(`insert into corvis_control.feature_flag
       (tenant_id, flag_key, enabled, configuration, updated_at, updated_by)
-    values ($1,$2,$3,$4::jsonb,now(),$5::uuid)
+    values ($1,$2,$3,$4::jsonb,now(),$5)
     on conflict (tenant_id, flag_key) do update set
       enabled=excluded.enabled,
       configuration=excluded.configuration,
