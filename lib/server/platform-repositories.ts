@@ -1,24 +1,44 @@
 import type { AuditEvent, ExportManifest, ProcessingJob, RequestIdentity, ReviewDecision, SnapshotPublication } from "../../core/enterprise.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
+function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }
+
 export class PostgresWorkspaceRepository {
   private readonly db: PostgresSqlApi;
   constructor(db: PostgresSqlApi) { this.db = db; }
 
-  listDocuments(tenantId: string): Promise<PostgresRow[]> {
-    return this.db.query(`select * from corvis_serving.documents where tenant_id=$1 order by created_at desc limit 1000`, [tenantId]);
+  listDocuments(identity: RequestIdentity): Promise<PostgresRow[]> {
+    const documentIds = identity.entitlements.documentIds ?? [];
+    if (documentIds.length === 0) return Promise.resolve([]);
+    return this.db.query(`select * from corvis_serving.documents
+      where tenant_id=$1
+        and document_id::text in (select jsonb_array_elements_text($2::jsonb))
+      order by created_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
   }
 
-  listObservations(tenantId: string): Promise<PostgresRow[]> {
-    return this.db.query(`select * from corvis_serving.observations where tenant_id=$1 order by updated_at desc limit 5000`, [tenantId]);
+  listObservations(identity: RequestIdentity): Promise<PostgresRow[]> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    const documentIds = identity.entitlements.documentIds ?? [];
+    if (fundIds.length === 0 || documentIds.length === 0) return Promise.resolve([]);
+    return this.db.query(`select o.*
+      from corvis_serving.observations o
+      join corvis_source.source_reference r
+        on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+      where o.tenant_id=$1
+        and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      order by o.updated_at desc limit 5000`, [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
   }
 
-  listSnapshots(tenantId: string): Promise<PostgresRow[]> {
+  listSnapshots(identity: RequestIdentity): Promise<PostgresRow[]> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return Promise.resolve([]);
     return this.db.query(`select s.*,
         (select count(*) from corvis_facts.holding h where h.tenant_id=s.tenant_id and h.fund_id=s.fund_id) as holding_count
       from corvis_serving.fund_period_snapshots s
       where s.tenant_id=$1
-      order by s.created_at desc limit 1000`, [tenantId]);
+        and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
+      order by s.created_at desc limit 1000`, [identity.tenantId, jsonIds(fundIds)]);
   }
 }
 
@@ -26,9 +46,18 @@ export class PostgresReviewPublicationRepository {
   private readonly db: PostgresSqlApi;
   constructor(db: PostgresSqlApi) { this.db = db; }
 
-  async observation(tenantId: string, observationId: string): Promise<PostgresRow | undefined> {
-    const rows = await this.db.query(`select observation_id,version,review_state,value_number,value_string,risk_tier
-      from corvis_facts.observation where tenant_id=$1 and observation_id=$2::uuid limit 1`, [tenantId, observationId]);
+  async observation(identity: RequestIdentity, observationId: string): Promise<PostgresRow | undefined> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    const documentIds = identity.entitlements.documentIds ?? [];
+    if (fundIds.length === 0 || documentIds.length === 0) return undefined;
+    const rows = await this.db.query(`select o.observation_id,o.version,o.review_state,o.value_number,o.value_string,o.risk_tier
+      from corvis_facts.observation o
+      join corvis_source.source_reference r
+        on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+      where o.tenant_id=$1 and o.observation_id=$2::uuid
+        and o.fund_id in (select jsonb_array_elements_text($3::jsonb))
+        and r.document_id::text in (select jsonb_array_elements_text($4::jsonb))
+      limit 1`, [identity.tenantId, observationId, jsonIds(fundIds), jsonIds(documentIds)]);
     return rows[0];
   }
 
@@ -39,9 +68,13 @@ export class PostgresReviewPublicationRepository {
     return Number(rows[0]?.new_version ?? 0) === decision.expectedVersion + 1;
   }
 
-  async snapshot(tenantId: string, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
+  async snapshot(identity: RequestIdentity, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return undefined;
     const rows = await this.db.query(`select * from corvis_consolidated.fund_period_snapshot
-      where tenant_id=$1 and snapshot_id=$2::uuid and version=$3 limit 1`, [tenantId,snapshotId,version]);
+      where tenant_id=$1 and snapshot_id=$2::uuid and version=$3
+        and fund_id in (select jsonb_array_elements_text($4::jsonb))
+      limit 1`, [identity.tenantId,snapshotId,version,jsonIds(fundIds)]);
     return rows[0];
   }
 
@@ -86,8 +119,12 @@ export class PostgresOperationsRepository {
   }
 
   async jobs(identity: RequestIdentity): Promise<ProcessingJob[]> {
+    const documentIds = identity.entitlements.documentIds ?? [];
+    if (documentIds.length === 0) return [];
     const rows = await this.db.query(`select * from corvis_control.processing_job
-      where tenant_id=$1 order by updated_at desc limit 1000`, [identity.tenantId]);
+      where tenant_id=$1
+        and document_id::text in (select jsonb_array_elements_text($2::jsonb))
+      order by updated_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
     return rows.map((row) => ({
       id: String(row.job_id ?? ""), documentId: String(row.document_id ?? ""), tenantId: identity.tenantId,
       stage: String(row.stage ?? "registered") as ProcessingJob["stage"], state: String(row.state ?? "queued") as ProcessingJob["state"],
@@ -98,11 +135,22 @@ export class PostgresOperationsRepository {
   }
 
   async exportManifest(identity: RequestIdentity): Promise<{ snapshots: PostgresRow[]; observationCount: number }> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    const documentIds = identity.entitlements.documentIds ?? [];
+    if (fundIds.length === 0 || documentIds.length === 0) return { snapshots: [], observationCount: 0 };
     const snapshots = await this.db.query(`select snapshot_id,schema_version,taxonomy_version
-      from corvis_serving.fund_period_snapshots where tenant_id=$1 and status='published'
-      order by published_at desc`, [identity.tenantId]);
-    const counts = await this.db.query(`select count(*) as row_count from corvis_serving.observations
-      where tenant_id=$1 and review_state='approved'`, [identity.tenantId]);
+      from corvis_serving.fund_period_snapshots
+      where tenant_id=$1 and status='published'
+        and fund_id in (select jsonb_array_elements_text($2::jsonb))
+      order by published_at desc`, [identity.tenantId, jsonIds(fundIds)]);
+    const counts = await this.db.query(`select count(*) as row_count
+      from corvis_serving.observations o
+      join corvis_source.source_reference r
+        on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+      where o.tenant_id=$1 and o.review_state='approved'
+        and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))`,
+    [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
     return { snapshots, observationCount: Number(counts[0]?.row_count ?? 0) };
   }
 
