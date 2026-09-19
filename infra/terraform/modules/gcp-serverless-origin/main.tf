@@ -1,3 +1,7 @@
+locals {
+  source_range_chunks = chunklist(var.allowed_source_ranges, 10)
+}
+
 resource "google_compute_global_address" "api" {
   project      = var.project_id
   name         = "corvis-api-origin-${var.environment}"
@@ -16,6 +20,45 @@ resource "google_compute_region_network_endpoint_group" "api" {
   }
 }
 
+resource "google_compute_security_policy" "api_origin" {
+  project     = var.project_id
+  name        = "corvis-api-origin-${var.environment}"
+  description = "Allow only Cloudflare proxy networks to reach the Corvis API load-balancer backend."
+  type        = "CLOUD_ARMOR"
+
+  dynamic "rule" {
+    for_each = local.source_range_chunks
+
+    content {
+      action      = "allow"
+      priority    = 1000 + rule.key
+      description = "Allow Cloudflare proxy source range batch ${rule.key + 1}."
+
+      match {
+        versioned_expr = "SRC_IPS_V1"
+
+        config {
+          src_ip_ranges = rule.value
+        }
+      }
+    }
+  }
+
+  rule {
+    action      = "deny(403)"
+    priority    = 2147483647
+    description = "Default deny direct-origin traffic that did not traverse Cloudflare."
+
+    match {
+      versioned_expr = "SRC_IPS_V1"
+
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+  }
+}
+
 resource "google_compute_backend_service" "api" {
   project               = var.project_id
   name                  = "corvis-api-${var.environment}"
@@ -23,6 +66,12 @@ resource "google_compute_backend_service" "api" {
   protocol              = "HTTP"
   timeout_sec           = 30
   enable_cdn            = false
+  security_policy       = google_compute_security_policy.api_origin.id
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
 
   backend {
     group = google_compute_region_network_endpoint_group.api.id
