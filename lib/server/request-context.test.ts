@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AuthenticationError, resolveRequestIdentity } from "./request-context.ts";
+import { createHmac } from "node:crypto";
+import { AuthenticationError, resolveRequestIdentity, verifyGatewayIdentityAssertion, type GatewayIdentityAssertion } from "./request-context.ts";
 
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;
 
@@ -39,7 +40,30 @@ function trustedHeaders(overrides: Record<string,string> = {}) {
   };
 }
 
-test("production identity headers fail closed without trusted gateway secret", { concurrency: false }, () => {
+function signedAssertion(overrides: Partial<GatewayIdentityAssertion> = {}, secret = "trusted-secret"): string {
+  const payload: GatewayIdentityAssertion = {
+    v: 1,
+    sub: "user-1",
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    roles: ["reviewer"],
+    entitlements: {
+      workspaceIds: ["workspace-a"],
+      documentIds: ["doc-a","doc-b"],
+      sourceDocumentAccessAllowed: true,
+    },
+    authMethod: "saml",
+    sessionId: "session-1",
+    iat: 1_800_000_000,
+    exp: 1_800_000_240,
+    ...overrides,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
+  return `${encoded}.${signature}`;
+}
+
+test("unsigned business identity headers fail closed without trusted gateway secret", { concurrency: false }, () => {
   withEnv(trustedEnvironment, () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: {
       "x-corvis-auth-subject": "user-1", "x-corvis-auth-tenant": "tenant-a", "x-corvis-auth-workspace": "workspace-a", "x-corvis-auth-roles": "admin",
@@ -48,14 +72,63 @@ test("production identity headers fail closed without trusted gateway secret", {
   });
 });
 
-test("incorrect trusted gateway secret is rejected", { concurrency: false }, () => {
+test("incorrect trusted gateway secret is rejected on the non-production compatibility path", { concurrency: false }, () => {
   withEnv(trustedEnvironment, () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({ "x-corvis-gateway-secret": "wrong-secret" }) });
     assert.throws(() => resolveRequestIdentity(request), AuthenticationError);
   });
 });
 
-test("trusted gateway identity resolves explicit tenant, role and source entitlement", { concurrency: false }, () => {
+test("signed gateway assertion resolves tenant, roles and entitlements", () => {
+  const identity = verifyGatewayIdentityAssertion(signedAssertion(), "trusted-secret", new Date(1_800_000_100_000));
+  assert.equal(identity.subject, "user-1");
+  assert.equal(identity.tenantId, "tenant-a");
+  assert.equal(identity.workspaceId, "workspace-a");
+  assert.deepEqual(identity.roles, ["reviewer"]);
+  assert.deepEqual(identity.entitlements.documentIds, ["doc-a","doc-b"]);
+  assert.equal(identity.entitlements.sourceDocumentAccessAllowed, true);
+  assert.equal(identity.authMethod, "saml");
+});
+
+test("signed assertion rejects signature tampering and the wrong signing key", () => {
+  const assertion = signedAssertion();
+  const tampered = `${assertion.slice(0, -2)}aa`;
+  assert.throws(() => verifyGatewayIdentityAssertion(tampered, "trusted-secret", new Date(1_800_000_100_000)), AuthenticationError);
+  assert.throws(() => verifyGatewayIdentityAssertion(assertion, "wrong-secret", new Date(1_800_000_100_000)), AuthenticationError);
+});
+
+test("signed assertion rejects expired, future-issued and overlong authorization context", () => {
+  assert.throws(() => verifyGatewayIdentityAssertion(
+    signedAssertion({ iat: 1_799_999_000, exp: 1_799_999_200 }),
+    "trusted-secret",
+    new Date(1_800_000_100_000),
+  ), AuthenticationError);
+  assert.throws(() => verifyGatewayIdentityAssertion(
+    signedAssertion({ iat: 1_800_000_200, exp: 1_800_000_240 }),
+    "trusted-secret",
+    new Date(1_800_000_100_000),
+  ), AuthenticationError);
+  assert.throws(() => verifyGatewayIdentityAssertion(
+    signedAssertion({ iat: 1_800_000_000, exp: 1_800_000_900 }),
+    "trusted-secret",
+    new Date(1_800_000_100_000),
+  ), AuthenticationError);
+});
+
+test("signed assertion rejects invalid roles and a workspace outside signed entitlements", () => {
+  assert.throws(() => verifyGatewayIdentityAssertion(
+    signedAssertion({ roles: ["root" as never] }),
+    "trusted-secret",
+    new Date(1_800_000_100_000),
+  ), AuthenticationError);
+  assert.throws(() => verifyGatewayIdentityAssertion(
+    signedAssertion({ workspaceId: "workspace-b" }),
+    "trusted-secret",
+    new Date(1_800_000_100_000),
+  ), AuthenticationError);
+});
+
+test("legacy trusted gateway compatibility remains non-production only", { concurrency: false }, () => {
   withEnv(trustedEnvironment, () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
       "x-corvis-auth-roles": "reviewer,unknown-role",
