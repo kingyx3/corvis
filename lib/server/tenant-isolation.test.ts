@@ -23,6 +23,7 @@ const snapshotB = "00000000-0000-0000-0000-000000000402";
 
 function identity(tenantId: string): RequestIdentity {
   const isA = tenantId === tenantA;
+  const documentId = isA ? documentA : documentB;
   return {
     subject: isA ? "oidc|tenant-a-user" : "oidc|tenant-b-user",
     tenantId,
@@ -30,9 +31,11 @@ function identity(tenantId: string): RequestIdentity {
     roles: ["analyst"],
     entitlements: {
       workspaceIds: [isA ? workspaceA : workspaceB],
-      documentIds: [isA ? documentA : documentB],
+      documentIds: [documentId],
+      sourceDocumentIds: [documentId],
       fundIds: [isA ? "fund-a" : "fund-b"],
       sourceDocumentAccessAllowed: true,
+      redistributionAllowed: true,
     },
     authMethod: "oidc",
     sessionId: isA ? "session-a" : "session-b",
@@ -53,7 +56,7 @@ class TenantAwareDb implements PostgresSqlApi {
     if (sql.includes("corvis_serving.fund_period_snapshots")) {
       return [{ tenant_id: tenantId, snapshot_id: isA ? snapshotA : snapshotB, schema_version: "v1", taxonomy_version: isA ? "tenant-a-taxonomy" : "tenant-b-taxonomy" }];
     }
-    if (sql.includes("select count(*) as row_count from corvis_serving.observations")) {
+    if (sql.includes("select count(*) as row_count") && sql.includes("corvis_serving.observations")) {
       return [{ row_count: isA ? 3 : 7 }];
     }
     if (sql.includes("from corvis_control.control_evidence")) {
@@ -101,12 +104,12 @@ test("workspace and export repositories isolate two tenants", async () => {
   const operations = new PostgresOperationsRepository(db);
 
   const aStart = db.calls.length;
-  const aDocs = await workspace.listDocuments(tenantA);
+  const aDocs = await workspace.listDocuments(identity(tenantA));
   const aExport = await operations.exportManifest(identity(tenantA));
   const aCalls = db.calls.slice(aStart);
 
   const bStart = db.calls.length;
-  const bDocs = await workspace.listDocuments(tenantB);
+  const bDocs = await workspace.listDocuments(identity(tenantB));
   const bExport = await operations.exportManifest(identity(tenantB));
   const bCalls = db.calls.slice(bStart);
 
