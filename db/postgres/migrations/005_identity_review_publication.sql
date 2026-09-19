@@ -42,8 +42,81 @@ create policy observation_correction_tenant_select on corvis_facts.observation_c
 create index if not exists observation_correction_latest_idx
   on corvis_facts.observation_correction (tenant_id, observation_id, created_at desc);
 
--- Publication transitions are append-only. Each command also creates a new
--- immutable snapshot version rather than overwriting the prior version.
+-- One database call owns the complete review transition so a failed correction,
+-- review-event insert or optimistic version check cannot leave partial state.
+create or replace function corvis_facts.apply_review_decision(
+  p_tenant_id uuid,
+  p_observation_id uuid,
+  p_expected_version integer,
+  p_review_event_id uuid,
+  p_actor_subject text,
+  p_decision text,
+  p_reason_code text,
+  p_corrected_value text default null
+)
+returns table(new_version integer, next_state text)
+language plpgsql
+security invoker
+as $$
+declare
+  current_row corvis_facts.observation%rowtype;
+  computed_state text;
+  reviewer_count integer;
+begin
+  select * into current_row
+  from corvis_facts.observation
+  where tenant_id=p_tenant_id and observation_id=p_observation_id and version=p_expected_version
+  for update;
+
+  if not found then
+    return;
+  end if;
+
+  if p_decision not in ('approve','reject','correct') then
+    raise exception 'invalid review decision';
+  end if;
+  if p_decision='correct' and p_corrected_value is null then
+    raise exception 'corrected value is required';
+  end if;
+
+  insert into corvis_facts.review_event
+    (tenant_id,review_event_id,observation_id,actor_subject,decision,reason_code,before_value,after_value,observation_version,created_at)
+  values (
+    p_tenant_id,p_review_event_id,p_observation_id,p_actor_subject,p_decision,p_reason_code,
+    jsonb_build_object('valueNumber',current_row.value_number,'valueString',current_row.value_string,'reviewState',current_row.review_state),
+    case when p_decision='correct'
+      then jsonb_build_object('valueString',p_corrected_value,'reviewState','review_required')
+      else jsonb_build_object('valueNumber',current_row.value_number,'valueString',current_row.value_string,'reviewState',case when p_decision='reject' then 'rejected' else 'approved' end)
+    end,
+    p_expected_version,now()
+  );
+
+  if p_decision='correct' then
+    insert into corvis_facts.observation_correction
+      (tenant_id,observation_id,based_on_observation_version,corrected_value_string,reason_code,actor_subject)
+    values (p_tenant_id,p_observation_id,p_expected_version,p_corrected_value,p_reason_code,p_actor_subject);
+    computed_state := 'review_required';
+  elsif p_decision='reject' then
+    computed_state := 'rejected';
+  elsif current_row.risk_tier='critical' then
+    select count(distinct actor_subject) into reviewer_count
+    from corvis_facts.review_event
+    where tenant_id=p_tenant_id and observation_id=p_observation_id and decision='approve';
+    computed_state := case when reviewer_count >= 2 then 'approved' else 'review_required' end;
+  else
+    computed_state := 'approved';
+  end if;
+
+  update corvis_facts.observation
+  set review_state=computed_state, version=version+1, updated_at=now()
+  where tenant_id=p_tenant_id and observation_id=p_observation_id and version=p_expected_version;
+
+  return query select p_expected_version + 1, computed_state;
+end;
+$$;
+
+-- Publication transitions are append-only. Each command creates a new immutable
+-- snapshot version plus attributable publication/outbox events in one transaction.
 create table if not exists corvis_consolidated.snapshot_publication_event (
   tenant_id uuid not null references corvis_control.tenant(tenant_id),
   publication_event_id uuid primary key default gen_random_uuid(),
@@ -60,6 +133,58 @@ create table if not exists corvis_consolidated.snapshot_publication_event (
 alter table corvis_consolidated.snapshot_publication_event enable row level security;
 create policy snapshot_publication_event_tenant_select on corvis_consolidated.snapshot_publication_event
   for select using (corvis_control.has_tenant_access(tenant_id));
+
+create or replace function corvis_consolidated.append_snapshot_transition(
+  p_tenant_id uuid,
+  p_snapshot_id uuid,
+  p_expected_version integer,
+  p_publication_event_id uuid,
+  p_action text,
+  p_actor_subject text,
+  p_reason text default null
+)
+returns integer
+language plpgsql
+security invoker
+as $$
+declare
+  current_row corvis_consolidated.fund_period_snapshot%rowtype;
+  next_status text;
+  next_version integer;
+begin
+  select * into current_row
+  from corvis_consolidated.fund_period_snapshot
+  where tenant_id=p_tenant_id and snapshot_id=p_snapshot_id and version=p_expected_version
+  for update;
+
+  if not found then return null; end if;
+  if p_action not in ('publish','withdraw','supersede') then raise exception 'invalid publication action'; end if;
+
+  next_status := case p_action when 'publish' then 'published' when 'withdraw' then 'withdrawn' else 'superseded' end;
+  next_version := p_expected_version + 1;
+
+  insert into corvis_consolidated.fund_period_snapshot
+    (tenant_id,snapshot_id,fund_id,report_period,version,status,fact_ids,blocking_exception_count,schema_version,taxonomy_version,created_at,published_at)
+  values (
+    current_row.tenant_id,current_row.snapshot_id,current_row.fund_id,current_row.report_period,next_version,next_status,
+    current_row.fact_ids,current_row.blocking_exception_count,current_row.schema_version,current_row.taxonomy_version,now(),
+    case when next_status='published' then now() else current_row.published_at end
+  );
+
+  insert into corvis_consolidated.snapshot_publication_event
+    (tenant_id,publication_event_id,snapshot_id,from_version,to_version,action,actor_subject,reason)
+  values (p_tenant_id,p_publication_event_id,p_snapshot_id,p_expected_version,next_version,p_action,p_actor_subject,p_reason);
+
+  insert into corvis_control.outbox_event
+    (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
+  values (
+    p_tenant_id,gen_random_uuid(),'SnapshotPublicationChanged','fund_period_snapshot',p_snapshot_id::text,
+    jsonb_build_object('action',p_action,'actor',p_actor_subject,'reason',p_reason,'version',next_version),now()
+  );
+
+  return next_version;
+end;
+$$;
 
 create or replace view corvis_serving.observations as
 with latest_correction as (
