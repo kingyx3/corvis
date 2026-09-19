@@ -144,6 +144,7 @@ function resolveMetric(question: string, candidates: MetricCandidate[]): { candi
 function aggregationSupported(operation: SemanticOperation, aggregationBehavior: string): boolean {
   if (operation === "values" || operation === "count" || operation === "minimum" || operation === "maximum") return true;
   const normalized = normalize(aggregationBehavior);
+  if (/\b(non additive|nonadditive|not additive|non summable|not summable)\b/.test(normalized)) return false;
   if (operation === "sum") return /\b(sum|additive|total)\b/.test(normalized);
   if (operation === "average") return /\b(average|avg|mean)\b/.test(normalized);
   return false;
