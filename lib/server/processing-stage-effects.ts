@@ -6,9 +6,14 @@ export type ProcessingStageHandler = (input: ProcessingStageEffectInput, signal:
 export type ProcessingStageHandlers = Partial<Record<ProcessingStage, ProcessingStageHandler>>;
 
 export class ProcessingStageTimeoutError extends Error {
-  constructor(readonly stage: ProcessingStage, readonly timeoutMs: number) {
+  readonly stage: ProcessingStage;
+  readonly timeoutMs: number;
+
+  constructor(stage: ProcessingStage, timeoutMs: number) {
     super(`processing stage ${stage} exceeded its execution timeout`);
     this.name = "ProcessingStageTimeoutError";
+    this.stage = stage;
+    this.timeoutMs = timeoutMs;
   }
 }
 
