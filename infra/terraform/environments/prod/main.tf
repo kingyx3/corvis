@@ -46,6 +46,10 @@ data "cloudflare_zones" "corvis" {
   max_items = 2
 }
 
+data "cloudflare_ip_ranges" "proxy" {
+  count = local.edge_enabled ? 1 : 0
+}
+
 resource "terraform_data" "edge_zone_guard" {
   count = local.edge_enabled ? 1 : 0
 
@@ -113,6 +117,7 @@ module "api_origin" {
   cloud_run_service_name = module.api_runtime.api_service_name
   hostname               = local.api_hostname
   dns_authorization_id   = google_certificate_manager_dns_authorization.api[0].id
+  allowed_source_ranges  = data.cloudflare_ip_ranges.proxy[0].ipv4_cidrs
 
   depends_on = [cloudflare_dns_record.api_certificate_validation]
 }

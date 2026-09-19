@@ -5,10 +5,8 @@ const environment = process.env.CORVIS_ENVIRONMENT || "unknown";
 const customerHostname = process.env.CUSTOMER_HOSTNAME || "";
 const adminHostname = process.env.ADMIN_HOSTNAME || "";
 const apiHostname = process.env.API_HOSTNAME || "";
-const directOriginProbeUrls = (process.env.DIRECT_ORIGIN_PROBE_URLS || "")
-  .split(";")
-  .map((value) => value.trim())
-  .filter(Boolean);
+const directLoadBalancerStatus = process.env.DIRECT_LOAD_BALANCER_BYPASS_STATUS || "";
+const directCloudRunStatus = process.env.DIRECT_CLOUD_RUN_BYPASS_STATUS || "";
 
 const checks = [];
 
@@ -39,6 +37,10 @@ async function check(name, fn) {
   }
 }
 
+function skip(name, detail) {
+  checks.push({ name, status: "skip", startedAt: new Date().toISOString(), detail });
+}
+
 function assertCloudflare(response, label) {
   invariant(Boolean(response.headers.get("cf-ray")), `${label} did not traverse Cloudflare (missing cf-ray)`);
 }
@@ -53,8 +55,12 @@ for (const [label, hostname] of [
   ["customer", customerHostname],
   ["admin", adminHostname],
 ]) {
+  if (!hostname) {
+    skip(`${label}-edge-https`, `${label} runtime is not yet activated in this environment`);
+    continue;
+  }
+
   await check(`${label}-edge-https`, async () => {
-    invariant(hostname, `${label} hostname is not configured`);
     const response = await request(`https://${hostname}/`);
     assertCloudflare(response, label);
     assertSecurityHeaders(response, label);
@@ -124,35 +130,35 @@ await check("cloudflare-rate-limit-probe", async () => {
   return { statuses };
 });
 
-await check("direct-origin-bypass-blocked", async () => {
-  invariant(directOriginProbeUrls.length > 0, "DIRECT_ORIGIN_PROBE_URLS is required to prove origin bypass is blocked");
-  const results = [];
-  for (const url of directOriginProbeUrls) {
-    try {
-      const response = await request(url);
-      invariant([403, 404].includes(response.status), `direct origin ${url} remained reachable with status ${response.status}`);
-      results.push({ url, outcome: `blocked-${response.status}` });
-    } catch {
-      results.push({ url, outcome: "network-blocked" });
-    }
-  }
-  return { origins: results };
+await check("direct-load-balancer-origin-bypass-blocked", async () => {
+  invariant(directLoadBalancerStatus, "direct load-balancer bypass probe did not run");
+  invariant(directLoadBalancerStatus === "403", `direct load-balancer request returned ${directLoadBalancerStatus} instead of Cloud Armor 403`);
+  return { status: Number(directLoadBalancerStatus), protection: "cloud-armor-default-deny" };
+});
+
+await check("direct-cloud-run-origin-bypass-blocked", async () => {
+  invariant(directCloudRunStatus, "direct Cloud Run bypass probe did not run");
+  invariant(["403", "404"].includes(directCloudRunStatus), `direct Cloud Run request remained reachable with status ${directCloudRunStatus}`);
+  return { status: Number(directCloudRunStatus), protection: "cloud-run-ingress-restriction" };
 });
 
 const failed = checks.filter((entry) => entry.status === "fail");
+const skipped = checks.filter((entry) => entry.status === "skip");
+const passed = checks.filter((entry) => entry.status === "pass");
 const evidence = {
-  schemaVersion: "corvis.security-acceptance.v1",
+  schemaVersion: "corvis.security-acceptance.v2",
   environment,
   checkedAt: new Date().toISOString(),
   source: "github-actions",
   checks,
-  summary: { passed: checks.length - failed.length, failed: failed.length },
+  summary: { passed: passed.length, failed: failed.length, skipped: skipped.length },
 };
 
 await writeFile("security-acceptance-evidence.json", `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
 
 for (const entry of checks) {
-  console.log(`${entry.status === "pass" ? "PASS" : "FAIL"} ${entry.name}: ${JSON.stringify(entry.detail)}`);
+  const marker = entry.status === "pass" ? "PASS" : entry.status === "skip" ? "SKIP" : "FAIL";
+  console.log(`${marker} ${entry.name}: ${JSON.stringify(entry.detail)}`);
 }
 
 if (failed.length > 0) process.exitCode = 1;
