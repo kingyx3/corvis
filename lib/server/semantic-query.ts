@@ -12,6 +12,7 @@ export type GovernedSemanticQueryShape = {
   documentIds: string[];
   metricCode?: string;
   metricDisplayName?: string;
+  metricDataType?: string;
   operation: SemanticOperation;
   aggregationBehavior?: string;
   economicPeriodTokens: string[];
@@ -33,12 +34,17 @@ type MetricCandidate = {
   displayName: string;
   dataType: string;
   aggregationBehavior: string;
+  numericAvailable: boolean;
 };
 
 type MetricMatch = { candidate: MetricCandidate; score: number };
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function bool(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
 }
 
 function normalize(value: string): string {
@@ -141,9 +147,11 @@ function resolveMetric(question: string, candidates: MetricCandidate[]): { candi
   return { candidate: best.candidate };
 }
 
-function aggregationSupported(operation: SemanticOperation, aggregationBehavior: string): boolean {
-  if (operation === "values" || operation === "count" || operation === "minimum" || operation === "maximum") return true;
-  const normalized = normalize(aggregationBehavior);
+function aggregationSupported(operation: SemanticOperation, candidate: MetricCandidate): boolean {
+  if (operation === "values" || operation === "count") return true;
+  if (!candidate.numericAvailable) return false;
+  if (operation === "minimum" || operation === "maximum") return true;
+  const normalized = normalize(candidate.aggregationBehavior);
   if (/\b(non additive|nonadditive|not additive|non summable|not summable)\b/.test(normalized)) return false;
   if (operation === "sum") return /\b(sum|additive|total)\b/.test(normalized);
   if (operation === "average") return /\b(average|avg|mean)\b/.test(normalized);
@@ -175,10 +183,11 @@ export class GovernedSemanticQueryService {
 
   private async metricCandidates(identity: RequestIdentity, fundIds: string[], documentIds: string[]): Promise<MetricCandidate[]> {
     if (fundIds.length === 0 || documentIds.length === 0) return [];
-    const rows = await this.db.query(`select distinct o.metric_code,
+    const rows = await this.db.query(`select o.metric_code,
         coalesce(md.display_name,o.metric_code) as display_name,
         coalesce(md.data_type,'unknown') as data_type,
-        coalesce(md.aggregation_behavior,'unspecified') as aggregation_behavior
+        coalesce(md.aggregation_behavior,'unspecified') as aggregation_behavior,
+        bool_or(o.value_number is not null) as numeric_available
       from corvis_serving.observations o
       join corvis_source.source_reference r
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -193,6 +202,7 @@ export class GovernedSemanticQueryService {
         and o.review_state='approved'
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
         and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      group by o.metric_code,md.display_name,md.data_type,md.aggregation_behavior
       order by o.metric_code
       limit 500`, [identity.tenantId, JSON.stringify(fundIds), JSON.stringify(documentIds)]);
     return rows.map((row) => ({
@@ -200,6 +210,7 @@ export class GovernedSemanticQueryService {
       displayName: text(row.display_name) || text(row.metric_code),
       dataType: text(row.data_type) || "unknown",
       aggregationBehavior: text(row.aggregation_behavior) || "unspecified",
+      numericAvailable: bool(row.numeric_available),
     })).filter((candidate) => candidate.metricCode.length > 0);
   }
 
@@ -213,9 +224,13 @@ export class GovernedSemanticQueryService {
       count: "count(*)::bigint",
     };
     const scoped = `with scoped as (
-      select distinct on (o.fund_id,coalesce(o.company_id,''),o.metric_code,coalesce(o.currency,''))
-        o.observation_id,o.fund_id,o.company_id,o.metric_code,o.value_number,o.value_string,
-        o.currency,o.economic_period,o.report_date,o.source_reference_id,o.version,o.updated_at
+      select distinct on (
+        o.fund_id,coalesce(o.company_id,''),coalesce(o.holding_id,''),coalesce(o.instrument_id,''),
+        o.metric_code,coalesce(o.currency,''),coalesce(o.economic_period,'')
+      )
+        o.observation_id,o.fund_id,o.company_id,o.holding_id,o.instrument_id,o.metric_code,
+        o.value_number,o.value_string,o.currency,o.economic_period,o.report_date,
+        o.source_reference_id,o.version,o.updated_at
       from corvis_serving.observations o
       join corvis_source.source_reference r
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -225,10 +240,15 @@ export class GovernedSemanticQueryService {
         and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
         and o.metric_code=$4
         and ($5::jsonb='[]'::jsonb or regexp_replace(lower(coalesce(o.economic_period,'')),'[^a-z0-9]+','','g') in (select jsonb_array_elements_text($5::jsonb)))
-        and ($6::jsonb='[]'::jsonb or extract(year from o.report_date)::int in (select jsonb_array_elements_text($6::jsonb)::int))
-      order by o.fund_id,coalesce(o.company_id,''),o.metric_code,coalesce(o.currency,''),
-        o.report_date desc nulls last,o.economic_period desc nulls last,o.version desc,o.updated_at desc
-      limit $7
+        and ($6::jsonb='[]'::jsonb
+          or extract(year from o.report_date)::int in (select jsonb_array_elements_text($6::jsonb)::int)
+          or exists (
+            select 1 from jsonb_array_elements_text($6::jsonb) y
+            where regexp_replace(lower(coalesce(o.economic_period,'')),'[^a-z0-9]+','','g') like '%' || y || '%'
+          ))
+      order by o.fund_id,coalesce(o.company_id,''),coalesce(o.holding_id,''),coalesce(o.instrument_id,''),
+        o.metric_code,coalesce(o.currency,''),coalesce(o.economic_period,''),
+        o.report_date desc nulls last,o.version desc,o.updated_at desc
     )`;
     const parameters: PostgresPrimitive[] = [
       identity.tenantId,
@@ -241,10 +261,12 @@ export class GovernedSemanticQueryService {
     ];
     if (shape.operation === "values") {
       return this.db.query(`${scoped}
-        select observation_id,fund_id,company_id,metric_code,value_number,value_string,currency,
-          economic_period,report_date,source_reference_id,version
+        select observation_id,fund_id,company_id,holding_id,instrument_id,metric_code,value_number,value_string,
+          currency,economic_period,report_date,source_reference_id,version
         from scoped
-        order by fund_id,company_id nulls first,economic_period desc nulls last,report_date desc nulls last`, parameters);
+        order by fund_id,company_id nulls first,holding_id nulls first,instrument_id nulls first,
+          economic_period desc nulls last,report_date desc nulls last
+        limit $7`, parameters);
     }
     const expression = aggregateExpression[shape.operation];
     const numericPredicate = shape.operation === "count" ? "" : "where value_number is not null";
@@ -255,7 +277,8 @@ export class GovernedSemanticQueryService {
       from scoped
       ${numericPredicate}
       group by fund_id,metric_code,economic_period,currency
-      order by fund_id,economic_period desc nulls last,currency nulls first`, parameters);
+      order by fund_id,economic_period desc nulls last,currency nulls first
+      limit $7`, parameters);
   }
 
   async execute(identity: RequestIdentity, question: string): Promise<GovernedSemanticQueryResult> {
@@ -288,12 +311,13 @@ export class GovernedSemanticQueryService {
     }
 
     const candidate = resolution.candidate;
-    if (!aggregationSupported(operation, candidate.aggregationBehavior)) {
+    if (!aggregationSupported(operation, candidate)) {
       return {
         shape: {
           ...baseShape,
           metricCode: candidate.metricCode,
           metricDisplayName: candidate.displayName,
+          metricDataType: candidate.dataType,
           aggregationBehavior: candidate.aggregationBehavior,
           status: "unsupported",
           reason: "aggregation_not_allowed_by_metric_definition",
@@ -308,6 +332,7 @@ export class GovernedSemanticQueryService {
       ...baseShape,
       metricCode: candidate.metricCode,
       metricDisplayName: candidate.displayName,
+      metricDataType: candidate.dataType,
       aggregationBehavior: candidate.aggregationBehavior,
       status: "planned",
     };
