@@ -1,29 +1,47 @@
 import { randomUUID } from "crypto";
-import { getServerConfig } from "@/lib/server/config";
-import { snowflake } from "@/lib/server/snowflake";
-import { webhookHeaders, type WebhookEnvelope } from "@/lib/server/webhooks";
+import { getServerConfig } from "./config.ts";
+import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 
 function bearer(token?: string): Record<string,string> { return token ? { authorization:`Bearer ${token}` } : {}; }
+function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
 export async function processQueuedExports(limit=25): Promise<{processed:number;failed:number}> {
   const config=getServerConfig();
   if(!config.exportDeliveryEndpoint) throw new Error("Export delivery adapter is not configured");
-  const rows=await snowflake().query(`SELECT TENANT_ID,EXPORT_ID,FORMAT,SNAPSHOT_IDS,MANIFEST,DELIVERY_ATTEMPTS FROM PM_SERVING.EXPORT_JOB WHERE STATE IN ('queued','retryable') ORDER BY CREATED_AT LIMIT ?`,[limit]);
+  const store=db();
+  const rows=await store.query(`select tenant_id,export_id,format,snapshot_ids,manifest,delivery_attempts
+    from corvis_serving.export_job
+    where state in ('queued','retryable') and coalesce(delivery_attempts,0)<5
+    order by created_at limit $1`,[limit]);
   let processed=0,failed=0;
   for(const row of rows){
     const tenantId=String(row.tenant_id); const exportId=String(row.export_id);
+    const priorAttempts=Number(row.delivery_attempts??0);
+    const claimed=await store.query(`update corvis_serving.export_job
+      set state='delivering',delivery_attempts=coalesce(delivery_attempts,0)+1,last_error=null
+      where tenant_id=$1 and export_id=$2::uuid and state in ('queued','retryable') and coalesce(delivery_attempts,0)=$3
+      returning delivery_attempts`,[tenantId,exportId,priorAttempts]);
+    if(!claimed[0]) continue;
+    const attempt=Number(claimed[0].delivery_attempts??priorAttempts+1);
     try{
-      await snowflake().execute(`UPDATE PM_SERVING.EXPORT_JOB SET STATE='delivering',DELIVERY_ATTEMPTS=COALESCE(DELIVERY_ATTEMPTS,0)+1,LAST_ERROR=NULL WHERE TENANT_ID=? AND EXPORT_ID=?`,[tenantId,exportId]);
-      const response=await fetch(`${config.exportDeliveryEndpoint.replace(/\/$/,"")}/exports`,{method:"POST",headers:{"content-type":"application/json",...bearer(config.exportDeliveryToken)},body:JSON.stringify({tenantId,exportId,format:row.format,snapshotIds:row.snapshot_ids,manifest:row.manifest}),cache:"no-store"});
+      const response=await fetch(`${config.exportDeliveryEndpoint.replace(/\/$/,"")}/exports`,{
+        method:"POST",headers:{"content-type":"application/json",...bearer(config.exportDeliveryToken)},
+        body:JSON.stringify({tenantId,exportId,format:row.format,snapshotIds:row.snapshot_ids,manifest:row.manifest}),cache:"no-store"
+      });
       if(!response.ok) throw new Error(`Export delivery failed (${response.status})`);
       const body=await response.json() as {objectUri?:string;checksumSha256?:string;expiresAt?:string};
       if(!body.objectUri || !body.checksumSha256) throw new Error("Export delivery adapter returned incomplete result");
-      await snowflake().execute(`UPDATE PM_SERVING.EXPORT_JOB SET STATE='complete',OBJECT_URI=?,EXPIRES_AT=TO_TIMESTAMP_TZ(?),CHECKSUM_SHA256=?,COMPLETED_AT=CURRENT_TIMESTAMP() WHERE TENANT_ID=? AND EXPORT_ID=?`,[body.objectUri,body.expiresAt??new Date(Date.now()+3600_000).toISOString(),body.checksumSha256,tenantId,exportId]);
+      await store.execute(`update corvis_serving.export_job
+        set state='complete',object_uri=$1,expires_at=$2::timestamptz,checksum_sha256=$3,completed_at=now()
+        where tenant_id=$4 and export_id=$5::uuid and state='delivering' and delivery_attempts=$6`,
+      [body.objectUri,body.expiresAt??new Date(Date.now()+3600_000).toISOString(),body.checksumSha256,tenantId,exportId,attempt]);
       processed++;
     }catch(error){
       failed++;
-      const attempts=Number(row.delivery_attempts??0)+1;
-      await snowflake().execute(`UPDATE PM_SERVING.EXPORT_JOB SET STATE=?,LAST_ERROR=? WHERE TENANT_ID=? AND EXPORT_ID=?`,[attempts>=5?"failed":"retryable",error instanceof Error?error.message:"unknown",tenantId,exportId]);
+      await store.execute(`update corvis_serving.export_job set state=$1,last_error=$2
+        where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
+      [attempt>=5?"failed":"retryable",error instanceof Error?error.message:"unknown",tenantId,exportId,attempt]);
     }
   }
   return {processed,failed};
@@ -32,25 +50,72 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
 export async function processWebhookDeliveries(limit=50): Promise<{processed:number;failed:number}> {
   const config=getServerConfig();
   if(!config.webhookSigningSecret) throw new Error("Webhook signing secret is not configured");
-  const events=await snowflake().query(`SELECT E.TENANT_ID,E.EVENT_ID,E.EVENT_TYPE,E.AGGREGATE_ID,E.PAYLOAD,E.CREATED_AT,S.WEBHOOK_ID,S.ENDPOINT_URL
-    FROM PM_CONTROL.OUTBOX_EVENT E JOIN PM_CONTROL.WEBHOOK_SUBSCRIPTION S ON S.TENANT_ID=E.TENANT_ID AND S.ACTIVE=TRUE
-    WHERE E.PUBLISHED_AT IS NULL AND ARRAY_CONTAINS(E.EVENT_TYPE::VARIANT,S.EVENT_TYPES)
-    ORDER BY E.CREATED_AT LIMIT ?`,[limit]);
+  const store=db();
+  const events=await store.query(`select e.tenant_id,e.event_id,e.event_type,e.aggregate_id,e.payload,e.created_at,
+      s.webhook_id,s.endpoint_url,
+      coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
+        where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0) as prior_attempts
+    from corvis_control.outbox_event e
+    join corvis_control.webhook_subscription s
+      on s.tenant_id=e.tenant_id and s.active=true and e.event_type=any(s.event_types)
+    where e.published_at is null
+      and coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
+        where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0)<5
+      and not exists (
+        select 1 from corvis_control.webhook_delivery d
+        where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id and d.state in ('delivering','complete')
+      )
+      and coalesce((
+        select max(d.next_attempt_at) from corvis_control.webhook_delivery d
+        where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id and d.state='retryable'
+      ), now()) <= now()
+    order by e.created_at limit $1`,[limit]);
   let processed=0,failed=0;
   for(const row of events){
     const tenantId=String(row.tenant_id), eventId=String(row.event_id), webhookId=String(row.webhook_id);
     const envelope:WebhookEnvelope={id:eventId,type:String(row.event_type),createdAt:String(row.created_at),tenantId,data:row.payload};
     const body=JSON.stringify(envelope); const deliveryId=randomUUID();
+    const attempt=Number(row.prior_attempts??0)+1;
+    const claimed=await store.query(`insert into corvis_control.webhook_delivery
+      (tenant_id,delivery_id,webhook_id,event_id,attempt,state,created_at)
+      values ($1,$2::uuid,$3::uuid,$4::uuid,$5,'delivering',now())
+      on conflict (tenant_id,webhook_id,event_id,attempt) do nothing
+      returning delivery_id`,[tenantId,deliveryId,webhookId,eventId,attempt]);
+    if(!claimed[0]) continue;
     try{
-      const response=await fetch(String(row.endpoint_url),{method:"POST",headers:webhookHeaders(config.webhookSigningSecret,envelope),body,cache:"no-store"});
+      const response=await fetch(String(row.endpoint_url),{
+        method:"POST",headers:webhookHeaders(config.webhookSigningSecret,envelope),body,cache:"no-store"
+      });
       if(!response.ok) throw new Error(`Webhook endpoint returned ${response.status}`);
-      await snowflake().execute(`INSERT INTO PM_CONTROL.WEBHOOK_DELIVERY (TENANT_ID,DELIVERY_ID,WEBHOOK_ID,EVENT_ID,ATTEMPT,STATUS_CODE,STATE,CREATED_AT,COMPLETED_AT) VALUES (?,?,?,?,1,?,'complete',CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())`,[tenantId,deliveryId,webhookId,eventId,response.status]);
-      await snowflake().execute(`UPDATE PM_CONTROL.OUTBOX_EVENT SET PUBLISHED_AT=CURRENT_TIMESTAMP(),ATTEMPT_COUNT=ATTEMPT_COUNT+1,LAST_ERROR=NULL WHERE TENANT_ID=? AND EVENT_ID=?`,[tenantId,eventId]);
+      await store.execute(`update corvis_control.webhook_delivery
+        set status_code=$1,state='complete',completed_at=now(),next_attempt_at=null,last_error=null
+        where tenant_id=$2 and delivery_id=$3::uuid and state='delivering'`,
+      [response.status,tenantId,deliveryId]);
+      const pending=await store.query(`select count(*) as pending_count
+        from corvis_control.webhook_subscription s
+        where s.tenant_id=$1 and s.active=true
+          and $2=any(s.event_types)
+          and not exists (
+            select 1 from corvis_control.webhook_delivery d
+            where d.tenant_id=s.tenant_id and d.webhook_id=s.webhook_id and d.event_id=$3::uuid and d.state='complete'
+          )`,[tenantId,String(row.event_type),eventId]);
+      if(Number(pending[0]?.pending_count??0)===0){
+        await store.execute(`update corvis_control.outbox_event
+          set published_at=now(),attempt_count=attempt_count+1,last_error=null
+          where tenant_id=$1 and event_id=$2::uuid`,[tenantId,eventId]);
+      }
       processed++;
     }catch(error){
       failed++;
-      await snowflake().execute(`INSERT INTO PM_CONTROL.WEBHOOK_DELIVERY (TENANT_ID,DELIVERY_ID,WEBHOOK_ID,EVENT_ID,ATTEMPT,STATE,NEXT_ATTEMPT_AT,CREATED_AT) SELECT ?,?,?,?,COALESCE((SELECT MAX(ATTEMPT)+1 FROM PM_CONTROL.WEBHOOK_DELIVERY WHERE TENANT_ID=? AND WEBHOOK_ID=? AND EVENT_ID=?),1),'retryable',DATEADD('minute',5,CURRENT_TIMESTAMP()),CURRENT_TIMESTAMP()`,[tenantId,deliveryId,webhookId,eventId,tenantId,webhookId,eventId]);
-      await snowflake().execute(`UPDATE PM_CONTROL.OUTBOX_EVENT SET ATTEMPT_COUNT=ATTEMPT_COUNT+1,LAST_ERROR=? WHERE TENANT_ID=? AND EVENT_ID=?`,[error instanceof Error?error.message:"unknown",tenantId,eventId]);
+      await store.execute(`update corvis_control.webhook_delivery
+        set state=$1,next_attempt_at=case when $1='retryable' then now()+interval '5 minutes' else null end,
+            last_error=$2
+        where tenant_id=$3 and delivery_id=$4::uuid and state='delivering'`,
+      [attempt>=5?"failed":"retryable",error instanceof Error?error.message:"unknown",tenantId,deliveryId]);
+      await store.execute(`update corvis_control.outbox_event
+        set attempt_count=attempt_count+1,last_error=$1
+        where tenant_id=$2 and event_id=$3::uuid`,
+      [error instanceof Error?error.message:"unknown",tenantId,eventId]);
     }
   }
   return {processed,failed};

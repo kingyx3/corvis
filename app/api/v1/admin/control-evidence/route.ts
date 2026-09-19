@@ -1,15 +1,18 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { generateControlEvidence } from "@/lib/server/operations";
+import { generateControlEvidence, listControlEvidence } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
 import { resolveRequestIdentity } from "@/lib/server/request-context";
-import { snowflake } from "@/lib/server/snowflake";
 
 export async function GET(request: Request) {
   const id=correlationId(request);
-  try { const identity=resolveRequestIdentity(request); assertPermission(identity,"admin:manage"); const rows=await snowflake().query(`SELECT * FROM PM_CONTROL.CONTROL_EVIDENCE WHERE TENANT_ID=? ORDER BY GENERATED_AT DESC LIMIT 500`,[identity.tenantId]); return json({data:rows,correlationId:id}); }
-  catch(error){ return apiError(error,id); }
+  try {
+    const identity=resolveRequestIdentity(request);
+    assertPermission(identity,"admin:manage");
+    const rows=await listControlEvidence(identity);
+    return json({data:rows,correlationId:id});
+  } catch(error){ return apiError(error,id); }
 }
 
 export async function POST(request: Request) {

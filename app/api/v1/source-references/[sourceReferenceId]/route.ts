@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
 import { assertDocumentAccess, assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { getSourceReference } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
 import { resolveRequestIdentity } from "@/lib/server/request-context";
-import { snowflake } from "@/lib/server/snowflake";
 
 export async function GET(request: Request, context: { params: Promise<{ sourceReferenceId: string }> }) {
   const id = correlationId(request);
@@ -11,8 +11,7 @@ export async function GET(request: Request, context: { params: Promise<{ sourceR
     const identity = resolveRequestIdentity(request);
     assertPermission(identity, "sources:read");
     const { sourceReferenceId } = await context.params;
-    const rows = await snowflake().query(`SELECT SOURCE_REFERENCE_ID,DOCUMENT_ID,PAGE_NUMBER,SHEET_NAME,CELL_RANGE,BBOX,EXCERPT FROM PM_SERVING.SOURCE_REFERENCES WHERE TENANT_ID=? AND SOURCE_REFERENCE_ID=? LIMIT 1`, [identity.tenantId, sourceReferenceId]);
-    const row = rows[0];
+    const row = await getSourceReference(identity, sourceReferenceId);
     if (!row) return json({ error: "source_reference_not_found", correlationId: id }, { status: 404 });
     const documentId = String(row.document_id || "");
     assertDocumentAccess(identity, documentId, true);

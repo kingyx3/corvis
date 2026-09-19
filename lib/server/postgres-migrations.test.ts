@@ -8,6 +8,7 @@ const migrationFiles = [
   "db/postgres/migrations/003_operations_delivery_governance.sql",
   "db/postgres/migrations/004_actor_subject_and_research.sql",
   "db/postgres/migrations/005_identity_review_publication.sql",
+  "db/postgres/migrations/006_upload_delivery_operations.sql",
 ];
 
 async function migrations(): Promise<string> {
@@ -30,6 +31,8 @@ test("Postgres tenant data enables RLS and has no broad client mutation policies
     "corvis_control.processing_job",
     "corvis_control.outbox_event",
     "corvis_control.data_rights",
+    "corvis_control.webhook_subscription",
+    "corvis_control.webhook_delivery",
     "corvis_source.document",
     "corvis_facts.observation",
     "corvis_facts.holding",
@@ -60,4 +63,18 @@ test("review corrections and publication transitions preserve immutable history"
   assert.match(sql, /create table if not exists corvis_consolidated\.snapshot_publication_event/);
   assert.match(sql, /create or replace function corvis_consolidated\.append_snapshot_transition/);
   assert.equal(/update corvis_facts\.observation\s+set\s+value_/i.test(sql), false);
+});
+
+test("artifact release and job retry atomically emit durable work", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /create or replace function corvis_source\.release_clean_artifact/);
+  assert.match(sql, /'documentregistered'/);
+  assert.match(sql, /create or replace function corvis_control\.retry_processing_job/);
+  assert.match(sql, /'processingjobretryrequested'/);
+});
+
+test("webhook deliveries have durable claims and bounded attempts", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /state text not null check \(state in \('delivering','complete','retryable','failed'\)\)/);
+  assert.match(sql, /unique \(tenant_id, webhook_id, event_id, attempt\)/);
 });

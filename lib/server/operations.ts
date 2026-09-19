@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
-import type { RequestIdentity } from "@/core/enterprise";
-import { getServerConfig } from "@/lib/server/config";
-import { platform } from "@/lib/server/platform";
-import { postgres, type PostgresSqlApi } from "@/lib/server/postgres";
+import type { RequestIdentity } from "../../core/enterprise.ts";
+import { getServerConfig } from "./config.ts";
+import { platform } from "./platform.ts";
+import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
 function bearer(token?: string): Record<string,string> { return token ? { authorization: `Bearer ${token}` } : {}; }
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
@@ -22,6 +22,16 @@ export async function setFeatureFlag(identity: RequestIdentity, key: string, ena
       updated_at=excluded.updated_at,
       updated_by=excluded.updated_by`,
   [identity.tenantId,key,enabled,JSON.stringify(config ?? {}),identity.subject]);
+}
+
+export async function listControlEvidence(identity: RequestIdentity) {
+  return controlDb().query(`select * from corvis_control.control_evidence
+    where tenant_id=$1 order by generated_at desc limit 500`, [identity.tenantId]);
+}
+
+export async function listDeletionRequests(identity: RequestIdentity) {
+  return controlDb().query(`select * from corvis_control.deletion_request
+    where tenant_id=$1 order by requested_at desc limit 500`, [identity.tenantId]);
 }
 
 export async function createDeletionRequest(identity: RequestIdentity, scope: unknown, reason: string) {
@@ -66,6 +76,32 @@ export async function executeDeletionRequest(identity: RequestIdentity, requestI
     [error instanceof Error ? error.message : "unknown",identity.tenantId,requestId]);
     throw error;
   }
+}
+
+export async function retryProcessingJob(identity: RequestIdentity, jobId: string): Promise<
+  | { ok: true; version: number }
+  | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted" | "version_conflict" }
+> {
+  const db = controlDb();
+  const rows = await db.query(`select state,attempt,max_attempts,version from corvis_control.processing_job
+    where tenant_id=$1 and job_id=$2 limit 1`, [identity.tenantId,jobId]);
+  const job = rows[0];
+  if (!job) return { ok:false, reason:"not_found" };
+  const state=String(job.state??""); const attempt=Number(job.attempt??0); const maxAttempts=Number(job.max_attempts??0); const version=Number(job.version??0);
+  if (!["retryable","failed","dead_letter"].includes(state)) return { ok:false, reason:"not_retryable" };
+  if (attempt >= maxAttempts) return { ok:false, reason:"attempts_exhausted" };
+  const result = await db.query(`select corvis_control.retry_processing_job($1::uuid,$2,$3,$4) as new_version`,
+    [identity.tenantId,jobId,version,identity.subject]);
+  const newVersion=Number(result[0]?.new_version??0);
+  if (newVersion !== version+1) return { ok:false, reason:"version_conflict" };
+  return { ok:true, version:newVersion };
+}
+
+export async function getSourceReference(identity: RequestIdentity, sourceReferenceId: string) {
+  const rows=await controlDb().query(`select source_reference_id,document_id,page_number,sheet_name,cell_range,bbox,excerpt
+    from corvis_serving.source_references
+    where tenant_id=$1 and source_reference_id=$2::uuid limit 1`, [identity.tenantId,sourceReferenceId]);
+  return rows[0];
 }
 
 export async function generateControlEvidence(identity: RequestIdentity) {
