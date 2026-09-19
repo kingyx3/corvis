@@ -67,7 +67,6 @@ function productionEnvironment(): NodeJS.ProcessEnv {
     CORVIS_SEARCH_ENDPOINT: "https://search.example.com",
     CORVIS_AI_ENDPOINT: "https://ai.example.com",
     CORVIS_OBSERVABILITY_ENDPOINT: "https://telemetry.example.com/events",
-    CORVIS_WEBHOOK_SIGNING_SECRET: "webhook-test-secret",
     CORVIS_DATA_LIFECYCLE_ENDPOINT: "https://lifecycle.example.com",
     CORVIS_EXPORT_DELIVERY_ENDPOINT: "https://delivery.example.com",
     CORVIS_WORKER_SECRET: "worker-secret",

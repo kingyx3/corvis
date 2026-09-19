@@ -101,7 +101,6 @@ Generate, derive, or collect these through deployment/runtime flows and store th
 
 - `CORVIS_POSTGRES_DSN`
 - `CORVIS_TRUSTED_AUTH_PROXY_SECRET`
-- `CORVIS_WEBHOOK_SIGNING_SECRET`
 - `CORVIS_WORKER_SECRET`
 - internal service-to-service tokens when workload identity cannot replace them
 - Snowflake runtime OAuth/access material

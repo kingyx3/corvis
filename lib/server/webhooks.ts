@@ -20,12 +20,21 @@ export function verifyWebhookSignature(secret: string, timestamp: string, body: 
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-export function webhookHeaders(secret: string, envelope: WebhookEnvelope): Record<string,string> {
+/**
+ * Signs one delivery attempt. `sentAt` defaults to the current time rather
+ * than `envelope.createdAt`: `envelope.createdAt` is the business event's own
+ * timestamp and stays fixed across every retry of that event, while a retry
+ * can be sent minutes or hours later. Signing with the fixed event timestamp
+ * would make `verifyWebhookSignature`'s tolerance window reject every retry
+ * once enough time had passed, since the header timestamp would already be
+ * stale the moment it was sent.
+ */
+export function webhookHeaders(secret: string, envelope: WebhookEnvelope, sentAt: string = new Date().toISOString()): Record<string,string> {
   const body = JSON.stringify(envelope);
   return {
     "content-type": "application/json",
     "x-corvis-webhook-id": envelope.id,
-    "x-corvis-webhook-timestamp": envelope.createdAt,
-    "x-corvis-webhook-signature": signWebhook(secret, envelope.createdAt, body),
+    "x-corvis-webhook-timestamp": sentAt,
+    "x-corvis-webhook-signature": signWebhook(secret, sentAt, body),
   };
 }

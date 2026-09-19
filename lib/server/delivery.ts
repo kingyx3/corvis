@@ -48,16 +48,17 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
 }
 
 export async function processWebhookDeliveries(limit=50): Promise<{processed:number;failed:number}> {
-  const config=getServerConfig();
-  if(!config.webhookSigningSecret) throw new Error("Webhook signing secret is not configured");
   const store=db();
   const events=await store.query(`select e.tenant_id,e.event_id,e.event_type,e.aggregate_id,e.payload,e.created_at,
       s.webhook_id,s.endpoint_url,
+      k.secret as signing_secret,
       coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
         where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0) as prior_attempts
     from corvis_control.outbox_event e
     join corvis_control.webhook_subscription s
-      on s.tenant_id=e.tenant_id and s.active=true and e.event_type=any(s.event_types)
+      on s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
+    join corvis_control.webhook_signing_key k
+      on k.tenant_id=s.tenant_id and k.webhook_id=s.webhook_id and k.status='active'
     where e.published_at is null
       and coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
         where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0)<5
@@ -84,7 +85,7 @@ export async function processWebhookDeliveries(limit=50): Promise<{processed:num
     if(!claimed[0]) continue;
     try{
       const response=await fetch(String(row.endpoint_url),{
-        method:"POST",headers:webhookHeaders(config.webhookSigningSecret,envelope),body,cache:"no-store"
+        method:"POST",headers:webhookHeaders(String(row.signing_secret),envelope),body,cache:"no-store"
       });
       if(!response.ok) throw new Error(`Webhook endpoint returned ${response.status}`);
       await store.execute(`update corvis_control.webhook_delivery
@@ -93,7 +94,7 @@ export async function processWebhookDeliveries(limit=50): Promise<{processed:num
       [response.status,tenantId,deliveryId]);
       const pending=await store.query(`select count(*) as pending_count
         from corvis_control.webhook_subscription s
-        where s.tenant_id=$1 and s.active=true
+        where s.tenant_id=$1 and s.status='active'
           and $2=any(s.event_types)
           and not exists (
             select 1 from corvis_control.webhook_delivery d

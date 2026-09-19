@@ -155,6 +155,82 @@ paths:
       operationId: getReadiness
       responses:
         '200': { description: Admin-only production binding readiness }
+  /admin/webhooks/subscriptions:
+    get:
+      operationId: listWebhookSubscriptions
+      responses:
+        '200': { description: Tenant-scoped webhook subscriptions (metadata only; never includes a signing secret) }
+    post:
+      operationId: createWebhookSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpointUrl, eventTypes]
+              properties:
+                endpointUrl: { type: string, format: uri, description: Must be https. }
+                eventTypes: { type: array, items: { type: string }, minItems: 1 }
+      responses:
+        '201':
+          description: Subscription created with its first signing key. The signing secret is returned exactly once, in this response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscriptionCreated'
+  /admin/webhooks/subscriptions/{webhookId}:
+    parameters:
+      - in: path
+        name: webhookId
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: updateWebhookSubscriptionStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [pause, resume, revoke] }
+      responses:
+        '200': { description: 'Subscription transitioned. revoke is terminal; pause/resume are reversible.' }
+        '400': { description: Invalid or unrecognized action }
+        '409': { description: The requested transition is not valid from the subscription's current status }
+  /admin/webhooks/subscriptions/{webhookId}/rotate-signing-key:
+    parameters:
+      - in: path
+        name: webhookId
+        required: true
+        schema: { type: string }
+    post:
+      operationId: rotateWebhookSigningKey
+      description: Retires the current active signing key and activates a freshly generated one atomically. The new secret is returned exactly once, in this response.
+      responses:
+        '200':
+          description: Signing key rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSigningKeyRotated'
+        '404': { description: Subscription not found or already revoked }
+  /admin/webhooks/subscriptions/{webhookId}/deliveries:
+    parameters:
+      - in: path
+        name: webhookId
+        required: true
+        schema: { type: string }
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/cursor'
+    get:
+      operationId: listWebhookDeliveries
+      description: Customer-visible delivery diagnostics for one subscription. This endpoint has no unpaginated caller, so pagination is its only mode.
+      responses:
+        '200': { description: Paginated delivery attempts (state, attempt, status code, last error) }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
 components:
   securitySchemes:
     enterpriseSession:
@@ -214,3 +290,24 @@ components:
         action: { type: string, enum: [publish, withdraw, supersede] }
         expectedVersion: { type: integer, minimum: 1 }
         reason: { type: string }
+    WebhookSubscriptionCreated:
+      type: object
+      required: [webhookId, endpointUrl, eventTypes, status, signingSecret, signingKeyId]
+      properties:
+        webhookId: { type: string }
+        endpointUrl: { type: string }
+        eventTypes: { type: array, items: { type: string } }
+        status: { type: string, enum: [active, paused, revoked] }
+        signingSecret:
+          type: string
+          description: Returned exactly once, at creation time. Never re-readable afterward.
+        signingKeyId: { type: string }
+    WebhookSigningKeyRotated:
+      type: object
+      required: [webhookId, signingKeyId, signingSecret]
+      properties:
+        webhookId: { type: string }
+        signingKeyId: { type: string }
+        signingSecret:
+          type: string
+          description: Returned exactly once, at rotation time. Never re-readable afterward.

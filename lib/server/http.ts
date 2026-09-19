@@ -6,6 +6,7 @@ import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { logEvent } from "@/lib/server/telemetry";
+import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
 
 export function json(data: unknown, init: ResponseInit = {}): Response {
   return Response.json(data, {
@@ -50,6 +51,11 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof FeatureFlagGovernanceError) {
     logEvent("warn", "feature_flag.governance_denied", { correlationId }, { code: error.code });
     return json({ error: error.code, correlationId }, { status: 422 });
+  }
+  if (error instanceof WebhookSubscriptionError) {
+    logEvent("warn", "webhook_subscription.denied", { correlationId }, { code: error.code });
+    const status = error.code === "webhook_subscription_not_found" ? 404 : error.code === "webhook_subscription_transition_denied" ? 409 : 400;
+    return json({ error: error.code, correlationId }, { status });
   }
   if (error instanceof ResearchTimeoutError) {
     logEvent("warn", "research.timeout", { correlationId });
