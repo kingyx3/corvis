@@ -32,32 +32,11 @@ export class PostgresReviewPublicationRepository {
     return rows[0];
   }
 
-  async recordReview(identity: RequestIdentity, decision: ReviewDecision, reviewEventId: string, before: unknown, after: unknown): Promise<void> {
-    await this.db.execute(`insert into corvis_facts.review_event
-        (tenant_id,review_event_id,observation_id,actor_subject,decision,reason_code,before_value,after_value,observation_version,created_at)
-      values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb,$8::jsonb,$9,now())`,
-    [identity.tenantId,reviewEventId,decision.observationId,identity.subject,decision.decision,decision.reasonCode,JSON.stringify(before),JSON.stringify(after),decision.expectedVersion]);
-  }
-
-  async independentApproverCount(tenantId: string, observationId: string): Promise<number> {
-    const rows = await this.db.query(`select count(distinct actor_subject) as reviewer_count
-      from corvis_facts.review_event where tenant_id=$1 and observation_id=$2::uuid and decision='approve'`, [tenantId, observationId]);
-    return Number(rows[0]?.reviewer_count ?? 0);
-  }
-
-  async recordCorrection(identity: RequestIdentity, decision: ReviewDecision): Promise<void> {
-    await this.db.execute(`insert into corvis_facts.observation_correction
-        (tenant_id,observation_id,based_on_observation_version,corrected_value_string,reason_code,actor_subject)
-      values ($1,$2::uuid,$3,$4,$5,$6)`,
-    [identity.tenantId,decision.observationId,decision.expectedVersion,decision.correctedValue ?? null,decision.reasonCode,identity.subject]);
-  }
-
-  async transitionObservation(tenantId: string, observationId: string, expectedVersion: number, nextState: string): Promise<boolean> {
-    const rows = await this.db.query(`update corvis_facts.observation
-      set review_state=$1, version=version+1, updated_at=now()
-      where tenant_id=$2 and observation_id=$3::uuid and version=$4
-      returning version`, [nextState,tenantId,observationId,expectedVersion]);
-    return Number(rows[0]?.version ?? 0) === expectedVersion + 1;
+  async applyReview(identity: RequestIdentity, decision: ReviewDecision, reviewEventId: string): Promise<boolean> {
+    const rows = await this.db.query(`select * from corvis_facts.apply_review_decision(
+      $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8)`,
+    [identity.tenantId,decision.observationId,decision.expectedVersion,reviewEventId,identity.subject,decision.decision,decision.reasonCode,decision.correctedValue ?? null]);
+    return Number(rows[0]?.new_version ?? 0) === decision.expectedVersion + 1;
   }
 
   async snapshot(tenantId: string, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
@@ -87,24 +66,11 @@ export class PostgresReviewPublicationRepository {
     return Number(rows[0]?.independently_reviewed ?? 0);
   }
 
-  async appendSnapshotTransition(identity: RequestIdentity, command: SnapshotPublication, eventId: string, nextStatus: string): Promise<boolean> {
-    const publishedAt = nextStatus === "published" ? "now()" : "published_at";
-    const rows = await this.db.query(`insert into corvis_consolidated.fund_period_snapshot
-        (tenant_id,snapshot_id,fund_id,report_period,version,status,fact_ids,blocking_exception_count,schema_version,taxonomy_version,created_at,published_at)
-      select tenant_id,snapshot_id,fund_id,report_period,version+1,$1,fact_ids,blocking_exception_count,schema_version,taxonomy_version,now(),${publishedAt}
-      from corvis_consolidated.fund_period_snapshot
-      where tenant_id=$2 and snapshot_id=$3::uuid and version=$4
-      on conflict do nothing returning version`, [nextStatus,identity.tenantId,command.snapshotId,command.expectedVersion]);
-    if (Number(rows[0]?.version ?? 0) !== command.expectedVersion + 1) return false;
-    await this.db.execute(`insert into corvis_consolidated.snapshot_publication_event
-        (tenant_id,publication_event_id,snapshot_id,from_version,to_version,action,actor_subject,reason)
-      values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8)`,
-    [identity.tenantId,eventId,command.snapshotId,command.expectedVersion,command.expectedVersion+1,command.action,identity.subject,command.reason ?? null]);
-    await this.db.execute(`insert into corvis_control.outbox_event
-        (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
-      values ($1,gen_random_uuid(),'SnapshotPublicationChanged','fund_period_snapshot',$2,$3::jsonb,now())`,
-    [identity.tenantId,command.snapshotId,JSON.stringify({ action: command.action, actor: identity.subject, reason: command.reason ?? null, version: command.expectedVersion + 1 })]);
-    return true;
+  async appendSnapshotTransition(identity: RequestIdentity, command: SnapshotPublication, eventId: string): Promise<boolean> {
+    const rows = await this.db.query(`select corvis_consolidated.append_snapshot_transition(
+      $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7) as new_version`,
+    [identity.tenantId,command.snapshotId,command.expectedVersion,eventId,command.action,identity.subject,command.reason ?? null]);
+    return Number(rows[0]?.new_version ?? 0) === command.expectedVersion + 1;
   }
 }
 
@@ -131,7 +97,7 @@ export class PostgresOperationsRepository {
     }));
   }
 
-  async exportManifest(identity: RequestIdentity, format: ExportManifest["format"]): Promise<{ snapshots: PostgresRow[]; observationCount: number }> {
+  async exportManifest(identity: RequestIdentity): Promise<{ snapshots: PostgresRow[]; observationCount: number }> {
     const snapshots = await this.db.query(`select snapshot_id,schema_version,taxonomy_version
       from corvis_serving.fund_period_snapshots where tenant_id=$1 and status='published'
       order by published_at desc`, [identity.tenantId]);
