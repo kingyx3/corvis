@@ -22,7 +22,7 @@ import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository, PostgresReviewPublicationRepository, PostgresWorkspaceRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { evaluatePublicationGate } from "./publication-policy.ts";
-import { researchService } from "./research.ts";
+import { researchService, type ResearchExecutionOptions } from "./research.ts";
 
 export interface PlatformPort {
   listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]>;
@@ -32,7 +32,7 @@ export interface PlatformPort {
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
-  research(identity: RequestIdentity, question: string): Promise<ResearchAnswer>;
+  research(identity: RequestIdentity, question: string, options?: ResearchExecutionOptions): Promise<ResearchAnswer>;
   audit(event: AuditEvent): Promise<void>;
   readiness(): Promise<Record<string, "configured" | "missing" | "demo">>;
   export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest>;
@@ -103,8 +103,15 @@ class DemoPlatform implements PlatformPort {
     return { accepted: true, resolutionEventId: randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" };
   }
   async publish(identity: RequestIdentity, command: SnapshotPublication) { void identity; void command; return { accepted: true as const, publicationEventId: randomUUID() }; }
-  async research(identity: RequestIdentity, question: string): Promise<ResearchAnswer> {
+  async research(identity: RequestIdentity, question: string, options: ResearchExecutionOptions = {}): Promise<ResearchAnswer> {
     void identity;
+    options.signal?.throwIfAborted();
+    options.onProgress?.("planning");
+    options.signal?.throwIfAborted();
+    options.onProgress?.("retrieval");
+    options.signal?.throwIfAborted();
+    options.onProgress?.("generation");
+    options.signal?.throwIfAborted();
     return { answer: `Demo-mode response for: ${question}.`, citations: [], semanticQueryIds: [], uncertainty: "Demo mode does not execute production semantic queries." };
   }
   async audit(event: AuditEvent) { this.auditEvents.push(event); }
@@ -248,7 +255,9 @@ export class PostgresProductionPlatform implements PlatformPort {
     return { accepted: true, publicationEventId };
   }
 
-  async research(identity: RequestIdentity, question: string): Promise<ResearchAnswer> { return researchService().answer(identity, question); }
+  async research(identity: RequestIdentity, question: string, options: ResearchExecutionOptions = {}): Promise<ResearchAnswer> {
+    return researchService().answer(identity, question, options);
+  }
 
   audit(event: AuditEvent): Promise<void> { return this.operations.audit(event); }
 
