@@ -41,7 +41,7 @@ export class PermissionedResearchService {
     this.db = db ?? postgres(getServerConfig().postgresDsn);
   }
 
-  private async search(identity: RequestIdentity, question: string): Promise<SearchHit[]> {
+  private async search(identity: RequestIdentity, question: string, fundIds: string[]): Promise<SearchHit[]> {
     const sourceDocumentIds = identity.entitlements.sourceDocumentIds ?? [];
     if (!identity.entitlements.sourceDocumentAccessAllowed || sourceDocumentIds.length === 0) return [];
     const config = getServerConfig();
@@ -56,7 +56,7 @@ export class PermissionedResearchService {
           tenantId: identity.tenantId,
           workspaceId: identity.workspaceId,
           documentIds: sourceDocumentIds,
-          fundIds: identity.entitlements.fundIds,
+          fundIds,
           sourceDocumentAccessAllowed: true,
         },
       }),
@@ -82,7 +82,7 @@ export class PermissionedResearchService {
       on conflict (tenant_id,semantic_query_id) do nothing`,
     [identity.tenantId,semanticQueryId,identity.subject,questionHash(question),JSON.stringify(semantic.factIds),semantic.rows.length,JSON.stringify(semantic.shape)]);
 
-    const hits = await this.search(identity, question);
+    const hits = await this.search(identity, question, semantic.shape.fundIds);
     const response = await fetch(`${config.aiEndpoint.replace(/\/$/, "")}/answer`, {
       method: "POST",
       headers: { "content-type": "application/json", ...bearer(config.aiApiToken) },
