@@ -14,6 +14,15 @@ on:
         type: choice
         options: [plan, apply]
         default: plan
+      release_sha:
+        description: Main commit previously built by Build release image; resolves git-<sha> to an immutable digest
+        required: false
+        type: string
+      rollback_known_good:
+        description: Deploy the last Security-acceptance-approved digest for this environment
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,19 +41,22 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
-      TF_VAR_api_image: ${{ vars.API_IMAGE }}
       TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
       GCP_REGION: asia-southeast1
+      ARTIFACT_REPOSITORY: corvis
+      API_IMAGE_NAME: api
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
       - name: Validate deployment roots
         shell: bash
         env:
           GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
         run: |
           set -euo pipefail
           if [[ -z "${TF_VAR_project_id}" ]]; then
@@ -55,24 +67,13 @@ jobs:
             echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
             exit 1
           fi
-          if [[ "${{ inputs.environment }}" != "dev" && -n "${TF_VAR_api_image}" && ! "${TF_VAR_api_image}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
-            echo "API_IMAGE must be an immutable digest reference ending in @sha256:<64 hex chars>."
+          if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
+            echo "Choose either release_sha or rollback_known_good, not both."
             exit 1
           fi
-
-          if [[ -n "${TF_VAR_cloudflare_zone_name}" ]]; then
-            if [[ "${{ inputs.environment }}" == "dev" ]]; then
-              echo "Cloudflare public-edge deployment is intentionally limited to uat/prod."
-              exit 1
-            fi
-            if [[ -z "${TF_VAR_api_image}" ]]; then
-              echo "Cloudflare API edge activation requires API_IMAGE so Terraform can bind a real Cloud Run origin."
-              exit 1
-            fi
-            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
-              echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."
-              exit 1
-            fi
+          if [[ -n "${RELEASE_SHA}" && ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full 40-character lowercase Git commit SHA."
+            exit 1
           fi
 
       - name: Guard apply source
@@ -114,6 +115,80 @@ jobs:
             --versioning \
             --uniform-bucket-level-access \
             --public-access-prevention=enforced
+
+      - name: Resolve immutable API release
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${API_IMAGE_NAME}"
+          api_image=""
+
+          if [[ "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
+            manifest="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
+            if ! gcloud storage cat "${manifest}" > known-good.json; then
+              echo "No Security-acceptance-approved rollback manifest exists for ${{ inputs.environment }}."
+              exit 1
+            fi
+            api_image="$(jq -r '.image // empty' known-good.json)"
+            rm -f known-good.json
+            if [[ ! "${api_image}" =~ ^${image}@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Known-good manifest did not contain an immutable image from the expected Artifact Registry repository."
+              exit 1
+            fi
+          elif [[ -n "${RELEASE_SHA}" ]]; then
+            tagged_ref="${image}:git-${RELEASE_SHA}"
+            digest="$(gcloud artifacts docker images describe "${tagged_ref}" \
+              --project="${TF_VAR_project_id}" \
+              --format='value(image_summary.digest)')"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Release tag ${tagged_ref} did not resolve to an immutable Artifact Registry digest."
+              exit 1
+            fi
+            api_image="${image}@${digest}"
+          fi
+
+          if [[ -n "${api_image}" ]]; then
+            gcloud artifacts docker images describe "${api_image}" \
+              --project="${TF_VAR_project_id}" >/dev/null
+          fi
+          echo "TF_VAR_api_image=${api_image}" >> "${GITHUB_ENV}"
+
+          {
+            echo "### Terraform release selection"
+            if [[ -n "${api_image}" ]]; then
+              echo "- API image: `${api_image}`"
+            else
+              echo "- API image: disabled (no release selected)"
+            fi
+            echo "- Rollback source: `${ROLLBACK_KNOWN_GOOD}`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Validate edge activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${TF_VAR_api_image}" && ! "${TF_VAR_api_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "Resolved API image must be an immutable digest reference."
+            exit 1
+          fi
+
+          if [[ -n "${TF_VAR_cloudflare_zone_name}" ]]; then
+            if [[ "${{ inputs.environment }}" == "dev" ]]; then
+              echo "Cloudflare public-edge deployment is intentionally limited to uat/prod."
+              exit 1
+            fi
+            if [[ -z "${TF_VAR_api_image}" ]]; then
+              echo "Cloudflare API edge activation requires release_sha or rollback_known_good."
+              exit 1
+            fi
+            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+              echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."
+              exit 1
+            fi
+          fi
 
       - name: Terraform init
         shell: bash
