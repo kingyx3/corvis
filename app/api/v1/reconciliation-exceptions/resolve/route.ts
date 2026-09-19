@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "observations:review");
+    assertPermission(identity, "reconciliations:resolve");
     const command = await request.json() as ReconciliationResolutionCommand;
     if (
       !command.exceptionId ||
