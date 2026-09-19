@@ -11,7 +11,8 @@ const identity: RequestIdentity = {
 };
 class FakeDb implements PostgresSqlApi {
   calls: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
-  constructor(private readonly results: PostgresRow[][]) {}
+  private readonly results: PostgresRow[][];
+  constructor(results: PostgresRow[][]) { this.results = results; }
   async query(sql: string, parameters: PostgresPrimitive[] = []) { this.calls.push({ sql, parameters }); return this.results.shift() ?? []; }
   async execute() {}
   async health() { return true; }
