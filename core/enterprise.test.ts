@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertDocumentAccess, assertPermission, assertWorkspace, hasPermission, type Permission, type RequestIdentity, type Role } from "./enterprise.ts";
+import { assertDocumentAccess, assertPermission, assertRedistributionAllowed, assertWorkspace, hasPermission, type Permission, type RequestIdentity, type Role } from "./enterprise.ts";
 
 const base: RequestIdentity = {
   subject: "user-1",
@@ -71,6 +71,21 @@ test("source access is stricter than normalized document access", () => {
   assert.throws(() => assertDocumentAccess(base, "doc-b", false));
 });
 
+test("source-document allowlist cannot widen normal document grants", () => {
+  const sourceScoped: RequestIdentity = {
+    ...base,
+    entitlements: {
+      ...base.entitlements,
+      documentIds: ["doc-a", "doc-b"],
+      sourceDocumentIds: ["doc-a"],
+      sourceDocumentAccessAllowed: true,
+    },
+  };
+  assert.doesNotThrow(() => assertDocumentAccess(sourceScoped, "doc-a", true));
+  assert.doesNotThrow(() => assertDocumentAccess(sourceScoped, "doc-b", false));
+  assert.throws(() => assertDocumentAccess(sourceScoped, "doc-b", true));
+});
+
 test("document entitlement does not become a wildcard when a scoped list is present", () => {
   for (const documentId of ["doc-b", "doc-c", "tenant-b-doc-a"]) {
     assert.throws(() => assertDocumentAccess(base, documentId, false));
@@ -80,4 +95,10 @@ test("document entitlement does not become a wildcard when a scoped list is pres
 test("an explicit empty document entitlement list denies every document", () => {
   const noDocuments = { ...base, entitlements: { ...base.entitlements, documentIds: [] } };
   assert.throws(() => assertDocumentAccess(noDocuments, "doc-a", false));
+});
+
+test("redistribution remains independent from export RBAC", () => {
+  assert.throws(() => assertRedistributionAllowed(base));
+  const allowed = { ...base, entitlements: { ...base.entitlements, redistributionAllowed: true } };
+  assert.doesNotThrow(() => assertRedistributionAllowed(allowed));
 });
