@@ -1,7 +1,23 @@
 import { createHash, randomUUID } from "crypto";
 import { documents, fundSnapshots, observations } from "../../adapters/demo/catalog.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
-import { assertRedistributionAllowed, type AuditEvent, type ExportManifest, type ProcessingJob, type RequestIdentity, type ResearchAnswer, type ReviewDecision, type SnapshotPublication } from "../../core/enterprise.ts";
+import {
+  assertRedistributionAllowed,
+  type AuditEvent,
+  type ExportManifest,
+  type ProcessingJob,
+  type ReconciliationException,
+  type ReconciliationExceptionType,
+  type ReconciliationResolutionAction,
+  type ReconciliationResolutionCommand,
+  type ReconciliationResolutionOutcome,
+  type ReconciliationSourceReference,
+  type RequestIdentity,
+  type ResearchAnswer,
+  type ReviewDecision,
+  type ReviewOutcome,
+  type SnapshotPublication,
+} from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository, PostgresReviewPublicationRepository, PostgresWorkspaceRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
@@ -12,7 +28,9 @@ export interface PlatformPort {
   listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]>;
   listObservations(identity: RequestIdentity): Promise<ObservationRecord[]>;
   listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]>;
-  review(identity: RequestIdentity, decision: ReviewDecision): Promise<{ accepted: true; reviewEventId: string }>;
+  listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
+  review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
+  resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
   research(identity: RequestIdentity, question: string): Promise<ResearchAnswer>;
   audit(event: AuditEvent): Promise<void>;
@@ -39,13 +57,51 @@ function documentStatus(value: string): DocumentRecord["status"] {
 function quality(value: string): DocumentRecord["quality"] { const q = value.toLowerCase(); return q === "high" ? "High" : q === "medium" ? "Medium" : "Pending"; }
 function reviewState(value: string): ObservationRecord["state"] { return value.toLowerCase() === "approved" ? "Approved" : "Needs review"; }
 function checksum(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function objectValue(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch { return {}; }
+  }
+  return {};
+}
+function objectArray(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) return parsed.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>;
+    } catch { return []; }
+  }
+  return [];
+}
+function allowedActions(type: ReconciliationExceptionType): ReconciliationResolutionAction[] {
+  if (type === "source_authority") return ["select_source"];
+  if (type === "materiality") return ["mark_immaterial"];
+  return ["accept_reconciliation"];
+}
 
 class DemoPlatform implements PlatformPort {
   private auditEvents: AuditEvent[] = [];
   async listDocuments() { return documents; }
   async listObservations() { return observations; }
   async listSnapshots() { return fundSnapshots; }
-  async review(identity: RequestIdentity, decision: ReviewDecision) { void identity; void decision; return { accepted: true as const, reviewEventId: randomUUID() }; }
+  async listReconciliationExceptions() { return []; }
+  async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
+    void identity;
+    return {
+      accepted: true,
+      reviewEventId: randomUUID(),
+      newVersion: decision.expectedVersion + 1,
+      nextState: decision.decision === "approve" ? "approved" : decision.decision === "reject" ? "rejected" : "review_required",
+    };
+  }
+  async resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome> {
+    void identity;
+    return { accepted: true, resolutionEventId: randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" };
+  }
   async publish(identity: RequestIdentity, command: SnapshotPublication) { void identity; void command; return { accepted: true as const, publicationEventId: randomUUID() }; }
   async research(identity: RequestIdentity, question: string): Promise<ResearchAnswer> {
     void identity;
@@ -106,14 +162,69 @@ export class PostgresProductionPlatform implements PlatformPort {
     }));
   }
 
-  async review(identity: RequestIdentity, decision: ReviewDecision): Promise<{ accepted: true; reviewEventId: string }> {
+  async listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]> {
+    const rows = await this.reviewPublication.reconciliationExceptions(identity, snapshotId, snapshotVersion);
+    return rows.map((row) => {
+      const type = text(row,"exception_type") as ReconciliationExceptionType;
+      const sourceReferences: ReconciliationSourceReference[] = objectArray(row.source_references).map((source) => ({
+        sourceReferenceId: String(source.sourceReferenceId ?? ""),
+        documentId: String(source.documentId ?? ""),
+        page: source.page == null ? undefined : Number(source.page),
+        sheetName: source.sheetName == null ? undefined : String(source.sheetName),
+        cellRange: source.cellRange == null ? undefined : String(source.cellRange),
+        excerpt: source.excerpt == null ? undefined : String(source.excerpt),
+      })).filter((source) => source.sourceReferenceId && source.documentId);
+      return {
+        exceptionId: text(row,"exception_id"),
+        snapshotId: text(row,"snapshot_id"),
+        snapshotVersion: num(row,"snapshot_version",1),
+        fundId: text(row,"fund_id"),
+        reportPeriod: text(row,"report_period"),
+        type,
+        subjectType: text(row,"subject_type") || undefined,
+        subjectId: text(row,"subject_id") || undefined,
+        metricCode: text(row,"metric_code") || undefined,
+        summary: text(row,"summary","Reconciliation exception"),
+        materiality: text(row,"materiality","unknown") as ReconciliationException["materiality"],
+        context: objectValue(row.context),
+        status: text(row,"status","open") as ReconciliationException["status"],
+        version: num(row,"version",1),
+        allowedActions: allowedActions(type),
+        sourceReferences,
+        createdAt: text(row,"created_at"),
+        resolvedAt: text(row,"resolved_at") || undefined,
+      };
+    });
+  }
+
+  async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     const current = await this.reviewPublication.observation(identity, decision.observationId);
     if (!current) throw new Error("Observation not found");
     if (num(current,"version") !== decision.expectedVersion) throw new ConflictError("observation_version_conflict");
     if (decision.decision === "correct" && !decision.correctedValue) throw new Error("Corrected value is required");
     const reviewEventId = randomUUID();
-    if (!await this.reviewPublication.applyReview(identity, decision, reviewEventId)) throw new ConflictError("observation_version_conflict");
-    return { accepted: true, reviewEventId };
+    const applied = await this.reviewPublication.applyReview(identity, decision, reviewEventId);
+    if (!applied || num(applied,"new_version") !== decision.expectedVersion + 1) throw new ConflictError("observation_version_conflict");
+    return {
+      accepted: true,
+      reviewEventId,
+      newVersion: num(applied,"new_version"),
+      nextState: text(applied,"next_state") as ReviewOutcome["nextState"],
+    };
+  }
+
+  async resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome> {
+    if (!command.reasonCode) throw new Error("Resolution reason is required");
+    const current = await this.reviewPublication.reconciliationExceptionForResolution(identity, command);
+    if (!current) throw new ConflictError("reconciliation_exception_not_found_or_version_conflict");
+    const type = text(current,"exception_type") as ReconciliationExceptionType;
+    if (!allowedActions(type).includes(command.action)) throw new ConflictError("reconciliation_resolution_not_allowed");
+    const resolutionEventId = randomUUID();
+    const applied = await this.reviewPublication.applyReconciliationResolution(identity, command, resolutionEventId);
+    if (!applied || num(applied,"new_version") !== command.expectedVersion + 1) {
+      throw new ConflictError("reconciliation_exception_not_found_or_version_conflict");
+    }
+    return { accepted: true, resolutionEventId, newVersion: num(applied,"new_version"), status: "resolved" };
   }
 
   async publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }> {
