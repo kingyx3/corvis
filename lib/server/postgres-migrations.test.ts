@@ -30,11 +30,11 @@ test("Postgres tenant data enables RLS and has no broad client mutation policies
   ]) {
     assert.match(sql, new RegExp(`alter table ${table.replace(".", "\\.")} enable row level security`));
   }
-  assert.equal(/create policy[^;]+for (insert|update|delete|all)/s.test(sql), false);
+  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false);
 });
 
 test("Postgres serving views remain tenant-keyed", async () => {
   const sql = (await migrations()).toLowerCase();
-  assert.match(sql, /create or replace view corvis_serving\.observations as\s+select tenant_id,/s);
-  assert.match(sql, /create or replace view corvis_serving\.fund_period_snapshots as\s+select tenant_id,/s);
+  assert.match(sql, /create or replace view corvis_serving\.observations as\s+select tenant_id,/);
+  assert.match(sql, /create or replace view corvis_serving\.fund_period_snapshots as\s+select tenant_id,/);
 });
