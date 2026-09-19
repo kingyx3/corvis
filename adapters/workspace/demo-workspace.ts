@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import type { WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 
@@ -30,13 +29,13 @@ export function createDemoWorkspacePort(): WorkspacePort {
       demoCustomerJourneyStore.review(command);
       return {
         accepted: true,
-        reviewEventId: randomUUID(),
+        reviewEventId: crypto.randomUUID(),
         newVersion: command.expectedVersion + 1,
         nextState: command.decision === "approve" ? "approved" as const : command.decision === "reject" ? "rejected" as const : "review_required" as const,
       };
     },
     async resolveReconciliation(command) {
-      return { accepted: true, resolutionEventId: randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" as const };
+      return { accepted: true, resolutionEventId: crypto.randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" as const };
     },
     async publish(command) {
       demoCustomerJourneyStore.publish(command);
