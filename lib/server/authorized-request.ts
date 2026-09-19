@@ -13,9 +13,10 @@ type ResolveAuthorizedOptions = {
  *
  * The signed gateway assertion establishes subject/tenant/workspace/session and
  * carries resource-scoped entitlements. In production, effective workspace
- * membership and application roles are always re-resolved from Postgres before
- * a route evaluates permissions. This prevents a cryptographically valid but
- * stale/over-privileged role claim from becoming the application authority.
+ * membership, application roles, and implemented fine-grained resource rights
+ * are re-resolved from Postgres before a route evaluates permissions. This
+ * prevents a cryptographically valid but stale/over-privileged claim from
+ * becoming the application authority.
  */
 export async function resolveAuthorizedRequestIdentity(
   request: Request,
@@ -42,6 +43,8 @@ export async function resolveAuthorizedRequestIdentity(
     entitlements: {
       ...authenticated.entitlements,
       workspaceIds: authorized.workspaceIds,
+      fundIds: authorized.fundIds,
+      documentIds: authorized.documentIds,
     },
   };
 }
