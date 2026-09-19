@@ -62,6 +62,22 @@ test("authoritative membership maps roles, workspaces, readable grants, and excl
   assert.match(db.lastSql, /e\.valid_until is null or e\.valid_until > now\(\)/);
 });
 
+test("service-account authorization requires an active, unexpired and currently reviewed lifecycle grant", async () => {
+  const servicePrincipal = { ...principal, subject: "svc|allocator-import", authMethod: "service_account" as const };
+  const db = new FakeDb([{ workspace_id: principal.workspaceId, role_name: "analyst" }]);
+  await new PostgresMembershipAuthorizationRepository(db).resolve(servicePrincipal);
+
+  assert.match(db.lastSql, /s\.auth_method <> 'service_account'/);
+  assert.match(db.lastSql, /from corvis_control\.service_identity_grant g/);
+  assert.match(db.lastSql, /g\.tenant_id=s\.tenant_id/);
+  assert.match(db.lastSql, /g\.auth_method=s\.auth_method/);
+  assert.match(db.lastSql, /g\.subject=s\.subject/);
+  assert.match(db.lastSql, /g\.status='active'/);
+  assert.match(db.lastSql, /g\.valid_from <= now\(\)/);
+  assert.match(db.lastSql, /g\.valid_until > now\(\)/);
+  assert.match(db.lastSql, /g\.next_review_at > now\(\)/);
+});
+
 test("session revocation writes an immutable tenant-scoped deny record idempotently", async () => {
   const db = new FakeDb([]);
   const repository = new PostgresSessionRevocationRepository(db);
