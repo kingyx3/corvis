@@ -1,0 +1,4 @@
+# Exact false positives: the literal security check name direct-load-balancer-origin-mtls-blocked
+# follows cloudflare-rate-limit-probe on these lines. Neither string is a credential.
+4600989756b900251dc0da0138cb21b9a42ac791:lib/server/control-evidence-collector.ts:cloudflare-api-key:102
+4600989756b900251dc0da0138cb21b9a42ac791:lib/server/control-evidence-collector.test.ts:cloudflare-api-key:216
