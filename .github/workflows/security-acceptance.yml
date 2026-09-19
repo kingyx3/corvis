@@ -31,23 +31,19 @@ jobs:
       GCP_REGION: asia-southeast1
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           version: ">= 416.0.0"
-
       - name: Derive API hostname
         shell: bash
         run: |
@@ -56,61 +52,30 @@ jobs:
             echo "CLOUDFLARE_ZONE_NAME is required for edge security acceptance."
             exit 1
           fi
-
           case "${CORVIS_ENVIRONMENT}" in
             prod) api_hostname="api.${CLOUDFLARE_ZONE_NAME}" ;;
             uat) api_hostname="api.uat.${CLOUDFLARE_ZONE_NAME}" ;;
             *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
           esac
-
           echo "API_HOSTNAME=${api_hostname}" >> "${GITHUB_ENV}"
-
       - name: Probe direct origin bypass paths
         shell: bash
         run: |
           set -euo pipefail
-
-          origin_ip="$(gcloud compute addresses describe "corvis-api-origin-${CORVIS_ENVIRONMENT}" \
-            --global \
-            --project="${GCP_PROJECT_ID}" \
-            --format='value(address)')"
-          if [[ -z "${origin_ip}" ]]; then
-            echo "Unable to derive the managed API origin IPv4 address."
-            exit 1
-          fi
-
-          cloud_run_url="$(gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" \
-            --region="${GCP_REGION}" \
-            --project="${GCP_PROJECT_ID}" \
-            --format='value(status.url)')"
-          if [[ -z "${cloud_run_url}" ]]; then
-            echo "Unable to derive the Cloud Run service URL."
-            exit 1
-          fi
-
+          origin_ip="$(gcloud compute addresses describe "corvis-api-origin-${CORVIS_ENVIRONMENT}" --global --project="${GCP_PROJECT_ID}" --format='value(address)')"
+          [[ -n "${origin_ip}" ]] || { echo "Unable to derive the managed API origin IPv4 address."; exit 1; }
+          cloud_run_url="$(gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
+          [[ -n "${cloud_run_url}" ]] || { echo "Unable to derive the Cloud Run service URL."; exit 1; }
           set +e
-          load_balancer_status="$(curl --silent --show-error \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            --max-time 15 \
-            --resolve "${API_HOSTNAME}:443:${origin_ip}" \
-            "https://${API_HOSTNAME}/api/v1/health")"
+          load_balancer_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 --resolve "${API_HOSTNAME}:443:${origin_ip}" "https://${API_HOSTNAME}/api/v1/health")"
           load_balancer_exit_code=$?
           set -e
-
-          cloud_run_status="$(curl --silent --show-error \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            --max-time 15 \
-            "${cloud_run_url}/api/v1/health" || true)"
-
+          cloud_run_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "${cloud_run_url}/api/v1/health" || true)"
           echo "DIRECT_LOAD_BALANCER_BYPASS_STATUS=${load_balancer_status}" >> "${GITHUB_ENV}"
           echo "DIRECT_LOAD_BALANCER_BYPASS_EXIT_CODE=${load_balancer_exit_code}" >> "${GITHUB_ENV}"
           echo "DIRECT_CLOUD_RUN_BYPASS_STATUS=${cloud_run_status}" >> "${GITHUB_ENV}"
-
       - name: Verify edge, transport and origin security
         run: node .github/scripts/security-acceptance.mjs
-
       - name: Upload sanitized edge security evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -128,59 +93,37 @@ jobs:
       CORVIS_ENVIRONMENT: ${{ inputs.environment }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
-      POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-{0}-postgres-dsn', inputs.environment) }}
+      POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
     steps:
       - uses: actions/checkout@v7
-
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           version: ">= 416.0.0"
-
       - name: Install PostgreSQL client
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
-
       - name: Verify live Postgres RLS tenant isolation
         shell: bash
         run: |
           set -euo pipefail
-          dsn="$(gcloud secrets versions access latest \
-            --project="${GCP_PROJECT_ID}" \
-            --secret="${POSTGRES_DSN_SECRET_NAME}")"
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-
           result="pass"
-          if ! PGCONNECT_TIMEOUT=15 psql "${dsn}" \
-              -X \
-              -v ON_ERROR_STOP=1 \
-              -f db/postgres/security_acceptance.sql; then
-            result="fail"
-          fi
+          if ! PGCONNECT_TIMEOUT=15 psql "${dsn}" -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql; then result="fail"; fi
           unset dsn
-
           checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n \
-            --arg environment "${CORVIS_ENVIRONMENT}" \
-            --arg checkedAt "${checked_at}" \
-            --arg result "${result}" \
-            '{schemaVersion:"corvis.postgres-rls-security-acceptance.v1", environment:$environment, checkedAt:$checkedAt, source:"github-actions", result:$result, checks:["two-tenant-workspace-read-isolation","two-tenant-feature-flag-read-isolation","two-tenant-control-evidence-read-isolation","two-tenant-source-document-read-isolation","two-tenant-export-read-isolation","authenticated-control-mutation-denied"]}' \
-            > postgres-rls-security-acceptance-evidence.json
-
-          if [[ "${result}" != "pass" ]]; then
-            exit 1
-          fi
-
+          jq -n --arg environment "${CORVIS_ENVIRONMENT}" --arg checkedAt "${checked_at}" --arg result "${result}" '{schemaVersion:"corvis.postgres-rls-security-acceptance.v1", environment:$environment, checkedAt:$checkedAt, source:"github-actions", result:$result, checks:["two-tenant-workspace-read-isolation","two-tenant-feature-flag-read-isolation","two-tenant-control-evidence-read-isolation","two-tenant-source-document-read-isolation","two-tenant-export-read-isolation","authenticated-control-mutation-denied"]}' > postgres-rls-security-acceptance-evidence.json
+          [[ "${result}" == "pass" ]]
       - name: Upload sanitized Postgres RLS evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -208,43 +151,19 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           version: ">= 416.0.0"
-
       - name: Record accepted digest as known-good rollback target
         shell: bash
         run: |
           set -euo pipefail
-          image="$(gcloud run services describe "corvis-api-${{ inputs.environment }}" \
-            --region="${GCP_REGION}" \
-            --project="${GCP_PROJECT_ID}" \
-            --format='value(spec.template.spec.containers.image)')"
+          image="$(gcloud run services describe "corvis-api-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
           expected_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api@sha256:"
-          if [[ ! "${image}" =~ ^${expected_prefix}[0-9a-f]{64}$ ]]; then
-            echo "Accepted Cloud Run revision is not pinned to the expected Artifact Registry digest."
-            exit 1
-          fi
-
+          if [[ ! "${image}" =~ ^${expected_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted Cloud Run revision is not pinned to the expected Artifact Registry digest."; exit 1; fi
           accepted_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n \
-            --arg schemaVersion "corvis.known-good-release.v1" \
-            --arg environment "${{ inputs.environment }}" \
-            --arg image "${image}" \
-            --arg acceptedAt "${accepted_at}" \
-            --arg acceptanceWorkflowSha "${GITHUB_SHA}" \
-            --arg acceptanceRunId "${GITHUB_RUN_ID}" \
-            '{schemaVersion:$schemaVersion,environment:$environment,image:$image,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' \
-            > known-good.json
-
+          jq -n --arg schemaVersion "corvis.known-good-release.v1" --arg environment "${{ inputs.environment }}" --arg image "${image}" --arg acceptedAt "${accepted_at}" --arg acceptanceWorkflowSha "${GITHUB_SHA}" --arg acceptanceRunId "${GITHUB_RUN_ID}" '{schemaVersion:$schemaVersion,environment:$environment,image:$image,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' > known-good.json
           destination="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
           gcloud storage cp known-good.json "${destination}"
-
-          {
-            echo "### Known-good rollback target"
-            echo "- Environment: `${{ inputs.environment }}`"
-            echo "- Accepted image: `${image}`"
-            echo "- Manifest: `${destination}`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          { echo "### Known-good rollback target"; echo "- Environment: `${{ inputs.environment }}`"; echo "- Accepted image: `${image}`"; echo "- Manifest: `${destination}`"; } >> "${GITHUB_STEP_SUMMARY}"
