@@ -17,7 +17,10 @@ function signedAssertion(secret = "trusted-secret"): string {
       workspaceIds: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
       fundIds: ["fund-from-assertion"],
       documentIds: ["doc-from-assertion"],
-      sourceDocumentAccessAllowed: false,
+      sourceDocumentAccessAllowed: true,
+      internalAnalyticsAllowed: true,
+      modelTrainingAllowed: true,
+      redistributionAllowed: true,
     },
     authMethod: "oidc",
     sessionId: "session-1",
@@ -46,7 +49,7 @@ async function withEnv<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-test("authoritative Postgres roles and implemented resource grants override signed claims", { concurrency: false }, async () => {
+test("authoritative Postgres roles, resource grants and data rights override signed claims", { concurrency: false }, async () => {
   let resolvedPrincipal: AuthorizationPrincipal | undefined;
   const repository: MembershipAuthorizationRepository = {
     async resolve(principal) {
@@ -58,7 +61,11 @@ test("authoritative Postgres roles and implemented resource grants override sign
           "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         ],
         fundIds: ["fund-db"],
-        documentIds: ["doc-db"],
+        documentIds: ["doc-db", "doc-no-source"],
+        sourceDocumentIds: ["doc-db"],
+        internalAnalyticsAllowed: false,
+        modelTrainingAllowed: false,
+        redistributionAllowed: false,
       };
     },
   };
@@ -74,12 +81,17 @@ test("authoritative Postgres roles and implemented resource grants override sign
       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     ]);
     assert.deepEqual(identity.entitlements.fundIds, ["fund-db"]);
-    assert.deepEqual(identity.entitlements.documentIds, ["doc-db"]);
+    assert.deepEqual(identity.entitlements.documentIds, ["doc-db", "doc-no-source"]);
+    assert.deepEqual(identity.entitlements.sourceDocumentIds, ["doc-db"]);
+    assert.equal(identity.entitlements.sourceDocumentAccessAllowed, true);
+    assert.equal(identity.entitlements.internalAnalyticsAllowed, false);
+    assert.equal(identity.entitlements.modelTrainingAllowed, false);
+    assert.equal(identity.entitlements.redistributionAllowed, false);
     assert.equal(resolvedPrincipal?.sessionId, "session-1");
   });
 });
 
-test("explicit empty Postgres resource grants do not fall back to signed claims", { concurrency: false }, async () => {
+test("explicit empty Postgres resource/data-right grants do not fall back to signed claims", { concurrency: false }, async () => {
   const repository: MembershipAuthorizationRepository = {
     async resolve() {
       return {
@@ -87,6 +99,10 @@ test("explicit empty Postgres resource grants do not fall back to signed claims"
         workspaceIds: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
         fundIds: [],
         documentIds: [],
+        sourceDocumentIds: [],
+        internalAnalyticsAllowed: false,
+        modelTrainingAllowed: false,
+        redistributionAllowed: false,
       };
     },
   };
@@ -97,6 +113,11 @@ test("explicit empty Postgres resource grants do not fall back to signed claims"
     const identity = await resolveAuthorizedRequestIdentity(request, { repository, requireAuthoritative: true });
     assert.deepEqual(identity.entitlements.fundIds, []);
     assert.deepEqual(identity.entitlements.documentIds, []);
+    assert.deepEqual(identity.entitlements.sourceDocumentIds, []);
+    assert.equal(identity.entitlements.sourceDocumentAccessAllowed, false);
+    assert.equal(identity.entitlements.internalAnalyticsAllowed, false);
+    assert.equal(identity.entitlements.modelTrainingAllowed, false);
+    assert.equal(identity.entitlements.redistributionAllowed, false);
   });
 });
 
