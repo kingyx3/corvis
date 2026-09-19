@@ -32,6 +32,13 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_source_bucket_name: ${{ vars.GCS_SOURCE_BUCKET_NAME }}
+      TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      TF_VAR_customer_hostname: ${{ vars.CUSTOMER_HOSTNAME }}
+      TF_VAR_admin_hostname: ${{ vars.ADMIN_HOSTNAME }}
+      TF_VAR_api_hostname: ${{ vars.API_HOSTNAME }}
+      TF_VAR_origin_ipv4_address: ${{ vars.GCP_ORIGIN_IPV4_ADDRESS }}
+      TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ vars.GCP_PROJECT_ID }}-corvis-tf-state
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
     steps:
