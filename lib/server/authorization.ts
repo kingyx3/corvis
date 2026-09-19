@@ -26,7 +26,11 @@ function text(value: unknown): string {
 }
 
 export class PostgresMembershipAuthorizationRepository implements MembershipAuthorizationRepository {
-  constructor(private readonly db: PostgresSqlApi) {}
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) {
+    this.db = db;
+  }
 
   async resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null> {
     if (principal.authMethod === "demo") return null;
