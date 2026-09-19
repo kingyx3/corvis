@@ -90,6 +90,7 @@ test("privileged and evidence routes preserve their specific authorization bound
 test("browser and client adapter code cannot manufacture trusted identity gateway headers", async () => {
   const files = [...await sourceFiles("app"), ...await sourceFiles("adapters")];
   const forbidden = [
+    "x-corvis-identity-assertion",
     "x-corvis-gateway-secret",
     "x-corvis-auth-subject",
     "x-corvis-auth-tenant",
