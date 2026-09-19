@@ -61,6 +61,7 @@ as $$
 declare
   current_row corvis_control.event_inbox%rowtype;
   next_token uuid;
+  inserted_count integer;
 begin
   if p_consumer_name is null or btrim(p_consumer_name)='' then raise exception 'consumer name is required'; end if;
   if p_payload_sha256 is null or btrim(p_payload_sha256)='' then raise exception 'payload hash is required'; end if;
@@ -74,6 +75,7 @@ begin
     p_tenant_id,p_consumer_name,p_event_id,p_event_type,p_aggregate_type,p_aggregate_id,p_payload,p_payload_sha256,
     'received',1,0,p_max_attempts,now(),now()
   ) on conflict (tenant_id,consumer_name,event_id) do nothing;
+  get diagnostics inserted_count = row_count;
 
   select * into current_row
   from corvis_control.event_inbox
@@ -81,13 +83,12 @@ begin
   for update;
 
   if not found then raise exception 'event inbox claim failed'; end if;
-  if current_row.payload_sha256 <> p_payload_sha256 then
-    raise exception 'event id payload mismatch';
+  if current_row.payload_sha256 <> p_payload_sha256 then raise exception 'event id payload mismatch'; end if;
+  if current_row.event_type <> p_event_type or current_row.aggregate_type <> p_aggregate_type or current_row.aggregate_id <> p_aggregate_id then
+    raise exception 'event id metadata mismatch';
   end if;
 
-  if current_row.delivery_count > 0 and current_row.first_received_at <> current_row.last_received_at then
-    null;
-  elsif current_row.attempt > 0 or current_row.state <> 'received' then
+  if inserted_count = 0 then
     update corvis_control.event_inbox
     set delivery_count=delivery_count+1,last_received_at=now()
     where tenant_id=p_tenant_id and consumer_name=p_consumer_name and event_id=p_event_id
@@ -99,7 +100,11 @@ begin
     return;
   end if;
   if current_row.state='failed' or current_row.attempt >= current_row.max_attempts then
-    return query select false,false,null::uuid,current_row.attempt,'failed'::text;
+    update corvis_control.event_inbox
+    set state='failed',lease_token=null,lease_expires_at=null,next_attempt_at=null
+    where tenant_id=p_tenant_id and consumer_name=p_consumer_name and event_id=p_event_id
+    returning * into current_row;
+    return query select false,false,null::uuid,current_row.attempt,current_row.state;
     return;
   end if;
   if current_row.state='processing' and current_row.lease_expires_at is not null and current_row.lease_expires_at > now() then
