@@ -1,13 +1,13 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
 import { uploads } from "@/lib/server/uploads";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "documents:write");
     const body = await request.json() as { fileName?: string; contentType?: string; sizeBytes?: number; lastModified?: number; checksumSha256?: string; idempotencyKey?: string };
     if (!body.fileName || !body.contentType || !body.sizeBytes) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });

@@ -1,16 +1,16 @@
-import { assertPermission } from "@/core/enterprise";
+import { assertPermission, type RequestIdentity } from "@/core/enterprise";
 import { uploads } from "@/lib/server/uploads";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
-function canAccessUpload(identity: ReturnType<typeof resolveRequestIdentity>, actorSubject: string): boolean {
+function canAccessUpload(identity: RequestIdentity, actorSubject: string): boolean {
   return actorSubject === identity.subject || identity.roles.includes("admin");
 }
 
 export async function GET(request: Request, context: { params: Promise<{ uploadId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const session = await uploads().get(identity, uploadId);
@@ -30,7 +30,7 @@ export async function GET(request: Request, context: { params: Promise<{ uploadI
 export async function DELETE(request: Request, context: { params: Promise<{ uploadId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const session = await uploads().get(identity, uploadId);

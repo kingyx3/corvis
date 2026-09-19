@@ -1,13 +1,13 @@
 import { randomUUID } from "crypto";
 import { assertPermission, type ReviewDecision } from "@/core/enterprise";
 import { platform } from "@/lib/server/platform";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "observations:review");
     const command = await request.json() as ReviewDecision;
     if (!command.observationId || !["approve","reject","correct"].includes(command.decision) || !command.reasonCode || !Number.isInteger(command.expectedVersion)) {

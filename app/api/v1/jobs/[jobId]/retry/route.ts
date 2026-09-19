@@ -3,12 +3,12 @@ import { assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { retryProcessingJob } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { jobId } = await context.params;
     const result = await retryProcessingJob(identity, jobId);

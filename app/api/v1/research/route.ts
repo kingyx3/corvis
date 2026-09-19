@@ -1,12 +1,12 @@
 import { assertPermission } from "@/core/enterprise";
 import { platform } from "@/lib/server/platform";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "research:query");
     const body = await request.json() as { question?: string };
     const question = body.question?.trim();

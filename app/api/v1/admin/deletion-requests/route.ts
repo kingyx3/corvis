@@ -3,12 +3,12 @@ import { assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { createDeletionRequest, listDeletionRequests } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
-import { resolveRequestIdentity } from "@/lib/server/request-context";
+import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 export async function GET(request: Request) {
   const id=correlationId(request);
   try {
-    const identity=resolveRequestIdentity(request);
+    const identity=await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity,"admin:manage");
     const rows=await listDeletionRequests(identity);
     return json({data:rows,correlationId:id});
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const id=correlationId(request);
   try {
-    const identity=resolveRequestIdentity(request); assertPermission(identity,"admin:manage");
+    const identity=await resolveAuthorizedRequestIdentity(request); assertPermission(identity,"admin:manage");
     const body=await request.json() as {scope?:unknown;reason?:string};
     if(body.scope==null || !body.reason?.trim()) return json({error:"invalid_request",correlationId:id},{status:400});
     const requestId=await createDeletionRequest(identity,body.scope,body.reason.trim());
