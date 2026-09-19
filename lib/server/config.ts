@@ -32,7 +32,6 @@ export type ServerConfig = {
 
   observabilityEndpoint?: string;
   observabilityToken?: string;
-  webhookSigningSecret?: string;
   dataLifecycleEndpoint?: string;
   dataLifecycleToken?: string;
   exportDeliveryEndpoint?: string;
@@ -80,7 +79,6 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     researchTimeoutMs: Math.min(positiveInteger(env.CORVIS_RESEARCH_TIMEOUT_MS) ?? 30_000, 120_000),
     observabilityEndpoint: env.CORVIS_OBSERVABILITY_ENDPOINT,
     observabilityToken: env.CORVIS_OBSERVABILITY_TOKEN,
-    webhookSigningSecret: env.CORVIS_WEBHOOK_SIGNING_SECRET,
     dataLifecycleEndpoint: env.CORVIS_DATA_LIFECYCLE_ENDPOINT,
     dataLifecycleToken: env.CORVIS_DATA_LIFECYCLE_TOKEN,
     exportDeliveryEndpoint: env.CORVIS_EXPORT_DELIVERY_ENDPOINT,
@@ -104,7 +102,6 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
       ["CORVIS_AI_ENDPOINT", config.aiEndpoint],
       ["CORVIS_OBSERVABILITY_ENDPOINT", config.observabilityEndpoint],
-      ["CORVIS_WEBHOOK_SIGNING_SECRET", config.webhookSigningSecret],
       ["CORVIS_DATA_LIFECYCLE_ENDPOINT", config.dataLifecycleEndpoint],
       ["CORVIS_EXPORT_DELIVERY_ENDPOINT", config.exportDeliveryEndpoint],
       ["CORVIS_WORKER_SECRET", config.workerSecret],

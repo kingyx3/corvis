@@ -62,6 +62,10 @@ test("privileged and evidence routes preserve their specific authorization bound
     ["app/api/v1/admin/feature-flags/route.ts", "admin:manage"],
     ["app/api/v1/admin/readiness/route.ts", "admin:manage"],
     ["app/api/v1/admin/session-revocations/route.ts", "admin:manage"],
+    ["app/api/v1/admin/webhooks/subscriptions/route.ts", "admin:manage"],
+    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/route.ts", "admin:manage"],
+    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/rotate-signing-key/route.ts", "admin:manage"],
+    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/deliveries/route.ts", "admin:manage"],
     ["app/api/v1/jobs/[jobId]/retry/route.ts", "admin:manage"],
     ["app/api/v1/exports/route.ts", "exports:create"],
     ["app/api/v1/research/route.ts", "research:query"],
@@ -131,7 +135,8 @@ test("outbound webhook delivery is replay-safe and bounded", async () => {
   assert.match(delivery, /on conflict \(tenant_id,webhook_id,event_id,attempt\) do nothing/, "duplicate delivery claims must be idempotent");
   assert.match(delivery, /coalesce\(\(select max\(d\.attempt\)[\s\S]*?\),0\)<5/, "webhook delivery selection must stop after five attempts");
   assert.match(delivery, /attempt>=5\?["']failed["']:["']retryable["']/, "the fifth failed attempt must become terminal");
-  assert.match(delivery, /webhookHeaders\(config\.webhookSigningSecret,envelope\)/, "every outbound delivery must be signed");
+  assert.match(delivery, /webhookHeaders\(String\(row\.signing_secret\),envelope\)/, "every outbound delivery must be signed with its subscription's own active key");
+  assert.match(delivery, /k\.tenant_id=s\.tenant_id and k\.webhook_id=s\.webhook_id and k\.status='active'/, "delivery must resolve the tenant-scoped active signing key, not a shared secret");
   assert.match(sql, /unique \(tenant_id, webhook_id, event_id, attempt\)/, "database must enforce unique delivery attempts per tenant/webhook/event");
 });
 

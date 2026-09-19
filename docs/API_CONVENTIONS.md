@@ -18,9 +18,9 @@ appropriate HTTP status, produced by the single `apiError()` mapper in
 The stable error codes today include `authentication_required` (401),
 `forbidden` (403), a per-domain conflict/governance code (409 or 422 —
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
-`FeatureFlagGovernanceError`/`DeletionExecutionError` code, etc.),
-`invalid_cursor` (400), the research-specific timeout/cancel/provider codes,
-and `internal_error` (500) as the fallback. Adding a new typed error class
+`FeatureFlagGovernanceError`/`DeletionExecutionError`/`WebhookSubscriptionError`
+code, etc.), `invalid_cursor` (400), the research-specific timeout/cancel/provider
+codes, and `internal_error` (500) as the fallback. Adding a new typed error class
 means adding one `instanceof` branch to `apiError()`, not reinventing the
 envelope in the route.
 
@@ -54,9 +54,14 @@ changing. Malformed or tampered cursors, and non-positive/non-integer
 `limit` values, are rejected with `invalid_cursor` (400) rather than
 silently ignored, clamped without complaint, or crashing.
 
-**Landed on:** `GET /documents`, `GET /observations`, `GET /snapshots`.
-**Not yet applied:** `GET /jobs`, `GET /exports` and any future resource
-listing should adopt the same `paginate()`/`paginationRequested()` pair.
+**Landed on:** `GET /documents`, `GET /observations`, `GET /snapshots` and
+`GET /jobs` (all preserve the unpaginated-by-default compatibility rule
+above), plus `GET /admin/webhooks/subscriptions/{webhookId}/deliveries`,
+which is a new endpoint with no pre-existing unpaginated caller and so
+pagination is its only mode. `GET /exports` and any future resource listing
+should adopt the same `paginate()`/`paginationRequested()` pair; a genuinely
+new endpoint should default to pagination-only rather than adding the
+compatibility branch.
 
 **Known limitation:** pagination is currently applied over the full list
 each repository/adapter already returns, not pushed down as a `LIMIT`/
@@ -75,6 +80,45 @@ action; `lib/server/data-lifecycle.ts`'s deletion execution follows the same
 principle for its per-attempt evidence ledger. New mutating endpoints that
 can be safely retried should follow this same body-field convention rather
 than introducing a second one.
+
+## Webhooks
+
+`corvis_control.webhook_subscription` and `corvis_control.webhook_delivery`
+(migration `006_upload_delivery_operations.sql`) hold the durable outbound
+delivery ledger: `lib/server/delivery.ts`'s `processWebhookDeliveries` claims
+outbox events for each active subscription with an idempotent
+`on conflict (tenant_id,webhook_id,event_id,attempt) do nothing` insert,
+bounded to 5 attempts, and marks the fifth failure terminal
+(`docs/API_CONVENTIONS.md`'s own idempotency rule applies here too: a
+redelivered attempt is a no-op, not a duplicate).
+
+Subscription administration and per-subscription signing-key rotation
+(migration `019_webhook_subscription_management.sql`,
+`lib/server/webhook-subscriptions.ts`) are exposed under
+`/admin/webhooks/subscriptions`, gated by `admin:manage`:
+
+- `POST /admin/webhooks/subscriptions` — create (`endpointUrl` must be
+  `https://`, `eventTypes` a non-empty array). The response includes the
+  signing secret exactly once; it is never re-readable afterward.
+- `GET /admin/webhooks/subscriptions` — list (metadata only, never a secret).
+- `PATCH /admin/webhooks/subscriptions/{webhookId}` — `{ "action": "pause" | "resume" | "revoke" }`.
+  `revoke` is terminal; `pause`/`resume` are reversible. An invalid transition
+  (for example resuming an already-active subscription) is rejected rather
+  than silently accepted.
+- `POST /admin/webhooks/subscriptions/{webhookId}/rotate-signing-key` —
+  retires the current key and activates a freshly generated one atomically,
+  so a subscription is never left with zero or two active keys. The new
+  secret is returned exactly once, in this response.
+- `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` — paginated
+  customer-visible delivery diagnostics (state, attempt, status code, last
+  error).
+
+A signing secret is per tenant and per subscription, never shared across
+tenants: each outbound delivery is signed with `webhookHeaders()` using the
+subscription's own current active key. `webhookHeaders()` signs with the
+actual send time, not the business event's own (fixed) `createdAt`, so a
+retry sent well after the original event still produces a signature the
+receiver's tolerance window accepts.
 
 ## Rate limiting
 

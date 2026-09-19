@@ -146,3 +146,15 @@ test("webhook deliveries have durable claims and bounded attempts", async () => 
   assert.match(sql, /state text not null check \(state in \('delivering','complete','retryable','failed'\)\)/);
   assert.match(sql, /unique \(tenant_id, webhook_id, event_id, attempt\)/);
 });
+
+test("webhook signing keys are tenant/subscription-scoped, never shared, and rotation cannot leave zero or two active keys", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /create table if not exists corvis_control\.webhook_signing_key/);
+  assert.match(sql, /secret text not null check \(length\(secret\) >= 32\)/);
+  assert.match(sql, /create unique index if not exists webhook_signing_key_one_active_idx\s*\n\s*on corvis_control\.webhook_signing_key \(tenant_id, webhook_id\)\s*\n\s*where status = 'active'/);
+  assert.match(sql, /create or replace function corvis_control\.rotate_webhook_signing_key/);
+  assert.match(sql, /status = 'retiring', retire_by = now\(\) \+ make_interval\(secs => p_grace_seconds\)/);
+  assert.match(sql, /create or replace function corvis_control\.create_webhook_subscription/);
+  // A subscription can never be created without its first signing key.
+  assert.match(sql, /insert into corvis_control\.webhook_subscription[\s\S]*insert into corvis_control\.webhook_signing_key/);
+});

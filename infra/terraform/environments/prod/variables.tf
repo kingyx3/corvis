@@ -18,3 +18,21 @@ variable "enable_cloudflare_managed_waf" {
   type        = bool
   default     = false
 }
+
+variable "monitoring_notification_channel_ids" {
+  description = "Existing Cloud Monitoring notification channel IDs to attach to SLO alerts and the budget."
+  type        = list(string)
+  default     = []
+}
+
+variable "billing_account_id" {
+  description = "Billing account for the monthly budget. Empty disables budget creation."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "monthly_budget_amount_usd" {
+  type    = number
+  default = 2000
+}

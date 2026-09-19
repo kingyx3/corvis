@@ -133,3 +133,15 @@ module "cloudflare_edge" {
 
   depends_on = [terraform_data.edge_configuration_guard, terraform_data.edge_zone_guard]
 }
+
+module "observability" {
+  source                    = "../../modules/gcp-observability"
+  project_id                = var.project_id
+  environment               = "prod"
+  api_service_name          = coalesce(module.api_runtime.api_service_name, "")
+  dead_letter_topic_name    = module.foundation.dead_letter_topic_name
+  processing_queue_name     = module.foundation.processing_queue_name
+  notification_channel_ids  = var.monitoring_notification_channel_ids
+  billing_account_id        = var.billing_account_id
+  monthly_budget_amount_usd = var.monthly_budget_amount_usd
+}
