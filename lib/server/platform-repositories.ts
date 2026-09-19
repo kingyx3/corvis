@@ -1,4 +1,12 @@
-import type { AuditEvent, ExportManifest, ProcessingJob, RequestIdentity, ReviewDecision, SnapshotPublication } from "../../core/enterprise.ts";
+import type {
+  AuditEvent,
+  ExportManifest,
+  ProcessingJob,
+  ReconciliationResolutionCommand,
+  RequestIdentity,
+  ReviewDecision,
+  SnapshotPublication,
+} from "../../core/enterprise.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }
@@ -61,11 +69,81 @@ export class PostgresReviewPublicationRepository {
     return rows[0];
   }
 
-  async applyReview(identity: RequestIdentity, decision: ReviewDecision, reviewEventId: string): Promise<boolean> {
+  async applyReview(identity: RequestIdentity, decision: ReviewDecision, reviewEventId: string): Promise<PostgresRow | undefined> {
     const rows = await this.db.query(`select * from corvis_facts.apply_review_decision(
       $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8)`,
     [identity.tenantId,decision.observationId,decision.expectedVersion,reviewEventId,identity.subject,decision.decision,decision.reasonCode,decision.correctedValue ?? null]);
-    return Number(rows[0]?.new_version ?? 0) === decision.expectedVersion + 1;
+    return rows[0];
+  }
+
+  async reconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<PostgresRow[]> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return [];
+    const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
+      ? identity.entitlements.sourceDocumentIds ?? []
+      : [];
+    return this.db.query(`select e.*,
+        coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'sourceReferenceId',r.source_reference_id::text,
+            'documentId',r.document_id::text,
+            'page',r.page_number,
+            'sheetName',r.sheet_name,
+            'cellRange',r.cell_range,
+            'excerpt',r.excerpt
+          ) order by r.source_reference_id::text)
+          from corvis_source.source_reference r
+          where r.tenant_id=e.tenant_id
+            and r.source_reference_id=any(e.competing_source_reference_ids)
+            and r.document_id::text in (select jsonb_array_elements_text($5::jsonb))
+        ),'[]'::jsonb) as source_references
+      from corvis_serving.reconciliation_exceptions e
+      where e.tenant_id=$1 and e.snapshot_id=$2::uuid and e.snapshot_version=$3
+        and e.fund_id in (select jsonb_array_elements_text($4::jsonb))
+      order by case e.status when 'open' then 0 else 1 end, e.created_at, e.exception_id`,
+    [identity.tenantId,snapshotId,snapshotVersion,jsonIds(fundIds),jsonIds(sourceDocumentIds)]);
+  }
+
+  async reconciliationExceptionForResolution(
+    identity: RequestIdentity,
+    command: ReconciliationResolutionCommand,
+  ): Promise<PostgresRow | undefined> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return undefined;
+    const selectingSource = command.action === "select_source";
+    const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
+      ? identity.entitlements.sourceDocumentIds ?? []
+      : [];
+    if (selectingSource && (!command.selectedSourceReferenceId || sourceDocumentIds.length === 0)) return undefined;
+    const rows = await this.db.query(`select e.*
+      from corvis_consolidated.reconciliation_exception e
+      where e.tenant_id=$1 and e.exception_id=$2::uuid and e.version=$3 and e.status='open'
+        and e.fund_id in (select jsonb_array_elements_text($4::jsonb))
+        and ($5::uuid is null or exists (
+          select 1 from corvis_source.source_reference r
+          where r.tenant_id=e.tenant_id
+            and r.source_reference_id=$5::uuid
+            and r.source_reference_id=any(e.competing_source_reference_ids)
+            and r.document_id::text in (select jsonb_array_elements_text($6::jsonb))
+        ))
+      limit 1`, [
+      identity.tenantId,command.exceptionId,command.expectedVersion,jsonIds(fundIds),
+      selectingSource ? command.selectedSourceReferenceId ?? null : null,jsonIds(sourceDocumentIds),
+    ]);
+    return rows[0];
+  }
+
+  async applyReconciliationResolution(
+    identity: RequestIdentity,
+    command: ReconciliationResolutionCommand,
+    resolutionEventId: string,
+  ): Promise<PostgresRow | undefined> {
+    const rows = await this.db.query(`select * from corvis_consolidated.resolve_reconciliation_exception(
+      $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8::uuid,$9)`, [
+      identity.tenantId,command.exceptionId,command.expectedVersion,resolutionEventId,identity.subject,
+      command.action,command.reasonCode,command.selectedSourceReferenceId ?? null,command.note ?? null,
+    ]);
+    return rows[0];
   }
 
   async snapshot(identity: RequestIdentity, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
