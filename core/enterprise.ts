@@ -2,12 +2,13 @@ export type Role = "admin" | "reviewer" | "analyst" | "api_client" | "read_only"
 export type Permission =
   | "documents:read" | "documents:write" | "sources:read"
   | "observations:read" | "observations:review" | "snapshots:publish"
+  | "reconciliations:read" | "reconciliations:resolve"
   | "research:query" | "exports:create" | "admin:manage";
 
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
-  admin: ["documents:read","documents:write","sources:read","observations:read","observations:review","snapshots:publish","research:query","exports:create","admin:manage"],
-  reviewer: ["documents:read","sources:read","observations:read","observations:review","research:query","exports:create"],
-  analyst: ["documents:read","sources:read","observations:read","research:query","exports:create"],
+  admin: ["documents:read","documents:write","sources:read","observations:read","observations:review","snapshots:publish","reconciliations:read","reconciliations:resolve","research:query","exports:create","admin:manage"],
+  reviewer: ["documents:read","sources:read","observations:read","observations:review","reconciliations:read","reconciliations:resolve","research:query","exports:create"],
+  analyst: ["documents:read","sources:read","observations:read","reconciliations:read","research:query","exports:create"],
   api_client: ["documents:read","observations:read","research:query","exports:create"],
   read_only: ["documents:read","observations:read"],
 };
