@@ -6,6 +6,33 @@ import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 function bearer(token?: string): Record<string,string> { return token ? { authorization:`Bearer ${token}` } : {}; }
 function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
+/**
+ * Capped exponential backoff with jitter for webhook redelivery.
+ *
+ * Attempt 1 retries around the original flat 5-minute interval, then the
+ * delay doubles per attempt (10m, 20m, 40m, ...) up to a 1-hour cap. Jitter
+ * of +/-20% is applied around the (possibly capped) delay so a burst of
+ * deliveries failing at the same attempt number don't all retry in
+ * lockstep against a recovering endpoint.
+ *
+ * `random` is injectable so tests can assert exact bounds deterministically
+ * instead of relying on `Math.random`.
+ */
+export const WEBHOOK_RETRY_BASE_DELAY_MS = 5 * 60_000;
+export const WEBHOOK_RETRY_MAX_DELAY_MS = 60 * 60_000;
+export const WEBHOOK_RETRY_JITTER_RATIO = 0.2;
+
+export type RandomSource = () => number;
+
+export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource = Math.random): number {
+  const exponent = Math.max(0, attempt - 1);
+  const exponential = WEBHOOK_RETRY_BASE_DELAY_MS * (2 ** exponent);
+  const capped = Math.min(exponential, WEBHOOK_RETRY_MAX_DELAY_MS);
+  const jitterRange = capped * WEBHOOK_RETRY_JITTER_RATIO;
+  const jitter = (random() * 2 - 1) * jitterRange;
+  return Math.max(0, Math.round(capped + jitter));
+}
+
 export async function processQueuedExports(limit=25): Promise<{processed:number;failed:number}> {
   const config=getServerConfig();
   if(!config.exportDeliveryEndpoint) throw new Error("Export delivery adapter is not configured");
@@ -47,7 +74,7 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
   return {processed,failed};
 }
 
-export async function processWebhookDeliveries(limit=50): Promise<{processed:number;failed:number}> {
+export async function processWebhookDeliveries(limit=50, random: RandomSource = Math.random): Promise<{processed:number;failed:number}> {
   const store=db();
   const events=await store.query(`select e.tenant_id,e.event_id,e.event_type,e.aggregate_id,e.payload,e.created_at,
       s.webhook_id,s.endpoint_url,
@@ -108,11 +135,13 @@ export async function processWebhookDeliveries(limit=50): Promise<{processed:num
       processed++;
     }catch(error){
       failed++;
+      const state=attempt>=5?"failed":"retryable";
+      const nextAttemptAt=state==="retryable"?new Date(Date.now()+computeWebhookRetryDelayMs(attempt,random)).toISOString():null;
       await store.execute(`update corvis_control.webhook_delivery
-        set state=$1,next_attempt_at=case when $1='retryable' then now()+interval '5 minutes' else null end,
-            last_error=$2
-        where tenant_id=$3 and delivery_id=$4::uuid and state='delivering'`,
-      [attempt>=5?"failed":"retryable",error instanceof Error?error.message:"unknown",tenantId,deliveryId]);
+        set state=$1,next_attempt_at=$2::timestamptz,
+            last_error=$3
+        where tenant_id=$4 and delivery_id=$5::uuid and state='delivering'`,
+      [state,nextAttemptAt,error instanceof Error?error.message:"unknown",tenantId,deliveryId]);
       await store.execute(`update corvis_control.outbox_event
         set attempt_count=attempt_count+1,last_error=$1
         where tenant_id=$2 and event_id=$3::uuid`,
