@@ -5,6 +5,7 @@ import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
+import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
 import { logEvent } from "@/lib/server/telemetry";
 import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
 
@@ -55,6 +56,14 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof WebhookSubscriptionError) {
     logEvent("warn", "webhook_subscription.denied", { correlationId }, { code: error.code });
     const status = error.code === "webhook_subscription_not_found" ? 404 : error.code === "webhook_subscription_transition_denied" ? 409 : 400;
+    return json({ error: error.code, correlationId }, { status });
+  }
+  if (error instanceof ConnectorGovernanceError) {
+    logEvent("warn", "source_connection.denied", { correlationId }, { code: error.code });
+    const status = error.code === "connection_not_found" ? 404
+      : error.code === "connection_revoked" || error.code.startsWith("invalid_transition_from_") ? 409
+      : error.code === "unregistered_provider" ? 422
+      : 400;
     return json({ error: error.code, correlationId }, { status });
   }
   if (error instanceof ResearchTimeoutError) {
