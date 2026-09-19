@@ -156,6 +156,79 @@ begin
 end;
 $$;
 
+-- A correction changes the reviewed value and therefore starts a new four-eyes
+-- approval epoch. Approvals from before the latest correction cannot satisfy
+-- the critical-observation independent-review requirement.
+create or replace function corvis_facts.apply_review_decision(
+  p_tenant_id uuid,
+  p_observation_id uuid,
+  p_expected_version integer,
+  p_review_event_id uuid,
+  p_actor_subject text,
+  p_decision text,
+  p_reason_code text,
+  p_corrected_value text default null
+)
+returns table(new_version integer, next_state text)
+language plpgsql
+security invoker
+as $$
+declare
+  current_row corvis_facts.observation%rowtype;
+  computed_state text;
+  reviewer_count integer;
+  latest_correction_version integer;
+begin
+  select * into current_row
+  from corvis_facts.observation
+  where tenant_id=p_tenant_id and observation_id=p_observation_id and version=p_expected_version
+  for update;
+
+  if not found then return; end if;
+  if p_decision not in ('approve','reject','correct') then raise exception 'invalid review decision'; end if;
+  if p_decision='correct' and p_corrected_value is null then raise exception 'corrected value is required'; end if;
+
+  insert into corvis_facts.review_event
+    (tenant_id,review_event_id,observation_id,actor_subject,decision,reason_code,before_value,after_value,observation_version,created_at)
+  values (
+    p_tenant_id,p_review_event_id,p_observation_id,p_actor_subject,p_decision,p_reason_code,
+    jsonb_build_object('valueNumber',current_row.value_number,'valueString',current_row.value_string,'reviewState',current_row.review_state),
+    case when p_decision='correct'
+      then jsonb_build_object('valueString',p_corrected_value,'reviewState','review_required')
+      else jsonb_build_object('valueNumber',current_row.value_number,'valueString',current_row.value_string,'reviewState',case when p_decision='reject' then 'rejected' else 'approved' end)
+    end,
+    p_expected_version,now()
+  );
+
+  if p_decision='correct' then
+    insert into corvis_facts.observation_correction
+      (tenant_id,observation_id,based_on_observation_version,corrected_value_string,reason_code,actor_subject)
+    values (p_tenant_id,p_observation_id,p_expected_version,p_corrected_value,p_reason_code,p_actor_subject);
+    computed_state := 'review_required';
+  elsif p_decision='reject' then
+    computed_state := 'rejected';
+  elsif current_row.risk_tier='critical' then
+    select coalesce(max(observation_version),0) into latest_correction_version
+    from corvis_facts.review_event
+    where tenant_id=p_tenant_id and observation_id=p_observation_id and decision='correct';
+
+    select count(distinct actor_subject) into reviewer_count
+    from corvis_facts.review_event
+    where tenant_id=p_tenant_id and observation_id=p_observation_id and decision='approve'
+      and observation_version > latest_correction_version;
+    computed_state := case when reviewer_count >= 2 then 'approved' else 'review_required' end;
+  else
+    computed_state := 'approved';
+  end if;
+
+  update corvis_facts.observation
+  set review_state=computed_state, version=version+1, updated_at=now()
+  where tenant_id=p_tenant_id and observation_id=p_observation_id and version=p_expected_version;
+
+  return query select p_expected_version + 1, computed_state;
+end;
+$$;
+
 create or replace view corvis_serving.reconciliation_exceptions as
 select e.tenant_id,e.exception_id,e.snapshot_id,e.snapshot_version,e.exception_key,
        e.fund_id,e.report_period,e.exception_type,e.subject_type,e.subject_id,e.metric_code,
@@ -190,8 +263,9 @@ from corvis_consolidated.fund_period_snapshot s
 left join corvis_identity.fund f on f.global_fund_id=s.fund_id;
 
 -- Publication enforcement is repeated at the persistence boundary. Application
--- checks improve UX, but callers cannot bypass unresolved exceptions or the
--- critical-observation four-eyes rule by invoking this function directly.
+-- checks improve UX, but callers cannot bypass unresolved exceptions, rejected
+-- observations, or the critical-observation four-eyes rule by invoking this
+-- function directly.
 create or replace function corvis_consolidated.append_snapshot_transition(
   p_tenant_id uuid,
   p_snapshot_id uuid,
@@ -234,18 +308,23 @@ begin
     if effective_blockers > 0 then raise exception 'blocking reconciliation exceptions remain'; end if;
     if exists (
       select 1 from corvis_facts.observation o
-      where o.tenant_id=p_tenant_id and o.fund_id=current_row.fund_id and o.review_state='review_required'
-    ) then raise exception 'observations still require review'; end if;
+      where o.tenant_id=p_tenant_id and o.fund_id=current_row.fund_id and o.review_state <> 'approved'
+    ) then raise exception 'observations are not fully approved'; end if;
     if exists (
       select 1
       from corvis_facts.observation o
-      where o.tenant_id=p_tenant_id and o.fund_id=current_row.fund_id and o.risk_tier='critical'
+      where o.tenant_id=p_tenant_id and o.fund_id=current_row.fund_id and o.risk_tier='critical' and o.review_state='approved'
         and (
           select count(distinct r.actor_subject)
           from corvis_facts.review_event r
           where r.tenant_id=o.tenant_id and r.observation_id=o.observation_id and r.decision='approve'
+            and r.observation_version > coalesce((
+              select max(c.observation_version)
+              from corvis_facts.review_event c
+              where c.tenant_id=o.tenant_id and c.observation_id=o.observation_id and c.decision='correct'
+            ),0)
         ) < 2
-    ) then raise exception 'critical observations require independent review'; end if;
+    ) then raise exception 'critical observations require independent review after the latest correction'; end if;
   end if;
 
   next_status := case p_action when 'publish' then 'published' when 'withdraw' then 'withdrawn' else 'superseded' end;
