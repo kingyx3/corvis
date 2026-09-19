@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ProcessingStage } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
 
 type TransportEvent = {
