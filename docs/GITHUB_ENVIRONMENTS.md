@@ -19,12 +19,6 @@ GitHub is the deployment/configuration control plane, not the long-term runtime 
 | `GCP_PROJECT_ID` | Target GCP project | Externally assigned/global identifier; cannot be safely inferred from `dev`/`uat`/`prod`. |
 | `GCP_WIF_PROVIDER` | Full Workload Identity Provider resource name | Required before GitHub can authenticate to GCP; the project number inside the resource name is not available until trust is established. |
 
-### Runtime activation (`uat` / `prod`)
-
-| Variable | Purpose | Why it remains |
-| --- | --- | --- |
-| `API_IMAGE` | Immutable Artifact Registry image reference ending in `@sha256:<digest>` | Release/promotion input until the build-and-promote workflow writes the selected digest automatically. Empty keeps the API runtime and public API origin unprovisioned. |
-
 ### Cloudflare edge (`uat` / `prod` only)
 
 | Variable | Purpose | Why it remains |
@@ -32,7 +26,9 @@ GitHub is the deployment/configuration control plane, not the long-term runtime 
 | `CLOUDFLARE_ZONE_NAME` | Registered Corvis Cloudflare zone | External domain ownership. Prefer one repository-level variable if UAT and prod share the same root zone. |
 | `CLOUDFLARE_MANAGED_WAF_ENABLED` | Enables plan-dependent Cloudflare/OWASP managed rulesets | Intentional rollout/capability decision, not a value that can be inferred safely. Defaults to `false`. |
 
-When `CLOUDFLARE_ZONE_NAME` is configured, `API_IMAGE` must also be configured. Terraform creates the GCP external HTTPS load balancer, derives its global IPv4 address, resolves the current Cloudflare proxy CIDRs, applies a Cloud Armor default-deny origin policy, creates the Google Certificate Manager DNS authorization record in Cloudflare, and then publishes only the API hostname. Customer/admin hostnames remain unpublished until their distinct production runtime boundaries exist.
+`API_IMAGE` is no longer a human-managed GitHub Environment variable. `build-release.yml` publishes `git-<commit>` to the environment's Artifact Registry repository, and `terraform-deploy.yml` resolves the selected `release_sha` to an immutable digest before Terraform runs. A fully successful live Security acceptance run separately records the environment's exact deployed digest as its known-good rollback target.
+
+When `CLOUDFLARE_ZONE_NAME` is configured, Terraform deployment must select either a built `release_sha` or `rollback_known_good=true`. The edge remains fail-closed if no immutable API image is selected.
 
 No extra GitHub variable is required for direct-origin security probes: the security-acceptance workflow derives the managed load-balancer address and Cloud Run URL from GCP through OIDC/WIF.
 
@@ -48,7 +44,7 @@ There are **no custom GCP credential secrets**. GCP CI/CD uses GitHub OIDC -> Wo
 
 ## Values derived automatically
 
-The deployment and acceptance workflows derive these instead of storing them in GitHub:
+The build, deployment and acceptance workflows derive these instead of storing them in GitHub:
 
 | Derived value | Derivation |
 | --- | --- |
@@ -58,21 +54,26 @@ The deployment and acceptance workflows derive these instead of storing them in 
 | Terraform state bucket | `${GCP_PROJECT_ID}-corvis-tf-state` |
 | Terraform root | `infra/terraform/environments/${environment}` |
 | Artifact Registry repository | Terraform module default `corvis` |
+| API image repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api` |
+| Release image tag | `git-${full_commit_sha}` produced only by the release build workflow |
+| Runtime API image | Artifact Registry resolution of the selected release tag to `image@sha256:<digest>` |
+| Known-good rollback image | Versioned `gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json`, advanced only after both live Security acceptance jobs pass |
 | Cloudflare zone ID | Provider lookup by `CLOUDFLARE_ZONE_NAME` using `CLOUDFLARE_API_TOKEN` |
 | Cloudflare proxy CIDRs | `cloudflare_ip_ranges` provider data source |
 | Production API hostname | `api.${zone}` |
 | UAT API hostname | `api.uat.${zone}` |
-| GCP API origin IPv4 | `gcp-serverless-origin` global-address output wired directly into Cloudflare DNS and queried directly by security acceptance |
+| GCP API origin IPv4 | managed load-balancer output wired directly into Cloudflare DNS and queried by security acceptance |
 | Certificate validation record | Google Certificate Manager DNS authorization output wired directly into Cloudflare DNS |
 | Postgres DSN secret name | `corvis-${environment}-postgres-dsn` |
 | API/worker service-account names | Terraform resources derived from project + environment |
 
-Cloud Run service URLs, image digests after automated promotion, runtime endpoints and future customer/admin origin addresses should likewise flow from Terraform/build outputs rather than becoming GitHub variables.
+Cloud Run service URLs, image digests, runtime endpoints and future customer/admin origin addresses must likewise flow from provider/build outputs rather than becoming GitHub variables.
 
 ## GitHub values to remove or avoid creating
 
 Remove these if they already exist; they are fixed, derived, or provider-resolvable:
 
+- `API_IMAGE`
 - `GCP_REGION`
 - `GCP_DEPLOY_SERVICE_ACCOUNT`
 - `GCS_SOURCE_BUCKET_NAME`
@@ -114,7 +115,7 @@ Explicitly prohibited GitHub credentials include GCP service-account JSON keys, 
 2. In each project, create the `corvis-deploy` service account.
 3. Create the GitHub Workload Identity Pool/provider and authorize the repository/environment identity to impersonate `corvis-deploy`.
 4. Create GitHub Environments `dev`, `uat`, and `prod` and set `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
-5. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, `API_IMAGE`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`; Terraform derives the origin IP, Cloudflare proxy ranges and certificate-validation record.
+5. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`. Build the selected main commit into that environment's Artifact Registry before deployment.
 
 ## Production protections
 
@@ -125,11 +126,12 @@ For `prod`, require reviewed deployments once multiple operators exist, deploy o
 - [ ] GitHub Environment exists.
 - [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured.
 - [ ] `corvis-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com` exists and is impersonable by the GitHub WIF identity.
-- [ ] obsolete derived GitHub variables are removed.
+- [ ] obsolete derived GitHub variables, including `API_IMAGE`, are removed.
 - [ ] no custom GCP credential secret exists in GitHub.
-- [ ] `API_IMAGE` is an immutable digest when a UAT/prod API runtime is activated.
+- [ ] the selected release commit has been built and attested in the target environment Artifact Registry.
+- [ ] deployment resolves the release tag to an immutable digest before Terraform plan/apply.
 - [ ] Cloudflare roots exist only where API edge deployment is enabled.
 - [ ] Terraform plan succeeds using derived names, provider lookups, Cloud Armor origin policy, certificate validation and origin outputs.
 - [ ] runtime secrets are in GCP Secret Manager, not GitHub.
 - [ ] deployed workloads use workload identity/Secret Manager references.
-- [ ] production-like acceptance tests pass before release.
+- [ ] production-like acceptance tests pass before the known-good rollback pointer is advanced.
