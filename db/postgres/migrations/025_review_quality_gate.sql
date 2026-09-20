@@ -95,8 +95,9 @@ create index if not exists extraction_review_gate_status_idx
 
 -- Review-event insertion and reviewed-stage completion serialize on the same job row.
 -- Any new append-only decision pessimistically invalidates the derived gate inside the
--- insert transaction. This closes the race where a late correction could otherwise
--- arrive after a ready gate was read but before canonicalized work was created.
+-- insert transaction. A reviewer cannot mutate the candidate review ledger while the
+-- reviewed worker is evaluating it, nor after that stage has succeeded; later
+-- corrections belong to the downstream governed correction/republication path.
 create or replace function corvis_review.guard_review_event_lifecycle()
 returns trigger
 language plpgsql
@@ -120,6 +121,9 @@ begin
     and j.job_id='reviewed:' || run_document_id::text
   for share;
 
+  if reviewed_state='running' then
+    raise exception 'candidate review is temporarily closed while reviewed stage is running';
+  end if;
   if reviewed_state='succeeded' then
     raise exception 'candidate review is closed after reviewed stage completion';
   end if;
@@ -282,7 +286,8 @@ $$;
 
 -- Persistence-bound fail-closed guard. Even if application code mistakenly asks
 -- to complete the reviewed stage, no canonicalized job may be created until the
--- exact finalized extraction candidate set has a ready governed review gate.
+-- exact finalized extraction candidate set and exact review decision set match the
+-- completed reviewed-stage effect and its ready gate.
 create or replace function corvis_review.enforce_ready_gate_before_review_success()
 returns trigger
 language plpgsql
@@ -290,30 +295,41 @@ security invoker
 set search_path = pg_catalog, corvis_control, corvis_review, corvis_source
 as $$
 declare
-  predecessor_result jsonb;
+  reviewed_result jsonb;
   run_id uuid;
   candidate_hash text;
+  decision_hash text;
+  policy_version text;
 begin
   if old.stage='reviewed' and old.state='running' and new.state='succeeded' then
-    select e.result into predecessor_result
+    select e.result into reviewed_result
     from corvis_control.processing_stage_effect e
     where e.tenant_id=old.tenant_id
+      and e.job_id=old.job_id
       and e.document_id=old.document_id
-      and e.stage='extracted'
+      and e.stage='reviewed'
       and e.state='complete'
     order by e.completed_at desc nulls last
     limit 1;
 
-    if predecessor_result is null then
-      raise exception 'review completion requires committed extraction predecessor';
+    if reviewed_result is null then
+      raise exception 'review completion requires committed reviewed-stage effect';
     end if;
 
     begin
-      run_id := (predecessor_result ->> 'extractionRunId')::uuid;
+      run_id := (reviewed_result ->> 'extractionRunId')::uuid;
     exception when others then
-      raise exception 'review completion extraction predecessor is invalid';
+      raise exception 'review completion extraction run is invalid';
     end;
-    candidate_hash := predecessor_result ->> 'candidateSetSha256';
+    candidate_hash := reviewed_result ->> 'candidateSetSha256';
+    decision_hash := reviewed_result ->> 'decisionSetSha256';
+    policy_version := reviewed_result ->> 'reviewPolicyVersion';
+
+    if policy_version <> 'candidate_review_v1'
+      or candidate_hash is null
+      or decision_hash is null then
+      raise exception 'review completion result is incomplete';
+    end if;
 
     if not exists (
       select 1
@@ -322,10 +338,11 @@ begin
         on r.tenant_id=g.tenant_id and r.extraction_run_id=g.extraction_run_id
       where g.tenant_id=old.tenant_id
         and g.extraction_run_id=run_id
-        and g.review_policy_version='candidate_review_v1'
+        and g.review_policy_version=policy_version
         and g.status='ready'
         and g.blocking_candidate_count=0
         and g.candidate_set_sha256=candidate_hash
+        and g.decision_set_sha256=decision_hash
         and r.document_id=old.document_id
         and r.status='ready'
         and r.candidate_set_sha256=candidate_hash
