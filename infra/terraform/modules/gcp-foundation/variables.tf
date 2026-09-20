@@ -37,6 +37,12 @@ variable "enforce_service_account_key_upload_disabled" {
   default     = false
 }
 
+variable "decommission_mode" {
+  description = "Explicit destructive lifecycle switch used only by the guarded decommission workflow. Allows Terraform to purge the source bucket during full teardown."
+  type        = bool
+  default     = false
+}
+
 variable "labels" {
   type    = map(string)
   default = {}
