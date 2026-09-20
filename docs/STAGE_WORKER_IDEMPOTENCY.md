@@ -15,3 +15,11 @@ Stage success/failure remains authoritative in Postgres. The worker delegates co
 `BoundedProcessingStageEffectRouter` is the provider-neutral composition boundary for production stage effects. Each processing stage receives its own injected handler rather than a shared provider-specific switch or platform service. Missing handlers fail closed. Each handler receives the worker-generated deterministic idempotency key unchanged plus an `AbortSignal` with a hard execution timeout; provider adapters must propagate that signal where supported and must define their own narrower timeout when appropriate.
 
 A timeout/failure in one stage is returned through the existing Postgres retry/dead-letter transition. It does not invoke another stage and must not widen authorization, skip lineage/review/publication gates, or mark the effect complete. This keeps extraction, canonicalization, reconciliation and publication independently replaceable and fault-testable while real provider-specific handlers are added incrementally under issue #79.
+
+## Registered source production gate
+
+The first concrete production handler is the `registered` source gate. `createProductionProcessingStageEffectRouter` currently composes only this handler; later processing stages remain deliberately absent and therefore fail closed until their own governed implementations are added.
+
+For a `DocumentRegistered` delivery, the handler re-resolves `artifactVersionId` and `ingestionId` through the tenant/document-scoped Postgres source registry. It advances only when the exact artifact is still recorded as malware-clean and quarantine-released, uses an authoritative `gs://` GCS object URI, and has both an immutable storage generation and SHA-256 lineage fingerprint. It returns only stable lineage metadata; it does not copy source bytes, object URIs or confidential payload content into the effect journal.
+
+The registered handler is intentionally read-only and deterministic. Redelivery therefore cannot create a second source-side effect, while the worker effect journal still suppresses re-execution once the logical effect is recorded complete. This gate proves the immutable registered evidence seam only; it does not claim document representation, extraction, provider activation or production-like UAT readiness.
