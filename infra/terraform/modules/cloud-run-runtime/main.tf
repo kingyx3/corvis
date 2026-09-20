@@ -50,7 +50,7 @@ resource "google_cloud_run_v2_service" "api" {
   # roles/run.invoker in the gcp-api-gateway module.
   ingress = "INGRESS_TRAFFIC_ALL"
 
-  deletion_protection = var.environment == "prod"
+  deletion_protection = var.environment == "prod" && !var.decommission_mode
 
   template {
     service_account = var.api_service_account_email
