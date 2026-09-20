@@ -10,6 +10,16 @@ The worker requires an authoritative `service_account` identity whose tenant mat
 
 Stage success/failure remains authoritative in Postgres. The worker delegates completion, retry scheduling and dead-letter transitions to the atomic stage repository; application code must not independently recompute retry timing or emit duplicate downstream stage events.
 
+## Authenticated production ingress
+
+`POST /api/internal/processing-stage` is the application ingress for approved Pub/Sub push and Cloud Tasks HTTP delivery. Both transports use the same `ProcessingStageDelivery` contract: Cloud Tasks posts it directly, while Pub/Sub wraps the same JSON in the standard base64 `message.data` envelope.
+
+The ingress verifies the Google-issued RS256 OIDC token against Google's signing keys, requires the exact configured worker URL as audience, and requires the exact configured worker service-account email. The Google OIDC `sub` claim is the immutable service-account subject that must be provisioned in `corvis_control.identity_subject`; transport claims never supply application roles, workspace membership or document entitlements.
+
+After token verification, Corvis enumerates the subject's active workspace mappings and re-resolves each candidate through the existing Postgres membership/data-right/service-identity authorization repository. The target document must resolve to exactly one authorized workspace. Missing, expired, overdue-review, revoked, cross-tenant, unentitled or ambiguous identities fail closed before the durable stage claim.
+
+The direct and Pub/Sub forms are body-size bounded and validate the complete delivery shape plus the deterministic payload SHA-256 before worker execution. A busy durable inbox/job claim returns a retryable HTTP response so Pub/Sub or Cloud Tasks does not acknowledge away the only remaining delivery while another lease is still in flight. Completed, duplicate, retryable-stage and terminal dead-letter outcomes are acknowledged because their authoritative next action is already persisted in Postgres/outbox state.
+
 ## Production effect routing
 
 `BoundedProcessingStageEffectRouter` is the provider-neutral composition boundary for production stage effects. Each processing stage receives its own injected handler rather than a shared provider-specific switch or platform service. Missing handlers fail closed. Each handler receives the worker-generated deterministic idempotency key unchanged plus an `AbortSignal` with a hard execution timeout; provider adapters must propagate that signal where supported and must define their own narrower timeout when appropriate.
