@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature } from "crypto";
+import { createPublicKey, verify as verifySignature, type JsonWebKey } from "crypto";
 
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const CLOCK_SKEW_SECONDS = 30;
