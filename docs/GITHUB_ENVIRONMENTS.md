@@ -28,7 +28,7 @@ After the one-time provider-side GCP trust anchor exists, operators use GitHub A
 | `CLOUDFLARE_ZONE_NAME` | Registered Corvis Cloudflare zone | External domain ownership. Prefer one repository-level variable if UAT and prod share the same root zone. |
 | `CLOUDFLARE_MANAGED_WAF_ENABLED` | Enables plan-dependent Cloudflare/OWASP managed rulesets | Intentional rollout/capability decision, not a value that can be inferred safely. Defaults to `false`. |
 
-`API_IMAGE` is not a human-managed GitHub Environment variable. `build-release.yml` publishes `git-<commit>` to the environment's Artifact Registry repository, and `terraform-deploy.yml` resolves the selected `release_sha` to an immutable digest before Terraform runs. A fully successful live Security acceptance run separately records the environment's exact deployed digest as its known-good rollback target.
+`API_IMAGE` is no longer a human-managed GitHub Environment variable. `build-release.yml` publishes `git-<commit>` to the environment's Artifact Registry repository, and `terraform-deploy.yml` resolves the selected `release_sha` to an immutable digest before Terraform runs. A fully successful live Security acceptance run separately records the environment's exact deployed digest as its known-good rollback target.
 
 When `CLOUDFLARE_ZONE_NAME` is configured, Terraform deployment must select either a built `release_sha` or `rollback_known_good=true`. The edge remains fail-closed if no immutable API image is selected.
 
