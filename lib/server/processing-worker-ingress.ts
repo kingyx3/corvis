@@ -29,7 +29,7 @@ export type ProcessingWorkerIngressConfig = {
   serviceAccountEmail: string;
 };
 
-type StageRepository = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "fail">;
+type StageRepository = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "block" | "fail">;
 type EffectRepository = Pick<PostgresProcessingStageEffectRepository, "begin" | "complete">;
 
 export type ProcessingWorkerIngressDependencies = {

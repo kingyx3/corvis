@@ -32,6 +32,11 @@ export type ProcessingStageCompletion = {
   nextStage?: ProcessingStage;
 };
 
+export type ProcessingStageBlock = {
+  blocked: boolean;
+  jobVersion: number;
+};
+
 export type ProcessingStageFailure = {
   nextState: "retryable" | "dead_letter";
   jobVersion: number;
@@ -107,6 +112,26 @@ export class PostgresProcessingStageRepository {
       completedJobVersion: number(row.completed_job_version),
       nextJobId: row.next_job_id == null ? undefined : String(row.next_job_id),
       nextStage: row.next_stage == null ? undefined : String(row.next_stage) as ProcessingStage,
+    };
+  }
+
+  async block(input: {
+    tenantId: string;
+    consumerName: string;
+    eventId: string;
+    leaseToken: string;
+    jobId: string;
+    reason: string;
+  }): Promise<ProcessingStageBlock | undefined> {
+    const rows = await this.db.query(`select * from corvis_control.block_processing_stage_delivery(
+      $1::uuid,$2,$3::uuid,$4::uuid,$5,$6)`, [
+      input.tenantId,input.consumerName,input.eventId,input.leaseToken,input.jobId,input.reason.slice(0,500),
+    ]);
+    const row = rows[0];
+    if (!row) return undefined;
+    return {
+      blocked: bool(row.blocked),
+      jobVersion: number(row.job_version),
     };
   }
 

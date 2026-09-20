@@ -20,13 +20,26 @@ export interface ProcessingStageEffectPort {
   execute(input: ProcessingStageEffectInput): Promise<Record<string, unknown> | void>;
 }
 
-type StageRepository = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "fail">;
+type StageRepository = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "block" | "fail">;
 type EffectRepository = Pick<PostgresProcessingStageEffectRepository, "begin" | "complete">;
+
+export class ProcessingStageBlockedError extends Error {
+  readonly reason: string;
+  readonly metadata: Record<string, unknown>;
+
+  constructor(reason: string, metadata: Record<string, unknown> = {}) {
+    super(`processing stage blocked: ${reason}`);
+    this.name = "ProcessingStageBlockedError";
+    this.reason = reason;
+    this.metadata = metadata;
+  }
+}
 
 export type ProcessingStageWorkerResult =
   | { outcome: "duplicate" }
   | { outcome: "busy"; state: string }
   | { outcome: "completed"; nextJobId?: string; nextStage?: ProcessingStage }
+  | { outcome: "blocked"; reason: string; metadata: Record<string, unknown> }
   | { outcome: "retryable"; nextAttemptAt?: string }
   | { outcome: "dead_letter" };
 
@@ -95,6 +108,19 @@ export async function runProcessingStageDelivery(input: {
     if (!completed?.completed) throw new Error("processing stage completion lease was lost");
     return { outcome: "completed", nextJobId: completed.nextJobId, nextStage: completed.nextStage };
   } catch (error) {
+    if (error instanceof ProcessingStageBlockedError) {
+      const blocked = await stages.block({
+        tenantId: delivery.tenantId,
+        consumerName: delivery.consumerName,
+        eventId: delivery.eventId,
+        leaseToken: claim.leaseToken,
+        jobId: delivery.jobId,
+        reason: error.reason,
+      });
+      if (!blocked?.blocked) throw error;
+      return { outcome: "blocked", reason: error.reason, metadata: error.metadata };
+    }
+
     const failed = await stages.fail({
       tenantId: delivery.tenantId,
       consumerName: delivery.consumerName,

@@ -6,9 +6,13 @@ import type {
   ProcessingStageDelivery,
   PostgresProcessingStageRepository,
 } from "./orchestration-stage.ts";
-import { runProcessingStageDelivery, type ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+import {
+  ProcessingStageBlockedError,
+  runProcessingStageDelivery,
+  type ProcessingStageEffectInput,
+} from "./processing-stage-worker.ts";
 
-type StageRepo = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "fail">;
+type StageRepo = Pick<PostgresProcessingStageRepository, "claim" | "complete" | "block" | "fail">;
 
 const identity: RequestIdentity = {
   subject: "worker:document-pipeline",
@@ -52,6 +56,9 @@ function claimedStages(overrides: Partial<ProcessingStageClaim> = {}): StageRepo
     },
     async complete() {
       return { completed: true, completedJobVersion: 3, nextJobId: "represented:x", nextStage: "represented" };
+    },
+    async block() {
+      return { blocked: true, jobVersion: 3 };
     },
     async fail() {
       return { nextState: "retryable", jobVersion: 3, inboxAttempt: 1, nextAttemptAt: "2026-09-19T10:00:00Z" };
@@ -121,6 +128,49 @@ test("completed effect is not executed again after redelivery", async () => {
   assert.equal(result.outcome, "completed");
   assert.equal(executions, 0);
   assert.equal(completed, 0);
+});
+
+test("governed human review blocks without completing effect or consuming technical retries", async () => {
+  let effectCompletions = 0;
+  let blockCalls = 0;
+  let failCalls = 0;
+  let stageCompletions = 0;
+  const stages = claimedStages();
+  stages.complete = async () => { stageCompletions += 1; return { completed: true, completedJobVersion: 3 }; };
+  stages.block = async (input) => {
+    blockCalls += 1;
+    assert.equal(input.reason, "review_required");
+    return { blocked: true, jobVersion: 3 };
+  };
+  stages.fail = async () => {
+    failCalls += 1;
+    return { nextState: "dead_letter", jobVersion: 3, inboxAttempt: 5 };
+  };
+
+  const result = await runProcessingStageDelivery({
+    identity,
+    delivery: { ...delivery, jobId: `reviewed:${delivery.documentId}`, expectedStage: "reviewed" },
+    stages,
+    effects: {
+      async begin() { return { shouldExecute: true, alreadyComplete: false, attempt: 1 }; },
+      async complete() { effectCompletions += 1; return true; },
+    },
+    handler: {
+      async execute() {
+        throw new ProcessingStageBlockedError("review_required", { blockingCandidateCount: 2 });
+      },
+    },
+  });
+
+  assert.deepEqual(result, {
+    outcome: "blocked",
+    reason: "review_required",
+    metadata: { blockingCandidateCount: 2 },
+  });
+  assert.equal(blockCalls, 1);
+  assert.equal(failCalls, 0);
+  assert.equal(stageCompletions, 0);
+  assert.equal(effectCompletions, 0);
 });
 
 test("crash/redelivery reuses the same deterministic idempotency key", async () => {
