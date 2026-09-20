@@ -1,0 +1,185 @@
+name: Bootstrap GCP foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target GitHub Environment
+        required: true
+        type: choice
+        options: [dev, uat, prod]
+        default: uat
+      action:
+        description: Bootstrap action
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gcp-bootstrap-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_VAR_api_image: ""
+      TF_VAR_cloudflare_zone_name: ""
+      TF_VAR_enable_cloudflare_managed_waf: "false"
+
+    steps:
+      - name: Validate bootstrap roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GCP_PROJECT_ID}" ]]; then
+            echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
+            exit 1
+          fi
+          if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
+            echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
+            exit 1
+          fi
+          if [[ "${{ inputs.action }}" == "apply" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Bootstrap apply is allowed only from main."
+            exit 1
+          fi
+          if [[ ! "${GCP_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$ ]]; then
+            echo "GCP_WIF_PROVIDER must be the full Google Workload Identity Provider resource name."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+
+      - name: Verify keyless trust anchor
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud iam service-accounts describe "${GCP_DEPLOY_SERVICE_ACCOUNT}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null
+
+          project_number="$(gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectNumber)')"
+          expected_prefix="projects/${project_number}/locations/global/workloadIdentityPools/"
+          if [[ "${GCP_WIF_PROVIDER}" != "${expected_prefix}"* ]]; then
+            echo "GCP_WIF_PROVIDER belongs to a different GCP project."
+            exit 1
+          fi
+
+          mapfile -t user_keys < <(
+            gcloud iam service-accounts keys list \
+              --iam-account="${GCP_DEPLOY_SERVICE_ACCOUNT}" \
+              --managed-by=user \
+              --format='value(name)'
+          )
+          if (( ${#user_keys[@]} > 0 )); then
+            echo "The deploy service account has user-managed keys. Corvis CI/CD is keyless; remove them before continuing."
+            exit 1
+          fi
+
+      - name: Bootstrap protected Terraform state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
+              --project="${GCP_PROJECT_ID}" \
+              --location="${GCP_REGION}" \
+              --uniform-bucket-level-access
+          fi
+          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
+            --versioning \
+            --uniform-bucket-level-access \
+            --public-access-prevention=enforced
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          terraform -chdir="${TF_ROOT}" init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=corvis/${{ inputs.environment }}"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Terraform validate
+        run: terraform -chdir="${TF_ROOT}" validate
+
+      - name: Plan keyless GCP foundation
+        run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=bootstrap.tfplan
+
+      - name: Apply keyless GCP foundation
+        if: inputs.action == 'apply'
+        run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve bootstrap.tfplan
+
+      - name: Verify bootstrap outputs
+        if: inputs.action == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud storage buckets describe "gs://${GCP_PROJECT_ID}-documents" --project="${GCP_PROJECT_ID}" >/dev/null
+          gcloud artifacts repositories describe corvis \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${GCP_REGION}" >/dev/null
+          gcloud iam service-accounts describe "corvis-api-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+            --project="${GCP_PROJECT_ID}" >/dev/null
+          gcloud iam service-accounts describe "corvis-worker-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+            --project="${GCP_PROJECT_ID}" >/dev/null
+          gcloud pubsub topics describe "document-registered-${{ inputs.environment }}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null
+          gcloud tasks queues describe "processing-${{ inputs.environment }}" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${GCP_REGION}" >/dev/null
+
+      - name: Bootstrap summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### GCP foundation bootstrap"
+            echo "- Environment: `${{ inputs.environment }}`"
+            echo "- Action: `${{ inputs.action }}`"
+            echo "- Project: `${GCP_PROJECT_ID}`"
+            echo "- WIF provider: `${GCP_WIF_PROVIDER}`"
+            echo "- Deploy identity: `${GCP_DEPLOY_SERVICE_ACCOUNT}`"
+            echo "- Terraform state: `gs://${TF_STATE_BUCKET}`"
+            echo "- Runtime image: intentionally disabled during bootstrap"
+            echo "- Cloudflare edge: intentionally disabled during bootstrap"
+            echo "- Static GCP credential secret: not used"
+            if [[ "${{ inputs.action }}" == "apply" ]]; then
+              echo "- Next: populate runtime secret versions, run Build release image, then Terraform deploy with the built main SHA."
+            else
+              echo "- Next: review this plan, then rerun this workflow with action=apply."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
