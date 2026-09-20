@@ -206,25 +206,30 @@ begin
     raise exception 'reconciliation schema version no longer matches extraction lineage';
   end if;
 
-  -- Every canonical observation must retain at least one exact source reference.
-  select count(distinct osr.source_reference_id)::integer into actual_reference_count
-  from corvis_facts.observation o
-  join corvis_facts.observation_source_reference osr
-    on osr.tenant_id=o.tenant_id and osr.observation_id=o.observation_id
-  join corvis_source.source_reference sr
-    on sr.tenant_id=osr.tenant_id and sr.source_reference_id=osr.source_reference_id
-  where o.tenant_id=p_tenant_id
-    and o.canonicalization_run_id=p_canonicalization_run_id
+  -- The predecessor count covers all reviewed candidate evidence, including entity
+  -- and exception candidates that do not become canonical observations. Validate that
+  -- complete retained evidence set independently from observation-specific lineage.
+  select count(*)::integer into actual_reference_count
+  from corvis_source.source_reference sr
+  where sr.tenant_id=p_tenant_id
+    and sr.extraction_run_id=p_extraction_run_id
     and sr.document_id=p_document_id;
   if actual_reference_count <> p_source_reference_count then
-    raise exception 'reconciliation source-reference lineage is incomplete';
+    raise exception 'reconciliation retained source-reference set is incomplete';
   end if;
+
+  -- Every canonical observation must independently retain at least one exact source
+  -- reference from this document/extraction run.
   if exists (
     select 1 from corvis_facts.observation o
     where o.tenant_id=p_tenant_id and o.canonicalization_run_id=p_canonicalization_run_id
       and not exists (
-        select 1 from corvis_facts.observation_source_reference osr
+        select 1
+        from corvis_facts.observation_source_reference osr
+        join corvis_source.source_reference sr
+          on sr.tenant_id=osr.tenant_id and sr.source_reference_id=osr.source_reference_id
         where osr.tenant_id=o.tenant_id and osr.observation_id=o.observation_id
+          and sr.document_id=p_document_id and sr.extraction_run_id=p_extraction_run_id
       )
   ) then
     raise exception 'reconciliation observation is missing source lineage';
@@ -340,7 +345,7 @@ begin
         select o.*,
           md5(concat_ws('|',
             coalesce(o.subject_type,''),coalesce(o.subject_level,''),coalesce(o.fund_id,''),
-            coalesce(o.company_id,''),coalesce(o.holding_id,''),coalesce(o.instrument_id,''),
+            coalesce(o.company_id,''),coalesce(o.holding_id::text,''),coalesce(o.instrument_id::text,''),
             coalesce(o.metric_code,''),coalesce(o.economic_period,''),coalesce(o.period_type,''),
             coalesce(o.period_start::text,''),coalesce(o.period_end::text,''),coalesce(o.as_of_date::text,''),
             coalesce(o.report_date::text,''),coalesce(o.scenario_type,''),coalesce(o.actuality,''),
@@ -361,8 +366,8 @@ begin
           min(case
             when subject_level='fund' then fund_id
             when subject_level='company' then company_id
-            when subject_level='holding' then holding_id
-            when subject_level='instrument' then instrument_id
+            when subject_level='holding' then holding_id::text
+            when subject_level='instrument' then instrument_id::text
             else null end) as subject_id,
           min(metric_code) as metric_code,
           count(*)::integer as observation_count,
@@ -527,6 +532,30 @@ begin
   return query select true,signal_id,current_job.version;
 end;
 $$;
+
+-- Resolution is the only business path that changes an exception from open to
+-- resolved. Resume is attached at the persistence boundary so callers cannot forget
+-- to wake the blocked durable stage after the final exception is cleared.
+create or replace function corvis_consolidated.resume_reconciliation_after_resolution()
+returns trigger
+language plpgsql
+security invoker
+set search_path = pg_catalog, corvis_control, corvis_consolidated
+as $$
+begin
+  if old.status='open' and new.status='resolved' and new.reconciliation_run_id is not null then
+    perform * from corvis_control.resume_blocked_reconciled_stage(new.tenant_id,new.exception_id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reconciliation_exception_resume_processing
+  on corvis_consolidated.reconciliation_exception;
+create trigger reconciliation_exception_resume_processing
+after update of status on corvis_consolidated.reconciliation_exception
+for each row
+execute function corvis_consolidated.resume_reconciliation_after_resolution();
 
 -- Persistence-bound completion guard. A programming error cannot create the
 -- consolidated stage unless reconciliation is genuinely ready and the committed
