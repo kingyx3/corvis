@@ -71,6 +71,7 @@ function dependencies(overrides: Partial<ProcessingWorkerIngressDependencies> = 
         jobState: "running",
       }),
       complete: async () => ({ completed: true, completedJobVersion: 3 }),
+      block: async () => ({ blocked: true, jobVersion: 3 }),
       fail: async () => undefined,
     },
     effects: {
