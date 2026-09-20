@@ -10,6 +10,8 @@ Keep GitHub configuration to **external trust roots and genuine operator decisio
 
 GitHub is the deployment/configuration control plane, not the long-term runtime secret store. Runtime secrets belong in GCP Secret Manager. Customer source credentials are tenant runtime secrets configured through the authenticated product, never GitHub deployment secrets.
 
+After the one-time provider-side GCP trust anchor exists, operators use GitHub Actions rather than local `gcloud` or Terraform. See [`GCP_BOOTSTRAP.md`](GCP_BOOTSTRAP.md) and the `Bootstrap GCP foundation` workflow.
+
 ## Active GitHub variables
 
 ### Required in every environment
@@ -110,11 +112,16 @@ Explicitly prohibited GitHub credentials include GCP service-account JSON keys, 
 
 ## One-time setup outside GitHub
 
+There is one unavoidable trust-bootstrap exception. A workflow cannot grant itself first access to an otherwise untrusted GCP project without introducing a static bootstrap credential, which Corvis prohibits.
+
 1. Create/own the GCP projects and attach billing.
 2. In each project, create the `corvis-deploy` service account.
-3. Create the GitHub Workload Identity Pool/provider and authorize the repository/environment identity to impersonate `corvis-deploy`.
+3. Create the GitHub Workload Identity Pool/provider, restrict it to `kingyx3/corvis` and the intended environment identity, and authorize it to impersonate `corvis-deploy`.
 4. Create GitHub Environments `dev`, `uat`, and `prod` and set `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
-5. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`. Build the selected main commit into that environment's Artifact Registry before deployment.
+5. From GitHub Actions, run **Bootstrap GCP foundation** with `plan`, then `apply`. From this point onward the GCP environment lifecycle is operated from GitHub Actions.
+6. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`. Build the selected main commit into that environment's Artifact Registry before normal deployment.
+
+Do not run local `gcloud` or Terraform for routine Corvis environment management. Do not create a temporary Google credential secret to avoid the initial WIF trust step.
 
 ## Production protections
 
@@ -125,6 +132,7 @@ For `prod`, require reviewed deployments once multiple operators exist, deploy o
 - [ ] GitHub Environment exists.
 - [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured.
 - [ ] `corvis-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com` exists and is impersonable by the GitHub WIF identity.
+- [ ] `Bootstrap GCP foundation` plan succeeds, then apply succeeds from `main`.
 - [ ] obsolete derived GitHub variables, including `API_IMAGE`, are removed.
 - [ ] no custom GCP credential secret exists in GitHub.
 - [ ] the selected release commit has been built and attested in the target environment Artifact Registry.
