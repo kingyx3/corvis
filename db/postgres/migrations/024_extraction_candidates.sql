@@ -34,7 +34,10 @@ create table if not exists corvis_source.extraction_run (
     references corvis_source.document_artifact_version(tenant_id, document_artifact_version_id),
   foreign key (tenant_id, representation_id)
     references corvis_source.document_representation(tenant_id, representation_id),
-  unique (tenant_id, representation_id, extraction_contract_version),
+  unique (
+    tenant_id, representation_id, extraction_contract_version,
+    schema_version, skill_id, skill_version
+  ),
   check (bundle_object_uri like 'gs://%'),
   check (bundle_storage_generation <> ''),
   check (bundle_content_sha256 ~ '^[0-9a-f]{64}$'),
