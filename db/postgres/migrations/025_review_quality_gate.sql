@@ -93,6 +93,56 @@ create index if not exists extraction_review_gate_status_idx
   on corvis_review.extraction_review_gate
     (tenant_id, status, evaluated_at desc);
 
+-- Review-event insertion and reviewed-stage completion serialize on the same job row.
+-- Any new append-only decision pessimistically invalidates the derived gate inside the
+-- insert transaction. This closes the race where a late correction could otherwise
+-- arrive after a ready gate was read but before canonicalized work was created.
+create or replace function corvis_review.guard_review_event_lifecycle()
+returns trigger
+language plpgsql
+security invoker
+set search_path = pg_catalog, corvis_review, corvis_source, corvis_control
+as $$
+declare
+  run_document_id uuid;
+  reviewed_state text;
+begin
+  select r.document_id into run_document_id
+  from corvis_source.extraction_run r
+  where r.tenant_id=new.tenant_id
+    and r.extraction_run_id=new.extraction_run_id
+    and r.status='ready';
+  if not found then raise exception 'candidate review requires finalized extraction run'; end if;
+
+  select j.state into reviewed_state
+  from corvis_control.processing_job j
+  where j.tenant_id=new.tenant_id
+    and j.job_id='reviewed:' || run_document_id::text
+  for share;
+
+  if reviewed_state='succeeded' then
+    raise exception 'candidate review is closed after reviewed stage completion';
+  end if;
+
+  update corvis_review.extraction_review_gate
+  set status='pending',
+      blocking_candidate_count=greatest(blocking_candidate_count,1),
+      evaluated_at=now()
+  where tenant_id=new.tenant_id
+    and extraction_run_id=new.extraction_run_id
+    and review_policy_version=new.review_policy_version;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists candidate_review_event_lifecycle_guard
+  on corvis_review.candidate_review_event;
+create trigger candidate_review_event_lifecycle_guard
+before insert on corvis_review.candidate_review_event
+for each row
+execute function corvis_review.guard_review_event_lifecycle();
+
 -- A review gate is not a technical failure. Complete the durable delivery, leave the
 -- stage effect intentionally incomplete, and park the job until attributable review
 -- decisions make the gate ready. This prevents transport retry/dead-letter machinery
