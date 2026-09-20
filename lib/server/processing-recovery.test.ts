@@ -83,16 +83,24 @@ test("operator recovery refuses non-terminal or non-exhausted jobs before mutati
   }
 });
 
-test("processing recovery migration is append-only, evidence-backed and resets only the retry epoch", async () => {
+test("processing recovery migration preserves lineage on retry and recovery", async () => {
   const sql = (await readFile("db/postgres/migrations/027_processing_operator_recovery.sql", "utf8")).toLowerCase();
 
   assert.match(sql, /create table if not exists corvis_control\.processing_recovery_event/);
   assert.match(sql, /alter table corvis_control\.processing_recovery_event force row level security/);
   assert.equal(/create policy[^;]+processing_recovery_event/i.test(sql), false);
   assert.match(sql, /action text not null check \(action in \('recover_dead_letter'\)\)/);
+
+  assert.match(sql, /create or replace function corvis_control\.fail_processing_stage_delivery/);
+  assert.match(sql, /signal_payload := \(inbox_row\.payload - 'nextattemptat'\) \|\| jsonb_build_object/);
+  assert.match(sql, /'processingstageretryscheduled'/);
+  assert.equal(/signal_payload := jsonb_build_object\(/.test(sql), false);
+
   assert.match(sql, /if current_job\.state <> 'dead_letter'/);
   assert.match(sql, /if current_job\.attempt < current_job\.max_attempts/);
   assert.match(sql, /dead-letter recovery requires retained durable stage-delivery evidence/);
+  assert.match(sql, /dead-letter recovery requires retained predecessor lineage evidence/);
+  assert.match(sql, /i\.payload \? 'predecessorresult'/);
   assert.match(sql, /source_payload := \(source_inbox\.payload - 'nextattemptat'\)/);
   assert.match(sql, /set state='queued',[\s\S]*?attempt=0,[\s\S]*?recovery_count=next_recovery_count/);
   assert.match(sql, /'processingjobretryrequested'/);
