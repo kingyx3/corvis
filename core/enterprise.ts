@@ -91,9 +91,15 @@ export type AuditEvent = {
 export type ProcessingStage = "registered" | "represented" | "extracted" | "reviewed" | "canonicalized" | "reconciled" | "consolidated" | "published";
 export type ProcessingJob = {
   id: string; documentId: string; tenantId: string; stage: ProcessingStage;
-  state: "queued" | "running" | "retryable" | "failed" | "dead_letter" | "succeeded";
+  state: "queued" | "running" | "blocked" | "retryable" | "failed" | "dead_letter" | "succeeded";
   attempt: number; maxAttempts: number; correlationId: string; version: number;
-  createdAt: string; updatedAt: string; lastError?: string;
+  createdAt: string; updatedAt: string;
+  blockedReason?: string;
+  nextAttemptAt?: string;
+  recoveryCount?: number;
+  lastRecoveryAt?: string;
+  lastRecoveryReasonCode?: string;
+  lastError?: string;
 };
 
 export type ReviewDecision = {
