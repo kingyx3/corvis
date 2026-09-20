@@ -68,12 +68,16 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
 ### Reliability and delivery
 
-- Processing-job/outbox schemas and retry/dead-letter state primitives exist.
+- Processing-job/outbox schemas, authoritative stage claims, deterministic effect keys/journaling and retry/dead-letter state primitives exist.
+- The processing transport has durable lease ownership, bounded transport retry/dead-letter behavior, Pub/Sub publication and Cloud Tasks scheduling adapters that honor persisted retry timing.
+- `BoundedProcessingStageEffectRouter` isolates stage handlers with fail-closed missing bindings and hard timeout/cancellation behavior.
+- The first concrete production stage handler revalidates the exact registered artifact against tenant/document-scoped Postgres metadata and requires clean/released immutable GCS generation plus SHA-256 lineage before the pipeline can advance beyond registration.
+- Later representation/extraction/review/canonical/publication handlers, authenticated live worker composition, operator dead-letter/replay/status completion and production-like UAT evidence remain tracked in issue #79; unimplemented stages intentionally fail closed.
 - `lib/server/telemetry.ts` provides structured telemetry hooks.
 - Export job/manifest/checksum and webhook-signing/replay foundations exist.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
 - Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.
-- Live consumers, durable inbox/deduplication, UAT failure tests, SLO dashboards/alerts and recovery evidence remain in issues #4 and #9.
+- SLO dashboards/alerts and broader recovery evidence remain tracked in issue #9.
 - Real asynchronous export rendering/storage/expiry and customer webhook delivery remain tracked in issue #11; the client delivery port/surface does not substitute for those provider-backed paths.
 
 ### Admin, control and evidence
