@@ -789,7 +789,7 @@ export function parseExtractionCandidateBundle(input: {
     });
   }
   if (candidates.length === 0) throw new Error("extraction candidate bundle contains no candidates");
-  return candidates;
+  return candidates.sort((left, right) => left.candidateKey.localeCompare(right.candidateKey));
 }
 
 export function extractionCandidateSetSha256(candidates: ExtractionCandidate[]): string {
