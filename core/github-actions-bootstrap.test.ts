@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/gcp-bootstrap.yml", "utf8");
+const stateLifecycle = readFileSync(".github/scripts/terraform-state.sh", "utf8");
 const docs = readFileSync("docs/GCP_BOOTSTRAP.md", "utf8");
 
 test("GCP bootstrap remains keyless and environment scoped", () => {
@@ -25,7 +26,10 @@ test("bootstrap cannot activate runtime or Cloudflare accidentally", () => {
 test("bootstrap uses the same Terraform roots and protected remote state contract", () => {
   assert.match(workflow, /TF_ROOT: infra\/terraform\/environments\/\$\{\{ inputs\.environment \}\}/);
   assert.match(workflow, /TF_STATE_BUCKET: \$\{\{ format\('\{0\}-corvis-tf-state'/);
-  assert.match(workflow, /public-access-prevention=enforced/);
+  assert.match(workflow, /terraform-state\.sh ensure/);
+  assert.match(stateLifecycle, /--public-access-prevention/);
+  assert.match(stateLifecycle, /--uniform-bucket-level-access/);
+  assert.match(stateLifecycle, /--versioning/);
   assert.match(workflow, /terraform -chdir="\$\{TF_ROOT\}" plan/);
   assert.match(workflow, /terraform -chdir="\$\{TF_ROOT\}" apply/);
 });
