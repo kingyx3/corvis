@@ -1,6 +1,6 @@
 # Corvis repository architecture
 
-This document is the high-level technical map for how the code in this repository fits together. It describes the current physical repository, the dependency direction between code layers, the deployed provider topology, and the GitHub Actions control plane.
+This document is the high-level technical map for how the code in this repository fits together. It describes the physical repository, dependency direction, deployed provider topology, and GitHub Actions control plane.
 
 For business architecture, vendor/account ownership, procurement, and one-time external setup outside the repository, use Confluence. GitHub remains the source of truth for executable technical implementation.
 
@@ -38,19 +38,21 @@ ________________________________________________________________________________
 |            |___________________________|_________________________|____________________|              |
 |                                                |                                                   |
 |                                                v                                                   |
-|  EXTERNAL RUNTIME DEPENDENCIES                                                                      |
+|  EXTERNAL RUNTIME DEPENDENCIES                                                                     |
 |  ________________________________________________________________________________________________  |
-|  | GCP Cloud Run / Jobs | GCS | Pub/Sub / Tasks / Scheduler | Secret Manager / KMS | Postgres |  |
-|  | Cloudflare edge      | Artifact Registry | Logging / Monitoring / Trace          | optional Snowflake |
+|  | Cloudflare Worker | GCP API Gateway | Cloud Run / Jobs | GCS | Pub/Sub / Tasks / Scheduler |  |
+|  | Secret Manager / KMS | Artifact Registry | Logging / Monitoring / Trace | Postgres | Snowflake* |
 |  |______________________________________________________________________________________________|  |
 |                                                                                                    |
-|  DELIVERY / OPERATIONS / CONTRACTS                                                                  |
+|  DELIVERY / OPERATIONS / CONTRACTS                                                                 |
 |  ________________________________________________________________________________________________  |
 |  | infra/terraform/ | .github/workflows/ | openapi/ | ops/ | e2e/ | scripts/ | docs/          |  |
 |  | IaC              | CI/CD + governance | API spec | SRE  | E2E  | tooling  | technical docs |  |
 |  |__________________|_____________________|__________|______|______|__________|________________|  |
 |__________________________________________________________________________________________________|
 ```
+
+`*` Snowflake is optional downstream analytics/secure sharing only after an explicit activation decision.
 
 The intended dependency direction is inward: UI and API routes call application/server services; those services depend on domain contracts; concrete provider behavior lives behind adapters. Provider SDKs, SQL details, and cloud-specific behavior should not become product/domain contracts.
 
@@ -86,17 +88,20 @@ ________________________________________________________________________________
 |        |                                                                                           |
 |        v                                                                                           |
 | Cloudflare public edge                                                                             |
-| DNS | TLS | proxy | DDoS/WAF/rate controls                                                        |
+| DNS | TLS | DDoS/WAF/rate controls | Worker                                                       |
 |        |                                                                                           |
+|        | Worker overwrites x-api-key with edge-only secret                                         |
 |        v                                                                                           |
-| GCP external HTTPS load balancer                                                                   |
+| Google API Gateway                                                                                 |
 |        |                                                                                           |
+|        | dedicated gateway service-account identity                                                |
 |        v                                                                                           |
-| Cloud Run: Next.js customer/admin/API runtime                                                      |
+| Cloud Run: API runtime                                                                             |
+| IAM: gateway service account only | no allUsers invoker | scale-to-zero                           |
 |        |                                                                                           |
-|        |----> authorization + request validation        [app/api + lib/server]                      |
-|        |----> application/domain service composition    [application + runtime + core]              |
-|        |----> provider adapter                          [adapters + lib/server]                      |
+|        |----> signed application identity + authorization       [app/api + lib/server]             |
+|        |----> application/domain service composition            [application + runtime + core]      |
+|        |----> provider adapter                                  [adapters + lib/server]             |
 |        |                                                                                           |
 |        |______________________________     ______________________________                           |
 |                                       |   |                                                         |
@@ -117,16 +122,19 @@ ________________________________________________________________________________
 |                                                   |----> GCS                                        |
 |                                                   |----> approved AI/OCR/source providers          |
 |                                                                                                    |
-| Postgres ---- optional approved downstream replication ----> Snowflake analytics / secure sharing    |
+| Postgres ---- optional approved downstream replication ----> Snowflake analytics / secure sharing   |
 |__________________________________________________________________________________________________|
 ```
 
 Important boundaries:
 
-- Postgres is the authoritative structured write path; Snowflake is downstream only when explicitly activated.
-- GCS is the immutable source/replay artifact store; large uploads go browser-to-GCS rather than through the application body path.
-- Async processing uses queues/jobs so extraction, connector, export, and other long-running work can fail/retry independently of synchronous customer requests.
-- Customer source-portal credentials are runtime tenant secrets stored via the application into managed secret storage; they are not GitHub deployment secrets.
+- the Cloudflare edge key proves approved edge traversal only; it is not customer/user authentication;
+- Cloud Run is network-reachable because API Gateway is not a Cloud Run internal-ingress source, but direct unauthenticated invocation is blocked by IAM;
+- application authentication/authorization and Postgres RLS remain independent of the edge/gateway controls;
+- Postgres is the authoritative structured write path; Snowflake is downstream only when explicitly activated;
+- GCS is the immutable source/replay artifact store; large uploads go browser-to-GCS rather than through Worker/API Gateway/Cloud Run request bodies;
+- async processing uses queues/jobs so extraction, connector, export, and other long-running work can fail/retry independently of synchronous customer requests;
+- customer source-portal credentials are runtime tenant secrets stored via the application into managed secret storage; they are not GitHub deployment secrets.
 
 ## 4. Infrastructure modules and deployed topology
 
@@ -135,32 +143,29 @@ ________________________________________________________________________________
 |                               TERRAFORM ENVIRONMENT ROOT                                            |
 |                    infra/terraform/environments/{dev|uat|prod}                                     |
 |__________________________________________________________________________________________________|
-|                         |                         |                         |                        |
-|                         v                         v                         v                        |
+|                                                                                                    |
 |  _____________________________   _____________________________   ________________________________   |
-|  | gcp-foundation            |   | cloud-run-runtime         |   | gcp-serverless-origin       |   |
-|  | project services, IAM,    |   | runtime services/jobs,    |   | shared HTTPS load balancer, |   |
-|  | buckets, registry, etc.   |   | identities, secrets refs  |   | origin/cert integration     |   |
+|  | gcp-foundation            |   | cloud-run-runtime         |   | gcp-api-gateway            |   |
+|  | services, IAM, buckets,   |-->| API runtime, identities, |-->| gateway, edge API key,      |   |
+|  | registry, queues, KMS     |   | runtime secret refs      |   | gateway SA + invoker IAM   |   |
 |  |___________________________|   |___________________________|   |______________________________|   |
-|                         |                         |                         |                        |
-|                         |_________________________|_________________________|                        |
-|                                                   |                                              |
-|                                                   v                                              |
-|                                      _____________________________                                 |
-|                                      | gcp-observability        |                                 |
-|                                      | alerts, dashboard,       |                                 |
-|                                      | optional billing budget  |                                 |
-|                                      |__________________________|                                 |
-|                                                   |                                              |
-|                                                   v                                              |
-|                                      GCP Singapore application plane                              |
-|                                                                                                  |
-|  _____________________________                 |                                                   |
-|  | cloudflare-edge           |_________________|                                                   |
-|  | DNS, proxy, edge policy   |       hardened public path                                         |
-|  |___________________________|                                                                   |
+|                                                                 |                                  |
+|                                                                 v                                  |
+|                                                 ______________________________                      |
+|                                                 | cloudflare-edge             |                      |
+|                                                 | Worker, route, DNS, WAF,   |                      |
+|                                                 | rate limit, cache bypass    |                      |
+|                                                 |____________________________|                      |
+|                                                                                                    |
+|  _____________________________                                                                     |
+|  | gcp-observability        |                                                                      |
+|  | alerts, dashboard,       |                                                                      |
+|  | optional billing budget  |                                                                      |
+|  |__________________________|                                                                      |
 |__________________________________________________________________________________________________|
 ```
+
+The former `gcp-serverless-origin` module and its external load balancer, Cloud Armor, Certificate Manager and origin-mTLS resources are no longer part of the baseline code.
 
 Terraform and SQL migrations are the reproducible implementation sources. Manual provider-console changes are break-glass/bootstrap exceptions and should be reconciled back into code.
 
@@ -173,7 +178,7 @@ ________________________________________________________________________________
 | pull request                                                                                       |
 |    |                                                                                               |
 |    v                                                                                               |
-| ci.yml + CodeQL + Terraform validation + leak/security checks                                      |
+| CI + CodeQL + Terraform validation + leak/security checks                                          |
 |    |                                                                                               |
 |    v                                                                                               |
 | merge to main                                                                                      |
@@ -182,11 +187,12 @@ ________________________________________________________________________________
 |    |                                                                                               |
 |    |----> terraform-deploy.yml ---> OIDC/WIF ---> GCP + Cloudflare Terraform apply                |
 |    |                                      |                                                        |
-|    |                                      |----> database/runtime configuration                    |
 |    |                                      |----> Cloud Run / Jobs                                  |
+|    |                                      |----> API Gateway + restricted edge key                 |
+|    |                                      |----> Cloudflare Worker / route / edge policy           |
 |    |                                      |----> Secret Manager references                         |
 |    |                                                                                               |
-|    |----> security-acceptance.yml -> live post-deploy checks + evidence                            |
+|    |----> security-acceptance.yml -> live Worker/gateway/IAM/RLS checks + evidence                |
 |    |                                                                                               |
 |    |----> control-loop.yml --------> repository/control health evidence                            |
 |    |                                                                                               |
@@ -217,7 +223,9 @@ After those ownership/trust roots exist, provider configuration should flow from
 
 ## 7. Related technical documents
 
+- [`API_INGRESS_DECISION.md`](API_INGRESS_DECISION.md) — ingress architecture decision and rollout state.
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) — provider topology and IaC principles.
+- [`SECURITY_ACCEPTANCE.md`](SECURITY_ACCEPTANCE.md) — live Worker/gateway/IAM/RLS acceptance contract.
 - [`MODULARITY.md`](MODULARITY.md) — module boundaries and failure isolation.
 - [`DATA_PLATFORM.md`](DATA_PLATFORM.md) — structured data and downstream analytics boundaries.
 - [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) — minimal environment variables/secrets and one-time bootstrap exceptions.

@@ -32,7 +32,7 @@ After the one-time provider-side GCP trust anchor exists, operators use GitHub A
 
 When `CLOUDFLARE_ZONE_NAME` is configured, Terraform deployment must select either a built `release_sha` or `rollback_known_good=true`. The edge remains fail-closed if no immutable API image is selected.
 
-No extra GitHub variable is required for direct-origin security probes: the security-acceptance workflow derives the managed load-balancer address and Cloud Run URL from GCP through OIDC/WIF.
+No extra GitHub variable is required for API Gateway, Cloud Run IAM checks, Cloudflare account lookup, or direct-bypass probes. Terraform/workflows derive those values from GCP and Cloudflare through the existing WIF/provider roots.
 
 No GitHub variable is required for the Postgres DSN secret name. Security acceptance derives the contract `corvis-${environment}-postgres-dsn`.
 
@@ -40,9 +40,11 @@ No GitHub variable is required for the Postgres DSN secret name. Security accept
 
 | Secret | Scope | Purpose |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | `uat` / `prod` when edge deployment is enabled | Least-privilege deployment credential for Cloudflare DNS/zone/rules configuration. |
+| `CLOUDFLARE_API_TOKEN` | `uat` / `prod` when edge deployment is enabled | Least-privilege deployment credential for Cloudflare DNS/Worker/zone/rules configuration. |
 
 There are **no custom GCP credential secrets**. GCP CI/CD uses GitHub OIDC -> Workload Identity Federation. `GITHUB_TOKEN` is supplied automatically by GitHub Actions and must not be created manually.
+
+The API Gateway edge API key is also **not** a manually entered GitHub secret. Terraform creates a key restricted to the Corvis managed API and passes it as a sensitive value into the Cloudflare Worker `secret_text` binding. The protected Terraform state is therefore security-sensitive and must remain access-controlled.
 
 ## Values derived automatically
 
@@ -61,11 +63,14 @@ The build, deployment and acceptance workflows derive these instead of storing t
 | Runtime API image | Artifact Registry resolution of the selected release tag to `image@sha256:<digest>` |
 | Known-good rollback image | Versioned `gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json`, advanced only after both live Security acceptance jobs pass |
 | Cloudflare zone ID | Provider lookup by `CLOUDFLARE_ZONE_NAME` using `CLOUDFLARE_API_TOKEN` |
-| Cloudflare proxy CIDRs | `cloudflare_ip_ranges` provider data source |
+| Cloudflare account ID | Derived from the selected Cloudflare zone lookup |
 | Production API hostname | `api.${zone}` |
 | UAT API hostname | `api.uat.${zone}` |
-| GCP API origin IPv4 | managed load-balancer output wired directly into Cloudflare DNS and queried by security acceptance |
-| Certificate validation record | Google Certificate Manager DNS authorization output wired directly into Cloudflare DNS |
+| API Gateway API/config/gateway IDs | Terraform names derived from project + environment |
+| API Gateway default hostname | `google_api_gateway_gateway` provider output; used only as Worker upstream and security-acceptance probe target |
+| Gateway service account | `corvis-gateway-${environment}@${GCP_PROJECT_ID}.iam.gserviceaccount.com` |
+| Gateway edge API key | Terraform-generated Google API key restricted to the generated Corvis managed API and injected into the Worker secret binding |
+| Cloud Run URL | GCP provider/runtime output; queried directly for negative IAM acceptance only |
 | Postgres DSN secret name | `corvis-${environment}-postgres-dsn` |
 | API/worker service-account names | Terraform resources derived from project + environment |
 
@@ -73,7 +78,7 @@ Cloud Run service URLs, image digests, runtime endpoints and future customer/adm
 
 ## GitHub values to remove or avoid creating
 
-Remove these if they already exist; they are fixed, derived, or provider-resolvable:
+Remove these if they already exist; they are fixed, derived, provider-resolvable, or belong in managed runtime/provider state:
 
 - `API_IMAGE`
 - `GCP_REGION`
@@ -84,12 +89,14 @@ Remove these if they already exist; they are fixed, derived, or provider-resolva
 - `GCP_DIRECT_ORIGIN_PROBE_URLS`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_ZONE_ID`
+- `API_GATEWAY_HOSTNAME`
+- `API_GATEWAY_API_KEY`
 - `CUSTOMER_HOSTNAME`
 - `ADMIN_HOSTNAME`
 - `API_HOSTNAME`
 - `CORVIS_POSTGRES_DSN_SECRET_NAME`
 
-Do not store plaintext DSNs or generated runtime secrets as GitHub variables.
+Do not store plaintext DSNs, gateway API keys, generated runtime secrets, or provider-derived identifiers as ordinary GitHub variables.
 
 ## Conditional future provider roots
 
@@ -99,11 +106,12 @@ For Supabase, derive the project name from the environment, keep the Singapore r
 
 ## Secrets that must not be entered manually into GitHub
 
-Generate, derive, or collect these through deployment/runtime flows and store them in GCP Secret Manager instead:
+Generate, derive, or collect these through deployment/runtime flows and store them in their intended managed stores instead:
 
 - `CORVIS_POSTGRES_DSN`
 - `CORVIS_TRUSTED_AUTH_PROXY_SECRET`
 - `CORVIS_WORKER_SECRET`
+- API Gateway edge API keys
 - internal service-to-service tokens when workload identity cannot replace them
 - Snowflake runtime OAuth/access material
 - customer GP portal/data-room/source credentials, OAuth refresh tokens, passwords, and session secrets
@@ -117,9 +125,10 @@ There is one unavoidable trust-bootstrap exception. A workflow cannot grant itse
 1. Create/own the GCP projects and attach billing.
 2. In each project, create the `corvis-deploy` service account.
 3. Create the GitHub Workload Identity Pool/provider, restrict it to `kingyx3/corvis` and the intended environment identity, and authorize it to impersonate `corvis-deploy`.
-4. Create GitHub Environments `dev`, `uat`, and `prod` and set `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
-5. From GitHub Actions, run **Bootstrap GCP foundation** with `plan`, then `apply`. From this point onward the GCP environment lifecycle is operated from GitHub Actions.
-6. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`. Build the selected main commit into that environment's Artifact Registry before normal deployment.
+4. Give `corvis-deploy` the permissions required by the checked-in Terraform root, including creation/configuration of the serverless platform, API Gateway/API Keys, IAM bindings/service identities and enabled project services. Keep this as a deployment identity, not a runtime identity.
+5. Create GitHub Environments `dev`, `uat`, and `prod` and set `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
+6. From GitHub Actions, run **Bootstrap GCP foundation** with `plan`, then `apply`. From this point onward the GCP environment lifecycle is operated from GitHub Actions.
+7. Register/own the Cloudflare zone. When API edge deployment is enabled, set `CLOUDFLARE_ZONE_NAME`, the managed-WAF rollout flag if needed, and the scoped `CLOUDFLARE_API_TOKEN`. The token must include the Worker permissions required by the checked-in Cloudflare Terraform resources. Build the selected main commit into that environment's Artifact Registry before normal deployment.
 
 Do not run local `gcloud` or Terraform for routine Corvis environment management. Do not create a temporary Google credential secret to avoid the initial WIF trust step.
 
@@ -132,13 +141,14 @@ For `prod`, require reviewed deployments once multiple operators exist, deploy o
 - [ ] GitHub Environment exists.
 - [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured.
 - [ ] `corvis-deploy@${GCP_PROJECT_ID}.iam.gserviceaccount.com` exists and is impersonable by the GitHub WIF identity.
+- [ ] the deploy identity has the Terraform permissions required by the current checked-in root, including API Gateway/API Keys/service-account IAM configuration.
 - [ ] `Bootstrap GCP foundation` plan succeeds, then apply succeeds from `main`.
-- [ ] obsolete derived GitHub variables, including `API_IMAGE`, are removed.
+- [ ] obsolete derived GitHub variables, including `API_IMAGE` and old origin-IP values, are removed.
 - [ ] no custom GCP credential secret exists in GitHub.
 - [ ] the selected release commit has been built and attested in the target environment Artifact Registry.
 - [ ] deployment resolves the release tag to an immutable digest before Terraform plan/apply.
 - [ ] Cloudflare roots exist only where API edge deployment is enabled.
-- [ ] Terraform plan succeeds using derived names, provider lookups, Cloud Armor origin policy, certificate validation and origin outputs.
+- [ ] Terraform plan succeeds using derived Cloudflare account/zone lookup, API Gateway resources, Worker secret binding and gateway-only Cloud Run IAM.
 - [ ] runtime secrets are in GCP Secret Manager, not GitHub.
 - [ ] deployed workloads use workload identity/Secret Manager references.
-- [ ] production-like acceptance tests pass before the known-good rollback pointer is advanced.
+- [ ] live security acceptance proves Worker traversal, invalid/missing gateway-key rejection, direct Cloud Run IAM rejection and gateway-only invoker policy before the known-good rollback pointer is advanced.

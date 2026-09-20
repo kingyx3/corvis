@@ -58,23 +58,34 @@ jobs:
             *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
           esac
           echo "API_HOSTNAME=${api_hostname}" >> "${GITHUB_ENV}"
-      - name: Probe direct origin bypass paths
+      - name: Probe gateway and Cloud Run IAM boundaries
         shell: bash
         run: |
           set -euo pipefail
-          origin_ip="$(gcloud compute addresses describe "corvis-api-origin-${CORVIS_ENVIRONMENT}" --global --project="${GCP_PROJECT_ID}" --format='value(address)')"
-          [[ -n "${origin_ip}" ]] || { echo "Unable to derive the managed API origin IPv4 address."; exit 1; }
+          gateway_hostname="$(gcloud api-gateway gateways describe "corvis-api-${CORVIS_ENVIRONMENT}" --location="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(defaultHostname)')"
+          [[ -n "${gateway_hostname}" ]] || { echo "Unable to derive API Gateway hostname."; exit 1; }
+
           cloud_run_url="$(gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
           [[ -n "${cloud_run_url}" ]] || { echo "Unable to derive the Cloud Run service URL."; exit 1; }
-          set +e
-          load_balancer_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 --resolve "${API_HOSTNAME}:443:${origin_ip}" "https://${API_HOSTNAME}/api/v1/health")"
-          load_balancer_exit_code=$?
-          set -e
+
+          gateway_service_account="corvis-gateway-${CORVIS_ENVIRONMENT}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+          expected_member="serviceAccount:${gateway_service_account}"
+          iam_policy="$(gcloud run services get-iam-policy "corvis-api-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+          mapfile -t invokers < <(jq -r '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]?] | unique[]' <<<"${iam_policy}")
+          iam_boundary="fail"
+          if [[ "${#invokers[@]}" -eq 1 && "${invokers[0]}" == "${expected_member}" ]]; then
+            iam_boundary="pass"
+          else
+            echo "Cloud Run invoker policy is not gateway-only. Observed members: ${invokers[*]:-none}"
+          fi
+
           cloud_run_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "${cloud_run_url}/api/v1/health" || true)"
-          echo "DIRECT_LOAD_BALANCER_BYPASS_STATUS=${load_balancer_status}" >> "${GITHUB_ENV}"
-          echo "DIRECT_LOAD_BALANCER_BYPASS_EXIT_CODE=${load_balancer_exit_code}" >> "${GITHUB_ENV}"
+
+          echo "API_GATEWAY_HOSTNAME=${gateway_hostname}" >> "${GITHUB_ENV}"
           echo "DIRECT_CLOUD_RUN_BYPASS_STATUS=${cloud_run_status}" >> "${GITHUB_ENV}"
-      - name: Verify edge, transport and origin security
+          echo "CLOUD_RUN_IAM_BOUNDARY=${iam_boundary}" >> "${GITHUB_ENV}"
+          echo "EXPECTED_GATEWAY_INVOKER=${expected_member}" >> "${GITHUB_ENV}"
+      - name: Verify edge, gateway and origin security
         run: node .github/scripts/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()

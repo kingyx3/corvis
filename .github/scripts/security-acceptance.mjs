@@ -5,9 +5,10 @@ const environment = process.env.CORVIS_ENVIRONMENT || "unknown";
 const customerHostname = process.env.CUSTOMER_HOSTNAME || "";
 const adminHostname = process.env.ADMIN_HOSTNAME || "";
 const apiHostname = process.env.API_HOSTNAME || "";
-const directLoadBalancerStatus = process.env.DIRECT_LOAD_BALANCER_BYPASS_STATUS || "";
-const directLoadBalancerExitCode = process.env.DIRECT_LOAD_BALANCER_BYPASS_EXIT_CODE || "";
+const gatewayHostname = process.env.API_GATEWAY_HOSTNAME || "";
 const directCloudRunStatus = process.env.DIRECT_CLOUD_RUN_BYPASS_STATUS || "";
+const cloudRunIamBoundary = process.env.CLOUD_RUN_IAM_BOUNDARY || "";
+const expectedGatewayInvoker = process.env.EXPECTED_GATEWAY_INVOKER || "";
 
 const checks = [];
 
@@ -70,16 +71,22 @@ for (const [label, hostname] of [
   });
 }
 
-await check("api-https-and-cache-isolation", async () => {
+await check("api-https-worker-and-cache-isolation", async () => {
   invariant(apiHostname, "API hostname is not configured");
   const response = await request(`https://${apiHostname}/api/v1/health`);
   assertCloudflare(response, "api");
   assertSecurityHeaders(response, "api");
+  invariant(response.headers.get("x-corvis-edge-proxy") === "cloudflare-worker", "API request did not traverse the Corvis Cloudflare Worker");
   invariant(response.status === 200, `API health returned ${response.status}`);
   invariant((response.headers.get("cache-control") || "").toLowerCase().includes("no-store"), "API health is not marked no-store");
   const cacheStatus = (response.headers.get("cf-cache-status") || "").toUpperCase();
   invariant(!["HIT", "STALE", "REVALIDATED", "UPDATING"].includes(cacheStatus), `API response was shared-cached (${cacheStatus})`);
-  return { status: response.status, cacheControl: response.headers.get("cache-control"), cloudflareCacheStatus: cacheStatus || "not-reported", originMtlsPathWorking: true };
+  return {
+    status: response.status,
+    cacheControl: response.headers.get("cache-control"),
+    cloudflareCacheStatus: cacheStatus || "not-reported",
+    edgeProxy: "cloudflare-worker",
+  };
 });
 
 await check("http-redirects-to-https", async () => {
@@ -131,28 +138,39 @@ await check("cloudflare-rate-limit-probe", async () => {
   return { statuses };
 });
 
-await check("direct-load-balancer-origin-mtls-blocked", async () => {
-  invariant(directLoadBalancerExitCode, "direct load-balancer mTLS probe did not run");
-  invariant(directLoadBalancerStatus === "000", `direct load-balancer request reached HTTP with status ${directLoadBalancerStatus}; expected TLS rejection before HTTP`);
-  invariant(directLoadBalancerExitCode !== "0", "direct load-balancer TLS handshake unexpectedly succeeded without a client certificate");
-  return {
-    httpStatus: directLoadBalancerStatus,
-    curlExitCode: Number(directLoadBalancerExitCode),
-    protection: "cloudflare-authenticated-origin-pull-mtls",
-  };
+await check("direct-api-gateway-missing-edge-key-blocked", async () => {
+  invariant(gatewayHostname, "API Gateway hostname was not derived");
+  const response = await request(`https://${gatewayHostname}/api/v1/health`);
+  invariant([400, 401, 403].includes(response.status), `direct gateway request without edge key returned ${response.status}`);
+  return { status: response.status, protection: "api-key-required" };
+});
+
+await check("direct-api-gateway-invalid-edge-key-blocked", async () => {
+  invariant(gatewayHostname, "API Gateway hostname was not derived");
+  const response = await request(`https://${gatewayHostname}/api/v1/health`, {
+    headers: { "x-api-key": "corvis-security-acceptance-invalid" },
+  });
+  invariant([400, 401, 403].includes(response.status), `direct gateway request with invalid edge key returned ${response.status}`);
+  return { status: response.status, protection: "restricted-api-key" };
 });
 
 await check("direct-cloud-run-origin-bypass-blocked", async () => {
   invariant(directCloudRunStatus, "direct Cloud Run bypass probe did not run");
-  invariant(["403", "404"].includes(directCloudRunStatus), `direct Cloud Run request remained reachable with status ${directCloudRunStatus}`);
-  return { status: Number(directCloudRunStatus), protection: "cloud-run-ingress-restriction" };
+  invariant(["401", "403"].includes(directCloudRunStatus), `direct unauthenticated Cloud Run request returned ${directCloudRunStatus}`);
+  return { status: Number(directCloudRunStatus), protection: "cloud-run-iam" };
+});
+
+await check("cloud-run-invoker-policy-is-gateway-only", async () => {
+  invariant(expectedGatewayInvoker, "expected gateway invoker was not derived");
+  invariant(cloudRunIamBoundary === "pass", "Cloud Run roles/run.invoker is not restricted to the dedicated gateway service account");
+  return { expectedInvoker: expectedGatewayInvoker, allUsers: false, exclusiveGatewayInvoker: true };
 });
 
 const failed = checks.filter((entry) => entry.status === "fail");
 const skipped = checks.filter((entry) => entry.status === "skip");
 const passed = checks.filter((entry) => entry.status === "pass");
 const evidence = {
-  schemaVersion: "corvis.security-acceptance.v3",
+  schemaVersion: "corvis.security-acceptance.v4",
   environment,
   checkedAt: new Date().toISOString(),
   source: "github-actions",

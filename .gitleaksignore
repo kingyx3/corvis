@@ -1,4 +1,6 @@
-# Exact false positives: the literal security check name direct-load-balancer-origin-mtls-blocked
-# follows cloudflare-rate-limit-probe on these lines. Neither string is a credential.
+# Exact false positives: literal security acceptance check names follow
+# cloudflare-rate-limit-probe in control-evidence validation arrays. These
+# fingerprints refer to source-code check identifiers, not credentials.
 4600989756b900251dc0da0138cb21b9a42ac791:lib/server/control-evidence-collector.ts:cloudflare-api-key:102
 4600989756b900251dc0da0138cb21b9a42ac791:lib/server/control-evidence-collector.test.ts:cloudflare-api-key:216
+6ac7f4ca1bb8a627d96958697e25d806438f13b3:lib/server/control-evidence-collector.ts:cloudflare-api-key:55

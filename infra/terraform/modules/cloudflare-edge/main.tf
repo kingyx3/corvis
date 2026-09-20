@@ -1,57 +1,103 @@
 terraform {
   required_providers {
     cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 5"
+      source = "cloudflare/cloudflare"
     }
   }
 }
 
 locals {
-  public_hostnames = toset(compact([
-    trimspace(var.customer_hostname),
-    trimspace(var.admin_hostname),
-    trimspace(var.api_hostname),
-  ]))
-
-  static_hostnames = compact([
-    trimspace(var.customer_hostname),
-    trimspace(var.admin_hostname),
-  ])
-
-  quoted_public_hostnames = join(" ", [for hostname in local.public_hostnames : "\"${hostname}\""])
-  quoted_static_hostnames = join(" ", [for hostname in local.static_hostnames : "\"${hostname}\""])
-
-  dynamic_host_expression = join(" ", [
-    "(http.host in {${local.quoted_public_hostnames}}",
-    "and not starts_with(http.request.uri.path, \"/_next/static/\"))",
-  ])
-
-  static_host_expression = length(local.static_hostnames) > 0 ? "(http.host in {${local.quoted_static_hostnames}} and starts_with(http.request.uri.path, \"/_next/static/\"))" : "(http.host eq \"__corvis_static_surface_disabled__\")"
+  dynamic_host_expression = "(http.host eq \"${var.api_hostname}\")"
+  worker_name             = "corvis-api-${replace(var.api_hostname, ".", "-")}"
 }
 
-resource "cloudflare_dns_record" "public" {
-  for_each = local.public_hostnames
+resource "cloudflare_worker" "api_proxy" {
+  account_id = var.account_id
+  name       = local.worker_name
 
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+  }
+
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+
+  tags = ["corvis", "api-edge"]
+}
+
+resource "cloudflare_worker_version" "api_proxy" {
+  account_id         = var.account_id
+  worker_id          = cloudflare_worker.api_proxy.id
+  compatibility_date = "2026-09-20"
+  main_module        = "api-proxy.mjs"
+
+  modules = [{
+    name         = "api-proxy.mjs"
+    content_type = "application/javascript+module"
+    content_file = "${path.module}/api-proxy.mjs"
+  }]
+
+  bindings = [
+    {
+      type = "plain_text"
+      name = "PUBLIC_HOSTNAME"
+      text = var.api_hostname
+    },
+    {
+      type = "plain_text"
+      name = "GATEWAY_HOST"
+      text = var.gateway_hostname
+    },
+    {
+      type = "secret_text"
+      name = "GATEWAY_API_KEY"
+      text = var.gateway_api_key
+    },
+  ]
+}
+
+resource "cloudflare_workers_deployment" "api_proxy" {
+  account_id  = var.account_id
+  script_name = cloudflare_worker.api_proxy.name
+  strategy    = "percentage"
+
+  versions = [{
+    percentage = 100
+    version_id = cloudflare_worker_version.api_proxy.id
+  }]
+
+  annotations = {
+    workers_message = "Corvis API Gateway edge proxy"
+  }
+}
+
+resource "cloudflare_workers_route" "api" {
   zone_id = var.zone_id
-  name    = each.value
-  content = var.origin_ipv4_address
-  type    = "A"
+  pattern = "${var.api_hostname}/*"
+  script  = cloudflare_worker.api_proxy.name
+
+  depends_on = [cloudflare_workers_deployment.api_proxy]
+}
+
+resource "cloudflare_dns_record" "api" {
+  zone_id = var.zone_id
+  name    = var.api_hostname
+  content = var.gateway_hostname
+  type    = "CNAME"
   ttl     = 1
   proxied = true
-  comment = "Corvis public edge; origin is the GCP external HTTPS load balancer"
+  comment = "Corvis public API edge; Worker proxies to Google API Gateway"
+
+  depends_on = [cloudflare_workers_route.api]
 }
 
 resource "cloudflare_zone_setting" "ssl" {
   zone_id    = var.zone_id
   setting_id = "ssl"
   value      = "strict"
-}
-
-resource "cloudflare_zone_setting" "authenticated_origin_pulls" {
-  zone_id    = var.zone_id
-  setting_id = "tls_client_auth"
-  value      = "on"
 }
 
 resource "cloudflare_zone_setting" "tls_1_3" {
@@ -75,7 +121,7 @@ resource "cloudflare_zone_setting" "automatic_https_rewrites" {
 resource "cloudflare_ruleset" "custom_waf" {
   zone_id     = var.zone_id
   name        = "Corvis custom edge security"
-  description = "Baseline WAF rules that are available independently of paid managed-WAF features."
+  description = "Baseline WAF rules available independently of paid managed-WAF features."
   kind        = "zone"
   phase       = "http_request_firewall_custom"
 
@@ -169,33 +215,20 @@ resource "cloudflare_ruleset" "rate_limits" {
 
 resource "cloudflare_ruleset" "cache" {
   zone_id     = var.zone_id
-  name        = "Corvis cache isolation"
-  description = "Never shared-cache authenticated/dynamic Corvis surfaces; cache only immutable Next.js static assets."
+  name        = "Corvis API cache isolation"
+  description = "Never shared-cache authenticated Corvis API traffic."
   kind        = "zone"
   phase       = "http_request_cache_settings"
 
-  rules = concat(
-    [
-      {
-        ref         = "bypass_dynamic_corvis_surfaces"
-        description = "Bypass Cloudflare cache for customer, admin and API dynamic traffic"
-        expression  = local.dynamic_host_expression
-        action      = "set_cache_settings"
-        action_parameters = {
-          cache = false
-        }
-      },
-    ],
-    length(local.static_hostnames) > 0 ? [
-      {
-        ref         = "cache_immutable_next_static"
-        description = "Cache immutable Next.js static assets only"
-        expression  = local.static_host_expression
-        action      = "set_cache_settings"
-        action_parameters = {
-          cache = true
-        }
-      },
-    ] : [],
-  )
+  rules = [
+    {
+      ref         = "bypass_dynamic_corvis_api"
+      description = "Bypass Cloudflare cache for all Corvis API traffic"
+      expression  = local.dynamic_host_expression
+      action      = "set_cache_settings"
+      action_parameters = {
+        cache = false
+      }
+    },
+  ]
 }

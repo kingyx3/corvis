@@ -11,15 +11,14 @@ import { evidenceSource } from "./control-evidence-registry.ts";
  * then attempts the server-side promotion gate. Nothing else in the
  * application writes to this schema yet; see issue #14.
  *
- * Two JSON shapes are accepted, one per security-acceptance job:
- *  - `corvis.security-acceptance.v1` (the edge job's security-acceptance-evidence.json)
- *  - `corvis.postgres-rls-security-acceptance.v1` (the postgres-rls job's evidence file)
+ * Accepted shapes include the current edge/gateway producer plus legacy edge
+ * evidence retained for historical artifact replay, and the Postgres RLS job.
  */
 
 export type SecurityAcceptanceCheckResult = "pass" | "fail";
 
 export type SecurityAcceptanceEdgeEvidence = {
-  schemaVersion: "corvis.security-acceptance.v1" | "corvis.security-acceptance.v3";
+  schemaVersion: "corvis.security-acceptance.v1" | "corvis.security-acceptance.v3" | "corvis.security-acceptance.v4";
   environment: string;
   checkedAt: string;
   source: string;
@@ -42,8 +41,35 @@ export type SecurityAcceptanceEvidenceFile = SecurityAcceptanceEdgeEvidence | Se
 const SCHEMA_SOURCE_KEYS: Record<SecurityAcceptanceEvidenceFile["schemaVersion"], string> = {
   "corvis.security-acceptance.v1": "security-acceptance.edge",
   "corvis.security-acceptance.v3": "security-acceptance.edge",
+  "corvis.security-acceptance.v4": "security-acceptance.edge",
   "corvis.postgres-rls-security-acceptance.v1": "security-acceptance.postgres-rls",
 };
+
+const EDGE_V3_REQUIRED_CHECKS = [
+  "customer-edge-https",
+  "admin-edge-https",
+  "api-https-and-cache-isolation",
+  "http-redirects-to-https",
+  "csrf-cors-cross-site-block",
+  "cloudflare-waf-probe",
+  "cloudflare-rate-limit-probe",
+  "direct-load-balancer-origin-mtls-blocked",
+  "direct-cloud-run-origin-bypass-blocked",
+] as const;
+
+const EDGE_V4_REQUIRED_CHECKS = [
+  "customer-edge-https",
+  "admin-edge-https",
+  "api-https-worker-and-cache-isolation",
+  "http-redirects-to-https",
+  "csrf-cors-cross-site-block",
+  "cloudflare-waf-probe",
+  "cloudflare-rate-limit-probe",
+  "direct-api-gateway-missing-edge-key-blocked",
+  "direct-api-gateway-invalid-edge-key-blocked",
+  "direct-cloud-run-origin-bypass-blocked",
+  "cloud-run-invoker-policy-is-gateway-only",
+] as const;
 
 export class ControlEvidenceCollectionError extends Error {}
 
@@ -54,7 +80,10 @@ export function parseSecurityAcceptanceEvidence(raw: unknown): SecurityAcceptanc
   }
   const value = raw as Record<string, unknown>;
   const schemaVersion = value.schemaVersion;
-  if (schemaVersion !== "corvis.security-acceptance.v1" && schemaVersion !== "corvis.security-acceptance.v3" && schemaVersion !== "corvis.postgres-rls-security-acceptance.v1") {
+  if (schemaVersion !== "corvis.security-acceptance.v1" &&
+      schemaVersion !== "corvis.security-acceptance.v3" &&
+      schemaVersion !== "corvis.security-acceptance.v4" &&
+      schemaVersion !== "corvis.postgres-rls-security-acceptance.v1") {
     throw new ControlEvidenceCollectionError(`Unsupported security-acceptance evidence schemaVersion: ${JSON.stringify(schemaVersion)}`);
   }
   if (typeof value.checkedAt !== "string" || !value.checkedAt) {
@@ -96,14 +125,14 @@ export function parseSecurityAcceptanceEvidence(raw: unknown): SecurityAcceptanc
         (summary.skipped ?? 0) !== counts.skip) {
       throw new ControlEvidenceCollectionError("Edge summary does not match individual checks");
     }
-    if (schemaVersion === "corvis.security-acceptance.v3") {
-      const required = ["customer-edge-https", "admin-edge-https", "api-https-and-cache-isolation",
-        "http-redirects-to-https", "csrf-cors-cross-site-block", "cloudflare-waf-probe",
-        "cloudflare-rate-limit-probe", "direct-load-balancer-origin-mtls-blocked",
-        "direct-cloud-run-origin-bypass-blocked"];
-      if (required.some((name) => !names.has(name))) {
-        throw new ControlEvidenceCollectionError("Edge evidence is missing required checks");
-      }
+
+    const required = schemaVersion === "corvis.security-acceptance.v4"
+      ? EDGE_V4_REQUIRED_CHECKS
+      : schemaVersion === "corvis.security-acceptance.v3"
+        ? EDGE_V3_REQUIRED_CHECKS
+        : [];
+    if (required.some((name) => !names.has(name))) {
+      throw new ControlEvidenceCollectionError("Edge evidence is missing required checks");
     }
   }
   return value as unknown as SecurityAcceptanceEvidenceFile;

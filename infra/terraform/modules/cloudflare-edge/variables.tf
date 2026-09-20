@@ -1,23 +1,22 @@
+variable "account_id" {
+  description = "Cloudflare account ID derived from the selected zone."
+  type        = string
+}
+
 variable "zone_id" {
   description = "Cloudflare zone ID for the Corvis domain."
   type        = string
 }
 
-variable "origin_ipv4_address" {
-  description = "IPv4 address of the GCP external HTTPS load balancer origin."
+variable "gateway_hostname" {
+  description = "Google API Gateway default hostname used only by the Cloudflare Worker."
   type        = string
 }
 
-variable "customer_hostname" {
-  description = "Customer application hostname. Empty keeps that surface unpublished."
+variable "gateway_api_key" {
+  description = "API key restricted to the Corvis managed API and injected only by the Cloudflare Worker."
   type        = string
-  default     = ""
-}
-
-variable "admin_hostname" {
-  description = "Admin application hostname. Empty keeps that surface unpublished."
-  type        = string
-  default     = ""
+  sensitive   = true
 }
 
 variable "api_hostname" {

@@ -9,17 +9,21 @@ locals {
   )
 
   required_services = toset([
+    "apigateway.googleapis.com",
+    "apikeys.googleapis.com",
     "artifactregistry.googleapis.com",
-    "certificatemanager.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudtasks.googleapis.com",
-    "compute.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
-    "networksecurity.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "servicecontrol.googleapis.com",
+    "servicemanagement.googleapis.com",
+    "serviceusage.googleapis.com",
     "storage.googleapis.com",
   ])
 }

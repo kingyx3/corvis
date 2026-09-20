@@ -43,7 +43,12 @@ resource "google_cloud_run_v2_service" "api" {
   project  = var.project_id
   name     = "corvis-api-${var.environment}"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
+  # API Gateway is not a Cloud Run internal-ingress source. The network endpoint
+  # therefore remains reachable, while IAM is the invocation boundary: no
+  # allUsers grant exists and only the dedicated gateway service account receives
+  # roles/run.invoker in the gcp-api-gateway module.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = var.environment == "prod"
 
