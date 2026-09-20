@@ -18,21 +18,24 @@ const identity: RequestIdentity = {
 class FakePostgres implements PostgresSqlApi {
   readonly queries: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
   queue: PostgresRow[][] = [];
+  nextError?: Error;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.queries.push({ sql, parameters });
+    if (this.nextError) {
+      const error = this.nextError;
+      this.nextError = undefined;
+      throw error;
+    }
     return this.queue.shift() ?? [];
   }
   async execute(): Promise<void> {}
   async health(): Promise<boolean> { return true; }
 }
 
-test("operator recovery is distinct from normal retry and invokes governed recovery function", async () => {
+test("operator recovery delegates atomically to the idempotent database command", async () => {
   const db = new FakePostgres();
-  db.queue.push(
-    [{ state: "dead_letter", attempt: 5, max_attempts: 5, version: 9 }],
-    [{ new_version: 10, recovery_count: 2, recovery_event_id: "44444444-4444-4444-8444-444444444444" }],
-  );
+  db.queue.push([{ new_version: 10, recovery_count: 2, recovery_event_id: "44444444-4444-4444-8444-444444444444" }]);
 
   const result = await recoverDeadLetterProcessingJob({
     identity,
@@ -50,9 +53,9 @@ test("operator recovery is distinct from normal retry and invokes governed recov
     recoveryCount: 2,
     recoveryEventId: "44444444-4444-4444-8444-444444444444",
   });
-  assert.equal(db.queries.length, 2);
-  assert.match(db.queries[1]?.sql ?? "", /corvis_control\.recover_dead_letter_processing_job/);
-  assert.deepEqual(db.queries[1]?.parameters, [
+  assert.equal(db.queries.length, 1);
+  assert.match(db.queries[0]?.sql ?? "", /corvis_control\.recover_dead_letter_processing_job/);
+  assert.deepEqual(db.queries[0]?.parameters, [
     identity.tenantId,
     "canonicalized:33333333-3333-4333-8333-333333333333",
     9,
@@ -63,13 +66,14 @@ test("operator recovery is distinct from normal retry and invokes governed recov
   ]);
 });
 
-test("operator recovery refuses non-terminal or non-exhausted jobs before mutation", async () => {
-  for (const [row, reason] of [
-    [{ state: "retryable", attempt: 4, max_attempts: 5, version: 9 }, "not_terminal_dead_letter"],
-    [{ state: "dead_letter", attempt: 4, max_attempts: 5, version: 9 }, "not_exhausted"],
+test("operator recovery maps governed database refusal states without a weaker application path", async () => {
+  for (const [message, reason] of [
+    ["only terminal dead-letter jobs can be operator-recovered", "not_terminal_dead_letter"],
+    ["dead-letter recovery requires an exhausted job; use normal retry before exhaustion", "not_exhausted"],
+    ["dead-letter recovery requires retained predecessor lineage evidence", "missing_delivery_evidence"],
   ] as const) {
     const db = new FakePostgres();
-    db.queue.push([row]);
+    db.nextError = new Error(message);
     const result = await recoverDeadLetterProcessingJob({
       identity,
       jobId: "reviewed:33333333-3333-4333-8333-333333333333",
@@ -83,7 +87,7 @@ test("operator recovery refuses non-terminal or non-exhausted jobs before mutati
   }
 });
 
-test("processing recovery migration preserves lineage on retry and recovery", async () => {
+test("processing recovery migration preserves lineage, evidence and idempotency", async () => {
   const sql = (await readFile("db/postgres/migrations/027_processing_operator_recovery.sql", "utf8")).toLowerCase();
 
   assert.match(sql, /create table if not exists corvis_control\.processing_recovery_event/);
@@ -96,6 +100,8 @@ test("processing recovery migration preserves lineage on retry and recovery", as
   assert.match(sql, /'processingstageretryscheduled'/);
   assert.equal(/signal_payload := jsonb_build_object\(/.test(sql), false);
 
+  assert.match(sql, /select \* into existing_recovery[\s\S]*?processing_recovery_event/);
+  assert.match(sql, /return query select existing_recovery\.result_job_version/);
   assert.match(sql, /if current_job\.state <> 'dead_letter'/);
   assert.match(sql, /if current_job\.attempt < current_job\.max_attempts/);
   assert.match(sql, /dead-letter recovery requires retained durable stage-delivery evidence/);
