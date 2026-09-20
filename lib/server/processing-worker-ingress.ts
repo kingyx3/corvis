@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { ProcessingStage, RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { GoogleOidcVerifier, type GoogleServiceAccountIdentity } from "./gcp-oidc.ts";
@@ -20,7 +21,7 @@ import {
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const STAGES = new Set<ProcessingStage>(["registered","represented","extracted","reviewed","canonicalized","reconciled","consolidated","published"]);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/i;
 
 export type ProcessingWorkerIngressConfig = {
@@ -48,6 +49,21 @@ function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+export function processingPayloadSha256(value: unknown): string {
+  return createHash("sha256").update(stable(value)).digest("hex");
+}
+
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) throw new ProcessingWorkerRequestError("invalid_delivery", 400, `${field} is required`);
   return value.trim();
@@ -73,7 +89,9 @@ function deliveryFrom(value: unknown): ProcessingStageDelivery {
   const payload = object(body.payload);
   if (!payload) throw new ProcessingWorkerRequestError("invalid_delivery", 400, "payload must be an object");
   const payloadSha256 = requiredString(body.payloadSha256, "payloadSha256");
-  if (!SHA256.test(payloadSha256)) throw new ProcessingWorkerRequestError("invalid_delivery", 400, "payloadSha256 is invalid");
+  if (!SHA256.test(payloadSha256) || processingPayloadSha256(payload) !== payloadSha256.toLowerCase()) {
+    throw new ProcessingWorkerRequestError("invalid_delivery", 400, "payloadSha256 does not match payload");
+  }
   const leaseSeconds = positiveInteger(body.leaseSeconds, "leaseSeconds");
   if (leaseSeconds !== undefined && leaseSeconds > 3600) throw new ProcessingWorkerRequestError("invalid_delivery", 400, "leaseSeconds exceeds worker bound");
   const maxAttempts = positiveInteger(body.maxAttempts, "maxAttempts");
