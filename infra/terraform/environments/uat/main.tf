@@ -32,13 +32,13 @@ provider "google-beta" {
 provider "cloudflare" {}
 
 locals {
-  edge_requested                   = trimspace(var.cloudflare_zone_name) != ""
-  api_runtime_enabled              = trimspace(var.api_image) != ""
-  edge_enabled                     = local.edge_requested && local.api_runtime_enabled
-  api_hostname                     = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
-  deployer_service_account_email   = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-  cloudflare_zone_id               = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].id, "") : ""
-  cloudflare_account_id            = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].account.id, "") : ""
+  edge_requested                 = trimspace(var.cloudflare_zone_name) != ""
+  api_runtime_enabled            = trimspace(var.api_image) != ""
+  edge_enabled                   = local.edge_requested && local.api_runtime_enabled
+  api_hostname                   = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
+  cloudflare_zone_id             = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].id, "") : ""
+  cloudflare_account_id          = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].account.id, "") : ""
 }
 
 resource "terraform_data" "edge_configuration_guard" {
