@@ -36,3 +36,9 @@ variable "gateway_identity_secret_id" {
   type        = string
   default     = "corvis-gateway-identity-secret"
 }
+
+variable "decommission_mode" {
+  description = "Explicit lifecycle switch used only by the guarded decommission workflow to remove production deletion protection before teardown."
+  type        = bool
+  default     = false
+}
