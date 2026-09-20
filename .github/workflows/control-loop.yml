@@ -26,7 +26,7 @@ on:
         default: manual
 
 permissions:
-  contents: write
+  contents: read
   issues: read
 
 concurrency:
@@ -48,6 +48,18 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # Runtime state is operational data, not source code. Restore the newest
+      # prior cache entry and save this run under a unique immutable cache key.
+      # If the cache is absent/evicted, FileStateStore safely degrades to an
+      # empty watermark and the orchestrator performs a full scan.
+      - name: Restore control-loop state
+        uses: actions/cache/restore@v4
+        with:
+          path: control-loop/state
+          key: control-loop-state-${{ github.run_id }}
+          restore-keys: |
+            control-loop-state-
 
       - name: Resolve run mode
         id: resolve
@@ -103,17 +115,9 @@ jobs:
           path: control-loop-report.json
           retention-days: 90
 
-      - name: Commit updated watermark
+      - name: Save control-loop state
         if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "$(git status --porcelain -- control-loop/state)" ]; then
-            git config user.name "corvis-control-loop"
-            git config user.email "control-loop@users.noreply.github.com"
-            git add control-loop/state
-            git commit -m "chore(control-loop): update ${{ steps.resolve.outputs.mode }} run watermark [skip ci]"
-            git push
-          else
-            echo "no watermark change to commit"
-          fi
+        uses: actions/cache/save@v4
+        with:
+          path: control-loop/state
+          key: control-loop-state-${{ github.run_id }}
