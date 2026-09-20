@@ -27,11 +27,13 @@ export class ProcessingStageTimeoutError extends Error {
  * the worker and passed through unchanged to the stage implementation.
  */
 export class BoundedProcessingStageEffectRouter implements ProcessingStageEffectPort {
-  constructor(
-    private readonly handlers: ProcessingStageHandlers,
-    private readonly timeoutMs = 30_000,
-  ) {
+  private readonly handlers: ProcessingStageHandlers;
+  private readonly timeoutMs: number;
+
+  constructor(handlers: ProcessingStageHandlers, timeoutMs = 30_000) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("processing stage timeout must be positive");
+    this.handlers = handlers;
+    this.timeoutMs = timeoutMs;
   }
 
   async execute(input: ProcessingStageEffectInput): Promise<Record<string, unknown> | void> {
