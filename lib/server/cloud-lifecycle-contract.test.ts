@@ -67,8 +67,8 @@ test("destructive Terraform behavior defaults off outside the guarded lifecycle 
 
   assert.match(foundation, /force_destroy\s*=\s*var\.decommission_mode/);
   assert.match(runtime, /deletion_protection\s*=\s*var\.environment == "prod" && !var\.decommission_mode/);
-  assert.match(foundationVars, /variable "decommission_mode"[\s\s]*?default\s*=\s*false/);
-  assert.match(runtimeVars, /variable "decommission_mode"[\s\s]*?default\s*=\s*false/);
+  assert.match(foundationVars, /variable "decommission_mode"[\s\S]*?default\s*=\s*false/);
+  assert.match(runtimeVars, /variable "decommission_mode"[\s\S]*?default\s*=\s*false/);
   assert.match(deploy, /tf_var_decommission_mode: "false"/);
   assert.match(bootstrap, /tf_var_decommission_mode: "false"/);
 });
