@@ -36,3 +36,9 @@ variable "monthly_budget_amount_usd" {
   type    = number
   default = 500
 }
+
+variable "decommission_mode" {
+  description = "Set only by the guarded environment decommission workflow."
+  type        = bool
+  default     = false
+}
