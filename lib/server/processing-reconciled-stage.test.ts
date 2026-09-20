@@ -185,12 +185,16 @@ test("reconciliation migration preserves alternatives and fails closed before co
   assert.match(sql, /alter table corvis_consolidated\.reconciliation_run force row level security/);
   assert.match(sql, /create or replace function corvis_consolidated\.reconcile_canonicalization/);
   assert.match(sql, /reconciliation requires committed canonicalized-stage predecessor effect/);
+  assert.match(sql, /reconciliation retained source-reference set is incomplete/);
+  assert.match(sql, /reconciliation observation is missing source lineage/);
   assert.match(sql, /count\(distinct normalized_value::text\) > 1/);
   assert.match(sql, /exact semantic-grain observations disagree/);
   assert.match(sql, /sourceauthorityselection','explicit_resolution_required'/);
   assert.match(sql, /case when grain\.has_critical then 'material' else 'unknown' end/);
   assert.match(sql, /create or replace function corvis_control\.resume_blocked_reconciled_stage/);
   assert.match(sql, /set state='queued',blocked_reason=null,last_error=null/);
+  assert.match(sql, /create or replace function corvis_consolidated\.resume_reconciliation_after_resolution/);
+  assert.match(sql, /after update of status on corvis_consolidated\.reconciliation_exception/);
   assert.match(sql, /create or replace function corvis_consolidated\.enforce_ready_reconciliation_before_success/);
   assert.match(sql, /reconciliation persistence blocks consolidation/);
   assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(sql), false);
