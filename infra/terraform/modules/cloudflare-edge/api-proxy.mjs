@@ -20,12 +20,14 @@ export default {
     headers.set("x-api-key", env.GATEWAY_API_KEY);
     headers.set("x-corvis-edge-proxy", "cloudflare-worker");
 
-    const upstream = await fetch(new Request(upstreamUrl, {
+    const init = {
       method: request.method,
       headers,
-      body: request.body,
       redirect: "manual",
-    }));
+    };
+    if (request.method !== "GET" && request.method !== "HEAD") init.body = request.body;
+
+    const upstream = await fetch(new Request(upstreamUrl, init));
 
     const response = new Response(upstream.body, upstream);
     response.headers.set("x-corvis-edge-proxy", "cloudflare-worker");
