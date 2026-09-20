@@ -201,7 +201,7 @@ test("review migration is forced-RLS, append-only, resumable, and persistence-bl
   assert.match(sql, /create or replace function corvis_control\.resume_blocked_reviewed_stage/);
   assert.match(sql, /g\.status='ready'/);
   assert.match(sql, /review gate blocks canonicalization/);
-  assert.match(sql, /old\.stage='reviewed'.+new\.state='succeeded'/s);
+  assert.match(sql, /old\.stage='reviewed'[\s\S]+new\.state='succeeded'/);
   assert.match(sql, new RegExp(CANDIDATE_REVIEW_POLICY_VERSION));
   assert.equal(/update\s+corvis_source\.extraction_candidate\s+set/i.test(sql), false);
 });
