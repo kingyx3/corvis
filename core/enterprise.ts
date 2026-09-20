@@ -96,7 +96,7 @@ export type ProcessingJob = {
   createdAt: string; updatedAt: string;
   blockedReason?: string;
   nextAttemptAt?: string;
-  recoveryCount: number;
+  recoveryCount?: number;
   lastRecoveryAt?: string;
   lastRecoveryReasonCode?: string;
   lastError?: string;
