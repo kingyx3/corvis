@@ -70,12 +70,13 @@ resource "terraform_data" "edge_zone_guard" {
 }
 
 module "foundation" {
-  source                                        = "../../modules/gcp-foundation"
-  project_id                                    = var.project_id
-  environment                                   = "prod"
-  source_bucket_name                            = var.source_bucket_name
+  source                                         = "../../modules/gcp-foundation"
+  project_id                                     = var.project_id
+  environment                                    = "prod"
+  source_bucket_name                             = var.source_bucket_name
   enforce_service_account_key_creation_disabled = true
   enforce_service_account_key_upload_disabled   = true
+  decommission_mode                              = var.decommission_mode
 }
 
 module "api_runtime" {
@@ -84,6 +85,7 @@ module "api_runtime" {
   environment               = "prod"
   api_image                 = var.api_image
   api_service_account_email = module.foundation.api_service_account
+  decommission_mode         = var.decommission_mode
 }
 
 module "api_gateway" {
