@@ -1,70 +1,95 @@
-# Security acceptance: edge, origin and tenant isolation
+# Security acceptance: edge, gateway and tenant isolation
 
-This document owns the executable technical security-acceptance contract for the Corvis public edge and Postgres tenant-isolation boundary. Business/security-control requirements and readiness decisions remain in Confluence.
+This document owns the executable technical security-acceptance contract for the Corvis public API boundary and Postgres tenant-isolation boundary. Business/security-control requirements and readiness decisions remain in Confluence.
 
-## Edge and origin policy as code
+## Implemented edge and gateway policy as code
 
-`infra/terraform/modules/cloudflare-edge` manages public-edge controls for production-like environments. `infra/terraform/modules/gcp-serverless-origin` owns the API origin bridge and enforces independent origin controls:
+Production-like public API traffic is implemented as:
 
-- Cloudflare proxied DNS, Full (strict) TLS, Authenticated Origin Pulls, custom WAF, API rate limiting and dynamic-cache bypass;
-- GCP external managed HTTPS load balancer with a Cloud Run serverless NEG;
-- Cloud Run ingress restricted to internal and Cloud Load Balancing;
-- Cloud Armor attached to the API backend with current Cloudflare proxy ranges derived from the Cloudflare provider;
-- a default-deny Cloud Armor rule for direct load-balancer traffic that does not come from Cloudflare;
-- load-balancer request logging enabled for origin-security evidence;
-- Google-managed origin certificate lifecycle through Certificate Manager DNS authorization;
-- a Certificate Manager TrustConfig containing Cloudflare's published Authenticated Origin Pull client CA;
-- a global Network Security ServerTlsPolicy attached to the HTTPS proxy with `REJECT_INVALID`, so missing or invalid client certificates fail during TLS before any HTTP request reaches the backend.
+```text
+Internet
+  |
+  v
+Cloudflare edge + Worker
+  |  edge-only restricted API key
+  v
+Google API Gateway
+  |  Google-signed dedicated service identity
+  v
+Cloud Run
+  |  IAM: gateway service account only; no allUsers invoker
+  v
+Application authorization + Postgres RLS
+```
 
-Cloudflare remains separate from application authentication and tenant authorization. Passing the edge or mTLS boundary does not grant an application identity, workspace membership, entitlement or data right.
+The repository modules are:
 
-## Authenticated Origin Pull trust model
+- `infra/terraform/modules/cloudflare-edge` — proxied DNS, Worker proxy, Full (strict) TLS, custom WAF, API rate limiting and cache bypass;
+- `infra/terraform/modules/gcp-api-gateway` — API Gateway, restricted edge API key, dedicated gateway service account and Cloud Run invoker grant;
+- `infra/terraform/modules/cloud-run-runtime` — scale-to-zero runtime with network ingress available to API Gateway but no public IAM invocation grant.
 
-Corvis initially uses Cloudflare **global Authenticated Origin Pulls**. Cloudflare presents its published Origin Pull client certificate for proxied HTTPS requests, and the GCP frontend validates that certificate against a version-controlled public CA trust anchor embedded in the Terraform module.
+The old `gcp-serverless-origin` external load-balancer / Cloud Armor / Certificate Manager / Authenticated Origin Pull path has been removed from the repository baseline.
 
-That public CA material is not a runtime secret or private key. It must nevertheless be treated as a versioned external trust dependency: monitor the upstream certificate lifecycle and replace the embedded trust anchor through a reviewed Terraform change before expiry or provider rotation. Never commit a Cloudflare client private key or a certificate/key artifact file.
+Cloudflare remains separate from application authentication and tenant authorization. Passing the edge key boundary does not grant an application identity, workspace membership, entitlement or data right. The application continues to require its signed identity assertion and server-side authorization context; Postgres RLS remains an independent tenant-isolation boundary.
 
-Global AOP proves that a connection originated from the Cloudflare network, not from a Corvis-exclusive Cloudflare client certificate. Cloud Armor's provider-derived Cloudflare source allowlist remains an independent control. If Confluence later requires account-exclusive client identity, migrate deliberately to Cloudflare zone-level or per-hostname AOP with an approved private-PKI bootstrap rather than silently changing this trust model.
+## Edge-only gateway credential
+
+The API Gateway OpenAPI transport contract requires an API key. Terraform creates a key restricted to the Corvis managed API and injects it into the Cloudflare Worker as a `secret_text` binding.
+
+The Worker:
+
+- routes only the configured API hostname and `/api/v1` surface;
+- deletes any caller-supplied `x-api-key` and injects the Terraform-managed edge key;
+- proxies to the provider `gateway.dev` hostname;
+- marks proxied responses with `x-corvis-edge-proxy: cloudflare-worker` for acceptance evidence;
+- has `workers.dev` and preview URLs disabled;
+- does not proxy ordinary source-document bodies, which continue to upload directly to GCS after application authorization.
+
+The edge API key is defense-in-depth and bypass resistance, not user authentication. If it is exposed, application authorization and Cloud Run IAM still remain separate controls, but the key must be rotated through Terraform/Worker deployment.
+
+## Cloud Run IAM requirement
+
+API Gateway cannot use Cloud Run's `internal-and-cloud-load-balancing` ingress classification, so the service is network-reachable at its normal HTTPS URL. The security boundary is IAM:
+
+1. Cloud Run has **no** `allUsers` `roles/run.invoker` grant;
+2. the dedicated `corvis-gateway-${environment}` service account is the only normal public-path `roles/run.invoker` member;
+3. API Gateway uses that service account to sign backend identity tokens;
+4. a direct unauthenticated request to the `run.app` URL must fail with `401` or `403` before application execution.
+
+Do not add an `allUsers` invoker grant to recover availability. A gateway/backend-auth problem must fail closed.
 
 ## Deployment inputs
 
-The normal GitHub Environment inputs remain documented in `GITHUB_ENVIRONMENTS.md`. Direct-origin probe URLs, origin IPs and mTLS private material are not human-managed GitHub inputs. Security acceptance authenticates to GCP through GitHub OIDC/WIF and derives:
+The normal GitHub Environment inputs remain documented in `GITHUB_ENVIRONMENTS.md`. Gateway hostnames, Cloudflare account/zone IDs, gateway service-account names and edge API keys are derived/generated by providers and Terraform; they are not human-managed GitHub variables.
 
-- `corvis-api-origin-${environment}` global IPv4;
+Security acceptance authenticates to GCP through GitHub OIDC/WIF and derives:
+
+- `corvis-api-${environment}` API Gateway hostname;
 - `corvis-api-${environment}` Cloud Run service URL;
-- the deterministic API hostname from `CLOUDFLARE_ZONE_NAME` and environment.
+- `corvis-gateway-${environment}@${project}.iam.gserviceaccount.com` expected invoker identity;
+- the deterministic public API hostname from `CLOUDFLARE_ZONE_NAME` and environment.
 
 The Postgres DSN remains a runtime secret in GCP Secret Manager. Its secret name is deterministic: `corvis-${environment}-postgres-dsn`.
 
-## GCP origin requirement
-
-Public API traffic follows Cloudflare → client-authenticated TLS → GCP external Application Load Balancer → serverless NEG → Cloud Run. Three independent negative controls are required:
-
-1. a correct-SNI TLS request sent directly to the managed load-balancer IPv4 **without a Cloudflare client certificate** must fail the TLS handshake before an HTTP response is produced;
-2. Cloud Armor must remain configured to allow only provider-derived Cloudflare proxy ranges and default-deny other backend sources;
-3. a request sent directly to the default Cloud Run URL must be denied by Cloud Run ingress controls (403/404).
-
-The direct load-balancer probe deliberately uses the normal API hostname for TLS/SNI while overriding DNS to the origin address. This proves client-certificate rejection rather than merely succeeding because an IP-address certificate does not match.
-
-Do not weaken Authenticated Origin Pulls, the GCP ServerTlsPolicy, Cloud Armor, Cloud Run ingress, RLS or application authorization to recover availability. A missing/invalid origin-security dependency must fail closed.
-
 ## Executable UAT evidence
 
-Run **Security acceptance** from GitHub Actions against `uat` after the API edge/origin and Supabase/Postgres data plane are deployed. The workflow runs independent edge/origin and Postgres-RLS jobs.
+Run **Security acceptance** from GitHub Actions against `uat` after the API edge/gateway and Supabase/Postgres data plane are deployed. The workflow runs independent edge/gateway and Postgres-RLS jobs.
 
-### Edge/origin job
+### Edge/gateway job
 
 `.github/scripts/security-acceptance.mjs` fails unless the activated API boundary proves:
 
-1. HTTPS API traffic successfully traverses Cloudflare, demonstrating that Cloudflare can complete the client-authenticated origin handshake;
+1. HTTPS API traffic successfully traverses Cloudflare and the configured Worker;
 2. HSTS and `nosniff` are present;
 3. API responses are `no-store` and are not observed as shared-cache hits;
 4. HTTP redirects to HTTPS;
 5. cross-site state-changing API traffic is rejected;
 6. the deterministic custom-WAF probe is blocked;
 7. the deterministic rate-limit probe crosses its threshold and is blocked;
-8. a direct load-balancer TLS connection without a client certificate is rejected before HTTP (`curl` non-zero with HTTP status `000`);
-9. the direct Cloud Run request is rejected by the ingress boundary.
+8. a direct API Gateway call with no edge API key is rejected;
+9. a direct API Gateway call with an invalid edge API key is rejected;
+10. a direct unauthenticated Cloud Run request is rejected by IAM;
+11. Cloud Run `roles/run.invoker` contains exactly the dedicated gateway service account and no `allUsers` member.
 
 Customer/admin edge checks are recorded as skipped until those distinct runtimes are activated; their absence is not evidence that those surfaces are production-ready.
 
@@ -72,10 +97,21 @@ Customer/admin edge checks are recorded as skipped until those distinct runtimes
 
 `db/postgres/security_acceptance.sql` connects using the runtime DSN retrieved from GCP Secret Manager and performs a transaction-scoped two-tenant test against the live database. It proves tenant-isolated reads and denied authenticated control mutations using actual RLS, then rolls back synthetic data and temporary grants.
 
+## Large-upload acceptance
+
+Source-document bytes must continue to follow the direct-upload contract:
+
+```text
+Browser/client -> Corvis API upload initiation -> short-lived GCS resumable session
+Browser/client ================================================> GCS
+```
+
+API Gateway and the Cloudflare Worker carry only bounded authorization/control requests for this flow. They must not become the ordinary document-body data path.
+
 ## Evidence handling
 
-The workflow uploads separate sanitized JSON artifacts for edge/origin and Postgres RLS acceptance. Evidence records only check identifiers, environment, timestamps and pass/fail/skip state. It does not contain provider tokens, database connection strings, application credentials, request authorization, customer data or source documents.
+The workflow uploads separate sanitized JSON artifacts for edge/gateway and Postgres RLS acceptance. Evidence records only check identifiers, environment, timestamps and pass/fail/skip state. It does not contain API keys, provider tokens, database connection strings, application credentials, request authorization, customer data or source documents.
 
-A passing source-code CI run is not provider evidence. For a material security release, retain the successful UAT acceptance artifacts together with the release SHA/deployment evidence and reference them from the enterprise control-evidence process (#14).
+A passing source-code CI run is not provider evidence. For a material security release, retain the successful UAT acceptance artifacts together with the release SHA/deployment evidence and reference them from the enterprise control-evidence process.
 
-Issue #8 remains active until production-like UAT proves the applicable Cloudflare/origin checks, mTLS launch gate and live Postgres RLS isolation against deployed provider resources.
+Issue #99 remains open until live production-like UAT proves the gateway/Worker/IAM checks and live Postgres RLS isolation against deployed provider resources.
