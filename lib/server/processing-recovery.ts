@@ -65,7 +65,8 @@ export async function recoverDeadLetterProcessingJob(input: {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("retained durable stage-delivery evidence")) {
+    if (message.includes("retained durable stage-delivery evidence")
+      || message.includes("retained predecessor lineage evidence")) {
       return { ok:false, reason:"missing_delivery_evidence" };
     }
     if (message.includes("only terminal dead-letter jobs")) {
