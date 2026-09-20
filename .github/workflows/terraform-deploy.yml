@@ -39,11 +39,13 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
       TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      TF_VAR_decommission_mode: "false"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
@@ -109,20 +111,8 @@ jobs:
         with:
           terraform_version: "1.13.3"
 
-      - name: Bootstrap protected remote state bucket
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${TF_VAR_project_id}" >/dev/null 2>&1; then
-            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
-              --project="${TF_VAR_project_id}" \
-              --location="${GCP_REGION}" \
-              --uniform-bucket-level-access
-          fi
-          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
-            --versioning \
-            --uniform-bucket-level-access \
-            --public-access-prevention=enforced
+      - name: Require bootstrap-owned remote state
+        run: bash .github/scripts/terraform-state.sh require
 
       - name: Resolve immutable API release
         shell: bash
