@@ -1,0 +1,81 @@
+swagger: "2.0"
+info:
+  title: Corvis API edge transport
+  version: "1.0"
+  description: Edge transport contract. Customer and tenant authorization remains enforced by the Corvis application.
+schemes:
+  - https
+produces:
+  - application/json
+consumes:
+  - application/json
+securityDefinitions:
+  cloudflare_edge_key:
+    type: apiKey
+    name: x-api-key
+    in: header
+security:
+  - cloudflare_edge_key: []
+x-google-allow: configured
+x-google-backend:
+  address: ${backend_uri}
+  path_translation: APPEND_PATH_TO_ADDRESS
+  protocol: h2
+paths:
+  /api/v1:
+    get:
+      operationId: apiV1RootGet
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    post:
+      operationId: apiV1RootPost
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    options:
+      operationId: apiV1RootOptions
+      responses:
+        "204":
+          description: Proxied Corvis API preflight response
+  /api/v1/{path=**}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        type: string
+    get:
+      operationId: apiV1WildcardGet
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    post:
+      operationId: apiV1WildcardPost
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    put:
+      operationId: apiV1WildcardPut
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    patch:
+      operationId: apiV1WildcardPatch
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    delete:
+      operationId: apiV1WildcardDelete
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    head:
+      operationId: apiV1WildcardHead
+      responses:
+        "200":
+          description: Proxied Corvis API response
+    options:
+      operationId: apiV1WildcardOptions
+      responses:
+        "204":
+          description: Proxied Corvis API preflight response
