@@ -5,6 +5,7 @@ import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
 import {
   executeProcessingWorkerRequest,
   parseProcessingStageDelivery,
+  processingPayloadSha256,
   ProcessingWorkerRequestError,
   type ProcessingWorkerIngressDependencies,
 } from "./processing-worker-ingress.ts";
@@ -15,6 +16,7 @@ const documentId = "22222222-2222-2222-2222-222222222222";
 const workerUrl = "https://worker.example/api/internal/processing-stage";
 const workerEmail = "corvis-worker-prod@example.iam.gserviceaccount.com";
 const workerSubject = "109876543210987654321";
+const payload = { artifactVersionId: "33333333-3333-3333-3333-333333333333", ingestionId: "ingestion-1" };
 
 const delivery: ProcessingStageDelivery = {
   tenantId,
@@ -24,8 +26,8 @@ const delivery: ProcessingStageDelivery = {
   documentId,
   jobId: `registered:${documentId}`,
   expectedStage: "registered",
-  payload: { artifactVersionId: "33333333-3333-3333-3333-333333333333", ingestionId: "ingestion-1" },
-  payloadSha256: "a".repeat(64),
+  payload,
+  payloadSha256: processingPayloadSha256(payload),
   maxAttempts: 5,
   leaseSeconds: 300,
 };
@@ -111,7 +113,12 @@ test("Pub/Sub push envelope decodes the same bounded delivery contract", async (
   assert.deepEqual(parsed, delivery);
 });
 
-test("Pub/Sub envelope attribute mismatch fails before stage claim", async () => {
+test("tampered payload or Pub/Sub envelope attributes fail before stage claim", async () => {
+  await assert.rejects(() => parseProcessingStageDelivery(request({
+    ...delivery,
+    payload: { ...payload, ingestionId: "tampered" },
+  })), /payloadSha256/);
+
   const envelope = {
     message: {
       data: Buffer.from(JSON.stringify(delivery)).toString("base64"),
@@ -127,11 +134,12 @@ test("Pub/Sub envelope attribute mismatch fails before stage claim", async () =>
 
 test("unapproved Google identity and missing document authorization fail closed", async () => {
   let claimed = false;
+  const base = dependencies();
   const stages = {
-    ...dependencies().stages,
+    ...base.stages,
     claim: async (input: ProcessingStageDelivery) => {
       claimed = true;
-      return dependencies().stages.claim(input);
+      return base.stages.claim(input);
     },
   };
   await assert.rejects(() => executeProcessingWorkerRequest(request(delivery), dependencies({
