@@ -14,11 +14,11 @@ export interface StateStore {
 }
 
 /**
- * File-backed default. GitHub Actions has no other durable store available
- * to a public-repo workflow without extra infrastructure, so the bootstrap
- * implementation commits `control-loop/state/*.json` back to the repository
- * after a successful run. This is intentionally the only state the workflow
- * writes outside of allowlisted remediation.
+ * File-backed default. In GitHub Actions the state directory is restored from
+ * and saved to an Actions cache entry; it is deliberately not committed back
+ * to the protected source branch. Cache loss/eviction is safe: a missing
+ * watermark degrades to a full scan and a missing lock simply means no prior
+ * runner still owns the application-level lock.
  */
 export class FileStateStore implements StateStore {
   private readonly root: string;
