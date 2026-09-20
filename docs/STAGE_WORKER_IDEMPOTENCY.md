@@ -44,4 +44,18 @@ A representation is identified deterministically from tenant + document + immuta
 
 `corvis_source.document_representation` is the structured authority for representation metadata; the representation body remains replayable GCS evidence. The table is forced-RLS and server/worker managed. Inserts are conflict-idempotent and an existing row must match every immutable field exactly. A crash after the GCS representation is created but before effect completion therefore causes redelivery to reuse/verify the same logical object and row rather than producing duplicate representation truth.
 
-Only representation metadata needed by the next stage is returned to the effect journal. The object URI stays in the Postgres source module and is re-resolved by downstream handlers. Extraction and all later business stages remain fail-closed until their own governed handlers are implemented and tested.
+Only representation metadata needed by the next stage is returned to the effect journal. The object URI stays in the Postgres source module and is re-resolved by downstream handlers.
+
+## Extracted candidate production gate
+
+The `extracted` handler is composed only when `CORVIS_EXTRACTION_ENDPOINT` is bound. Without that approved internal endpoint the stage remains absent/fail-closed. The adapter is intentionally non-authoritative: a model/extraction service never receives database write authority and never writes canonical observations.
+
+The handler consumes only the exact committed `represented` result. It re-resolves the representation by tenant + document + representation ID and requires artifact ID, representation type, immutable GCS generation/hash/size, producer/version and interpretation method to match the predecessor result before any extraction provider call.
+
+Extraction run identity is deterministic over tenant + document + representation plus the reviewed technical extraction contract and the Confluence-governed schema/skill versions. The provider receives that run ID, the exact representation GCS identity, the deterministic target JSONL URI and the worker idempotency key through a keyless GCP OIDC call. It must create/reuse that exact GCS bundle; the durable worker owns retry/redelivery.
+
+Before Postgres accepts candidates, Corvis independently verifies the returned bundle's GCS generation, size, SHA-256, extraction-run ID, predecessor representation generation/hash and governed skill/schema metadata, then downloads the exact immutable generation and recomputes the body SHA-256. Each JSONL candidate must have a stable key, supported candidate type, object payload, bounded dimension-level confidence, provenance, exception codes and at least one exact page or sheet source reference with an approved extraction method.
+
+`corvis_source.extraction_run`, `corvis_source.extraction_candidate` and `corvis_source.extraction_candidate_source_reference` are forced-RLS, server/worker-managed candidate state. Candidate and source-reference IDs are derived deterministically from the run and provider stable keys. Inserts use conflict-idempotent natural identity and every pre-existing immutable record is compared before continuing. A crash after some candidate rows are written leaves the run in `writing`; redelivery safely fills/revalidates the same rows and the run becomes `ready` only after the persisted candidate count matches and a deterministic candidate-set SHA-256 is recorded.
+
+The effect result contains only stable extraction run/representation/artifact IDs, candidate count/hash and governed schema/skill versions. Candidate payloads, source text and GCS object URIs do not enter the processing event bus. Review/quality and all later canonical/publication stages remain separate governed boundaries and must consume only finalized `ready` candidate runs.
