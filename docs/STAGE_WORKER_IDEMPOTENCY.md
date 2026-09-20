@@ -9,3 +9,9 @@ The Postgres `processing_stage_effect` journal records whether the logical effec
 The worker requires an authoritative `service_account` identity whose tenant matches the delivery and whose document entitlement includes the target document. Transport authentication (for example Pub/Sub push or Cloud Tasks OIDC) must resolve to that service identity before invoking the worker runner.
 
 Stage success/failure remains authoritative in Postgres. The worker delegates completion, retry scheduling and dead-letter transitions to the atomic stage repository; application code must not independently recompute retry timing or emit duplicate downstream stage events.
+
+## Production effect routing
+
+`BoundedProcessingStageEffectRouter` is the provider-neutral composition boundary for production stage effects. Each processing stage receives its own injected handler rather than a shared provider-specific switch or platform service. Missing handlers fail closed. Each handler receives the worker-generated deterministic idempotency key unchanged plus an `AbortSignal` with a hard execution timeout; provider adapters must propagate that signal where supported and must define their own narrower timeout when appropriate.
+
+A timeout/failure in one stage is returned through the existing Postgres retry/dead-letter transition. It does not invoke another stage and must not widen authorization, skip lineage/review/publication gates, or mark the effect complete. This keeps extraction, canonicalization, reconciliation and publication independently replaceable and fault-testable while real provider-specific handlers are added incrementally under issue #79.
