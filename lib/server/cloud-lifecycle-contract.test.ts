@@ -53,8 +53,20 @@ test("full teardown destroys managed resources before deleting remote state and 
 
   assert.match(kms, /--remove-rotation-schedule/);
   assert.match(kms, /keys versions disable/);
-  assert.match(kms, /terraform .* import .*google_kms_key_ring\.corvis/);
-  assert.match(kms, /terraform .* import .*google_kms_crypto_key\.source/);
+  assert.match(kms, /keyring_address="module\.foundation\.google_kms_key_ring\.corvis"/);
+  assert.match(kms, /key_address="module\.foundation\.google_kms_crypto_key\.source"/);
+  assert.match(kms, /import "\$\{keyring_address\}" "\$\{keyring_id\}"/);
+  assert.match(kms, /import "\$\{key_address\}" "\$\{key_id\}"/);
+});
+
+test("full teardown is resumable without recreating an environment after state is already empty", async () => {
+  const workflow = await read(".github/workflows/gcp-decommission.yml");
+
+  assert.match(workflow, /has_resources=false/);
+  assert.match(workflow, /repair retained kms state after a partial full teardown/);
+  assert.match(workflow, /if: steps\.managed_state\.outputs\.has_resources == 'true'/);
+  assert.match(workflow, /managed state is already empty; apply will not recreate resources/);
+  assert.match(workflow, /verify full decommission state is empty/);
 });
 
 test("destructive Terraform behavior defaults off outside the guarded lifecycle workflow", async () => {
