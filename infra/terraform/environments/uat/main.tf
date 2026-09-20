@@ -74,6 +74,7 @@ module "foundation" {
   project_id         = var.project_id
   environment        = "uat"
   source_bucket_name = var.source_bucket_name
+  decommission_mode  = var.decommission_mode
 }
 
 module "api_runtime" {
@@ -82,6 +83,7 @@ module "api_runtime" {
   environment               = "uat"
   api_image                 = var.api_image
   api_service_account_email = module.foundation.api_service_account
+  decommission_mode         = var.decommission_mode
 }
 
 module "api_gateway" {

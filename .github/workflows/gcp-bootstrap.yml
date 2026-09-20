@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       GCP_REGION: asia-southeast1
@@ -42,6 +43,7 @@ jobs:
       TF_VAR_api_image: ""
       TF_VAR_cloudflare_zone_name: ""
       TF_VAR_enable_cloudflare_managed_waf: "false"
+      TF_VAR_decommission_mode: "false"
 
     steps:
       - name: Validate bootstrap roots
@@ -109,19 +111,7 @@ jobs:
           fi
 
       - name: Bootstrap protected Terraform state
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
-            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
-              --project="${GCP_PROJECT_ID}" \
-              --location="${GCP_REGION}" \
-              --uniform-bucket-level-access
-          fi
-          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" \
-            --versioning \
-            --uniform-bucket-level-access \
-            --public-access-prevention=enforced
+        run: bash .github/scripts/terraform-state.sh ensure
 
       - name: Terraform init
         shell: bash
@@ -129,6 +119,9 @@ jobs:
           terraform -chdir="${TF_ROOT}" init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="prefix=corvis/${{ inputs.environment }}"
+
+      - name: Re-adopt retained KMS bootstrap anchors
+        run: bash .github/scripts/terraform-kms-state.sh adopt
 
       - name: Terraform format check
         run: terraform fmt -check -recursive infra/terraform
@@ -149,6 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud storage buckets describe "gs://${GCP_PROJECT_ID}-documents" --project="${GCP_PROJECT_ID}" >/dev/null
+          gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${GCP_PROJECT_ID}" >/dev/null
           gcloud artifacts repositories describe corvis \
             --project="${GCP_PROJECT_ID}" \
             --location="${GCP_REGION}" >/dev/null
@@ -173,7 +167,8 @@ jobs:
             echo "- Project: `${GCP_PROJECT_ID}`"
             echo "- WIF provider: `${GCP_WIF_PROVIDER}`"
             echo "- Deploy identity: `${GCP_DEPLOY_SERVICE_ACCOUNT}`"
-            echo "- Terraform state: `gs://${TF_STATE_BUCKET}`"
+            echo "- Terraform state: `gs://${TF_STATE_BUCKET}` (versioned; stale noncurrent versions lifecycle-managed)"
+            echo "- Retained KMS anchors: automatically re-adopted after a prior full decommission"
             echo "- Runtime image: intentionally disabled during bootstrap"
             echo "- Cloudflare edge: intentionally disabled during bootstrap"
             echo "- Static GCP credential secret: not used"
