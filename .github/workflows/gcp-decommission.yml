@@ -113,7 +113,33 @@ jobs:
           terraform fmt -check -recursive infra/terraform
           terraform -chdir="${TF_ROOT}" validate
 
+      - name: Inspect managed Terraform state
+        id: managed_state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t resources < <(terraform -chdir="${TF_ROOT}" state list)
+          if (( ${#resources[@]} == 0 )); then
+            echo "has_resources=false" >> "${GITHUB_OUTPUT}"
+            echo "Terraform backend exists but contains no managed resources."
+          else
+            echo "has_resources=true" >> "${GITHUB_OUTPUT}"
+            echo "Terraform tracks ${#resources[@]} managed resources."
+          fi
+
+      - name: Refuse idle transition from empty state
+        if: inputs.mode == 'idle' && steps.managed_state.outputs.has_resources == 'false'
+        shell: bash
+        run: |
+          echo "Idle decommission requires an initialized managed environment. The backend is empty; run Bootstrap GCP foundation before using idle mode."
+          exit 1
+
+      - name: Repair retained KMS state after a partial full teardown
+        if: steps.managed_state.outputs.has_resources == 'true'
+        run: bash .github/scripts/terraform-kms-state.sh adopt
+
       - name: Resolve current runtime for safe protection removal
+        if: steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -141,11 +167,12 @@ jobs:
           fi
 
       - name: Plan lifecycle preparation
+        if: steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=lifecycle-prep.tfplan
 
       - name: Apply lifecycle preparation
-        if: inputs.action == 'apply'
+        if: inputs.action == 'apply' && steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve lifecycle-prep.tfplan
 
@@ -158,13 +185,17 @@ jobs:
           {
             echo "### Full decommission preview"
             echo "- Terraform-managed resources currently tracked: `${count}`"
-            echo "- Apply will first make deletion-protected resources removable."
-            echo "- Apply then detaches the recoverable KMS anchor from state, destroys all other Terraform-managed resources, verifies empty state, hibernates KMS rotation/versions, and deletes the remote state bucket last."
+            if [[ "${{ steps.managed_state.outputs.has_resources }}" == "true" ]]; then
+              echo "- Apply will first make deletion-protected resources removable."
+              echo "- Apply then detaches the recoverable KMS anchor from state, destroys all other Terraform-managed resources, verifies empty state, hibernates KMS rotation/versions, and deletes the remote state bucket last."
+            else
+              echo "- Managed state is already empty; apply will not recreate resources and will resume final KMS hibernation/state-bucket deletion only."
+            fi
             echo "- Source data, Artifact Registry images, runtime secrets and known-good manifests are deleted in full mode."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Idle environment
-        if: inputs.action == 'apply' && inputs.mode == 'idle'
+        if: inputs.action == 'apply' && inputs.mode == 'idle' && steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -183,7 +214,7 @@ jobs:
           bash .github/scripts/terraform-state.sh require
 
       - name: Full Terraform decommission
-        if: inputs.action == 'apply' && inputs.mode == 'full'
+        if: inputs.action == 'apply' && inputs.mode == 'full' && steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -194,6 +225,18 @@ jobs:
           remaining="$(terraform -chdir="${TF_ROOT}" state list)"
           if [[ -n "${remaining}" ]]; then
             echo "Terraform state is not empty after full destroy:"
+            printf '%s\n' "${remaining}"
+            exit 1
+          fi
+
+      - name: Verify full decommission state is empty
+        if: inputs.action == 'apply' && inputs.mode == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          remaining="$(terraform -chdir="${TF_ROOT}" state list)"
+          if [[ -n "${remaining}" ]]; then
+            echo "Refusing final teardown because Terraform still tracks resources:"
             printf '%s\n' "${remaining}"
             exit 1
           fi
