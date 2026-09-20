@@ -152,9 +152,9 @@ test("canonicalization migration preserves immutable reviewed lineage and fails 
   assert.match(sql, /alter table corvis_facts\.observation_source_reference force row level security/);
 
   assert.match(sql, /create or replace function corvis_facts\.canonicalize_reviewed_extraction/);
-  assert.match(sql, /g\.status='ready'/);
-  assert.match(sql, /g\.candidate_set_sha256=p_candidate_set_sha256/);
-  assert.match(sql, /g\.decision_set_sha256=p_decision_set_sha256/);
+  assert.match(sql, /from corvis_review\.extraction_review_gate[\s\s\S]*?and status='ready'/);
+  assert.match(sql, /and candidate_set_sha256=p_candidate_set_sha256/);
+  assert.match(sql, /and decision_set_sha256=p_decision_set_sha256/);
   assert.match(sql, /e\.result ->> 'canonicalizationready'='true'/);
   assert.match(sql, /effective_payload := candidate_row\.payload \|\| coalesce\(correction_payload,'\{\}'::jsonb\)/);
   assert.match(sql, /canonicalization observation fund identity is unresolved/);
