@@ -1,0 +1,235 @@
+name: Decommission GCP environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target GitHub Environment
+        required: true
+        type: choice
+        options: [dev, uat, prod]
+        default: uat
+      mode:
+        description: idle removes public/runtime compute but retains durable foundation; full deletes Terraform-managed data/resources and remote state
+        required: true
+        type: choice
+        options: [idle, full]
+        default: idle
+      action:
+        description: Preview or execute the lifecycle transition
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+      confirmation:
+        description: For apply enter IDLE <env> or DECOMMISSION <env> DELETE DATA AND STATE
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment }}
+    env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      TF_ROOT: infra/terraform/environments/${{ inputs.environment }}
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
+      TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
+      TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      TF_VAR_decommission_mode: "true"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Validate lifecycle request
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GCP_PROJECT_ID}" || -z "${GCP_WIF_PROVIDER}" ]]; then
+            echo "GCP_PROJECT_ID and GCP_WIF_PROVIDER are required."
+            exit 1
+          fi
+          if [[ "${{ inputs.action }}" == "apply" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Lifecycle apply is allowed only from main."
+            exit 1
+          fi
+          if [[ "${{ inputs.action }}" == "apply" ]]; then
+            if [[ "${{ inputs.mode }}" == "idle" ]]; then
+              expected="IDLE ${{ inputs.environment }}"
+            else
+              expected="DECOMMISSION ${{ inputs.environment }} DELETE DATA AND STATE"
+            fi
+            if [[ "${CONFIRMATION}" != "${expected}" ]]; then
+              echo "Confirmation mismatch. Expected exactly: ${expected}"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+
+      - name: Require initialized Terraform state
+        run: bash .github/scripts/terraform-state.sh require
+
+      - name: Terraform init and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=corvis/${{ inputs.environment }}"
+          terraform fmt -check -recursive infra/terraform
+          terraform -chdir="${TF_ROOT}" validate
+
+      - name: Resolve current runtime for safe protection removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          service="corvis-api-${CORVIS_ENVIRONMENT}"
+          current_image=""
+          if gcloud run services describe "${service}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" >/dev/null 2>&1; then
+            current_image="$(gcloud run services describe "${service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format='value(template.containers[0].image)')"
+            if [[ ! "${current_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "Existing Cloud Run image is not an immutable digest; refusing destructive lifecycle operation."
+              exit 1
+            fi
+          fi
+          echo "TF_VAR_api_image=${current_image}" >> "${GITHUB_ENV}"
+
+          if terraform -chdir="${TF_ROOT}" state list | grep -q '^module.cloudflare_edge'; then
+            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+              echo "Cloudflare resources exist in Terraform state, so CLOUDFLARE_API_TOKEN is required for lifecycle changes."
+              exit 1
+            fi
+          fi
+
+      - name: Plan lifecycle preparation
+        shell: bash
+        run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=lifecycle-prep.tfplan
+
+      - name: Apply lifecycle preparation
+        if: inputs.action == 'apply'
+        shell: bash
+        run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve lifecycle-prep.tfplan
+
+      - name: Preview full decommission inventory
+        if: inputs.action == 'plan' && inputs.mode == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(terraform -chdir="${TF_ROOT}" state list | wc -l | tr -d ' ')"
+          {
+            echo "### Full decommission preview"
+            echo "- Terraform-managed resources currently tracked: `${count}`"
+            echo "- Apply will first make deletion-protected resources removable."
+            echo "- Apply then detaches the recoverable KMS anchor from state, destroys all other Terraform-managed resources, verifies empty state, hibernates KMS rotation/versions, and deletes the remote state bucket last."
+            echo "- Source data, Artifact Registry images, runtime secrets and known-good manifests are deleted in full mode."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Idle environment
+        if: inputs.action == 'apply' && inputs.mode == 'idle'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TF_VAR_api_image=""
+          export TF_VAR_cloudflare_zone_name=""
+          export TF_VAR_decommission_mode="false"
+          terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=idle.tfplan
+          terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve idle.tfplan
+
+          if gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" >/dev/null 2>&1; then
+            echo "Cloud Run API still exists after idle transition."
+            exit 1
+          fi
+          bash .github/scripts/terraform-state.sh require
+
+      - name: Full Terraform decommission
+        if: inputs.action == 'apply' && inputs.mode == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" state rm module.foundation.google_kms_crypto_key.source || true
+          terraform -chdir="${TF_ROOT}" state rm module.foundation.google_kms_key_ring.corvis || true
+          terraform -chdir="${TF_ROOT}" destroy -lock-timeout=5m -auto-approve
+
+          remaining="$(terraform -chdir="${TF_ROOT}" state list)"
+          if [[ -n "${remaining}" ]]; then
+            echo "Terraform state is not empty after full destroy:"
+            printf '%s\n' "${remaining}"
+            exit 1
+          fi
+
+      - name: Hibernate retained KMS anchor
+        if: inputs.action == 'apply' && inputs.mode == 'full'
+        run: bash .github/scripts/terraform-kms-state.sh hibernate
+
+      - name: Delete remote Terraform state last
+        if: inputs.action == 'apply' && inputs.mode == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud storage rm --recursive "gs://${TF_STATE_BUCKET}"
+          if gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Terraform state bucket still exists after full decommission."
+            exit 1
+          fi
+
+      - name: Lifecycle summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### GCP environment lifecycle"
+            echo "- Environment: `${{ inputs.environment }}`"
+            echo "- Mode: `${{ inputs.mode }}`"
+            echo "- Action: `${{ inputs.action }}`"
+            if [[ "${{ inputs.action }}" == "apply" && "${{ inputs.mode }}" == "idle" ]]; then
+              echo "- Durable foundation/data/state: retained"
+              echo "- Public API runtime/edge: decommissioned"
+              echo "- Re-provision: Build release image, then Terraform deploy"
+            elif [[ "${{ inputs.action }}" == "apply" && "${{ inputs.mode }}" == "full" ]]; then
+              echo "- Terraform-managed environment/data/state: decommissioned"
+              echo "- KMS key/key-ring: retained as disabled bootstrap anchors; rotation removed"
+              echo "- External trust anchor (project + WIF + corvis-deploy): retained"
+              echo "- Re-provision: Bootstrap GCP foundation plan/apply first"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
