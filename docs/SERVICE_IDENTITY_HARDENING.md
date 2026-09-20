@@ -13,6 +13,14 @@ Corvis production service identities are keyless and least-privilege by default.
 - `service_identity_grant` has forced RLS and no client mutation policy. Provisioning, renewal, review, and disable operations must use an audited server/service-role path with explicit tenant predicates.
 - Session revocation remains an independent deny control. A current lifecycle grant does not override a revoked session.
 
+### Processing-worker OIDC binding
+
+Approved Pub/Sub push and Cloud Tasks delivery to `/api/internal/processing-stage` uses the dedicated worker service account and a Google-issued OIDC ID token. The application independently verifies the RS256 signature against Google's published keys, the Google issuer, token lifetime, the exact configured worker URL audience and the exact configured worker service-account email.
+
+For this boundary, provision the Google token's immutable numeric `sub` value as the `corvis_control.identity_subject.subject` for `auth_method='service_account'`. Do not use transport-provided tenant, workspace or role claims to construct authorization. After token verification, Corvis resolves active workspace mappings and re-runs the normal Postgres membership, data-right, lifecycle-grant and session-revocation checks for the durable delivery's tenant/document.
+
+Worker session revocation uses a stable application session identifier derived from the immutable Google subject (`processing-worker:<sha256-prefix>`). Operators must use the corresponding subject/session pair when an immediate application-layer cut-off is required in addition to disabling the GCP service account or Cloud Run invocation grant.
+
 ## Lifecycle operating rule
 
 Each application service identity must have a named purpose, owner/reviewer recorded as `reviewed_by_subject`, a finite `valid_until`, and a finite `next_review_at` no later than expiry. Renewal is an explicit control-plane action; an expired grant or overdue review fails closed on the next authorization lookup.
@@ -31,6 +39,7 @@ Do not substitute mocks or local assertions for provider evidence. Once the real
 6. Service-role/server access still applies explicit tenant predicates and does not depend on RLS for isolation.
 7. A service-account subject without a lifecycle grant, with an expired grant, with an overdue review, or with a disabled grant is denied.
 8. A current service-account grant is still denied when its session has been revoked.
-9. Record timestamps, environment/project identifiers, migration version, test actor/subject identifiers, SQL/API commands used, and sanitized outputs in the security acceptance evidence artifact. Never include credentials or raw tokens.
+9. Processing ingress evidence proves wrong issuer/audience/email, expired tokens, disabled/expired/revoked service identity, wrong tenant/document and ambiguous workspace authorization all fail before the stage claim.
+10. Record timestamps, environment/project identifiers, migration version, test actor/subject identifiers, SQL/API commands used, and sanitized outputs in the security acceptance evidence artifact. Never include credentials or raw tokens.
 
 The UAT evidence item remains open until these checks have been executed against the real provider environment and the resulting evidence has been reviewed.
