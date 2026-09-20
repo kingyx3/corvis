@@ -221,8 +221,9 @@ test("represented stage honors stage cancellation before provider work", async (
 });
 
 test("representation provider configuration is optional and bounded", () => {
-  assert.equal(configuredRepresentationProducerConfig({}), undefined);
+  assert.equal(configuredRepresentationProducerConfig({ NODE_ENV: "test" }), undefined);
   assert.deepEqual(configuredRepresentationProducerConfig({
+    NODE_ENV: "test",
     CORVIS_REPRESENTATION_ENDPOINT: "https://representation.example/",
     CORVIS_OBJECT_STORE_BUCKET: outputBucket,
     CORVIS_REPRESENTATION_TIMEOUT_MS: "999999",
@@ -233,6 +234,7 @@ test("representation provider configuration is optional and bounded", () => {
     timeoutMs: 25_000,
   });
   assert.throws(() => configuredRepresentationProducerConfig({
+    NODE_ENV: "test",
     CORVIS_REPRESENTATION_ENDPOINT: "https://representation.example",
   }), /CORVIS_OBJECT_STORE_BUCKET/);
 });
