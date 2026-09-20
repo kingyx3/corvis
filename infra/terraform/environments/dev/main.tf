@@ -21,4 +21,5 @@ module "foundation" {
   project_id         = var.project_id
   environment        = "dev"
   source_bucket_name = var.source_bucket_name
+  decommission_mode  = var.decommission_mode
 }
