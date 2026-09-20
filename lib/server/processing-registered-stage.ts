@@ -6,6 +6,7 @@ import {
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { createConfiguredExtractedStageHandler } from "./processing-extracted-stage.ts";
 import { createConfiguredRepresentedStageHandler } from "./processing-represented-stage.ts";
+import { createConfiguredReviewedStageHandler } from "./processing-reviewed-stage.ts";
 
 export type RegisteredArtifactRecord = {
   artifactVersionId: string;
@@ -126,10 +127,11 @@ export function createRegisteredArtifactStageHandler(repository: RegisteredArtif
 /**
  * Current production composition for processing-stage effects.
  *
- * Registration is always configured. Representation and extraction are each
- * configured only when their approved keyless internal endpoint is bound for the
- * environment; otherwise that stage remains fail-closed. Later governed stages
- * remain deliberately absent until their own handlers are implemented and tested.
+ * Registration and governed review/quality are always configured because both use
+ * Corvis-owned Postgres state. Representation and extraction are each configured
+ * only when their approved keyless internal endpoint is bound for the environment;
+ * otherwise that stage remains fail-closed. Canonicalization and later governed
+ * stages remain deliberately absent until their own handlers are implemented and tested.
  */
 export function createProductionProcessingStageEffectRouter(
   db: PostgresSqlApi,
@@ -139,8 +141,10 @@ export function createProductionProcessingStageEffectRouter(
   const registered = createRegisteredArtifactStageHandler(new PostgresRegisteredArtifactRepository(db));
   const represented = createConfiguredRepresentedStageHandler(db, env);
   const extracted = createConfiguredExtractedStageHandler(db, env);
+  const reviewed = createConfiguredReviewedStageHandler(db);
   return new BoundedProcessingStageEffectRouter({
     registered,
+    reviewed,
     ...(represented ? { represented } : {}),
     ...(extracted ? { extracted } : {}),
   }, timeoutMs);
