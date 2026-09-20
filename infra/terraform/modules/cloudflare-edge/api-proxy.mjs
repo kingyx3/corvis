@@ -1,4 +1,4 @@
-export default {
+const apiProxyWorker = {
   async fetch(request, env) {
     const incoming = new URL(request.url);
 
@@ -35,3 +35,5 @@ export default {
     return response;
   },
 };
+
+export default apiProxyWorker;
