@@ -4,6 +4,7 @@ import {
   type ProcessingStageHandler,
 } from "./processing-stage-effects.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { createConfiguredCanonicalizedStageHandler } from "./processing-canonicalized-stage.ts";
 import { createConfiguredExtractedStageHandler } from "./processing-extracted-stage.ts";
 import { createConfiguredRepresentedStageHandler } from "./processing-represented-stage.ts";
 import { createConfiguredReviewedStageHandler } from "./processing-reviewed-stage.ts";
@@ -127,11 +128,12 @@ export function createRegisteredArtifactStageHandler(repository: RegisteredArtif
 /**
  * Current production composition for processing-stage effects.
  *
- * Registration and governed review/quality are always configured because both use
- * Corvis-owned Postgres state. Representation and extraction are each configured
- * only when their approved keyless internal endpoint is bound for the environment;
- * otherwise that stage remains fail-closed. Canonicalization and later governed
- * stages remain deliberately absent until their own handlers are implemented and tested.
+ * Registration, governed review/quality and canonicalization are always configured
+ * because they use Corvis-owned Postgres state. Representation and extraction are
+ * each configured only when their approved keyless internal endpoint is bound for
+ * the environment; otherwise that stage remains fail-closed. Reconciliation,
+ * consolidation and publication remain deliberately absent until their own handlers
+ * are implemented and tested.
  */
 export function createProductionProcessingStageEffectRouter(
   db: PostgresSqlApi,
@@ -142,9 +144,11 @@ export function createProductionProcessingStageEffectRouter(
   const represented = createConfiguredRepresentedStageHandler(db, env);
   const extracted = createConfiguredExtractedStageHandler(db, env);
   const reviewed = createConfiguredReviewedStageHandler(db);
+  const canonicalized = createConfiguredCanonicalizedStageHandler(db);
   return new BoundedProcessingStageEffectRouter({
     registered,
     reviewed,
+    canonicalized,
     ...(represented ? { represented } : {}),
     ...(extracted ? { extracted } : {}),
   }, timeoutMs);
