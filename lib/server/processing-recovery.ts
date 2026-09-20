@@ -29,21 +29,11 @@ export async function recoverDeadLetterProcessingJob(input: {
   db?: PostgresSqlApi;
 }): Promise<DeadLetterRecoveryResult> {
   const db = input.db ?? controlDb();
-  const rows = await db.query(`select state,attempt,max_attempts,version
-    from corvis_control.processing_job
-    where tenant_id=$1 and job_id=$2 limit 1`, [input.identity.tenantId,input.jobId]);
-  const job = rows[0];
-  if (!job || number(job,"version") !== input.expectedVersion) {
-    return { ok:false, reason:"not_found_or_version_conflict" };
-  }
-  if (text(job,"state") !== "dead_letter") {
-    return { ok:false, reason:"not_terminal_dead_letter" };
-  }
-  if (number(job,"attempt") < number(job,"max_attempts")) {
-    return { ok:false, reason:"not_exhausted" };
-  }
-
   try {
+    // The database function checks an existing deterministic recovery event before
+    // locking the expected job version. That ordering is deliberate: an exact repeat
+    // of a successful idempotent command must return the original result even though
+    // the first command already advanced the job version.
     const result = await db.query(`select * from corvis_control.recover_dead_letter_processing_job(
       $1::uuid,$2,$3,$4::uuid,$5,$6,$7
     )`, [
