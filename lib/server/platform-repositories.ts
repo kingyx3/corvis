@@ -1,11 +1,12 @@
-import type {
-  AuditEvent,
-  ExportManifest,
-  ProcessingJob,
-  ReconciliationResolutionCommand,
-  RequestIdentity,
-  ReviewDecision,
-  SnapshotPublication,
+import {
+  hasPermission,
+  type AuditEvent,
+  type ExportManifest,
+  type ProcessingJob,
+  type ReconciliationResolutionCommand,
+  type RequestIdentity,
+  type ReviewDecision,
+  type SnapshotPublication,
 } from "../../core/enterprise.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
@@ -205,16 +206,45 @@ export class PostgresOperationsRepository {
   async jobs(identity: RequestIdentity): Promise<ProcessingJob[]> {
     const documentIds = identity.entitlements.documentIds ?? [];
     if (documentIds.length === 0) return [];
-    const rows = await this.db.query(`select * from corvis_control.processing_job
-      where tenant_id=$1
-        and document_id::text in (select jsonb_array_elements_text($2::jsonb))
-      order by updated_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
+    const rows = await this.db.query(`select j.*,
+        retry.next_attempt_at,
+        recovery.created_at as last_recovery_at,
+        recovery.reason_code as last_recovery_reason_code
+      from corvis_control.processing_job j
+      left join lateral (
+        select i.next_attempt_at
+        from corvis_control.event_inbox i
+        where i.tenant_id=j.tenant_id
+          and i.consumer_name='processing-stage-worker'
+          and i.aggregate_id=j.document_id::text
+          and i.state='retryable'
+        order by i.last_received_at desc,i.event_id desc
+        limit 1
+      ) retry on true
+      left join lateral (
+        select r.created_at,r.reason_code
+        from corvis_control.processing_recovery_event r
+        where r.tenant_id=j.tenant_id and r.job_id=j.job_id
+        order by r.created_at desc,r.recovery_event_id desc
+        limit 1
+      ) recovery on true
+      where j.tenant_id=$1
+        and j.document_id::text in (select jsonb_array_elements_text($2::jsonb))
+      order by j.updated_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
+    const admin = hasPermission(identity,"admin:manage");
     return rows.map((row) => ({
       id: String(row.job_id ?? ""), documentId: String(row.document_id ?? ""), tenantId: identity.tenantId,
       stage: String(row.stage ?? "registered") as ProcessingJob["stage"], state: String(row.state ?? "queued") as ProcessingJob["state"],
       attempt: Number(row.attempt ?? 0), maxAttempts: Number(row.max_attempts ?? 0), correlationId: String(row.correlation_id ?? ""),
       version: Number(row.version ?? 1), createdAt: String(row.created_at ?? ""), updatedAt: String(row.updated_at ?? ""),
-      lastError: row.last_error == null ? undefined : String(row.last_error),
+      blockedReason: row.blocked_reason == null ? undefined : String(row.blocked_reason),
+      nextAttemptAt: row.next_attempt_at == null ? undefined : String(row.next_attempt_at),
+      recoveryCount: Number(row.recovery_count ?? 0),
+      lastRecoveryAt: row.last_recovery_at == null ? undefined : String(row.last_recovery_at),
+      lastRecoveryReasonCode: row.last_recovery_reason_code == null ? undefined : String(row.last_recovery_reason_code),
+      // Raw provider/worker errors are an operator diagnostic and may contain internal
+      // implementation detail. Customer/read-only job status receives state only.
+      lastError: admin && row.last_error != null ? String(row.last_error) : undefined,
     }));
   }
 
