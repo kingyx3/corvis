@@ -4,6 +4,7 @@ import {
   type ProcessingStageHandler,
 } from "./processing-stage-effects.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { createConfiguredRepresentedStageHandler } from "./processing-represented-stage.ts";
 
 export type RegisteredArtifactRecord = {
   artifactVersionId: string;
@@ -124,13 +125,20 @@ export function createRegisteredArtifactStageHandler(repository: RegisteredArtif
 /**
  * Current production composition for processing-stage effects.
  *
- * Only the source-registration gate is configured so later business stages remain
- * fail-closed until their own governed handlers are implemented and tested.
+ * Registration is always configured. Representation is configured only when the
+ * keyless internal representation endpoint is bound for the environment; otherwise
+ * it remains fail-closed. Later business stages remain deliberately absent until
+ * their own governed handlers are implemented and tested.
  */
 export function createProductionProcessingStageEffectRouter(
   db: PostgresSqlApi,
   timeoutMs = 30_000,
+  env: NodeJS.ProcessEnv = process.env,
 ): BoundedProcessingStageEffectRouter {
   const registered = createRegisteredArtifactStageHandler(new PostgresRegisteredArtifactRepository(db));
-  return new BoundedProcessingStageEffectRouter({ registered }, timeoutMs);
+  const represented = createConfiguredRepresentedStageHandler(db, env);
+  return new BoundedProcessingStageEffectRouter({
+    registered,
+    ...(represented ? { represented } : {}),
+  }, timeoutMs);
 }

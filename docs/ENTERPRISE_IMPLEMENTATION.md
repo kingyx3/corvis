@@ -70,9 +70,12 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
 - Processing-job/outbox schemas, authoritative stage claims, deterministic effect keys/journaling and retry/dead-letter state primitives exist.
 - The processing transport has durable lease ownership, bounded transport retry/dead-letter behavior, Pub/Sub publication and Cloud Tasks scheduling adapters that honor persisted retry timing.
+- Authenticated `POST /api/internal/processing-stage` ingress now verifies Google OIDC for approved Pub/Sub/Cloud Tasks callers, re-resolves the immutable service-account subject through Postgres lifecycle/membership/data-right controls, and invokes the authoritative Postgres stage/effect worker composition without accepting transport claims as application authorization.
 - `BoundedProcessingStageEffectRouter` isolates stage handlers with fail-closed missing bindings and hard timeout/cancellation behavior.
-- The first concrete production stage handler revalidates the exact registered artifact against tenant/document-scoped Postgres metadata and requires clean/released immutable GCS generation plus SHA-256 lineage before the pipeline can advance beyond registration.
-- Later representation/extraction/review/canonical/publication handlers, authenticated live worker composition, operator dead-letter/replay/status completion and production-like UAT evidence remain tracked in issue #79; unimplemented stages intentionally fail closed.
+- The `registered` production handler revalidates the exact source artifact against tenant/document-scoped Postgres metadata and requires clean/released immutable GCS generation plus SHA-256 lineage before the pipeline can advance beyond registration.
+- The `represented` production handler now defines deterministic representation identity, exact predecessor-lineage handoff, keyless bounded invocation of a Corvis representation service, independent GCS generation/hash/source verification and conflict-idempotent forced-RLS Postgres representation metadata. It is composed only when `CORVIS_REPRESENTATION_ENDPOINT` is supplied; otherwise the represented stage remains fail-closed.
+- Extraction/review/canonical/reconciliation/consolidation/publication handlers, operator dead-letter/replay/status completion and production-like UAT evidence remain tracked in issue #79; unimplemented stages intentionally fail closed.
+- Merging the authenticated ingress or represented-stage code does **not** prove real Pub/Sub/Cloud Tasks IAM, a representation provider, UAT GCS/Postgres bindings or production-like recovery behavior. Those remain activation/evidence work.
 - `lib/server/telemetry.ts` provides structured telemetry hooks.
 - Export job/manifest/checksum and webhook-signing/replay foundations exist.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
@@ -115,4 +118,4 @@ Snowflake is specifically **not** a required application adapter at launch; any 
 
 ## Implementation is not activation
 
-Merging code does not prove an IdP, production GCS bucket, Postgres project/RLS policy, Cloudflare edge, malware scanner, backup or operational control is operating correctly. [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) defines the live technical activation/evidence checks; Confluence retains the final business/control readiness gate.
+Merging code does not prove an IdP, production GCS bucket, Postgres project/RLS policy, Cloudflare edge, malware scanner, representation provider, backup or operational control is operating correctly. [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) defines the live technical activation/evidence checks; Confluence retains the final business/control readiness gate.
