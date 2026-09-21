@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "apiPrefix": "/api/v1",
+  "openapiVersion": "1.0.0",
+  "publishedOperations": {
+    "/me": ["get"],
+    "/documents": ["get"],
+    "/funds": ["get"],
+    "/companies": ["get"],
+    "/company-lifecycle-events": ["get"],
+    "/metric-definitions": ["get"],
+    "/observations": ["get"],
+    "/consolidated-facts": ["get"],
+    "/snapshots": ["get"],
+    "/review": ["post"],
+    "/snapshots/publish": ["post"],
+    "/research": ["post"],
+    "/exports": ["post"],
+    "/jobs": ["get"],
+    "/uploads/initiate": ["post"],
+    "/uploads/{uploadId}": ["get", "delete"],
+    "/uploads/{uploadId}/complete": ["post"],
+    "/admin/readiness": ["get"],
+    "/admin/webhooks/subscriptions": ["get", "post"],
+    "/admin/webhooks/subscriptions/{webhookId}": ["patch"],
+    "/admin/webhooks/subscriptions/{webhookId}/rotate-signing-key": ["post"],
+    "/admin/webhooks/subscriptions/{webhookId}/deliveries": ["get"]
+  },
+  "stableConventions": [
+    "correlationId",
+    "invalid_cursor",
+    "enterpriseSession"
+  ]
+}

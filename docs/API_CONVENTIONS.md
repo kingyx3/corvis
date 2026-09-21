@@ -160,8 +160,14 @@ and `assertPermission()`/`assertRole()` before doing anything else; this
 repository-wide contract is enforced by `lib/server/security-contract.test.ts`,
 not by convention alone.
 
-## Versioning
+## Versioning and deprecation
 
-`/api/v1` is the only version today. There is no deprecation/sunset
-mechanism yet; a breaking change to a resource should add a new version
-prefix rather than changing `/api/v1`'s existing contract in place.
+`/api/v1` is the published version today. `openapi/v1-compatibility-baseline.json`
+is an append-only CI baseline for already-published v1 paths/methods and stable
+contract conventions: additive operations are allowed, but a baseline operation
+cannot silently disappear from `openapi/corvis-v1.yaml`.
+
+Breaking changes use a new version prefix rather than changing v1 in place.
+The governed migration/notice/sunset process, including the rule that security
+and tenant-isolation fixes override compatibility concerns, is defined in
+`docs/API_DEPRECATION.md`.
