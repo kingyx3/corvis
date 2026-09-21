@@ -154,7 +154,9 @@ $$;
 
 -- Replace the original correction replay starter. It now resolves one exact retained
 -- source artifact, creates a namespaced registered job, and gives the registered
--- handler the immutable artifact/ingestion identity it already requires.
+-- handler the immutable artifact/ingestion identity it already requires. The root
+-- delivery is a DocumentRegistered event (not ProcessingStageReady) because there is
+-- intentionally no predecessor effect at the beginning of a processing journey.
 create or replace function corvis_control.request_data_correction_replay(
   p_tenant_id uuid,
   p_incident_id uuid,
@@ -266,11 +268,11 @@ begin
     raise exception 'correction replay job identity conflicts with existing durable state';
   end if;
 
-  computed_event_id := md5(p_tenant_id::text || ':' || computed_job_id || ':ready')::uuid;
+  computed_event_id := md5(p_tenant_id::text || ':' || computed_job_id || ':document-registered-replay')::uuid;
   insert into corvis_control.outbox_event
     (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
   values (
-    p_tenant_id,computed_event_id,'ProcessingStageReady','processing_job',computed_job_id,
+    p_tenant_id,computed_event_id,'DocumentRegistered','document',current_row.document_id::text,
     jsonb_build_object(
       'jobId',computed_job_id,
       'documentId',current_row.document_id,
