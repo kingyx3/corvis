@@ -1,12 +1,20 @@
 terraform {
   required_providers {
-    google = { source = "hashicorp/google" }
-    google-beta = { source = "hashicorp/google-beta" }
+    google = {
+      source = "hashicorp/google"
+    }
+    google-beta = {
+      source = "hashicorp/google-beta"
+    }
   }
 }
 
 locals {
-  labels = { service = "corvis", environment = var.environment, managed_by = "terraform" }
+  labels = {
+    service     = "corvis"
+    environment = var.environment
+    managed_by  = "terraform"
+  }
 }
 
 resource "google_service_account" "gateway" {
@@ -60,7 +68,12 @@ resource "google_apikeys_key" "cloudflare_edge" {
   project      = var.project_id
   name         = "corvis-web-edge-${var.environment}"
   display_name = "Corvis customer web edge ${var.environment}"
-  restrictions { api_targets { service = google_project_service.managed_api.service } }
+
+  restrictions {
+    api_targets {
+      service = google_project_service.managed_api.service
+    }
+  }
 }
 
 resource "google_api_gateway_api_config" "web" {
@@ -71,17 +84,31 @@ resource "google_api_gateway_api_config" "web" {
   display_name         = "Corvis customer web ${var.environment}"
   labels               = local.labels
 
-  gateway_config { backend_config { google_service_account = google_service_account.gateway.email } }
+  gateway_config {
+    backend_config {
+      google_service_account = google_service_account.gateway.email
+    }
+  }
 
   openapi_documents {
     document {
       path = "openapi.yaml"
-      contents = base64encode(templatefile("${path.module}/openapi.yaml.tftpl", { backend_uri = nonsensitive(var.cloud_run_service_uri) }))
+      contents = base64encode(templatefile("${path.module}/openapi.yaml.tftpl", {
+        backend_uri = nonsensitive(var.cloud_run_service_uri)
+      }))
     }
   }
 
-  lifecycle { create_before_destroy = true }
-  depends_on = [google_cloud_run_v2_service_iam_member.gateway_invoker, google_service_account_iam_member.gateway_token_creator, google_service_account_iam_member.deployer_act_as_gateway, google_project_service.managed_api]
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  depends_on = [
+    google_cloud_run_v2_service_iam_member.gateway_invoker,
+    google_service_account_iam_member.gateway_token_creator,
+    google_service_account_iam_member.deployer_act_as_gateway,
+    google_project_service.managed_api,
+  ]
 }
 
 resource "google_api_gateway_gateway" "web" {
