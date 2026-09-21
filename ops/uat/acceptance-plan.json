@@ -23,6 +23,8 @@
     "retry-dead-letter-and-authorized-recovery",
     "correction-replay-and-republication-idempotency",
     "cross-tenant-and-service-identity-negative-tests",
+    "production-no-demo-or-mock-fallback",
+    "performance-and-load-budgets",
     "known-good-rollback",
     "sanitized-operator-runbook-transcript"
   ],
@@ -35,6 +37,8 @@
     {"id":"correction-republication","required":true,"issues":[77,79],"assertions":["original-history-immutable","replacement-version-linked","replay-idempotent"]},
     {"id":"tenant-isolation","required":true,"issues":[8,12,79],"assertions":["cross-tenant-read-denied","cross-tenant-write-denied","rls-enforced"]},
     {"id":"service-identity-negative","required":true,"issues":[8,79],"assertions":["customer-cannot-invoke-api-directly","admin-presentation-has-no-data-plane-credentials","unauthorized-worker-invocation-denied"]},
+    {"id":"no-production-mocks","required":true,"issues":[12,13],"assertions":["demo-mode-disabled","unknown-runtime-surface-fails-closed","provider-readiness-required"]},
+    {"id":"performance-load","required":true,"issues":[9,12],"assertions":["api-latency-budget","page-interaction-budget","large-document-budget","quarter-end-concurrency-budget"]},
     {"id":"rollback","required":true,"issues":[13],"assertions":["known-good-pointer-unchanged-on-failed-acceptance","rollback-to-accepted-digest"]},
     {"id":"customer-cutover-dry-run","required":true,"issues":[78],"assertions":["manifest-valid","acceptance-scorecard-ready","rollback-plan-present"]},
     {"id":"security-assessment-readiness","required":true,"issues":[80],"assertions":["scope-current","sanitized-test-corpus","rules-of-engagement-ready"]}
