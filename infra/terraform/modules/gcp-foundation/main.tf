@@ -206,16 +206,14 @@ resource "google_project_iam_member" "worker_log_writer" {
   member  = "serviceAccount:${google_service_account.worker.email}"
 }
 
-resource "google_storage_bucket_iam_member" "api_source_writer" {
+# The API owns upload-session state and quarantine lifecycle in this bucket. Its
+# GCS adapter creates, reads/lists and deletes object-level records, so Creator
+# is insufficient; Object User is the narrow predefined object CRUD role and
+# does not grant bucket administration.
+resource "google_storage_bucket_iam_member" "api_source_objects" {
   bucket = google_storage_bucket.source.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.api.email}"
-
-  condition {
-    title       = "api_upload_prefix_only"
-    description = "The API may create objects only in the controlled uploads prefix."
-    expression  = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.source.name}/objects/uploads/')"
-  }
 }
 
 resource "google_storage_bucket_iam_member" "worker_source_reader" {
