@@ -37,6 +37,10 @@ variable "processing_topic_name" {
   type = string
 }
 
+variable "processing_dead_letter_topic_name" {
+  type = string
+}
+
 variable "processing_queue_name" {
   type = string
 }
