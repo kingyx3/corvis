@@ -41,8 +41,7 @@ test("runtime secret docs preserve provider ownership of Postgres credentials", 
 
   assert.match(docs, /controlled supabase\/postgres activation path/);
   assert.match(docs, /must not be committed, persisted in terraform state/);
-  assert.match(
-    docs,
-    /audit`? verifies that both terraform-managed containers exist and each has an enabled version\. it reads version metadata only|audit`? verifies that the terraform-managed postgres secret container exists and has an enabled version/,
-  );
+  assert.match(docs, /`runtime secret readiness` verifies that the terraform-managed postgres secret container exists and has an enabled version/);
+  assert.match(docs, /it reads version metadata only; it never accesses secret payloads/);
+  assert.match(docs, /real database credential never enters terraform state or a long-lived github secret/);
 });
