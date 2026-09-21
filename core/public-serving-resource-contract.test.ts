@@ -34,6 +34,8 @@ function normalized(sql: string): string {
   return sql.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+const NEW_RESOURCES = ["funds", "companies", "metric-definitions", "consolidated-facts", "company-lifecycle-events"] as const;
+
 test("fund directory is bounded by authoritative fund entitlements", async () => {
   const db = new FakeDb();
   await new PostgresPublicServingResourceRepository(db).funds(identity);
@@ -82,7 +84,7 @@ test("lifecycle API refuses events containing participants outside the visible e
 });
 
 test("new public collection routes authenticate, authorize and use opaque pagination", async () => {
-  for (const resource of ["funds", "companies", "metric-definitions", "consolidated-facts", "company-lifecycle-events"]) {
+  for (const resource of NEW_RESOURCES) {
     const source = (await readFile(`app/api/v1/${resource}/route.ts`, "utf8")).toLowerCase();
     assert.match(source, /resolveauthorizedrequestidentity/);
     assert.match(source, /assertpermission\(identity, "observations:read"\)/);
@@ -90,6 +92,15 @@ test("new public collection routes authenticate, authorize and use opaque pagina
     assert.match(source, /parselimit\(/);
     assert.match(source, /nextcursor/);
   }
+});
+
+test("new public resources are part of the versioned OpenAPI contract", async () => {
+  const openapi = await readFile("openapi/corvis-v1.yaml", "utf8");
+  for (const resource of NEW_RESOURCES) {
+    assert.ok(openapi.includes(`  /${resource}:\n`), `OpenAPI missing /${resource}`);
+  }
+  assert.match(openapi, /global identity alone never creates entitlement/i);
+  assert.match(openapi, /included in a published fund-period snapshot/i);
 });
 
 test("resource tranche intentionally does not fake holdings or instruments", async () => {
