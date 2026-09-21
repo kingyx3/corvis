@@ -26,7 +26,7 @@ function gatewayTarget(request, env) {
   return new Request(target.toString(), init);
 }
 
-export default {
+const customerProxyWorker = {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.hostname !== env.PUBLIC_HOSTNAME) {
@@ -48,3 +48,5 @@ export default {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   },
 };
+
+export default customerProxyWorker;
