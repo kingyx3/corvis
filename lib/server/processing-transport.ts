@@ -21,6 +21,7 @@ export type ProcessingTransportConfig = {
   topicName: string;
   queueName: string;
   workerUrl: string;
+  workerAudience: string;
   workerServiceAccountEmail: string;
 };
 
@@ -144,7 +145,7 @@ export class GcpProcessingTransportAdapter implements ProcessingTransportAdapter
         httpRequest: {
           httpMethod: "POST", url: this.config.workerUrl, headers: { "Content-Type": "application/json" },
           body: Buffer.from(JSON.stringify(delivery)).toString("base64"),
-          oidcToken: { serviceAccountEmail: this.config.workerServiceAccountEmail, audience: this.config.workerUrl },
+          oidcToken: { serviceAccountEmail: this.config.workerServiceAccountEmail, audience: this.config.workerAudience },
         },
       } }),
     });
@@ -159,6 +160,7 @@ export function processingTransportConfig(env: NodeJS.ProcessEnv = process.env):
     topicName: env.CORVIS_PROCESSING_TOPIC_NAME?.trim() ?? "",
     queueName: env.CORVIS_PROCESSING_QUEUE_NAME?.trim() ?? "",
     workerUrl: env.CORVIS_PROCESSING_WORKER_URL?.trim() ?? "",
+    workerAudience: env.CORVIS_PROCESSING_WORKER_AUDIENCE?.trim() ?? "",
     workerServiceAccountEmail: env.CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT?.trim() ?? "",
   };
   return Object.values(values).every(Boolean) ? values : undefined;
