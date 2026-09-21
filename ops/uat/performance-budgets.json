@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "environment": "uat",
+  "note": "Launch budgets to be measured against production-like providers. These are acceptance thresholds, not pre-bootstrap evidence.",
+  "api": {
+    "readP95Ms": 750,
+    "writeP95Ms": 1200,
+    "errorRatePercentMax": 1.0
+  },
+  "web": {
+    "initialPageInteractiveP95Ms": 3000,
+    "routeTransitionP95Ms": 1500,
+    "adminRefreshP95Ms": 2500
+  },
+  "processing": {
+    "uploadToRegisteredP95Seconds": 15,
+    "registeredToReviewReadyP95Minutes": 10,
+    "approvedToPublishedP95Minutes": 5
+  },
+  "load": {
+    "concurrentInteractiveUsers": 50,
+    "concurrentDocumentJourneys": 20,
+    "largeDocumentPages": 500,
+    "sustainedMinutes": 15
+  },
+  "failureConditions": [
+    "authorization-or-rls-bypass",
+    "duplicate-logical-business-effect",
+    "unbounded-queue-growth",
+    "persistent-error-rate-above-budget",
+    "provider-saturation-without-actionable-signal"
+  ]
+}
