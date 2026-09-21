@@ -40,8 +40,8 @@ because production callers like `adapters/workspace/http-workspace.ts`
 already call `/documents`, `/observations` and `/snapshots` with no query
 parameters and expect the complete list back; changing that default would
 have silently truncated their data. New endpoints without an existing
-unpaginated caller should make pagination the only mode instead of adding
-this compatibility branch.
+unpaginated caller make pagination the only mode instead of adding this
+compatibility branch.
 
 A cursor encodes the sort key of the last item on the page that issued it
 (by convention, the resource's own id; `snapshots` falls back to a
@@ -55,19 +55,37 @@ changing. Malformed or tampered cursors, and non-positive/non-integer
 silently ignored, clamped without complaint, or crashing.
 
 **Landed on:** `GET /documents`, `GET /observations`, `GET /snapshots` and
-`GET /jobs` (all preserve the unpaginated-by-default compatibility rule
-above), plus `GET /admin/webhooks/subscriptions/{webhookId}/deliveries`,
-which is a new endpoint with no pre-existing unpaginated caller and so
-pagination is its only mode. `GET /exports` and any future resource listing
-should adopt the same `paginate()`/`paginationRequested()` pair; a genuinely
-new endpoint should default to pagination-only rather than adding the
-compatibility branch.
+`GET /jobs` preserve the unpaginated-by-default compatibility rule above.
+`GET /funds`, `GET /companies`, `GET /company-lifecycle-events`,
+`GET /metric-definitions`, `GET /consolidated-facts` and
+`GET /admin/webhooks/subscriptions/{webhookId}/deliveries` are newer
+endpoints and therefore use pagination as their only collection mode.
+`GET /exports` and any future resource listing should adopt the same opaque
+cursor contract; genuinely new endpoints should default to pagination-only.
 
 **Known limitation:** pagination is currently applied over the full list
 each repository/adapter already returns, not pushed down as a `LIMIT`/
 keyset `WHERE` clause in the underlying Postgres query. It is correct and
 convenient for a client, but does not reduce the amount of work the server
 does to serve one page. Push-down to the repository layer is future work.
+
+## Serving-resource authorization
+
+Global economic identity is not a customer entitlement. `/funds` is bounded
+by the authoritative fund entitlement list; an absent fund list fails closed
+to no funds. `/companies` is derived from approved observations belonging to
+the current tenant on entitled funds. `/company-lifecycle-events` is stricter:
+an event is suppressed if any fund or company participant falls outside the
+caller-visible entitlement graph, preventing a globally known relationship
+from leaking a hidden entity. `/consolidated-facts` returns only facts for the
+current tenant and entitled funds that are actually included in a published
+fund-period snapshot. `/metric-definitions` exposes the active governed
+semantic dictionary, never extraction-provider payloads.
+
+Holdings and instruments are intentionally not synthesized from optional
+observation identifier columns. Those resources are added only after their
+full polymorphic holding-target and instrument semantics are represented in
+the governed persisted model.
 
 ## Idempotency
 
@@ -80,6 +98,11 @@ action; `lib/server/data-lifecycle.ts`'s deletion execution follows the same
 principle for its per-attempt evidence ledger. New mutating endpoints that
 can be safely retried should follow this same body-field convention rather
 than introducing a second one.
+
+Some newer HTTP action routes also accept an `Idempotency-Key` header for
+client ergonomics while normalizing it into the same tenant/subject-scoped
+server idempotency contract. A route must not create a second independent
+idempotency namespace for header versus body representations of the same key.
 
 ## Webhooks
 
@@ -122,10 +145,13 @@ receiver's tolerance window accepts.
 
 ## Rate limiting
 
-Not yet implemented at the application layer for `/api/v1`. Cloudflare edge
-rate limiting is configured per `docs/INFRASTRUCTURE.md` and
-`infra/terraform/modules/cloudflare-edge`; there is no additional
-per-tenant/per-key application-level limiter today.
+`/api/v1` has both edge-level Cloudflare rate controls and an application
+rate-limit boundary. The production request identity path resolves the
+current tenant/service-account identity and uses the Postgres-backed atomic
+limiter so distinct tenant/subject pairings have independent budgets and a
+database outage or malformed rate-limit decision fails closed. A denied
+request maps to HTTP 429 with `Retry-After`. The in-memory limiter remains a
+bounded test/local primitive, not the production distributed authority.
 
 ## Authentication and authorization
 
