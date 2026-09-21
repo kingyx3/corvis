@@ -3,10 +3,10 @@ data "google_project" "current" {
 }
 
 locals {
-  runtime_enabled = trimspace(var.api_image) != ""
-  worker_audience = "https://corvis-worker-${var.environment}.internal"
+  runtime_enabled                = trimspace(var.api_image) != ""
+  worker_audience                = "https://corvis-worker-${var.environment}.internal"
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-  pubsub_service_agent = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  pubsub_service_agent           = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
 
 resource "terraform_data" "runtime_configuration_guard" {
@@ -24,7 +24,9 @@ resource "google_secret_manager_secret" "postgres_dsn" {
 
   replication {
     user_managed {
-      replicas { location = var.region }
+      replicas {
+        location = var.region
+      }
     }
   }
 }
@@ -75,21 +77,62 @@ resource "google_cloud_run_v2_service" "worker" {
     containers {
       image = var.api_image
 
-      ports { container_port = 3000 }
+      ports {
+        container_port = 3000
+      }
 
-      env { name = "NODE_ENV" value = "production" }
-      env { name = "CORVIS_ENVIRONMENT" value = var.environment }
-      env { name = "CORVIS_AUTH_ISSUER" value = var.auth_issuer }
-      env { name = "CORVIS_AUTH_AUDIENCE" value = var.auth_audience }
-      env { name = "CORVIS_AUTH_JWKS_URL" value = var.auth_jwks_url }
-      env { name = "CORVIS_OBJECT_STORE_BUCKET" value = var.source_bucket_name }
-      env { name = "CORVIS_UPLOAD_ALLOWED_ORIGINS" value = join(",", var.upload_allowed_origins) }
-      env { name = "CORVIS_GCP_PROJECT_ID" value = var.project_id }
-      env { name = "CORVIS_GCP_REGION" value = var.region }
-      env { name = "CORVIS_PROCESSING_TOPIC_NAME" value = var.processing_topic_name }
-      env { name = "CORVIS_PROCESSING_QUEUE_NAME" value = var.processing_queue_name }
-      env { name = "CORVIS_PROCESSING_WORKER_AUDIENCE" value = local.worker_audience }
-      env { name = "CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT" value = var.worker_service_account_email }
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "CORVIS_ENVIRONMENT"
+        value = var.environment
+      }
+      env {
+        name  = "CORVIS_AUTH_ISSUER"
+        value = var.auth_issuer
+      }
+      env {
+        name  = "CORVIS_AUTH_AUDIENCE"
+        value = var.auth_audience
+      }
+      env {
+        name  = "CORVIS_AUTH_JWKS_URL"
+        value = var.auth_jwks_url
+      }
+      env {
+        name  = "CORVIS_OBJECT_STORE_BUCKET"
+        value = var.source_bucket_name
+      }
+      env {
+        name  = "CORVIS_UPLOAD_ALLOWED_ORIGINS"
+        value = join(",", var.upload_allowed_origins)
+      }
+      env {
+        name  = "CORVIS_GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "CORVIS_GCP_REGION"
+        value = var.region
+      }
+      env {
+        name  = "CORVIS_PROCESSING_TOPIC_NAME"
+        value = var.processing_topic_name
+      }
+      env {
+        name  = "CORVIS_PROCESSING_QUEUE_NAME"
+        value = var.processing_queue_name
+      }
+      env {
+        name  = "CORVIS_PROCESSING_WORKER_AUDIENCE"
+        value = local.worker_audience
+      }
+      env {
+        name  = "CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT"
+        value = var.worker_service_account_email
+      }
 
       env {
         name = "CORVIS_POSTGRES_DSN"
@@ -102,7 +145,10 @@ resource "google_cloud_run_v2_service" "worker" {
       }
 
       resources {
-        limits = { cpu = "1", memory = "512Mi" }
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
       }
     }
   }
@@ -239,22 +285,66 @@ resource "google_cloud_run_v2_service" "api" {
     containers {
       image = var.api_image
 
-      ports { container_port = 3000 }
+      ports {
+        container_port = 3000
+      }
 
-      env { name = "NODE_ENV" value = "production" }
-      env { name = "CORVIS_ENVIRONMENT" value = var.environment }
-      env { name = "CORVIS_AUTH_ISSUER" value = var.auth_issuer }
-      env { name = "CORVIS_AUTH_AUDIENCE" value = var.auth_audience }
-      env { name = "CORVIS_AUTH_JWKS_URL" value = var.auth_jwks_url }
-      env { name = "CORVIS_OBJECT_STORE_BUCKET" value = var.source_bucket_name }
-      env { name = "CORVIS_UPLOAD_ALLOWED_ORIGINS" value = join(",", var.upload_allowed_origins) }
-      env { name = "CORVIS_GCP_PROJECT_ID" value = var.project_id }
-      env { name = "CORVIS_GCP_REGION" value = var.region }
-      env { name = "CORVIS_PROCESSING_TOPIC_NAME" value = var.processing_topic_name }
-      env { name = "CORVIS_PROCESSING_QUEUE_NAME" value = var.processing_queue_name }
-      env { name = "CORVIS_PROCESSING_WORKER_URL" value = "${google_cloud_run_v2_service.worker[0].uri}/api/internal/processing-stage" }
-      env { name = "CORVIS_PROCESSING_WORKER_AUDIENCE" value = local.worker_audience }
-      env { name = "CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT" value = var.worker_service_account_email }
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "CORVIS_ENVIRONMENT"
+        value = var.environment
+      }
+      env {
+        name  = "CORVIS_AUTH_ISSUER"
+        value = var.auth_issuer
+      }
+      env {
+        name  = "CORVIS_AUTH_AUDIENCE"
+        value = var.auth_audience
+      }
+      env {
+        name  = "CORVIS_AUTH_JWKS_URL"
+        value = var.auth_jwks_url
+      }
+      env {
+        name  = "CORVIS_OBJECT_STORE_BUCKET"
+        value = var.source_bucket_name
+      }
+      env {
+        name  = "CORVIS_UPLOAD_ALLOWED_ORIGINS"
+        value = join(",", var.upload_allowed_origins)
+      }
+      env {
+        name  = "CORVIS_GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "CORVIS_GCP_REGION"
+        value = var.region
+      }
+      env {
+        name  = "CORVIS_PROCESSING_TOPIC_NAME"
+        value = var.processing_topic_name
+      }
+      env {
+        name  = "CORVIS_PROCESSING_QUEUE_NAME"
+        value = var.processing_queue_name
+      }
+      env {
+        name  = "CORVIS_PROCESSING_WORKER_URL"
+        value = "${google_cloud_run_v2_service.worker[0].uri}/api/internal/processing-stage"
+      }
+      env {
+        name  = "CORVIS_PROCESSING_WORKER_AUDIENCE"
+        value = local.worker_audience
+      }
+      env {
+        name  = "CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT"
+        value = var.worker_service_account_email
+      }
 
       env {
         name = "CORVIS_POSTGRES_DSN"
@@ -267,7 +357,10 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       resources {
-        limits = { cpu = "1", memory = "512Mi" }
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
       }
     }
   }
