@@ -41,10 +41,12 @@ test("worker runtime exposes only internal endpoints plus health", () => {
   assert.equal(runtimeSurfaceAllows("worker", "/"), false);
 });
 
-test("admin and customer contracts are mutually isolated", () => {
+test("admin and customer presentation runtimes cannot serve API routes", () => {
   assert.equal(runtimeSurfaceAllows("admin", "/admin"), true);
-  assert.equal(runtimeSurfaceAllows("admin", "/api/v1/admin/feature-flags"), true);
-  assert.equal(runtimeSurfaceAllows("admin", "/api/v1/funds"), false);
+  assert.equal(runtimeSurfaceAllows("admin", "/admin/operations"), true);
+  assert.equal(runtimeSurfaceAllows("admin", "/_next/static/chunk.js"), true);
+  assert.equal(runtimeSurfaceAllows("admin", "/api/v1/admin/feature-flags"), false);
+  assert.equal(runtimeSurfaceAllows("admin", "/api/v1/jobs/job-1/retry"), false);
   assert.equal(runtimeSurfaceAllows("admin", "/workspace"), false);
 
   assert.equal(runtimeSurfaceAllows("customer", "/"), true);
