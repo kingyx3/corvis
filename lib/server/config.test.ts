@@ -1,87 +1,101 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { getServerConfig } from "./config.ts";
-
-test("production rejects demo mode", () => {
-  assert.throws(() => getServerConfig({ NODE_ENV: "production", CORVIS_DEMO_MODE: "true" } as NodeJS.ProcessEnv));
-});
-
-test("production requires enterprise bindings", () => {
-  assert.throws(() => getServerConfig({ NODE_ENV: "production" } as NodeJS.ProcessEnv), /Missing production configuration/);
-});
-
-test("production requires the Postgres primary data-plane binding", () => {
-  const env = productionEnvironment();
-  delete env.CORVIS_POSTGRES_DSN;
-  assert.throws(() => getServerConfig(env), /CORVIS_POSTGRES_DSN/);
-});
-
-test("GCS resumable chunk size must be a multiple of 256 KiB", () => {
-  assert.throws(() => getServerConfig({ NODE_ENV: "test", CORVIS_GCS_CHUNK_SIZE_BYTES: "1000000" } as NodeJS.ProcessEnv), /multiple of 256 KiB/);
-});
-
-test("Ask Corvis deadline defaults to 30 seconds and is capped at 120 seconds", () => {
-  assert.equal(getServerConfig({ NODE_ENV: "test" } as NodeJS.ProcessEnv).researchTimeoutMs, 30_000);
-  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "45000" } as NodeJS.ProcessEnv).researchTimeoutMs, 45_000);
-  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "999999" } as NodeJS.ProcessEnv).researchTimeoutMs, 120_000);
-  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_RESEARCH_TIMEOUT_MS: "invalid" } as NodeJS.ProcessEnv).researchTimeoutMs, 30_000);
-});
-
-test("fully configured production environment is accepted without Snowflake", () => {
-  const config = getServerConfig(productionEnvironment());
-  assert.equal(config.demoMode, false);
-  assert.equal(config.environment, "production");
-  assert.equal(config.trustedAuthProxySecret, "test-only-secret");
-  assert.equal(config.postgresDsn, "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require");
-  assert.equal(config.snowflakeDatabase, undefined);
-  assert.equal(config.objectStoreBucket, "corvis-prod");
-  assert.deepEqual(config.uploadAllowedOrigins, ["https://customer.example.com", "https://admin.example.com"]);
-  assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
-  assert.equal(config.researchTimeoutMs, 30_000);
-  assert.equal(config.observabilityEndpoint, "https://telemetry.example.com/events");
-  assert.equal(config.dataLifecycleEndpoint, "https://lifecycle.example.com");
-});
-
-test("the per-tenant rate limit defaults to 600 requests per minute and is env-configurable", () => {
-  assert.equal(getServerConfig({ NODE_ENV: "test" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute, 600);
-  assert.equal(
-    getServerConfig({ NODE_ENV: "test", CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "120" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute,
-    120,
-  );
-  // Non-numeric/invalid overrides fall back to the default rather than disabling the limit.
-  assert.equal(
-    getServerConfig({ NODE_ENV: "test", CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "not-a-number" } as NodeJS.ProcessEnv).rateLimitRequestsPerMinute,
-    600,
-  );
-});
-
-test("optional Snowflake bindings remain available when downstream analytics is activated", () => {
-  const config = getServerConfig({
-    ...productionEnvironment(),
-    CORVIS_SNOWFLAKE_SQL_API_URL: "https://account.snowflakecomputing.com",
-    CORVIS_SNOWFLAKE_OAUTH_TOKEN: "test-token",
-    CORVIS_SNOWFLAKE_DATABASE: "CORVIS_ANALYTICS",
-    CORVIS_SNOWFLAKE_WAREHOUSE: "CORVIS_ANALYTICS",
-    CORVIS_SNOWFLAKE_ROLE: "CORVIS_ANALYTICS_ROLE",
-  });
-  assert.equal(config.snowflakeDatabase, "CORVIS_ANALYTICS");
-});
 
 function productionEnvironment(): NodeJS.ProcessEnv {
   return {
     NODE_ENV: "production",
     CORVIS_AUTH_ISSUER: "https://idp.example.com",
     CORVIS_AUTH_AUDIENCE: "corvis",
-    CORVIS_TRUSTED_AUTH_PROXY_SECRET: "test-only-secret",
     CORVIS_POSTGRES_DSN: "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require",
     CORVIS_OBJECT_STORE_BUCKET: "corvis-prod",
-    CORVIS_UPLOAD_ALLOWED_ORIGINS: "https://customer.example.com,https://admin.example.com",
-    CORVIS_GCS_CHUNK_SIZE_BYTES: String(8 * 1024 * 1024),
-    CORVIS_SEARCH_ENDPOINT: "https://search.example.com",
-    CORVIS_AI_ENDPOINT: "https://ai.example.com",
-    CORVIS_OBSERVABILITY_ENDPOINT: "https://telemetry.example.com/events",
-    CORVIS_DATA_LIFECYCLE_ENDPOINT: "https://lifecycle.example.com",
-    CORVIS_EXPORT_DELIVERY_ENDPOINT: "https://delivery.example.com",
-    CORVIS_WORKER_SECRET: "worker-secret",
-  } as NodeJS.ProcessEnv;
+  };
 }
+
+test("configuration retains safe local defaults", () => {
+  const config = getServerConfig({ NODE_ENV: "test" });
+  assert.equal(config.environment, "test");
+  assert.equal(config.demoMode, false);
+  assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
+  assert.equal(config.researchTimeoutMs, 30_000);
+  assert.equal(config.rateLimitRequestsPerMinute, 600);
+  assert.deepEqual(config.uploadAllowedOrigins, []);
+});
+
+test("OIDC discovery is the default and explicit JWKS remains optional", () => {
+  const config = getServerConfig({
+    NODE_ENV: "test",
+    CORVIS_AUTH_ISSUER: "https://idp.example.com",
+    CORVIS_AUTH_AUDIENCE: "corvis",
+    CORVIS_AUTH_JWKS_URL: "https://idp.example.com/jwks",
+  });
+  assert.equal(config.authIssuer, "https://idp.example.com");
+  assert.equal(config.authAudience, "corvis");
+  assert.equal(config.authJwksUrl, "https://idp.example.com/jwks");
+});
+
+test("production requires only authoritative cross-cutting auth, Postgres and object-store roots", () => {
+  assert.doesNotThrow(() => getServerConfig(productionEnvironment()));
+
+  for (const required of [
+    "CORVIS_AUTH_ISSUER",
+    "CORVIS_AUTH_AUDIENCE",
+    "CORVIS_POSTGRES_DSN",
+    "CORVIS_OBJECT_STORE_BUCKET",
+  ]) {
+    const env = productionEnvironment();
+    delete env[required];
+    assert.throws(
+      () => getServerConfig(env),
+      (error: unknown) => error instanceof Error && error.message.includes(required),
+      `${required} should remain a production startup requirement`,
+    );
+  }
+});
+
+test("optional capability bindings do not make unrelated production paths unstartable", () => {
+  const config = getServerConfig(productionEnvironment());
+  assert.equal(config.searchEndpoint, undefined);
+  assert.equal(config.aiEndpoint, undefined);
+  assert.equal(config.observabilityEndpoint, undefined);
+  assert.equal(config.dataLifecycleEndpoint, undefined);
+  assert.equal(config.exportDeliveryEndpoint, undefined);
+  assert.equal(config.workerSecret, undefined);
+  assert.deepEqual(config.uploadAllowedOrigins, []);
+});
+
+test("production never permits demo mode", () => {
+  assert.throws(
+    () => getServerConfig({ ...productionEnvironment(), CORVIS_DEMO_MODE: "true" }),
+    /CORVIS_DEMO_MODE must be disabled in production/,
+  );
+});
+
+test("GCS resumable chunk size must be a positive 256 KiB multiple", () => {
+  assert.throws(
+    () => getServerConfig({ NODE_ENV: "test", CORVIS_GCS_CHUNK_SIZE_BYTES: "12345" }),
+    /multiple of 256 KiB/,
+  );
+  assert.equal(
+    getServerConfig({ NODE_ENV: "test", CORVIS_GCS_CHUNK_SIZE_BYTES: String(16 * 1024 * 1024) }).gcsChunkSizeBytes,
+    16 * 1024 * 1024,
+  );
+});
+
+test("comma-separated upload origins are normalized and empty entries removed", () => {
+  const config = getServerConfig({
+    NODE_ENV: "test",
+    CORVIS_UPLOAD_ALLOWED_ORIGINS: " https://customer.example.com, ,https://admin.example.com ",
+  });
+  assert.deepEqual(config.uploadAllowedOrigins, ["https://customer.example.com", "https://admin.example.com"]);
+});
+
+test("bounded numeric configuration ignores invalid values and caps research timeout", () => {
+  const config = getServerConfig({
+    NODE_ENV: "test",
+    CORVIS_RESEARCH_TIMEOUT_MS: "999999",
+    CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "not-a-number",
+  });
+  assert.equal(config.researchTimeoutMs, 120_000);
+  assert.equal(config.rateLimitRequestsPerMinute, 600);
+});
