@@ -4,10 +4,10 @@ This file is the technical source of truth for Corvis deployment mechanics. Conf
 
 ## Principle
 
-After the one-time external trust bootstrap, GitHub Actions is the deployment control plane. Routine Corvis environment changes do not require local `gcloud`, Terraform or manual provider-console edits.
+After the one-time external trust bootstrap, GitHub Actions is the deployment control plane. Routine environment changes do not require local `gcloud`, Terraform or manual provider-console edits.
 
 ```text
-reviewed PR -> protected main -> immutable image + provenance
+reviewed PR -> protected main -> immutable release images + provenance
   -> GitHub OIDC/WIF
   -> Terraform plan
   -> Postgres secret readiness
@@ -16,13 +16,14 @@ reviewed PR -> protected main -> immutable image + provenance
        ├─ Cloud Run API
        ├─ IAM-private Cloud Run worker
        ├─ Pub/Sub push + DLQ
-       ├─ Cloud Tasks scheduled retry
+       ├─ Cloud Tasks retry
        ├─ Cloud Scheduler delivery drain
+       ├─ scheduled control-loop Cloud Run Jobs + durable state
        ├─ API Gateway
        └─ Cloudflare Worker/DNS/WAF/rate controls
   -> public health
-  -> live security/RLS acceptance
-  -> accepted digest recorded as known-good
+  -> edge + RLS + control-loop live acceptance
+  -> accepted release set recorded as known-good
 ```
 
 ## Environments
@@ -33,153 +34,134 @@ reviewed PR -> protected main -> immutable image + provenance
 
 `staging` is deprecated; use `uat`.
 
-## Release image
+## Release images
 
-`.github/workflows/build-release.yml` is the image boundary.
+`.github/workflows/build-release.yml` is the image boundary. It runs only from protected `main`, verifies release governance, authenticates through GitHub OIDC/WIF, and emits GitHub provenance attestations.
 
-- Runs only from `main`.
-- Verifies effective release governance before provider authentication.
-- Authenticates to GCP through GitHub OIDC/WIF; no static GCP key exists.
-- Publishes `git-${GITHUB_SHA}` to `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api`.
-- Resolves and records the immutable registry digest.
-- Emits `release-image.json` and GitHub build-provenance attestation.
-- The same immutable image is used by the API and private worker runtime for that environment.
+For a source commit it builds:
 
-A built image is not a known-good production release until live acceptance passes.
+- `corvis/api:git-${GITHUB_SHA}` — shared immutable API/worker application image;
+- `corvis/control-loop:git-${GITHUB_SHA}` — purpose-built repository-scanner image used only by the scheduled control-loop jobs.
 
-The current release builder publishes into the selected environment registry. When Corvis uses separate GCP projects/registries for environments, strict build-once cross-project copying of an already-built physical digest remains a separate activation hardening item; do not claim rebuilds of the same source commit are byte-identical promotion.
+Both tags are immediately resolved to immutable digests and captured in `release-image.json`. A production-like promotion resolves both images from the same reviewed source commit. A built image set is not known-good until live acceptance passes.
+
+The current builder publishes into the selected environment registry. If UAT and prod use separate GCP projects/registries, **strict build-once cross-project promotion remains a separate #13 item**: copy/promote the already-built physical image or use explicit bounded cross-project reader trust and verify the digest. Rebuilding the same source commit independently is not proof of byte-identical promotion.
 
 ## Promotion inputs
 
-`.github/workflows/promote-environment.yml` is the normal operator entry point for production-like `uat` and `prod` promotion. It accepts either:
+`.github/workflows/promote-environment.yml` is the normal operator entry point for `uat` and `prod`. It accepts exactly one of:
 
-1. `release_sha` — full reviewed `main` commit already built in the target environment registry; or
-2. `rollback_known_good=true` — the last acceptance-approved digest for that environment.
+1. `release_sha` — a full reviewed `main` commit whose release images already exist in the target registry; or
+2. `rollback_known_good=true` — the last acceptance-approved release set for that environment.
 
-They are mutually exclusive, and exactly one is required. The workflow itself must be dispatched from `main`.
+The workflow itself must be dispatched from `main`.
 
-The lower-level `.github/workflows/terraform-deploy.yml` remains directly dispatchable for Terraform plans, diagnostics and explicitly controlled lower-level operations. `.github/workflows/security-acceptance.yml` remains directly dispatchable when acceptance needs to be rerun without a new deployment. Both are also reusable workflows consumed by the governed promotion path.
+The lower-level `terraform-deploy.yml` remains directly dispatchable for plans/diagnostics and `security-acceptance.yml` remains directly rerunnable for acceptance. Both are reusable workflows consumed by the governed promotion path.
 
-Runtime removal is never an accidental side-effect of an empty release input; use the guarded decommission workflow for lifecycle changes.
-
-Before a production-like runtime can be promoted, the environment must also have:
-
-- `CORVIS_AUTH_ISSUER` and `CORVIS_AUTH_AUDIENCE` configured as the approved OIDC contract;
-- an enabled `corvis-postgres-dsn-${environment}` Secret Manager version written by the environment Postgres activation path;
-- Cloudflare roots when public API publication is enabled.
-
-See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md).
+Runtime removal is never an accidental side effect of an empty release input; use `gcp-decommission.yml` for lifecycle changes.
 
 ## One auditable promotion path
 
-For a normal `uat` or `prod` promotion, `promote-environment.yml` executes one ordered GitHub Actions graph:
+A normal production-like promotion performs this ordered graph:
 
-1. validate that the request comes from `main`, targets only `uat`/`prod`, and selects exactly one release source;
-2. call `terraform-deploy.yml` with `action=apply`;
-3. complete release-governance verification, WIF authentication, remote-state validation, immutable release resolution, Terraform plan, Postgres secret readiness, live migrations with retained evidence, exact Terraform apply and public health;
-4. only after deployment succeeds, call `security-acceptance.yml`;
-5. run edge/IAM/worker-transport acceptance and live Postgres/RLS acceptance;
-6. advance the environment known-good pointer only when both acceptance families succeed;
-7. complete the parent promotion run only after the acceptance workflow and known-good recording succeed.
+1. validate `main`, target environment and release selection;
+2. verify live GitHub release governance;
+3. authenticate through WIF and require the bootstrap-owned remote state bucket;
+4. resolve the API/worker and control-loop image tags to immutable digests;
+5. validate Terraform and produce the exact locked plan;
+6. require the enabled canonical Postgres DSN secret;
+7. apply versioned forward-only migrations and retain sanitized evidence;
+8. apply the exact Terraform plan;
+9. verify public API health when the edge is enabled;
+10. run live edge/IAM/worker acceptance, two-tenant Postgres/RLS acceptance and scheduled control-loop runtime acceptance;
+11. only when all acceptance families pass, record the accepted API/worker + control-loop image set in `known-good.json`;
+12. complete the parent promotion run.
 
-This creates one top-level promotion audit trail while preserving the detailed migration, infrastructure and security evidence in the called workflows. A failed deployment never starts acceptance, and failed acceptance never advances known-good.
-
-For the deployment phase specifically, `terraform-deploy.yml` executes this order:
-
-1. verify the release commit is on `main` and the live ruleset/check governance is non-bypassable;
-2. authenticate through WIF;
-3. require the bootstrap-owned remote state bucket;
-4. resolve the selected release to an immutable digest;
-5. initialize/validate Terraform and create the exact locked plan;
-6. require an enabled Postgres DSN secret version;
-7. read that DSN through IAM without logging it;
-8. run `db/postgres/migrate.ts --apply` against the live environment;
-9. upload sanitized migration evidence;
-10. apply the exact previously created Terraform plan;
-11. when the edge is enabled, require `/api/v1/health` to succeed through Cloudflare -> API Gateway -> Cloud Run.
-
-The migration runner is forward-only, gap/checksum aware and records its own `corvis_migration.schema_migration` ledger. Re-running an already-current environment is a no-op for migration SQL.
+A failed deploy never starts acceptance. Failed or incomplete acceptance never advances known-good.
 
 ## Runtime topology
 
-The promoted immutable image currently feeds two distinct runtime identities:
+### API and worker
 
-- `corvis-api-${environment}` — public API backend, invokable only by the dedicated API Gateway service account;
-- `corvis-worker-${environment}` — background-processing/delivery runtime, invokable only by its dedicated worker service account.
+- `corvis-api-${environment}` — customer/API backend; only the dedicated API Gateway identity has `roles/run.invoker`.
+- `corvis-worker-${environment}` — background processing/delivery; only the dedicated worker identity has `roles/run.invoker`.
 
 Managed asynchronous transport is keyless:
 
-- Pub/Sub pushes immediate stage deliveries to `/api/internal/processing-stage` using Google OIDC;
-- Cloud Tasks schedules persisted retries to the same endpoint using the worker identity;
+- Pub/Sub pushes immediate stage work to `/api/internal/processing-stage` using Google OIDC;
+- Cloud Tasks schedules persisted retries to the same worker boundary;
 - Cloud Scheduler calls `/api/internal/delivery` to drain durable processing/export/webhook outboxes;
-- the worker Cloud Run service uses an explicit custom OIDC audience derived from the environment;
 - no production `CORVIS_WORKER_SECRET` is required.
 
-The API uses the same worker identity only to enqueue authenticated scheduled retries; it cannot anonymously invoke the worker.
+### Continuous control loop
 
-A dedicated production Cloud Scheduler -> Cloud Run Job boundary for the continuous business/control loop remains separate from this request-serving worker and is still required before the first production customer. Customer-web/admin-web runtime separation must likewise be implemented together with application-level surface boundaries; merely deploying the same unrestricted Next.js image under extra service names would not create a meaningful security boundary.
+UAT/prod also provision a dedicated keyless identity `corvis-control-loop-${environment}` plus a private, uniform-access, public-access-prevented, versioned GCS state bucket. The identity has object administration only on that state bucket and logging permission; it does not inherit API/worker data-plane roles.
 
-## Authentication boundary
+Three Cloud Run Jobs share the accepted `corvis/control-loop@sha256:...` image:
 
-Production OIDC bearer tokens are verified directly against the configured issuer/JWKS and audience. Tenant/workspace headers are untrusted context selectors only; effective membership, roles, entitlements, data rights and session state are re-resolved from Postgres before authorization.
+- daily — `02:17 Asia/Singapore`;
+- weekly — Sunday `03:23 Asia/Singapore`;
+- monthly candidate — Sunday `04:31 Asia/Singapore`; the application resolves it to monthly only when Singapore day-of-month is 1–7, otherwise it performs the weekly mode.
 
-The signed Corvis gateway-assertion contract remains available for a future reviewed SAML/identity broker, but OIDC production does not depend on deploying an assertion-minting proxy first.
+Cloud Scheduler invokes the Cloud Run Jobs API with an OAuth token for the control-loop identity. Each job is granted only its required `roles/run.invoker` binding. The job runs in dry-run/read-only mode today; no remediator or GitHub/Confluence write integration is enabled.
 
-## Secret handling
+The production state adapter stores watermark, lock and sanitized latest run reports in GCS. Lock acquisition uses Cloud Storage object-generation preconditions, so overlapping job executions cannot both acquire the mutation lease. The existing GitHub Actions scheduler remains a build-phase/read-only bootstrap until provider activation; it must not be promoted to a parallel mutation path.
 
-- GCP provider access uses WIF, not JSON keys.
-- The canonical application database secret is `corvis-postgres-dsn-${environment}` in Secret Manager.
-- API, worker, migration and Security-acceptance paths consume that same managed value through IAM.
-- The API Gateway edge key is Terraform-generated, restricted to the managed API and injected directly into the Cloudflare Worker secret binding.
-- Do not duplicate DSNs, worker secrets, gateway keys or provider-derived runtime URLs into GitHub variables.
+Customer-web/admin-web runtime separation remains a separate #10/#13 item and must be implemented together with real application-level surface boundaries. Extra Cloud Run service names around the same unrestricted application would not create a meaningful security boundary.
 
-Provider-management credentials such as the scoped Cloudflare API token are deployment-only and are never injected into application containers.
+## Authentication and secrets
+
+Production OIDC bearer tokens are verified directly against the configured issuer/JWKS and audience. Tenant/workspace headers remain untrusted selectors; effective membership, roles, entitlements, data rights and session state are re-resolved from Postgres.
+
+- GCP provider access uses WIF, never JSON keys.
+- `corvis-postgres-dsn-${environment}` is the canonical runtime database secret.
+- API, worker, migration and live acceptance consume that same managed DSN through IAM.
+- The control loop does not receive the Postgres DSN or API/worker identities.
+- The API Gateway edge key is Terraform-generated and restricted to the managed API.
+- Provider-management credentials such as the scoped Cloudflare token are deployment-only and are never injected into runtime containers.
 
 ## Acceptance and known-good state
 
-`security-acceptance.yml` runs production-like provider checks after deployment. The harness covers at least:
+`security-acceptance.yml` covers at least:
 
-- Cloudflare Worker traversal, HTTPS/WAF/rate/cache controls;
-- missing/invalid direct API Gateway edge-key rejection;
-- direct unauthenticated API Cloud Run rejection and exact gateway-only invoker IAM;
-- direct unauthenticated worker rejection and exact worker-only invoker IAM;
-- Pub/Sub/Scheduler targets and OIDC identity/audience wiring;
+- Cloudflare/API Gateway traversal and direct-bypass negatives;
+- exact API and worker invoker IAM;
+- Pub/Sub/Scheduler authenticated worker transport;
 - live two-tenant Postgres/RLS isolation;
-- automated evidence persistence.
+- all three control-loop Cloud Run Jobs pinned to one immutable control-loop digest;
+- exact Singapore schedules and OAuth scheduler identity;
+- private/versioned control-loop state bucket and bounded bucket IAM;
+- automated sanitized evidence persistence.
 
-Only a fully successful acceptance run records:
+Only a fully successful acceptance run writes:
 
 `gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json`
 
-If acceptance fails or cannot run, the known-good pointer does not advance.
+The manifest contains both the accepted API/worker image and accepted control-loop image. Rollback redeploys that accepted set, then reruns live acceptance before completing.
 
-## Rollback
-
-`rollback_known_good=true` through `promote-environment.yml` redeploys the last accepted immutable image and then reruns live acceptance before the promotion completes. Rollback must preserve database/source history and never silently reverse a forward database migration.
-
-Use expand/migrate/contract database changes and feature kill switches where they are safer than destructive schema reversal. A database restore is an incident-recovery procedure, not routine application rollback.
+Database rollback remains forward-safe: routine release rollback never silently reverses a migration or rewrites source/canonical history. Use expand/migrate/contract changes, feature kill switches, or the incident recovery process as appropriate.
 
 ## Infrastructure lifecycle
 
-Environment teardown is owned exclusively by `.github/workflows/gcp-decommission.yml`:
+`gcp-decommission.yml` is the only normal teardown path:
 
-- `idle` removes API/worker/public-edge runtime while preserving durable foundation, data and Terraform state;
-- `full` explicitly removes Terraform-managed data/resources and deletes remote state last, while retaining the recoverable KMS bootstrap anchor and external WIF trust anchor.
+- `idle` removes runtime/public-edge resources while retaining durable foundations, data and Terraform state;
+- `full` explicitly removes Terraform-managed data/resources and deletes remote state last while retaining the recoverable KMS/bootstrap trust anchors defined by the lifecycle contract.
 
-Destructive transitions require exact confirmation strings. See [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md).
+Control-loop Cloud Run Jobs follow the same decommission switch. Their state bucket is durable foundation state and is purgeable only through explicit full decommission.
 
-## What remains external/provider-bound
+## External/provider-bound activation
 
-The repository cannot safely bootstrap ownership of an otherwise untrusted provider account. Before the first UAT apply, operators still must establish:
+Before first UAT apply, operators still need the external trust roots the repository cannot create for itself:
 
-- billed GCP project + `corvis-deploy` service account + repository-scoped WIF trust;
-- Cloudflare zone/account ownership and scoped Terraform token;
-- separate Supabase/Postgres environment project and secure DSN activation;
+- billed GCP project, `corvis-deploy` service account and repository-scoped WIF trust;
+- Cloudflare zone/account ownership and scoped token;
+- separate production-like Postgres/Supabase environment and secure DSN activation;
 - approved OIDC/SAML provider configuration;
-- any optional external AI/search/representation/extraction/delivery provider chosen for the UAT journey.
+- any optional AI/search/representation/extraction/delivery provider selected for the UAT journey.
 
-Those roots are environment activation inputs, not excuses for ongoing undocumented manual deployment.
+Those are bootstrap inputs, not an ongoing manual deployment model.
 
 ## Release gate
 
-Repository CI requires deterministic install, lint, TypeScript, unit tests, production build, browser E2E, dependency audit, CodeQL, secret/history guard, non-root container assertion, clean Postgres migration application and Terraform formatting/provider validation. Passing those checks proves the reviewed source contract; production readiness still requires the live provider/UAT evidence owned by Confluence and the open readiness trackers.
+Repository CI requires deterministic install, lint, TypeScript, unit tests, production build, browser E2E, dependency audit, CodeQL, public-repository leak/history checks, non-root API and control-loop container validation, clean Postgres migration application, and Terraform formatting/provider validation. Passing repository CI proves the reviewed source contract; production readiness still requires provider-backed UAT evidence and the open Confluence/GitHub readiness gates.
