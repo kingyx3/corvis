@@ -33,9 +33,9 @@ locals {
   ])
 
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-  pubsub_service_agent            = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-  cloud_tasks_service_agent       = "service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
-  cloud_scheduler_service_agent   = "service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  pubsub_service_agent           = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  cloud_tasks_service_agent      = "service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+  cloud_scheduler_service_agent  = "service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
 resource "google_project_service" "required" {
