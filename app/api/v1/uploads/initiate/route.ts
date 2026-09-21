@@ -3,9 +3,11 @@ import { assertPermission } from "@/core/enterprise";
 import { uploads } from "@/lib/server/uploads";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { durationMetric } from "@/lib/server/telemetry";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
+  const startedAt = Date.now();
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "documents:write");
@@ -21,6 +23,13 @@ export async function POST(request: Request) {
       idempotencyKey: `${identity.subject}:${clientKey}`,
       origin: request.headers.get("origin") || undefined,
     });
+    durationMetric("upload.initiation", startedAt, {
+      correlationId: id,
+      tenantId: identity.tenantId,
+      workspaceId: identity.workspaceId,
+      actorSubject: identity.subject,
+      documentId: session.documentId,
+    }, { outcome: "success" });
     return json({
       uploadId: session.uploadId,
       documentId: session.documentId,
@@ -30,5 +39,8 @@ export async function POST(request: Request) {
       uploadUrl: session.resumableUploadUrl,
       state: session.state,
     }, { status: 201 });
-  } catch (error) { return apiError(error, id); }
+  } catch (error) {
+    durationMetric("upload.initiation", startedAt, { correlationId: id }, { outcome: "failure" });
+    return apiError(error, id);
+  }
 }
