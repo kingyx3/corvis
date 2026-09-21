@@ -101,16 +101,15 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
 
   if (environment === "production") {
     if (demoMode) throw new Error("CORVIS_DEMO_MODE must be disabled in production");
-    // Startup requires only the authoritative core data/auth/storage bindings.
-    // Optional capabilities (AI/search/observability/export/lifecycle) fail closed
-    // at their own adapter boundaries and surface as missing readiness instead of
-    // preventing unrelated customer workflows from starting.
+    // Startup requires only authoritative cross-cutting bindings. Optional
+    // capability configuration (upload CORS, AI/search, observability,
+    // lifecycle/export delivery) fails closed at its own adapter boundary and
+    // is reported as incomplete readiness instead of taking unrelated paths down.
     const missing = [
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
       ["CORVIS_POSTGRES_DSN", config.postgresDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
-      ["CORVIS_UPLOAD_ALLOWED_ORIGINS", config.uploadAllowedOrigins.length ? "configured" : undefined],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
   }
