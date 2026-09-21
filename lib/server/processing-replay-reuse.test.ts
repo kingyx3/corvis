@@ -22,7 +22,12 @@ const replayRunKey = "data-correction:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 class StaticPostgres implements PostgresSqlApi {
   readonly queries: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
-  constructor(readonly rows: PostgresRow[]) {}
+  readonly rows: PostgresRow[];
+
+  constructor(rows: PostgresRow[]) {
+    this.rows = rows;
+  }
+
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.queries.push({ sql, parameters });
     return this.rows;
