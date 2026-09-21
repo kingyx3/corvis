@@ -5,6 +5,7 @@ import {
 } from "./processing-stage-effects.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { createConfiguredCanonicalizedStageHandler } from "./processing-canonicalized-stage.ts";
+import { createConfiguredConsolidatedStageHandler } from "./processing-consolidated-stage.ts";
 import { createConfiguredExtractedStageHandler } from "./processing-extracted-stage.ts";
 import { createConfiguredReconciledStageHandler } from "./processing-reconciled-stage.ts";
 import { createConfiguredRepresentedStageHandler } from "./processing-represented-stage.ts";
@@ -129,12 +130,12 @@ export function createRegisteredArtifactStageHandler(repository: RegisteredArtif
 /**
  * Current production composition for processing-stage effects.
  *
- * Registration, governed review/quality, canonicalization and reconciliation are
- * always configured because they use Corvis-owned Postgres state. Representation
- * and extraction are each configured only when their approved keyless internal
- * endpoint is bound for the environment; otherwise that stage remains fail-closed.
- * Consolidation and publication remain deliberately absent until their own bounded
- * persistence/gate handlers are implemented and tested.
+ * Registration, governed review/quality, canonicalization, reconciliation and
+ * consolidation are always configured because they use Corvis-owned Postgres state.
+ * Representation and extraction are each configured only when their approved keyless
+ * internal endpoint is bound for the environment; otherwise that stage remains
+ * fail-closed. Publication remains deliberately absent until its bounded persistence
+ * and publication-gate handler is implemented and tested.
  */
 export function createProductionProcessingStageEffectRouter(
   db: PostgresSqlApi,
@@ -147,11 +148,13 @@ export function createProductionProcessingStageEffectRouter(
   const reviewed = createConfiguredReviewedStageHandler(db);
   const canonicalized = createConfiguredCanonicalizedStageHandler(db);
   const reconciled = createConfiguredReconciledStageHandler(db);
+  const consolidated = createConfiguredConsolidatedStageHandler(db);
   return new BoundedProcessingStageEffectRouter({
     registered,
     reviewed,
     canonicalized,
     reconciled,
+    consolidated,
     ...(represented ? { represented } : {}),
     ...(extracted ? { extracted } : {}),
   }, timeoutMs);
