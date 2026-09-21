@@ -43,14 +43,15 @@ test("known-good rollback state advances only after both live acceptance jobs pa
   assert.match(workflow, /corvis\.known-good-release\.v1/);
 });
 
-test("deployment docs keep API_IMAGE derived rather than human-managed", async () => {
+test("deployment docs keep release images derived and known-good state acceptance-gated", async () => {
   const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
   const deployment = await read("docs/DEPLOYMENT.md");
 
-  assert.match(environments, /api_image` is (?:no longer )?a?\s*not a human-managed github environment variable|api_image` is not a human-managed github environment variable/);
+  assert.match(environments, /`api_image` is not a human-managed github environment variable/);
   assert.match(environments, /remove or avoid creating/);
   assert.match(environments, /runtime api\/worker image/);
-  assert.match(deployment, /fully successful live security acceptance run/);
-  assert.match(deployment, /build-once promotion/);
-  assert.match(deployment, /current workflow does not silently assume such trust exists/);
+  assert.match(deployment, /a built image is not a known-good production release until live acceptance passes/);
+  assert.match(deployment, /only a fully successful acceptance run records/);
+  assert.match(deployment, /known-good\.json/);
+  assert.match(deployment, /if acceptance fails or cannot run, the known-good pointer does not advance/);
 });
