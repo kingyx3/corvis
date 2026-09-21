@@ -1,0 +1,46 @@
+swagger: "2.0"
+info:
+  title: Corvis customer web edge transport
+  version: "1.0"
+schemes:
+  - https
+securityDefinitions:
+  cloudflare_edge_key:
+    type: apiKey
+    name: x-api-key
+    in: header
+security:
+  - cloudflare_edge_key: []
+x-google-allow: configured
+x-google-backend:
+  address: ${backend_uri}
+  path_translation: APPEND_PATH_TO_ADDRESS
+  protocol: h2
+paths:
+  /:
+    get:
+      operationId: customerRootGet
+      responses:
+        "200": { description: Customer web response }
+    head:
+      operationId: customerRootHead
+      responses:
+        "200": { description: Customer web response }
+  /{path=**}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        type: string
+    get:
+      operationId: customerWildcardGet
+      responses:
+        "200": { description: Customer web response }
+    post:
+      operationId: customerWildcardPost
+      responses:
+        "200": { description: Customer web response }
+    head:
+      operationId: customerWildcardHead
+      responses:
+        "200": { description: Customer web response }
