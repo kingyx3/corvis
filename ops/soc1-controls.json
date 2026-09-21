@@ -1,7 +1,7 @@
 {
   "schemaVersion": "corvis.soc1-readiness.v1",
   "authority": {
-    "businessControlSource": "Confluence: SOC 1 Readiness, Control Mapping & Audit Plan",
+    "businessControlSource": "https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/3440643/SOC+1+Readiness+ICFR+Control+Mapping+Audit+Plan",
     "technicalImplementationSource": "https://github.com/kingyx3/corvis"
   },
   "target": {
