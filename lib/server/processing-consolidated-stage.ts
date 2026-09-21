@@ -1,5 +1,6 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+import { isReplayProcessingRun } from "./processing-run.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 export type ReconciledPredecessorResult = {
@@ -114,6 +115,34 @@ export class PostgresConsolidationRepository {
     this.db = db;
   }
 
+  async findExisting(input: {
+    tenantId: string;
+    documentId: string;
+    predecessor: ReconciledPredecessorResult;
+  }): Promise<ConsolidationResult | undefined> {
+    const rows = await this.db.query(`select
+        c.consolidation_run_id,c.reconciliation_run_id,c.snapshot_id,c.snapshot_version,
+        r.fund_id,r.report_period,c.fact_count,c.source_observation_count,true as consolidation_ready
+      from corvis_consolidated.consolidation_run c
+      join corvis_consolidated.reconciliation_run r
+        on r.tenant_id=c.tenant_id and r.reconciliation_run_id=c.reconciliation_run_id
+      where c.tenant_id=$1::uuid
+        and c.document_id=$2::uuid
+        and c.reconciliation_run_id=$3::uuid
+        and c.snapshot_id=$4::uuid
+        and c.snapshot_version=$5
+        and c.status='ready'
+      limit 1`, [
+      input.tenantId,
+      input.documentId,
+      input.predecessor.reconciliationRunId,
+      input.predecessor.snapshotId,
+      input.predecessor.snapshotVersion,
+    ]);
+    const row = rows[0];
+    return row ? this.result(row, input.predecessor) : undefined;
+  }
+
   async consolidate(input: {
     tenantId: string;
     documentId: string;
@@ -133,7 +162,10 @@ export class PostgresConsolidationRepository {
     ]);
     const row = rows[0];
     if (!row) throw new Error("consolidated stage did not return consolidation state");
+    return this.result(row, input.predecessor);
+  }
 
+  private result(row: PostgresRow, predecessor: ReconciledPredecessorResult): ConsolidationResult {
     const ready = boolean(row, "consolidation_ready");
     const result: ConsolidationResult = {
       consolidationRunId: text(row, "consolidation_run_id"),
@@ -151,16 +183,16 @@ export class PostgresConsolidationRepository {
     if (!result.consolidationRunId || !result.reconciliationRunId || !result.snapshotId) {
       throw new Error("consolidated stage received incomplete consolidation identity");
     }
-    if (result.reconciliationRunId !== input.predecessor.reconciliationRunId) {
+    if (result.reconciliationRunId !== predecessor.reconciliationRunId) {
       throw new Error("consolidated stage reconciliation lineage changed during persistence");
     }
-    if (result.snapshotId !== input.predecessor.snapshotId || result.snapshotVersion !== input.predecessor.snapshotVersion) {
+    if (result.snapshotId !== predecessor.snapshotId || result.snapshotVersion !== predecessor.snapshotVersion) {
       throw new Error("consolidated stage snapshot lineage changed during persistence");
     }
-    if (result.fundId !== input.predecessor.fundId || result.reportPeriod !== input.predecessor.reportPeriod) {
+    if (result.fundId !== predecessor.fundId || result.reportPeriod !== predecessor.reportPeriod) {
       throw new Error("consolidated stage fund-period lineage changed during persistence");
     }
-    if (result.sourceObservationCount !== input.predecessor.observationCount) {
+    if (result.sourceObservationCount !== predecessor.observationCount) {
       throw new Error("consolidated stage source observation count changed during persistence");
     }
     if (result.factCount <= 0) throw new Error("consolidated stage persisted no facts");
@@ -175,7 +207,14 @@ export function createConsolidatedStageHandler(repository: PostgresConsolidation
     }
     assertNotAborted(signal);
     const predecessor = reconciledPredecessorResult(effect);
-    const result = await repository.consolidate({
+    const reused = isReplayProcessingRun(effect.payload)
+      ? await repository.findExisting({
+        tenantId: effect.tenantId,
+        documentId: effect.documentId,
+        predecessor,
+      })
+      : undefined;
+    const result = reused ?? await repository.consolidate({
       tenantId: effect.tenantId,
       documentId: effect.documentId,
       predecessor,
