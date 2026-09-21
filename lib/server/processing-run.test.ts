@@ -20,10 +20,13 @@ test("processing replay migration namespaces every downstream job and binds exac
   assert.match(sql, /when p_run_key='primary' then p_stage \|\| ':' \|\| p_document_id::text/);
   assert.match(sql, /current_job\.run_key,computed_next_stage,current_job\.document_id/);
   assert.match(sql, /'processingrunkey',current_job\.run_key/);
+  assert.match(sql, /'processingstageready'[\s\S]+?'predecessorjobid',p_job_id/);
   assert.match(sql, /create or replace function corvis_control\.request_data_correction_replay/);
   assert.match(sql, /correction replay requires exactly one retained clean source artifact/);
   assert.match(sql, /cross join lateral unnest\(s\.fact_ids\)/);
   assert.match(sql, /cross join lateral unnest\(cf\.source_observation_ids\)/);
+  assert.match(sql, /computed_event_id := md5\([^;]+document-registered-replay[^;]+\)::uuid/);
+  assert.match(sql, /'documentregistered','document',current_row\.document_id::text/);
   assert.match(sql, /'artifactversionid',artifact_id/);
   assert.match(sql, /'ingestionid',artifact_ingestion_id/);
   assert.match(sql, /replay_run_key := 'data-correction:' \|\| p_incident_id::text/);
