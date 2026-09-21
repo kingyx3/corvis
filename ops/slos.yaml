@@ -41,5 +41,7 @@ alerts:
     severity: SEV1
   - condition: dead_letter_queue_depth > 0 for 15m
     severity: SEV2
-  - condition: published_fact_source_reference_coverage < 1.0
+  - condition: publication_attempt_blocked_by_incomplete_source_lineage == true
+    severity: SEV2
+  - condition: upload_initiation_latency_p95_ms > 500 for 10m
     severity: SEV2
