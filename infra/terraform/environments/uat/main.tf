@@ -37,6 +37,7 @@ locals {
   edge_enabled                   = local.edge_requested && local.api_runtime_enabled
   api_hostname                   = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
   customer_hostname              = local.edge_enabled ? "app.uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  admin_hostname                 = local.edge_enabled ? "admin.uat.${trimspace(var.cloudflare_zone_name)}" : ""
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
   cloudflare_zone_id             = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].id, "") : ""
   cloudflare_account_id          = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].account.id, "") : ""
@@ -46,7 +47,7 @@ resource "terraform_data" "edge_configuration_guard" {
   lifecycle {
     precondition {
       condition     = !local.edge_requested || local.api_runtime_enabled
-      error_message = "Cloudflare edge activation requires an immutable API_IMAGE so API and customer origins cannot point at missing runtimes."
+      error_message = "Cloudflare edge activation requires an immutable API_IMAGE so API, customer and admin origins cannot point at missing runtimes."
     }
   }
 }
@@ -102,6 +103,16 @@ module "customer_runtime" {
   source            = "../../modules/cloud-run-customer"
   project_id        = var.project_id
   environment       = "uat"
+  surface           = "customer"
+  image             = var.api_image
+  decommission_mode = var.decommission_mode
+}
+
+module "admin_runtime" {
+  source            = "../../modules/cloud-run-customer"
+  project_id        = var.project_id
+  environment       = "uat"
+  surface           = "admin"
   image             = var.api_image
   decommission_mode = var.decommission_mode
 }
@@ -137,11 +148,26 @@ module "customer_gateway" {
   source                         = "../../modules/gcp-web-gateway"
   project_id                     = var.project_id
   environment                    = "uat"
+  surface                        = "customer"
   cloud_run_service_name         = module.customer_runtime.service_name
   cloud_run_service_uri          = module.customer_runtime.service_uri
   deployer_service_account_email = local.deployer_service_account_email
 
   depends_on = [module.customer_runtime]
+}
+
+module "admin_gateway" {
+  count = local.edge_enabled ? 1 : 0
+
+  source                         = "../../modules/gcp-web-gateway"
+  project_id                     = var.project_id
+  environment                    = "uat"
+  surface                        = "admin"
+  cloud_run_service_name         = module.admin_runtime.service_name
+  cloud_run_service_uri          = module.admin_runtime.service_uri
+  deployer_service_account_email = local.deployer_service_account_email
+
+  depends_on = [module.admin_runtime]
 }
 
 module "cloudflare_edge" {
@@ -177,6 +203,25 @@ module "cloudflare_customer_edge" {
   depends_on = [
     terraform_data.edge_zone_guard,
     module.customer_gateway,
+    module.api_gateway,
+  ]
+}
+
+module "cloudflare_admin_edge" {
+  count = local.edge_enabled ? 1 : 0
+
+  source                 = "../../modules/cloudflare-admin-edge"
+  account_id             = local.cloudflare_account_id
+  zone_id                = local.cloudflare_zone_id
+  admin_hostname         = local.admin_hostname
+  admin_gateway_hostname = module.admin_gateway[0].gateway_hostname
+  admin_gateway_api_key  = module.admin_gateway[0].edge_api_key
+  api_gateway_hostname   = module.api_gateway[0].gateway_hostname
+  api_gateway_api_key    = module.api_gateway[0].edge_api_key
+
+  depends_on = [
+    terraform_data.edge_zone_guard,
+    module.admin_gateway,
     module.api_gateway,
   ]
 }

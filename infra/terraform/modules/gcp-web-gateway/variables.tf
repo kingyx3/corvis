@@ -11,6 +11,16 @@ variable "environment" {
   type = string
 }
 
+variable "surface" {
+  description = "Presentation gateway surface."
+  type        = string
+  default     = "customer"
+  validation {
+    condition     = contains(["customer", "admin"], var.surface)
+    error_message = "surface must be customer or admin"
+  }
+}
+
 variable "cloud_run_service_name" {
   type = string
 }

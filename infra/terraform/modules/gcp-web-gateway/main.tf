@@ -14,14 +14,16 @@ locals {
     service     = "corvis"
     environment = var.environment
     managed_by  = "terraform"
+    surface     = var.surface
   }
+  gateway_id = "corvis-${var.surface}-${var.environment}"
 }
 
 resource "google_service_account" "gateway" {
   project      = var.project_id
-  account_id   = "corvis-web-gw-${var.environment}"
-  display_name = "Corvis customer web gateway ${var.environment}"
-  description  = "Keyless API Gateway identity allowed to invoke only the customer web Cloud Run service."
+  account_id   = "corvis-${var.surface}-gw-${var.environment}"
+  display_name = "Corvis ${var.surface} web gateway ${var.environment}"
+  description  = "Keyless API Gateway identity allowed to invoke only the ${var.surface} presentation Cloud Run service."
 }
 
 resource "google_project_service_identity" "api_gateway" {
@@ -53,8 +55,8 @@ resource "google_cloud_run_v2_service_iam_member" "gateway_invoker" {
 resource "google_api_gateway_api" "web" {
   provider     = google-beta
   project      = var.project_id
-  api_id       = "corvis-web-${var.environment}"
-  display_name = "Corvis customer web ${var.environment}"
+  api_id       = local.gateway_id
+  display_name = "Corvis ${var.surface} web ${var.environment}"
   labels       = local.labels
 }
 
@@ -66,8 +68,8 @@ resource "google_project_service" "managed_api" {
 
 resource "google_apikeys_key" "cloudflare_edge" {
   project      = var.project_id
-  name         = "corvis-web-edge-${var.environment}"
-  display_name = "Corvis customer web edge ${var.environment}"
+  name         = "corvis-${var.surface}-edge-${var.environment}"
+  display_name = "Corvis ${var.surface} web edge ${var.environment}"
 
   restrictions {
     api_targets {
@@ -80,8 +82,8 @@ resource "google_api_gateway_api_config" "web" {
   provider             = google-beta
   project              = var.project_id
   api                  = google_api_gateway_api.web.api_id
-  api_config_id_prefix = "corvis-web-${var.environment}-"
-  display_name         = "Corvis customer web ${var.environment}"
+  api_config_id_prefix = "${local.gateway_id}-"
+  display_name         = "Corvis ${var.surface} web ${var.environment}"
   labels               = local.labels
 
   gateway_config {
@@ -115,8 +117,8 @@ resource "google_api_gateway_gateway" "web" {
   provider     = google-beta
   project      = var.project_id
   region       = var.region
-  gateway_id   = "corvis-web-${var.environment}"
-  display_name = "Corvis customer web ${var.environment}"
+  gateway_id   = local.gateway_id
+  display_name = "Corvis ${var.surface} web ${var.environment}"
   api_config   = google_api_gateway_api_config.web.id
   labels       = local.labels
 }
