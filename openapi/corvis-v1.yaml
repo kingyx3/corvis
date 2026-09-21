@@ -42,6 +42,26 @@ paths:
       responses:
         '200': { description: Paginated tenant-visible company identities and governed name/identifier history. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+  /holdings:
+    get:
+      operationId: listHoldings
+      description: Lists approved tenant-scoped fund positions. Each holding targets exactly one company or underlying fund; an underlying-fund target is returned only when that target fund is also entitled.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated approved holdings with polymorphic company/fund targets and source lineage. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+  /instruments:
+    get:
+      operationId: listInstruments
+      description: Lists approved security or contractual exposures beneath approved company-targeted holdings on entitled funds. Instruments cannot exist beneath fund-targeted holdings.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated approved instruments with exact source security descriptions and normalized instrument attributes. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /company-lifecycle-events:
     get:
       operationId: listCompanyLifecycleEvents
