@@ -6,11 +6,11 @@ async function read(path: string): Promise<string> {
   return (await readFile(path, "utf8")).toLowerCase();
 }
 
-test("customer Cloud Run runtime is presentation-only and fail-closed", async () => {
+test("presentation Cloud Run runtimes are least-privilege and fail-closed", async () => {
   const runtime = await read("infra/terraform/modules/cloud-run-customer/main.tf");
 
   assert.match(runtime, /corvis_runtime_surface/);
-  assert.match(runtime, /value\s*=\s*"customer"/);
+  assert.match(runtime, /value\s*=\s*var\.surface/);
   assert.match(runtime, /roles\/logging\.logwriter/);
   assert.doesNotMatch(
     runtime,
@@ -39,6 +39,7 @@ test("production-like roots provision isolated customer services", async () => {
   for (const environment of ["uat", "prod"]) {
     const root = await read(`infra/terraform/environments/${environment}/main.tf`);
     assert.match(root, /module "customer_runtime"/);
+    assert.match(root, /surface\s*=\s*"customer"/);
     assert.match(root, /module "customer_gateway"/);
     assert.match(root, /module "cloudflare_customer_edge"/);
     assert.match(root, /upload_allowed_origins\s*=\s*local\.edge_enabled/);
