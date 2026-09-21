@@ -15,8 +15,18 @@ variable "environment" {
   }
 }
 
+variable "surface" {
+  description = "Presentation-only runtime surface."
+  type        = string
+  default     = "customer"
+  validation {
+    condition     = contains(["customer", "admin"], var.surface)
+    error_message = "surface must be customer or admin"
+  }
+}
+
 variable "image" {
-  description = "Immutable customer web image. Empty leaves the customer runtime unprovisioned."
+  description = "Immutable presentation web image. Empty leaves the runtime unprovisioned."
   type        = string
   default     = ""
 }
