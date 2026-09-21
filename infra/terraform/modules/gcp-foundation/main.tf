@@ -1,7 +1,3 @@
-data "google_project" "current" {
-  project_id = var.project_id
-}
-
 locals {
   labels = merge(
     {
@@ -33,9 +29,6 @@ locals {
   ])
 
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-  pubsub_service_agent           = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-  cloud_tasks_service_agent      = "service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
-  cloud_scheduler_service_agent  = "service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
 resource "google_project_service" "required" {
@@ -239,9 +232,9 @@ resource "google_cloud_tasks_queue_iam_member" "api_processing_enqueuer" {
   member   = "serviceAccount:${google_service_account.api.email}"
 }
 
-# Cloud Tasks creation with an OIDC token requires the caller to be allowed to
-# act as the target worker identity. Terraform itself needs the same narrow
-# permission while creating provider-side push/scheduler bindings.
+# Creating an authenticated Cloud Task requires the caller to be allowed to act
+# as the target worker identity. Terraform itself needs the same narrow grant to
+# configure provider-side authenticated push/scheduler bindings.
 resource "google_service_account_iam_member" "api_act_as_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
@@ -252,27 +245,4 @@ resource "google_service_account_iam_member" "deployer_act_as_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${local.deployer_service_account_email}"
-}
-
-# Pub/Sub, Cloud Tasks and Cloud Scheduler mint short-lived OIDC tokens on
-# behalf of the worker service account. No static service-account key exists.
-resource "google_service_account_iam_member" "pubsub_token_creator" {
-  service_account_id = google_service_account.worker.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:${local.pubsub_service_agent}"
-  depends_on         = [google_project_service.required]
-}
-
-resource "google_service_account_iam_member" "cloud_tasks_token_creator" {
-  service_account_id = google_service_account.worker.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:${local.cloud_tasks_service_agent}"
-  depends_on         = [google_project_service.required]
-}
-
-resource "google_service_account_iam_member" "cloud_scheduler_token_creator" {
-  service_account_id = google_service_account.worker.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:${local.cloud_scheduler_service_agent}"
-  depends_on         = [google_project_service.required]
 }
