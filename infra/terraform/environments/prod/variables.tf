@@ -7,6 +7,12 @@ variable "api_image" {
   default     = ""
 }
 
+variable "control_loop_image" {
+  description = "Immutable production control-loop image reference. Empty keeps scheduled control-loop jobs unprovisioned."
+  type        = string
+  default     = ""
+}
+
 variable "auth_issuer" {
   description = "Production OIDC issuer URL."
   type        = string
