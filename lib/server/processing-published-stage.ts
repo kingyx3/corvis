@@ -1,5 +1,6 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+import { isReplayProcessingRun } from "./processing-run.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 export type ConsolidatedPredecessorResult = {
@@ -104,6 +105,33 @@ export class PostgresPublicationRepository {
     this.db = db;
   }
 
+  async findExisting(input: {
+    tenantId: string;
+    documentId: string;
+    predecessor: ConsolidatedPredecessorResult;
+  }): Promise<PublicationResult | undefined> {
+    const rows = await this.db.query(`select
+        publication_run_id,consolidation_run_id,snapshot_id,source_snapshot_version,
+        published_snapshot_version as snapshot_version,publication_event_id,fact_count,
+        true as publication_ready
+      from corvis_consolidated.publication_run
+      where tenant_id=$1::uuid
+        and document_id=$2::uuid
+        and consolidation_run_id=$3::uuid
+        and snapshot_id=$4::uuid
+        and source_snapshot_version=$5
+        and status='ready'
+      limit 1`, [
+      input.tenantId,
+      input.documentId,
+      input.predecessor.consolidationRunId,
+      input.predecessor.snapshotId,
+      input.predecessor.snapshotVersion,
+    ]);
+    const row = rows[0];
+    return row ? this.result(row, input.predecessor) : undefined;
+  }
+
   async publish(input: {
     tenantId: string;
     documentId: string;
@@ -122,6 +150,10 @@ export class PostgresPublicationRepository {
     ]);
     const row = rows[0];
     if (!row) throw new Error("published stage did not return publication state");
+    return this.result(row, input.predecessor);
+  }
+
+  private result(row: PostgresRow, predecessor: ConsolidatedPredecessorResult): PublicationResult {
     if (!boolean(row, "publication_ready")) {
       throw new Error("published stage persistence did not become ready");
     }
@@ -140,19 +172,19 @@ export class PostgresPublicationRepository {
     if (!result.publicationRunId || !result.publicationEventId || !result.snapshotId) {
       throw new Error("published stage received incomplete publication identity");
     }
-    if (result.consolidationRunId !== input.predecessor.consolidationRunId) {
+    if (result.consolidationRunId !== predecessor.consolidationRunId) {
       throw new Error("published stage consolidation lineage changed during persistence");
     }
-    if (result.snapshotId !== input.predecessor.snapshotId) {
+    if (result.snapshotId !== predecessor.snapshotId) {
       throw new Error("published stage snapshot identity changed during persistence");
     }
-    if (result.sourceSnapshotVersion !== input.predecessor.snapshotVersion) {
+    if (result.sourceSnapshotVersion !== predecessor.snapshotVersion) {
       throw new Error("published stage source snapshot version changed during persistence");
     }
     if (result.snapshotVersion !== result.sourceSnapshotVersion + 1) {
       throw new Error("published stage did not create the next immutable snapshot version");
     }
-    if (result.factCount < input.predecessor.factCount) {
+    if (result.factCount < predecessor.factCount) {
       throw new Error("published stage snapshot lost consolidated facts");
     }
     return result;
@@ -164,7 +196,14 @@ export function createPublishedStageHandler(repository: PostgresPublicationRepos
     if (effect.stage !== "published") throw new Error(`published handler cannot execute stage ${effect.stage}`);
     assertNotAborted(signal);
     const predecessor = consolidatedPredecessorResult(effect);
-    const result = await repository.publish({
+    const reused = isReplayProcessingRun(effect.payload)
+      ? await repository.findExisting({
+        tenantId: effect.tenantId,
+        documentId: effect.documentId,
+        predecessor,
+      })
+      : undefined;
+    const result = reused ?? await repository.publish({
       tenantId: effect.tenantId,
       documentId: effect.documentId,
       predecessor,
