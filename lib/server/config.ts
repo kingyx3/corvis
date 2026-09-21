@@ -3,6 +3,7 @@ export type ServerConfig = {
   demoMode: boolean;
   authIssuer?: string;
   authAudience?: string;
+  authJwksUrl?: string;
   trustedAuthProxySecret?: string;
 
   postgresDsn?: string;
@@ -40,6 +41,8 @@ export type ServerConfig = {
   dataLifecycleToken?: string;
   exportDeliveryEndpoint?: string;
   exportDeliveryToken?: string;
+  // Non-production compatibility only. Production internal calls use Google
+  // workload OIDC instead of a shared secret.
   workerSecret?: string;
 };
 
@@ -61,6 +64,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     demoMode,
     authIssuer: env.CORVIS_AUTH_ISSUER,
     authAudience: env.CORVIS_AUTH_AUDIENCE,
+    authJwksUrl: env.CORVIS_AUTH_JWKS_URL,
     trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
     postgresDsn: env.CORVIS_POSTGRES_DSN,
     snowflakeDsn: env.CORVIS_SNOWFLAKE_DSN,
@@ -97,19 +101,16 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
 
   if (environment === "production") {
     if (demoMode) throw new Error("CORVIS_DEMO_MODE must be disabled in production");
+    // Startup requires only the authoritative core data/auth/storage bindings.
+    // Optional capabilities (AI/search/observability/export/lifecycle) fail closed
+    // at their own adapter boundaries and surface as missing readiness instead of
+    // preventing unrelated customer workflows from starting.
     const missing = [
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
-      ["CORVIS_TRUSTED_AUTH_PROXY_SECRET", config.trustedAuthProxySecret],
       ["CORVIS_POSTGRES_DSN", config.postgresDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
       ["CORVIS_UPLOAD_ALLOWED_ORIGINS", config.uploadAllowedOrigins.length ? "configured" : undefined],
-      ["CORVIS_SEARCH_ENDPOINT", config.searchEndpoint],
-      ["CORVIS_AI_ENDPOINT", config.aiEndpoint],
-      ["CORVIS_OBSERVABILITY_ENDPOINT", config.observabilityEndpoint],
-      ["CORVIS_DATA_LIFECYCLE_ENDPOINT", config.dataLifecycleEndpoint],
-      ["CORVIS_EXPORT_DELIVERY_ENDPOINT", config.exportDeliveryEndpoint],
-      ["CORVIS_WORKER_SECRET", config.workerSecret],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
   }
