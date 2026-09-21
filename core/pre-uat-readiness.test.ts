@@ -10,6 +10,16 @@ type AcceptancePlan = {
   scenarios: Array<{ id: string; required: boolean; issues: number[]; assertions: string[] }>;
 };
 
+type PerformanceBudgets = {
+  version: number;
+  environment: string;
+  api: { readP95Ms: number; writeP95Ms: number; errorRatePercentMax: number };
+  web: { initialPageInteractiveP95Ms: number; routeTransitionP95Ms: number; adminRefreshP95Ms: number };
+  processing: { uploadToRegisteredP95Seconds: number; registeredToReviewReadyP95Minutes: number; approvedToPublishedP95Minutes: number };
+  load: { concurrentInteractiveUsers: number; concurrentDocumentJourneys: number; largeDocumentPages: number; sustainedMinutes: number };
+  failureConditions: string[];
+};
+
 async function read(path: string): Promise<string> {
   return readFile(path, "utf8");
 }
@@ -34,6 +44,8 @@ test("pre-UAT acceptance plan covers every production-like failure and recovery 
     "retry-dead-letter-and-authorized-recovery",
     "correction-replay-and-republication-idempotency",
     "cross-tenant-and-service-identity-negative-tests",
+    "production-no-demo-or-mock-fallback",
+    "performance-and-load-budgets",
     "known-good-rollback",
   ]) assert.ok(requiredEvidence.has(evidence), `missing required UAT evidence: ${evidence}`);
 
@@ -47,6 +59,8 @@ test("pre-UAT acceptance plan covers every production-like failure and recovery 
     "correction-republication",
     "tenant-isolation",
     "service-identity-negative",
+    "no-production-mocks",
+    "performance-load",
     "rollback",
     "customer-cutover-dry-run",
     "security-assessment-readiness",
@@ -55,6 +69,23 @@ test("pre-UAT acceptance plan covers every production-like failure and recovery 
     assert.ok(scenario, `missing required UAT scenario: ${id}`);
     assert.equal(scenario.required, true);
     assert.ok(scenario.assertions.length > 0);
+  }
+});
+
+test("production-like performance budgets are explicit and fail closed", async () => {
+  const budgets = await readJson<PerformanceBudgets>("ops/uat/performance-budgets.json");
+  assert.equal(budgets.version, 1);
+  assert.equal(budgets.environment, "uat");
+  assert.ok(budgets.api.readP95Ms > 0 && budgets.api.readP95Ms <= 1000);
+  assert.ok(budgets.api.writeP95Ms >= budgets.api.readP95Ms);
+  assert.ok(budgets.api.errorRatePercentMax > 0 && budgets.api.errorRatePercentMax <= 1);
+  assert.ok(budgets.web.initialPageInteractiveP95Ms <= 3000);
+  assert.ok(budgets.processing.registeredToReviewReadyP95Minutes <= 10);
+  assert.ok(budgets.load.concurrentInteractiveUsers >= 50);
+  assert.ok(budgets.load.concurrentDocumentJourneys >= 20);
+  assert.ok(budgets.load.largeDocumentPages >= 500);
+  for (const condition of ["authorization-or-rls-bypass", "duplicate-logical-business-effect", "unbounded-queue-growth"]) {
+    assert.ok(budgets.failureConditions.includes(condition), `missing load-test failure condition: ${condition}`);
   }
 });
 
@@ -81,7 +112,7 @@ test("security assessment pack is safe for a public repo and matches runtime bou
 test("acceptance contract points at the current implementation owners rather than inventing parallel tracks", async () => {
   const plan = await readJson<AcceptancePlan>("ops/uat/acceptance-plan.json");
   const issueRefs = new Set(plan.scenarios.flatMap((scenario) => scenario.issues));
-  for (const issue of [8, 12, 13, 77, 78, 79, 80]) assert.ok(issueRefs.has(issue), `missing owning issue #${issue}`);
+  for (const issue of [8, 9, 12, 13, 77, 78, 79, 80]) assert.ok(issueRefs.has(issue), `missing owning issue #${issue}`);
 
   for (const path of [
     ".github/workflows/promote-environment.yml",
