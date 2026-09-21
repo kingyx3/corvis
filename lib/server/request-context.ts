@@ -179,7 +179,10 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
       tenantId,
       workspaceId,
       roles: [],
-      entitlements: { workspaceIds: [workspaceId] },
+      entitlements: {
+        workspaceIds: [workspaceId],
+        sourceDocumentAccessAllowed: false,
+      },
       authMethod: "oidc",
       sessionId: verified.sessionId,
     };
