@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "classification": "synthetic-public-fixture",
+  "tenants": [
+    {"id":"tenant-red","purpose":"ordinary tenant isolation tests"},
+    {"id":"tenant-blue","purpose":"cross-tenant negative tests"}
+  ],
+  "identities": [
+    {"id":"human-red","tenant":"tenant-red","role":"ordinary-user"},
+    {"id":"human-blue","tenant":"tenant-blue","role":"ordinary-user"},
+    {"id":"admin-operator","tenant":"tenant-red","role":"admin"}
+  ],
+  "documents": [
+    {"id":"synthetic-quarterly-red","tenant":"tenant-red","expectedClassification":"quarterly-fund-report"},
+    {"id":"synthetic-quarterly-blue","tenant":"tenant-blue","expectedClassification":"quarterly-fund-report"}
+  ],
+  "constraints": [
+    "no-real-customer-data",
+    "no-production-secrets",
+    "no-provider-credential-material",
+    "deterministic-expected-results"
+  ]
+}
