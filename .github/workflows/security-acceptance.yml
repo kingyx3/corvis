@@ -215,8 +215,109 @@ jobs:
           CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
           unset dsn
 
+  control-loop:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    env:
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+      - name: Verify scheduled control-loop runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_account="corvis-control-loop-${CORVIS_ENVIRONMENT}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+          state_bucket="${GCP_PROJECT_ID}-corvis-control-loop-${CORVIS_ENVIRONMENT}"
+          expected_image_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/control-loop@sha256:"
+          result="pass"
+          daily_image=""
+
+          for cadence in daily weekly monthly; do
+            case "${cadence}" in
+              daily) expected_mode="daily"; expected_schedule="17 2 * * *" ;;
+              weekly) expected_mode="weekly"; expected_schedule="23 3 * * 0" ;;
+              monthly) expected_mode="monthly-candidate"; expected_schedule="31 4 * * 0" ;;
+            esac
+            name="corvis-control-loop-${cadence}-${CORVIS_ENVIRONMENT}"
+            job="$(gcloud run jobs describe "${name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+            scheduler="$(gcloud scheduler jobs describe "${name}" --location="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+            policy="$(gcloud run jobs get-iam-policy "${name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+
+            image="$(jq -r '.template.template.containers[0].image // empty' <<<"${job}")"
+            job_sa="$(jq -r '.template.template.serviceAccount // empty' <<<"${job}")"
+            mode="$(jq -r '.template.template.containers[0].args[1] // empty' <<<"${job}")"
+            invoker_count="$(jq --arg member "serviceAccount:${service_account}" '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]? | select(. == $member)] | length' <<<"${policy}")"
+            uri="https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/jobs/${name}:run"
+
+            if [[ ! "${image}" =~ ^${expected_image_prefix}[0-9a-f]{64}$ \
+               || "${job_sa}" != "${service_account}" \
+               || "${mode}" != "${expected_mode}" \
+               || "${invoker_count}" != "1" \
+               || "$(jq -r '.schedule // empty' <<<"${scheduler}")" != "${expected_schedule}" \
+               || "$(jq -r '.timeZone // empty' <<<"${scheduler}")" != "Asia/Singapore" \
+               || "$(jq -r '.httpTarget.uri // empty' <<<"${scheduler}")" != "${uri}" \
+               || "$(jq -r '.httpTarget.oauthToken.serviceAccountEmail // empty' <<<"${scheduler}")" != "${service_account}" ]]; then
+              result="fail"
+            fi
+            if [[ -z "${daily_image}" ]]; then daily_image="${image}"; elif [[ "${image}" != "${daily_image}" ]]; then result="fail"; fi
+          done
+
+          bucket="$(gcloud storage buckets describe "gs://${state_bucket}" --format=json)"
+          bucket_policy="$(gcloud storage buckets get-iam-policy "gs://${state_bucket}" --format=json)"
+          state_admin_count="$(jq --arg member "serviceAccount:${service_account}" '[.bindings[]? | select(.role == "roles/storage.objectAdmin") | .members[]? | select(. == $member)] | length' <<<"${bucket_policy}")"
+          public_members="$(jq '[.bindings[]?.members[]? | select(. == "allUsers" or . == "allAuthenticatedUsers")] | length' <<<"${bucket_policy}")"
+          if [[ "$(jq -r '.iamConfiguration.publicAccessPrevention // empty' <<<"${bucket}")" != "enforced" \
+             || "$(jq -r '.iamConfiguration.uniformBucketLevelAccess.enabled // false' <<<"${bucket}")" != "true" \
+             || "$(jq -r '.versioning.enabled // false' <<<"${bucket}")" != "true" \
+             || "${state_admin_count}" != "1" \
+             || "${public_members}" != "0" ]]; then
+            result="fail"
+          fi
+
+          checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg environment "${CORVIS_ENVIRONMENT}" --arg checkedAt "${checked_at}" --arg result "${result}" --arg image "${daily_image}" '{schemaVersion:"corvis.control-loop-runtime-acceptance.v1",environment:$environment,checkedAt:$checkedAt,source:"github-actions",result:$result,image:$image,checks:["immutable-job-image","dedicated-service-identity","job-invoker-policy","singapore-schedules","oauth-scheduler-targets","shared-release-image","private-versioned-state-bucket","bounded-state-iam"]}' > control-loop-runtime-acceptance-evidence.json
+          [[ "${result}" == "pass" ]]
+      - name: Upload sanitized control-loop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-loop-runtime-acceptance-${{ inputs.environment }}-${{ github.run_id }}
+          path: control-loop-runtime-acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record control evidence
+        if: always()
+        shell: bash
+        env:
+          CORVIS_CONTROL_TENANT_ID: ${{ vars.CORVIS_CONTROL_TENANT_ID }}
+        run: |
+          set -euo pipefail
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
+          echo "::add-mask::${dsn}"
+          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts control-loop-runtime-acceptance-evidence.json
+          unset dsn
+
   record-known-good-release:
-    needs: [edge, postgres-rls]
+    needs: [edge, postgres-rls, control-loop]
     if: ${{ success() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -237,15 +338,19 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
         with:
           version: ">= 416.0.0"
-      - name: Record accepted digest as known-good rollback target
+      - name: Record accepted release set as known-good rollback target
         shell: bash
         run: |
           set -euo pipefail
           image="$(gcloud run services describe "corvis-api-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
-          expected_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api@sha256:"
-          if [[ ! "${image}" =~ ^${expected_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted Cloud Run revision is not pinned to the expected Artifact Registry digest."; exit 1; fi
+          control_loop_job="$(gcloud run jobs describe "corvis-control-loop-daily-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+          control_loop_image="$(jq -r '.template.template.containers[0].image // empty' <<<"${control_loop_job}")"
+          expected_api_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api@sha256:"
+          expected_control_loop_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/control-loop@sha256:"
+          if [[ ! "${image}" =~ ^${expected_api_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted API revision is not pinned to the expected Artifact Registry digest."; exit 1; fi
+          if [[ ! "${control_loop_image}" =~ ^${expected_control_loop_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted control-loop job is not pinned to the expected Artifact Registry digest."; exit 1; fi
           accepted_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n --arg schemaVersion "corvis.known-good-release.v1" --arg environment "${{ inputs.environment }}" --arg image "${image}" --arg acceptedAt "${accepted_at}" --arg acceptanceWorkflowSha "${GITHUB_SHA}" --arg acceptanceRunId "${GITHUB_RUN_ID}" '{schemaVersion:$schemaVersion,environment:$environment,image:$image,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' > known-good.json
+          jq -n --arg schemaVersion "corvis.known-good-release.v2" --arg environment "${{ inputs.environment }}" --arg image "${image}" --arg controlLoopImage "${control_loop_image}" --arg acceptedAt "${accepted_at}" --arg acceptanceWorkflowSha "${GITHUB_SHA}" --arg acceptanceRunId "${GITHUB_RUN_ID}" '{schemaVersion:$schemaVersion,environment:$environment,image:$image,controlLoopImage:$controlLoopImage,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' > known-good.json
           destination="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
           gcloud storage cp known-good.json "${destination}"
-          { echo "### Known-good rollback target"; echo "- Environment: `${{ inputs.environment }}`"; echo "- Accepted image: `${image}`"; echo "- Manifest: `${destination}`"; } >> "${GITHUB_STEP_SUMMARY}"
+          { echo "### Known-good rollback target"; echo "- Environment: `${{ inputs.environment }}`"; echo "- Accepted API/worker image: `${image}`"; echo "- Accepted control-loop image: `${control_loop_image}`"; echo "- Manifest: `${destination}`"; } >> "${GITHUB_STEP_SUMMARY}"
