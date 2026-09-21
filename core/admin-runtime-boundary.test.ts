@@ -13,7 +13,7 @@ async function routeFiles(root: string): Promise<string[]> {
     const child = path.join(root, entry);
     const info = await stat(child);
     if (info.isDirectory()) files.push(...await routeFiles(child));
-    else if (entry === "route.ts") files.push(child.replaceAll("\\", "/"));
+    else if (entry === "route.ts") files.push(child.split("\\").join("/"));
   }
   return files;
 }
