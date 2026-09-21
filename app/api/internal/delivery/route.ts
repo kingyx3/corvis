@@ -23,8 +23,12 @@ export async function POST(request:Request){
   const id=correlationId(request);
   if(!await authorizedWorker(request)) return json({error:"forbidden",correlationId:id},{status:403});
   try{
+    // This route runs on the private worker service. Derive its exact provider
+    // URL from the authenticated request instead of hard-coding a run.app host
+    // or introducing a self-referential Terraform environment variable.
+    const processingWorkerUrl = new URL("/api/internal/processing-stage", request.url).toString();
     const [exportsResult,webhooksResult,processingResult]=await Promise.all([
-      processQueuedExports(),processWebhookDeliveries(),dispatchConfiguredProcessingTransport(),
+      processQueuedExports(),processWebhookDeliveries(),dispatchConfiguredProcessingTransport(processingWorkerUrl),
     ]);
     return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult},correlationId:id});
   }catch(error){return json({error:"delivery_worker_failed",message:error instanceof Error?error.message:"unknown",correlationId:id},{status:500});}
