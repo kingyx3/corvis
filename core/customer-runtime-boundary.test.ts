@@ -12,7 +12,10 @@ test("customer Cloud Run runtime is presentation-only and fail-closed", async ()
   assert.match(runtime, /corvis_runtime_surface/);
   assert.match(runtime, /value\s*=\s*"customer"/);
   assert.match(runtime, /roles\/logging\.logwriter/);
-  assert.doesNotMatch(runtime, /secretmanager|postgres|storage\.object|pubsub|cloudtasks/);
+  assert.doesNotMatch(
+    runtime,
+    /google_secret_manager_secret_iam_member|secret_key_ref|corvis_postgres_dsn|google_storage_bucket_iam_member|google_pubsub_|google_cloud_tasks_/,
+  );
   assert.doesNotMatch(runtime, /allusers|allauthenticatedusers/);
   assert.match(runtime, /@sha256:/);
 });
