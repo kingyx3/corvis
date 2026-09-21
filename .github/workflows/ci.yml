@@ -72,6 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           createdb corvis_migration_smoke
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
           for migration in db/postgres/migrations/*.sql; do
             echo "Applying ${migration}"
             PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f "${migration}"
