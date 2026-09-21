@@ -1,5 +1,6 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+import { isReplayProcessingRun } from "./processing-run.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { CANDIDATE_REVIEW_POLICY_VERSION } from "./processing-reviewed-stage.ts";
 
@@ -100,6 +101,36 @@ export class PostgresCanonicalizationRepository {
     this.db = db;
   }
 
+  async findReady(input: {
+    tenantId: string;
+    documentId: string;
+    predecessor: ReviewedPredecessorResult;
+  }): Promise<CanonicalizationResult | undefined> {
+    const rows = await this.db.query(`select
+        canonicalization_run_id,extraction_run_id,review_policy_version,
+        candidate_set_sha256,decision_set_sha256,candidate_count,
+        canonical_candidate_count,observation_count,source_reference_count
+      from corvis_facts.canonicalization_run
+      where tenant_id=$1::uuid
+        and document_id=$2::uuid
+        and extraction_run_id=$3::uuid
+        and review_policy_version=$4
+        and candidate_set_sha256=$5
+        and decision_set_sha256=$6
+        and status='ready'
+      limit 1`, [
+      input.tenantId,
+      input.documentId,
+      input.predecessor.extractionRunId,
+      input.predecessor.reviewPolicyVersion,
+      input.predecessor.candidateSetSha256,
+      input.predecessor.decisionSetSha256,
+    ]);
+    const row = rows[0];
+    if (!row) return undefined;
+    return this.result(row, input.predecessor);
+  }
+
   async canonicalize(input: {
     tenantId: string;
     documentId: string;
@@ -119,20 +150,23 @@ export class PostgresCanonicalizationRepository {
     ]);
     const row = rows[0];
     if (!row) throw new Error("canonicalized stage did not return a finalized canonicalization run");
+    return this.result(row, input.predecessor);
+  }
 
+  private result(row: PostgresRow, predecessor: ReviewedPredecessorResult): CanonicalizationResult {
     const result: CanonicalizationResult = {
       canonicalizationRunId: text(row, "canonicalization_run_id"),
-      extractionRunId: input.predecessor.extractionRunId,
-      reviewPolicyVersion: input.predecessor.reviewPolicyVersion,
-      candidateSetSha256: input.predecessor.candidateSetSha256,
-      decisionSetSha256: input.predecessor.decisionSetSha256,
+      extractionRunId: predecessor.extractionRunId,
+      reviewPolicyVersion: predecessor.reviewPolicyVersion,
+      candidateSetSha256: predecessor.candidateSetSha256,
+      decisionSetSha256: predecessor.decisionSetSha256,
       candidateCount: count(row, "candidate_count"),
       canonicalCandidateCount: count(row, "canonical_candidate_count"),
       observationCount: count(row, "observation_count"),
       sourceReferenceCount: count(row, "source_reference_count"),
     };
     if (!result.canonicalizationRunId) throw new Error("canonicalized stage received missing canonicalization run id");
-    if (result.candidateCount !== input.predecessor.candidateCount) {
+    if (result.candidateCount !== predecessor.candidateCount) {
       throw new Error("canonicalized stage candidate count no longer matches reviewed predecessor");
     }
     if (result.canonicalCandidateCount !== result.candidateCount) {
@@ -147,7 +181,14 @@ export function createCanonicalizedStageHandler(repository: PostgresCanonicaliza
     if (effect.stage !== "canonicalized") throw new Error(`canonicalized handler cannot execute stage ${effect.stage}`);
     assertNotAborted(signal);
     const predecessor = reviewedPredecessorResult(effect);
-    const result = await repository.canonicalize({
+    const reused = isReplayProcessingRun(effect.payload)
+      ? await repository.findReady({
+        tenantId: effect.tenantId,
+        documentId: effect.documentId,
+        predecessor,
+      })
+      : undefined;
+    const result = reused ?? await repository.canonicalize({
       tenantId: effect.tenantId,
       documentId: effect.documentId,
       predecessor,
