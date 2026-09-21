@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "environment": "uat",
+  "purpose": "Production-like acceptance plan. This file defines required scenarios and evidence; it is not evidence that UAT has been executed.",
+  "bootstrapDependencies": [
+    "billed-gcp-project",
+    "github-wif-trust",
+    "cloudflare-zone-account-trust",
+    "provider-owned-postgres-tls-dsn",
+    "real-idp-issuer-audience-jwks"
+  ],
+  "requiredEvidence": [
+    "release-digest-and-provenance",
+    "terraform-plan-and-apply",
+    "cloudflare-dns-tls-and-worker-routing",
+    "gateway-and-cloud-run-iam",
+    "customer-admin-api-worker-control-loop-isolation",
+    "postgres-tls-migrations-and-rls",
+    "upload-gcs-and-source-lineage",
+    "authenticated-pubsub-and-cloudtasks-worker-invocation",
+    "processing-success-and-review-resume",
+    "duplicate-delivery-and-crash-idempotency",
+    "retry-dead-letter-and-authorized-recovery",
+    "correction-replay-and-republication-idempotency",
+    "cross-tenant-and-service-identity-negative-tests",
+    "known-good-rollback",
+    "sanitized-operator-runbook-transcript"
+  ],
+  "scenarios": [
+    {"id":"success-path","required":true,"issues":[79],"assertions":["registered-to-published","immutable-lineage","single-publication"]},
+    {"id":"review-block-resume","required":true,"issues":[79],"assertions":["blocked-not-retryable","authorized-review","resume-preserves-history"]},
+    {"id":"duplicate-redelivery","required":true,"issues":[79],"assertions":["no-duplicate-observations","no-duplicate-snapshots","no-duplicate-publication"]},
+    {"id":"worker-crash-after-side-effect","required":true,"issues":[79],"assertions":["effect-journal-prevents-repeat","recovery-converges"]},
+    {"id":"retry-dead-letter-recovery","required":true,"issues":[79],"assertions":["next-attempt-honored","dead-letter-once","authorized-recovery"]},
+    {"id":"correction-republication","required":true,"issues":[77,79],"assertions":["original-history-immutable","replacement-version-linked","replay-idempotent"]},
+    {"id":"tenant-isolation","required":true,"issues":[8,12,79],"assertions":["cross-tenant-read-denied","cross-tenant-write-denied","rls-enforced"]},
+    {"id":"service-identity-negative","required":true,"issues":[8,79],"assertions":["customer-cannot-invoke-api-directly","admin-presentation-has-no-data-plane-credentials","unauthorized-worker-invocation-denied"]},
+    {"id":"rollback","required":true,"issues":[13],"assertions":["known-good-pointer-unchanged-on-failed-acceptance","rollback-to-accepted-digest"]},
+    {"id":"customer-cutover-dry-run","required":true,"issues":[78],"assertions":["manifest-valid","acceptance-scorecard-ready","rollback-plan-present"]},
+    {"id":"security-assessment-readiness","required":true,"issues":[80],"assertions":["scope-current","sanitized-test-corpus","rules-of-engagement-ready"]}
+  ]
+}
