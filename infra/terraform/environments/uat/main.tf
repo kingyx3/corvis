@@ -165,14 +165,14 @@ module "cloudflare_edge" {
 module "cloudflare_customer_edge" {
   count = local.edge_enabled ? 1 : 0
 
-  source                       = "../../modules/cloudflare-customer-edge"
-  account_id                   = local.cloudflare_account_id
-  zone_id                      = local.cloudflare_zone_id
-  customer_hostname            = local.customer_hostname
-  customer_gateway_hostname    = module.customer_gateway[0].gateway_hostname
-  customer_gateway_api_key     = module.customer_gateway[0].edge_api_key
-  api_gateway_hostname         = module.api_gateway[0].gateway_hostname
-  api_gateway_api_key          = module.api_gateway[0].edge_api_key
+  source                    = "../../modules/cloudflare-customer-edge"
+  account_id                = local.cloudflare_account_id
+  zone_id                   = local.cloudflare_zone_id
+  customer_hostname         = local.customer_hostname
+  customer_gateway_hostname = module.customer_gateway[0].gateway_hostname
+  customer_gateway_api_key  = module.customer_gateway[0].edge_api_key
+  api_gateway_hostname      = module.api_gateway[0].gateway_hostname
+  api_gateway_api_key       = module.api_gateway[0].edge_api_key
 
   depends_on = [
     terraform_data.edge_zone_guard,
