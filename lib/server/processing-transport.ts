@@ -153,13 +153,13 @@ export class GcpProcessingTransportAdapter implements ProcessingTransportAdapter
   }
 }
 
-export function processingTransportConfig(env: NodeJS.ProcessEnv = process.env): ProcessingTransportConfig | undefined {
+export function processingTransportConfig(env: NodeJS.ProcessEnv = process.env, workerUrlOverride?: string): ProcessingTransportConfig | undefined {
   const values = {
     projectId: env.CORVIS_GCP_PROJECT_ID?.trim() ?? "",
     region: env.CORVIS_GCP_REGION?.trim() || "asia-southeast1",
     topicName: env.CORVIS_PROCESSING_TOPIC_NAME?.trim() ?? "",
     queueName: env.CORVIS_PROCESSING_QUEUE_NAME?.trim() ?? "",
-    workerUrl: env.CORVIS_PROCESSING_WORKER_URL?.trim() ?? "",
+    workerUrl: workerUrlOverride?.trim() || env.CORVIS_PROCESSING_WORKER_URL?.trim() || "",
     workerAudience: env.CORVIS_PROCESSING_WORKER_AUDIENCE?.trim() ?? "",
     workerServiceAccountEmail: env.CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT?.trim() ?? "",
   };
@@ -191,8 +191,8 @@ export async function dispatchProcessingTransportBatch(input: {
   return { claimed: events.length, dispatched, failed };
 }
 
-export async function dispatchConfiguredProcessingTransport(): Promise<{ configured: boolean; claimed: number; dispatched: number; failed: number }> {
-  const config = processingTransportConfig();
+export async function dispatchConfiguredProcessingTransport(workerUrlOverride?: string): Promise<{ configured: boolean; claimed: number; dispatched: number; failed: number }> {
+  const config = processingTransportConfig(process.env, workerUrlOverride);
   if (!config) return { configured: false, claimed: 0, dispatched: 0, failed: 0 };
   const repository = new PostgresProcessingTransportRepository(postgres(getServerConfig().postgresDsn));
   const result = await dispatchProcessingTransportBatch({ repository, adapter: new GcpProcessingTransportAdapter(config) });
