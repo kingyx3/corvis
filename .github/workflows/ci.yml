@@ -24,7 +24,19 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee unit-test-output.txt
+      - name: Preserve unit-test failure transcript
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-output-${{ github.run_id }}
+          path: unit-test-output.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Terraform format and provider validation
         shell: bash
         run: |
