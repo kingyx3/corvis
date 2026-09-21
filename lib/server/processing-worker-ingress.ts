@@ -25,7 +25,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/i;
 
 export type ProcessingWorkerIngressConfig = {
-  workerUrl: string;
+  workerAudience: string;
   serviceAccountEmail: string;
 };
 
@@ -133,10 +133,10 @@ function pubsubDelivery(value: Record<string, unknown>): ProcessingStageDelivery
 }
 
 export function processingWorkerIngressConfig(env: NodeJS.ProcessEnv = process.env): ProcessingWorkerIngressConfig {
-  const workerUrl = env.CORVIS_PROCESSING_WORKER_URL?.trim() ?? "";
+  const workerAudience = env.CORVIS_PROCESSING_WORKER_AUDIENCE?.trim() ?? "";
   const serviceAccountEmail = env.CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT?.trim() ?? "";
-  if (!workerUrl || !serviceAccountEmail) throw new Error("processing worker ingress is not configured");
-  return { workerUrl, serviceAccountEmail };
+  if (!workerAudience || !serviceAccountEmail) throw new Error("processing worker ingress is not configured");
+  return { workerAudience, serviceAccountEmail };
 }
 
 export async function parseProcessingStageDelivery(request: Request): Promise<ProcessingStageDelivery> {
@@ -157,7 +157,7 @@ export async function executeProcessingWorkerRequest(
   try {
     googleIdentity = await dependencies.verifyGoogleIdentity({
       authorization: request.headers.get("authorization"),
-      audience: dependencies.config.workerUrl,
+      audience: dependencies.config.workerAudience,
       serviceAccountEmail: dependencies.config.serviceAccountEmail,
     });
   } catch {
@@ -186,6 +186,15 @@ let googleVerifier: GoogleOidcVerifier | undefined;
 function productionVerifier(): GoogleOidcVerifier {
   if (!googleVerifier) googleVerifier = new GoogleOidcVerifier();
   return googleVerifier;
+}
+
+export async function verifyConfiguredProcessingWorkerIdentity(request: Request): Promise<GoogleServiceAccountIdentity> {
+  const config = processingWorkerIngressConfig();
+  return productionVerifier().verify({
+    authorization: request.headers.get("authorization"),
+    audience: config.workerAudience,
+    serviceAccountEmail: config.serviceAccountEmail,
+  });
 }
 
 export function productionProcessingWorkerDependencies(db: PostgresSqlApi): ProcessingWorkerIngressDependencies {
