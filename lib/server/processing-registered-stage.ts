@@ -7,6 +7,7 @@ import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { createConfiguredCanonicalizedStageHandler } from "./processing-canonicalized-stage.ts";
 import { createConfiguredConsolidatedStageHandler } from "./processing-consolidated-stage.ts";
 import { createConfiguredExtractedStageHandler } from "./processing-extracted-stage.ts";
+import { createConfiguredPublishedStageHandler } from "./processing-published-stage.ts";
 import { createConfiguredReconciledStageHandler } from "./processing-reconciled-stage.ts";
 import { createConfiguredRepresentedStageHandler } from "./processing-represented-stage.ts";
 import { createConfiguredReviewedStageHandler } from "./processing-reviewed-stage.ts";
@@ -130,12 +131,11 @@ export function createRegisteredArtifactStageHandler(repository: RegisteredArtif
 /**
  * Current production composition for processing-stage effects.
  *
- * Registration, governed review/quality, canonicalization, reconciliation and
- * consolidation are always configured because they use Corvis-owned Postgres state.
- * Representation and extraction are each configured only when their approved keyless
- * internal endpoint is bound for the environment; otherwise that stage remains
- * fail-closed. Publication remains deliberately absent until its bounded persistence
- * and publication-gate handler is implemented and tested.
+ * Registration, governed review/quality, canonicalization, reconciliation,
+ * consolidation and publication are always configured because they use Corvis-owned
+ * Postgres state. Representation and extraction are each configured only when their
+ * approved keyless internal endpoint is bound for the environment; otherwise that
+ * stage remains fail-closed.
  */
 export function createProductionProcessingStageEffectRouter(
   db: PostgresSqlApi,
@@ -149,12 +149,14 @@ export function createProductionProcessingStageEffectRouter(
   const canonicalized = createConfiguredCanonicalizedStageHandler(db);
   const reconciled = createConfiguredReconciledStageHandler(db);
   const consolidated = createConfiguredConsolidatedStageHandler(db);
+  const published = createConfiguredPublishedStageHandler(db);
   return new BoundedProcessingStageEffectRouter({
     registered,
     reviewed,
     canonicalized,
     reconciled,
     consolidated,
+    published,
     ...(represented ? { represented } : {}),
     ...(extracted ? { extracted } : {}),
   }, timeoutMs);
