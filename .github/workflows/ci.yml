@@ -8,7 +8,7 @@ on:
 jobs:
   frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CORVIS_DEMO_MODE: "true"
       NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
@@ -18,10 +18,25 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Terraform format and provider validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive infra/terraform
+          mapfile -t roots < <(find infra/terraform/environments -mindepth 1 -maxdepth 1 -type d | sort)
+          test "${#roots[@]}" -gt 0
+          for root in "${roots[@]}"; do
+            echo "Validating ${root}"
+            terraform -chdir="${root}" init -backend=false
+            terraform -chdir="${root}" validate
+          done
       - run: npm run build
       - name: Install browsers
         run: npx playwright install --with-deps chromium webkit
