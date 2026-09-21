@@ -1,0 +1,183 @@
+name: Copy UAT release to prod
+
+on:
+  workflow_call:
+    inputs:
+      release_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  source-metadata:
+    runs-on: ubuntu-latest
+    environment: uat
+    outputs:
+      project_id: ${{ steps.meta.outputs.project_id }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${{ vars.GCP_PROJECT_ID }}" ]] || { echo "UAT GCP_PROJECT_ID is required."; exit 1; }
+          echo "project_id=${{ vars.GCP_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+
+  target-metadata:
+    runs-on: ubuntu-latest
+    environment: prod
+    outputs:
+      project_id: ${{ steps.meta.outputs.project_id }}
+      deploy_service_account: ${{ steps.meta.outputs.deploy_service_account }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${{ vars.GCP_PROJECT_ID }}" ]] || { echo "Prod GCP_PROJECT_ID is required."; exit 1; }
+          echo "project_id=${{ vars.GCP_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+          echo "deploy_service_account=corvis-deploy@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" >> "$GITHUB_OUTPUT"
+
+  reconcile-source-read-trust:
+    needs: [source-metadata, target-metadata]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: uat
+    env:
+      SOURCE_PROJECT_ID: ${{ needs.source-metadata.outputs.project_id }}
+      TARGET_PROJECT_ID: ${{ needs.target-metadata.outputs.project_id }}
+      TARGET_DEPLOY_SERVICE_ACCOUNT: ${{ needs.target-metadata.outputs.deploy_service_account }}
+      SOURCE_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', needs.source-metadata.outputs.project_id) }}
+      GCP_REGION: asia-southeast1
+    steps:
+      - name: Validate isolated projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_PROJECT_ID}" != "${TARGET_PROJECT_ID}" ]] || { echo "UAT and prod must use separate GCP projects."; exit 1; }
+
+      - name: Authenticate as UAT deploy identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ needs.source-metadata.outputs.project_id }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.SOURCE_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Reconcile least-privilege cross-project release trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud artifacts repositories describe corvis \
+            --project="${SOURCE_PROJECT_ID}" \
+            --location="${GCP_REGION}" >/dev/null
+          gcloud artifacts repositories add-iam-policy-binding corvis \
+            --project="${SOURCE_PROJECT_ID}" \
+            --location="${GCP_REGION}" \
+            --member="serviceAccount:${TARGET_DEPLOY_SERVICE_ACCOUNT}" \
+            --role="roles/artifactregistry.reader" \
+            --condition=None >/dev/null
+          echo "Prod deploy identity has reader-only access to the UAT release repository."
+
+  copy:
+    needs: [source-metadata, target-metadata, reconcile-source-read-trust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    env:
+      GCP_REGION: asia-southeast1
+      SOURCE_PROJECT_ID: ${{ needs.source-metadata.outputs.project_id }}
+      TARGET_PROJECT_ID: ${{ needs.target-metadata.outputs.project_id }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ needs.target-metadata.outputs.deploy_service_account }}
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      GCRANE_VERSION: v0.22.1
+    steps:
+      - name: Validate promotion roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || { echo "Cross-project release promotion is main-only."; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA."; exit 1; }
+          [[ -n "${SOURCE_PROJECT_ID}" && -n "${TARGET_PROJECT_ID}" ]] || { echo "Source and target project IDs are required."; exit 1; }
+          [[ "${SOURCE_PROJECT_ID}" != "${TARGET_PROJECT_ID}" ]] || { echo "UAT and prod must use separate GCP projects for cross-project promotion."; exit 1; }
+
+      - name: Authenticate as prod deploy identity
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ needs.target-metadata.outputs.project_id }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Install pinned gcrane
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/google/go-containerregistry/releases/download/${GCRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          curl --fail --location --silent --show-error "$url" -o go-containerregistry.tar.gz
+          curl --fail --location --silent --show-error "https://github.com/google/go-containerregistry/releases/download/${GCRANE_VERSION}/checksums.txt" -o checksums.txt
+          expected="$(awk '$2 == "go-containerregistry_Linux_x86_64.tar.gz" {print $1}' checksums.txt)"
+          [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || { echo "Unable to resolve pinned gcrane checksum."; exit 1; }
+          echo "${expected}  go-containerregistry.tar.gz" | sha256sum --check --strict
+          tar -xzf go-containerregistry.tar.gz gcrane
+          sudo install -m 0755 gcrane /usr/local/bin/gcrane
+          gcrane version
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Copy exact release images and verify digest identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in api control-loop; do
+            source_ref="${GCP_REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
+            target_ref="${GCP_REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
+            source_digest="$(gcrane digest "${source_ref}")"
+            [[ "${source_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid source digest for ${image}."; exit 1; }
+
+            existing_digest="$(gcrane digest "${target_ref}" 2>/dev/null || true)"
+            if [[ -n "${existing_digest}" && "${existing_digest}" != "${source_digest}" ]]; then
+              echo "Refusing to overwrite prod ${image} tag with a different digest."
+              exit 1
+            fi
+
+            if [[ -z "${existing_digest}" ]]; then
+              gcrane cp "${source_ref}" "${target_ref}"
+            fi
+
+            target_digest="$(gcrane digest "${target_ref}")"
+            [[ "${target_digest}" == "${source_digest}" ]] || { echo "Digest mismatch after copying ${image}."; exit 1; }
+            echo "${image}: ${source_digest}"
+          done
+
+      - name: Record build-once promotion evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg schemaVersion "corvis.release-copy.v1" \
+            --arg sourceEnvironment "uat" \
+            --arg sourceProjectId "${SOURCE_PROJECT_ID}" \
+            --arg targetEnvironment "prod" \
+            --arg targetProjectId "${TARGET_PROJECT_ID}" \
+            --arg sourceSha "${RELEASE_SHA}" \
+            --arg copiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,copiedAt:$copiedAt,mechanism:"gcrane-copy-digest-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-copy-prod-${{ inputs.release_sha }}
+          path: release-copy-evidence.json
+          if-no-files-found: error
+          retention-days: 90

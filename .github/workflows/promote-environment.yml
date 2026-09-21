@@ -12,7 +12,7 @@ on:
         options: [uat, prod]
         default: uat
       release_sha:
-        description: Full reviewed main commit already present in the target Artifact Registry
+        description: Full reviewed main commit built once in the UAT release registry
         required: false
         type: string
       rollback_known_good:
@@ -63,8 +63,17 @@ jobs:
             exit 1
           fi
 
-  deploy:
+  copy-release-to-prod:
+    if: inputs.environment == 'prod' && inputs.rollback_known_good != true
     needs: validate
+    uses: ./.github/workflows/copy-release-to-prod.yml
+    with:
+      release_sha: ${{ inputs.release_sha }}
+    secrets: inherit
+
+  deploy:
+    needs: [validate, copy-release-to-prod]
+    if: ${{ always() && needs.validate.result == 'success' && (needs.copy-release-to-prod.result == 'success' || needs.copy-release-to-prod.result == 'skipped') }}
     uses: ./.github/workflows/terraform-deploy.yml
     with:
       environment: ${{ inputs.environment }}
@@ -96,11 +105,14 @@ jobs:
             echo "### Governed promotion complete"
             echo "- Environment: `${{ inputs.environment }}`"
             if [[ "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
-              echo "- Release selection: last acceptance-approved known-good digest"
+              echo "- Release selection: last acceptance-approved known-good release set"
             else
               echo "- Release source commit: `${RELEASE_SHA}`"
+              if [[ "${{ inputs.environment }}" == "prod" ]]; then
+                echo "- Build-once: exact UAT OCI images copied to prod and digest-verified before deploy"
+              fi
             fi
             echo "- Deployment: migrations + exact Terraform apply succeeded"
-            echo "- Acceptance: edge/IAM/worker transport + live Postgres RLS succeeded"
+            echo "- Acceptance: edge/IAM/worker/control-loop transport + live Postgres RLS succeeded"
             echo "- Known-good: advanced only by the successful acceptance workflow"
           } >> "${GITHUB_STEP_SUMMARY}"

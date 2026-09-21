@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Artifact Registry environment to publish into
+        description: Build registry; production-like releases are built once in UAT and copied to prod
         required: true
         type: choice
-        options: [dev, uat, prod]
+        options: [dev, uat]
         default: dev
 
 permissions:
@@ -40,6 +40,10 @@ jobs:
             echo "Release images may only be built from main."
             exit 1
           fi
+          case "${{ inputs.environment }}" in
+            dev|uat) ;;
+            *) echo "Release builds are prohibited in prod; build once in UAT and copy the exact image set."; exit 1 ;;
+          esac
           if [[ -z "${GCP_PROJECT_ID}" || -z "${{ vars.GCP_WIF_PROVIDER }}" ]]; then
             echo "GCP_PROJECT_ID and GCP_WIF_PROVIDER are required in the selected GitHub Environment."
             exit 1
@@ -152,11 +156,14 @@ jobs:
 
           {
             echo "### Immutable release images"
-            echo "- Environment registry: `${{ inputs.environment }}`"
+            echo "- Build registry: `${{ inputs.environment }}`"
             echo "- Source commit: `${GITHUB_SHA}`"
             echo "- API/worker image: `${API_DIGEST_REF}`"
             echo "- Control-loop image: `${CONTROL_LOOP_DIGEST_REF}`"
             echo "- Build provenance: GitHub artifact attestations for both images"
+            if [[ "${{ inputs.environment }}" == "uat" ]]; then
+              echo "- Production promotion: copy these exact OCI digests; do not rebuild"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload release metadata
