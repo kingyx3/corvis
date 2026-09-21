@@ -5,7 +5,7 @@ import { AuthenticationError, resolveRequestIdentity, verifyGatewayIdentityAsser
 
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;
 
-function withEnv(values: Record<string,string|undefined>, fn: () => void) {
+async function withEnv(values: Record<string,string|undefined>, fn: () => void | Promise<void>) {
   const env = process.env as Record<string, string | undefined>;
   const previous = Object.fromEntries(managedKeys.map((key) => [key, env[key]]));
   try {
@@ -13,7 +13,7 @@ function withEnv(values: Record<string,string|undefined>, fn: () => void) {
       if (value == null) delete env[key];
       else env[key] = value;
     }
-    fn();
+    await fn();
   } finally {
     for (const key of managedKeys) {
       if (previous[key] == null) delete env[key];
@@ -63,19 +63,19 @@ function signedAssertion(overrides: Partial<GatewayIdentityAssertion> = {}, secr
   return `${encoded}.${signature}`;
 }
 
-test("unsigned business identity headers fail closed without trusted gateway secret", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("unsigned business identity headers fail closed without trusted gateway secret", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: {
       "x-corvis-auth-subject": "user-1", "x-corvis-auth-tenant": "tenant-a", "x-corvis-auth-workspace": "workspace-a", "x-corvis-auth-roles": "admin",
     }});
-    assert.throws(() => resolveRequestIdentity(request), AuthenticationError);
+    await assert.rejects(resolveRequestIdentity(request), AuthenticationError);
   });
 });
 
-test("incorrect trusted gateway secret is rejected on the non-production compatibility path", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("incorrect trusted gateway secret is rejected on the non-production compatibility path", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({ "x-corvis-gateway-secret": "wrong-secret" }) });
-    assert.throws(() => resolveRequestIdentity(request), AuthenticationError);
+    await assert.rejects(resolveRequestIdentity(request), AuthenticationError);
   });
 });
 
@@ -128,15 +128,15 @@ test("signed assertion rejects invalid roles and a workspace outside signed enti
   ), AuthenticationError);
 });
 
-test("legacy trusted gateway compatibility remains non-production only", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("legacy trusted gateway compatibility remains non-production only", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
       "x-corvis-auth-roles": "reviewer,unknown-role",
       "x-corvis-entitled-documents": "doc-a,doc-b",
       "x-corvis-source-access": "true",
       "x-corvis-auth-method": "saml",
     })});
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveRequestIdentity(request);
     assert.equal(identity.tenantId, "tenant-a");
     assert.deepEqual(identity.roles, ["reviewer"]);
     assert.deepEqual(identity.entitlements.documentIds, ["doc-a","doc-b"]);
@@ -145,40 +145,40 @@ test("legacy trusted gateway compatibility remains non-production only", { concu
   });
 });
 
-test("workspace context cannot be selected outside the entitled workspace set", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("workspace context cannot be selected outside the entitled workspace set", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
       "x-corvis-auth-workspace": "workspace-b",
       "x-corvis-entitled-workspaces": "workspace-a",
     })});
-    assert.throws(() => resolveRequestIdentity(request), /Workspace context not entitled/);
+    await assert.rejects(resolveRequestIdentity(request), /Workspace context not entitled/);
   });
 });
 
-test("unknown or empty roles cannot create an authenticated request context", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("unknown or empty roles cannot create an authenticated request context", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     for (const roles of ["", "root,superuser"]) {
       const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({ "x-corvis-auth-roles": roles }) });
-      assert.throws(() => resolveRequestIdentity(request), /Missing authenticated request context/);
+      await assert.rejects(resolveRequestIdentity(request), /Missing authenticated request context/);
     }
   });
 });
 
-test("service-account authentication remains explicit and does not expand supplied roles", { concurrency: false }, () => {
-  withEnv(trustedEnvironment, () => {
+test("service-account authentication remains explicit and does not expand supplied roles", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
       "x-corvis-auth-method": "service_account",
       "x-corvis-auth-roles": "api_client,admin-ish",
     })});
-    const identity = resolveRequestIdentity(request);
+    const identity = await resolveRequestIdentity(request);
     assert.equal(identity.authMethod, "service_account");
     assert.deepEqual(identity.roles, ["api_client"]);
   });
 });
 
-test("demo identity is available only when explicitly enabled outside production", { concurrency: false }, () => {
-  withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "true", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined }, () => {
-    const identity = resolveRequestIdentity(new Request("https://localhost/api/v1/me"));
+test("demo identity is available only when explicitly enabled outside production", { concurrency: false }, async () => {
+  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "true", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined }, async () => {
+    const identity = await resolveRequestIdentity(new Request("https://localhost/api/v1/me"));
     assert.equal(identity.authMethod, "demo");
     assert.equal(identity.tenantId, "tenant_demo");
   });
