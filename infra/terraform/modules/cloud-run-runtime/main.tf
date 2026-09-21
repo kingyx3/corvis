@@ -1,12 +1,19 @@
-data "google_project" "current" {
-  project_id = var.project_id
+terraform {
+  required_providers {
+    google = {
+      source = "hashicorp/google"
+    }
+    google-beta = {
+      source = "hashicorp/google-beta"
+    }
+  }
 }
 
 locals {
   runtime_enabled                = trimspace(var.api_image) != ""
   worker_audience                = "https://corvis-worker-${var.environment}.internal"
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-  pubsub_service_agent           = "service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  worker_service_account_name    = "projects/${var.project_id}/serviceAccounts/${var.worker_service_account_email}"
 }
 
 resource "terraform_data" "runtime_configuration_guard" {
@@ -16,6 +23,51 @@ resource "terraform_data" "runtime_configuration_guard" {
       error_message = "A promoted runtime requires auth_issuer and auth_audience; production must never start without an identity-provider contract."
     }
   }
+}
+
+# Explicitly materialize the managed-service identities before granting them
+# token-mint permissions. This avoids a first-apply race after an API has only
+# just been enabled by the foundation module.
+resource "google_project_service_identity" "pubsub" {
+  count    = local.runtime_enabled ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  service  = "pubsub.googleapis.com"
+}
+
+resource "google_project_service_identity" "cloud_tasks" {
+  count    = local.runtime_enabled ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  service  = "cloudtasks.googleapis.com"
+}
+
+resource "google_project_service_identity" "cloud_scheduler" {
+  count    = local.runtime_enabled ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  service  = "cloudscheduler.googleapis.com"
+}
+
+resource "google_service_account_iam_member" "pubsub_token_creator" {
+  count              = local.runtime_enabled ? 1 : 0
+  service_account_id = local.worker_service_account_name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_project_service_identity.pubsub[0].email}"
+}
+
+resource "google_service_account_iam_member" "cloud_tasks_token_creator" {
+  count              = local.runtime_enabled ? 1 : 0
+  service_account_id = local.worker_service_account_name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_project_service_identity.cloud_tasks[0].email}"
+}
+
+resource "google_service_account_iam_member" "cloud_scheduler_token_creator" {
+  count              = local.runtime_enabled ? 1 : 0
+  service_account_id = local.worker_service_account_name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_project_service_identity.cloud_scheduler[0].email}"
 }
 
 resource "google_secret_manager_secret" "postgres_dsn" {
@@ -163,6 +215,9 @@ resource "google_cloud_run_v2_service" "worker" {
   depends_on = [
     terraform_data.runtime_configuration_guard,
     google_secret_manager_secret_iam_member.worker_postgres,
+    google_service_account_iam_member.pubsub_token_creator,
+    google_service_account_iam_member.cloud_tasks_token_creator,
+    google_service_account_iam_member.cloud_scheduler_token_creator,
   ]
 }
 
@@ -212,7 +267,7 @@ resource "google_pubsub_topic_iam_member" "dead_letter_publisher" {
   project = var.project_id
   topic   = var.processing_dead_letter_topic_name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${local.pubsub_service_agent}"
+  member  = "serviceAccount:${google_project_service_identity.pubsub[0].email}"
 }
 
 resource "google_pubsub_subscription_iam_member" "dead_letter_subscriber" {
@@ -221,7 +276,7 @@ resource "google_pubsub_subscription_iam_member" "dead_letter_subscriber" {
   project      = var.project_id
   subscription = google_pubsub_subscription.processing_worker[0].name
   role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:${local.pubsub_service_agent}"
+  member       = "serviceAccount:${google_project_service_identity.pubsub[0].email}"
 }
 
 resource "google_cloud_scheduler_job" "delivery" {
