@@ -40,8 +40,9 @@ test("known-good rollback state advances only after every live acceptance family
   assert.match(workflow, /if:\s*\$\{\{ success\(\) \}\}/);
   assert.match(workflow, /spec\.template\.spec\.containers\.image/);
   assert.match(workflow, /releases\/\$\{\{ inputs\.environment \}\}\/known-good\.json/);
-  assert.match(workflow, /corvis\.known-good-release\.v1/);
+  assert.match(workflow, /corvis\.known-good-release\.v2/);
   assert.match(workflow, /control-loop-runtime-acceptance/);
+  assert.match(workflow, /controlLoopImage/);
 });
 
 test("deployment docs keep the release set derived and known-good state acceptance-gated", async () => {
