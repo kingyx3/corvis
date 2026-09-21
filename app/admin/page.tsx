@@ -28,6 +28,14 @@ async function loadJson(path: string): Promise<PanelState> {
   }
 }
 
+async function loadPanels(): Promise<[PanelState, PanelState, PanelState]> {
+  return Promise.all([
+    loadJson("/api/v1/admin/readiness"),
+    loadJson("/api/v1/admin/feature-flags"),
+    loadJson("/api/v1/admin/control-evidence"),
+  ]);
+}
+
 function Panel({ title, state }: { title: string; state: PanelState }) {
   return (
     <section style={{ border: "1px solid #d5d8dc", borderRadius: 12, padding: 20, background: "#fff" }}>
@@ -52,19 +60,24 @@ export default function AdminPage() {
     setReadiness(EMPTY);
     setFlags(EMPTY);
     setEvidence(EMPTY);
-    const [nextReadiness, nextFlags, nextEvidence] = await Promise.all([
-      loadJson("/api/v1/admin/readiness"),
-      loadJson("/api/v1/admin/feature-flags"),
-      loadJson("/api/v1/admin/control-evidence"),
-    ]);
+    const [nextReadiness, nextFlags, nextEvidence] = await loadPanels();
     setReadiness(nextReadiness);
     setFlags(nextFlags);
     setEvidence(nextEvidence);
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let active = true;
+    void loadPanels().then(([nextReadiness, nextFlags, nextEvidence]) => {
+      if (!active) return;
+      setReadiness(nextReadiness);
+      setFlags(nextFlags);
+      setEvidence(nextEvidence);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <main style={{ minHeight: "100vh", background: "#f4f6f8", color: "#111827", padding: "32px clamp(16px, 4vw, 56px)" }}>
