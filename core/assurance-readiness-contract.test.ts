@@ -103,6 +103,7 @@ for (const program of programs) {
       `${program.name} observation period must precede report issuance`,
     );
 
+    // Match across lines without the ES2018 dotAll flag; Corvis intentionally targets ES2017.
     assert.match(doc, /not[\s\S]*?(?:certified|attested|audited)|must not be represented as[\s\S]*?(?:certified|attested|audited)/i);
     assert.match(doc, /production-like/i, `${program.name} readiness documentation must require production-like evidence`);
     assert.match(doc, /independent/i, `${program.name} readiness documentation must preserve independent assurance as an external gate`);
