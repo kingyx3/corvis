@@ -1,49 +1,50 @@
 # Infrastructure and deployment architecture
 
-This file is the technical source of truth for Corvis infrastructure implementation. Business-level technology decisions and readiness requirements remain in Confluence.
+This file is the technical source of truth for Corvis infrastructure implementation. Confluence owns business-level technology decisions and readiness requirements.
 
 ## Production topology
 
 ```text
 Internet
   ↓
-Cloudflare — authoritative DNS / TLS / CDN / DDoS / WAF / rate controls
-  ↓ Worker injects edge-only restricted API key
-Google API Gateway — usage-priced managed ingress
-  ↓ dedicated Google service-account identity
-Cloud Run — IAM-private API runtime, no allUsers invoker, scale-to-zero
-  ├─ Cloud Run Jobs / workers
-  ├─ Pub/Sub / Cloud Tasks / Cloud Scheduler
-  ├─ GCS — immutable source + replayable artifacts
-  ├─ Secret Manager / KMS
-  ├─ Cloud Logging / Monitoring / Trace
-  └─ Supabase Postgres — Singapore
-       ├─ control and operational state
-       ├─ canonical / curated state
-       ├─ RLS and tenant-safe serving
-       └─ search / pgvector where justified
-              ↓ optional downstream replication only after approval
-          Snowflake analytics / secure sharing
+Cloudflare — authoritative DNS / TLS / DDoS / WAF / rate controls
+  ↓ Worker overwrites x-api-key with Terraform-managed edge key
+Google API Gateway
+  ↓ dedicated gateway service account
+Cloud Run API — IAM-private, scale-to-zero
+  ├─ Supabase Postgres — authoritative structured state
+  ├─ GCS + KMS — source/replay evidence
+  └─ durable processing outbox
+          ↓
+      Pub/Sub / Cloud Tasks / Cloud Scheduler
+          ↓ Google OIDC, dedicated custom audience
+      Cloud Run worker — IAM-private, scale-to-zero
+          ├─ bounded stage execution / retry / recovery
+          ├─ GCS evidence reads
+          └─ Postgres stage/effect state
+
+Optional downstream only after approval:
+Postgres/GCS -> Snowflake analytics / secure sharing
 ```
 
-Large source documents do not traverse Cloudflare Worker or API Gateway. The API authorizes/initiates the upload and the browser/client writes the source bytes directly to GCS using the native resumable-upload path.
+Large source documents do not traverse the Cloudflare Worker or API Gateway. The API authorizes/initates upload and the client writes source bytes directly to GCS using the resumable-upload contract.
 
-## Infrastructure principles
+## Principles
 
-1. **Git is the implementation authority.** Terraform, migrations and deployment workflows are reviewed and versioned in this repository.
-2. **GitHub Actions is the deployment/configuration control plane.** Human-entered deployment inputs should live in GitHub Environment variables/secrets for `dev`, `uat` and `prod`; workflows propagate configuration to providers.
-3. **GitHub is not the runtime secret store.** Runtime secrets are copied/generated into GCP Secret Manager and referenced by Cloud Run/Jobs. Provider credentials needed only during deployment are consumed transiently by GitHub Actions.
-4. **Use federation before long-lived credentials.** GCP deployment uses GitHub OIDC → Workload Identity Federation. Do not create or store GCP service-account JSON keys in GitHub.
-5. **Prefer workload identity over network-location trust.** The API Gateway service account is the only normal public-path Cloud Run invoker. Cloud Run must not grant `roles/run.invoker` to `allUsers`.
-6. **One structured write authority.** Supabase Postgres is the application/control/canonical write authority. Snowflake, if enabled, is downstream only.
-7. **Immutable evidence is separate.** Accepted source documents and retained replay artifacts remain in GCS.
-8. **Scale to zero by default.** Cloud Run minimum instances are zero unless an observed SLO justifies otherwise.
-9. **No console as source of truth.** Manual provider-console changes are break-glass and must be reconciled into Terraform/migrations immediately.
-10. **No Corvis-managed AWS by default.** A vendor being hosted on AWS does not justify an AWS account/provider unless Corvis directly provisions AWS resources.
+1. **Git is implementation authority.** Terraform, SQL migrations and workflows are reviewed/versioned here.
+2. **GitHub Actions is the post-bootstrap deployment control plane.** Routine provider changes should not require local consoles/CLI.
+3. **GitHub is not the runtime secret store.** Runtime secrets live in GCP Secret Manager; provider deployment tokens remain CI-only.
+4. **Federation before long-lived credentials.** GCP deployment uses GitHub OIDC -> WIF. Runtime-to-runtime calls use workload identity/OIDC.
+5. **IAM is the Cloud Run origin boundary.** API Gateway is the only normal API invoker; the dedicated worker identity is the only normal worker invoker. No `allUsers` grant is baseline.
+6. **Postgres is the sole structured write authority.** Snowflake is optional downstream only.
+7. **GCS is retained source/replay evidence.** Database rows keep governed references/hashes rather than large source BLOBs.
+8. **Scale to zero by default.** API and worker min instances are zero unless measured SLO evidence justifies a floor.
+9. **One fact, one owner.** Derived IDs/URLs/names flow from Terraform/provider outputs instead of duplicated GitHub variables.
+10. **No Corvis-managed AWS baseline.** A vendor being hosted on AWS does not require Corvis AWS infrastructure.
 
 ## Environment model
 
-The canonical environments are `dev`, `uat`, and `prod`.
+Canonical environments are `dev`, `uat`, `prod` with separate Terraform roots and isolated provider state. Prefer separate GCP projects and require separate Supabase/Postgres projects. `uat` uses synthetic or explicitly sanitized data; production customer data never belongs in `dev`.
 
 ```text
 infra/terraform/environments/
@@ -52,188 +53,154 @@ infra/terraform/environments/
   prod/
 ```
 
-Each environment must have isolated provider resources and credentials. Production customer data must never be copied into `dev`; `uat` uses synthetic or explicitly sanitized data.
-
-### Environment isolation
-
-- Prefer separate GCP projects for `dev`, `uat`, and `prod` once production is being provisioned.
-- Use separate Supabase projects/databases per environment.
-- Use separate Cloudflare environment hostnames and environment-scoped tokens where practical.
-- Use separate GitHub Environment variables/secrets; never reuse a production runtime secret in `dev` or `uat`.
-- Production approval/protection rules should be stricter than `dev`/`uat`.
-
 ## Terraform ownership
-
-Current public API modules are:
 
 ```text
 infra/terraform/
   modules/
-    gcp-foundation/       # services, IAM identities, GCS, queues, registry, KMS
-    cloud-run-runtime/    # API runtime and runtime secret references
-    gcp-api-gateway/      # API Gateway, restricted edge API key, gateway identity
-    cloudflare-edge/      # Worker, route, DNS, WAF, rate limit, cache policy
-    gcp-observability/    # alerts, dashboard, optional billing budget
+    gcp-foundation/       # services, API/worker identities, GCS/KMS, registry,
+                          # Pub/Sub, Cloud Tasks and transport IAM
+    cloud-run-runtime/    # API + private worker, Postgres Secret Manager binding,
+                          # Pub/Sub push, Scheduler and runtime configuration
+    gcp-api-gateway/      # API Gateway, restricted edge key, gateway identity
+    cloudflare-edge/      # API Worker, DNS, TLS/WAF/rate/cache policy
+    gcp-observability/    # API/queue/DLQ alerts, dashboard, optional budget
   environments/
     dev/
     uat/
     prod/
 
-db/
-  postgres/
-    migrations/
-    replication/          # only if downstream CDC is activated
-  snowflake/              # optional downstream analytics/sharing
+db/postgres/migrations/   # authoritative schemas/RLS/roles/functions/data contract
 ```
 
-The previous `gcp-serverless-origin` load-balancer / Cloud Armor module has been removed from the baseline implementation.
+The prior external load-balancer/Cloud Armor/mTLS bridge is intentionally removed from the baseline. Reintroduce an always-on LB only for a documented requirement the identity-based gateway cannot satisfy.
 
-Use Terraform for provider/resource configuration where supported. Keep PostgreSQL DDL, constraints, indexes, extensions, RLS, database roles/functions and replication publication/identity in reviewed SQL migrations.
+## GCP foundation
 
-## GCP
+The baseline enables the APIs needed for API Gateway/API Keys, Cloud Run, Cloud Scheduler, Cloud Tasks, Pub/Sub, Secret Manager, KMS, Artifact Registry, Storage, Logging/Monitoring and IAM/WIF.
 
-### Baseline services
+### Runtime identities
 
-- Cloud Run / Cloud Run Jobs
-- API Gateway + API Keys for the production-like public API ingress
-- GCS Singapore source/artifact buckets
-- Pub/Sub
-- Cloud Tasks
-- Cloud Scheduler where required
-- Secret Manager
-- Cloud KMS
-- Artifact Registry
-- Cloud Logging / Monitoring / Trace
-- Identity Platform where used for authentication
+- `corvis-api-${environment}` — API application identity.
+- `corvis-worker-${environment}` — background-processing identity.
+- `corvis-gateway-${environment}` — API Gateway backend identity.
+- `corvis-deploy` — deployment identity used only from GitHub WIF.
 
-A GCP External Application Load Balancer and Cloud Armor are not baseline services merely to front Cloud Run. Add them only if a documented network-layer, customer, regulatory, or service-capability requirement cannot be met by the gateway/IAM design.
+Production applies organization policy that disables user-managed service-account key creation/upload. Runtime identities are keyless.
 
-### Identity
+### API origin
 
-GitHub Actions authenticates to GCP with OIDC Workload Identity Federation. Runtime services use dedicated service accounts and workload identity. Avoid long-lived service-account keys.
+API Gateway is network-reachable and invokes `corvis-api-${environment}` using the dedicated gateway service account. Cloud Run therefore uses `INGRESS_TRAFFIC_ALL`, but IAM—not network location—is the authorization boundary. The API service grants `roles/run.invoker` only to the gateway identity.
 
-For the public API path:
+The Cloudflare Worker injects a Terraform-generated Google API key restricted to the generated managed API. The edge key proves approved edge traversal only; it is never customer authentication.
 
-- Terraform creates `corvis-gateway-${environment}` as a keyless service account;
-- API Gateway uses that identity for backend authentication;
-- Cloud Run grants `roles/run.invoker` only to that service account on the API service;
-- the API Gateway service agent can mint tokens for that gateway identity;
-- the GitHub deploy identity can attach the gateway identity to API configs;
-- direct unauthenticated `run.app` calls are expected to fail IAM authorization.
+### Private worker and asynchronous transport
 
-Cloud Run uses `INGRESS_TRAFFIC_ALL` because API Gateway is not classified as Cloud Run internal ingress. This is intentional: IAM, not public network reachability, is the invocation boundary.
+`cloud-run-runtime` creates a separate `corvis-worker-${environment}` service using the same immutable image but a separate service account and invocation policy.
 
-### API Gateway
+The worker has an explicit custom OIDC audience:
 
-`modules/gcp-api-gateway` owns the production-like API gateway.
+`https://corvis-worker-${environment}.internal`
 
-The gateway transport specification is deliberately narrower than the business OpenAPI contract: it exposes the `/api/v1` surface, requires an API key at the gateway boundary, and forwards to the Cloud Run service using the dedicated gateway service account. Application authentication/tenant authorization remains authoritative behind the gateway.
+Only the worker service account receives `roles/run.invoker` on the worker service. Managed transports use that identity/audience:
 
-Terraform creates a Google API key restricted to the generated Corvis managed API. That key is passed directly to the Cloudflare module as a sensitive Terraform value and becomes a Worker `secret_text` binding. It is not a human-managed GitHub secret or user credential.
+- Pub/Sub push subscription -> `/api/internal/processing-stage` for immediate stage deliveries;
+- Cloud Tasks -> `/api/internal/processing-stage` for persisted scheduled retries;
+- Cloud Scheduler -> `/api/internal/delivery` to drain durable processing/export/webhook outboxes.
 
-### GCS
+Pub/Sub/Cloud Tasks/Cloud Scheduler service agents may mint short-lived tokens for the worker identity. The API may enqueue Cloud Tasks and publish processing events and has only the `actAs` permission needed for OIDC task creation. No production shared worker secret is required.
 
-Accepted source evidence is private, versioned and protected from public access. Source upload is direct browser → GCS resumable upload after a Corvis authorization/initiation request; Cloudflare and API Gateway must not proxy ordinary multi-GB source bodies.
+### GCS and KMS
 
-Approved portal/data-room connectors write acquired documents into the same GCS ingestion/document-registration path as customer uploads. They must not create a parallel source lake or extraction path. See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md).
+The source bucket is regional, private, versioned, CMEK-encrypted, uniform-access and public-access-prevention protected.
 
-Suggested lifecycle defaults:
+The API's actual upload/quarantine adapter performs object create/read/list/delete operations, so it receives object-level `roles/storage.objectUser`, not bucket administration. Worker access is read-only unless a later bounded stage explicitly requires more.
 
-- abandoned upload/quarantine scratch: 1–7 days;
-- rebuildable intermediate/render/export artifacts: normally 30 days;
-- retained source evidence: governance/legal/contractual retention, not cost-driven deletion.
-
-### Artifact Registry
-
-Keep deployed images, one known-good rollback and a bounded recent history. Delete untagged/unreferenced images after roughly 7 days and avoid retaining unlimited historical images.
+Transient/quarantine/export/intermediate data has lifecycle cleanup; retained source evidence follows governance/legal retention rather than a cost-only timer.
 
 ### Secret Manager
 
-Runtime secrets belong in Secret Manager. Keep the current version plus at most one rollback version during rotation; destroy superseded secret values after the approved successful-rotation window unless recovery requires longer. Disabled old versions should not be treated as free archival storage.
+The baseline runtime secret container is:
 
-Customer-provided credentials/tokens for approved GP portals, data rooms or source repositories are runtime tenant secrets, not GitHub deployment secrets. Store them in Secret Manager with tenant/connection-scoped references and least-privilege access; Postgres stores connection metadata and the secret reference, never plaintext credential material.
+`corvis-postgres-dsn-${environment}`
 
-### Source connector workers
+Terraform owns the container/IAM, not the secret value. The external Supabase/Postgres activation path writes an enabled DSN version without putting plaintext into Terraform state or GitHub variables. API, worker, migration and Security-acceptance workflows consume the same value through IAM.
 
-Automated source acquisition should normally run in isolated Cloud Run Jobs/workers using dedicated service identities and durable scheduling/retry state. Prefer provider APIs/OAuth; use browser automation only for reviewed connectors where the customer is authorized and the source permits the automation. Never bypass MFA, CAPTCHA or source access controls. Connector-acquired files enter the standard GCS integrity/quarantine/document-registration pipeline before downstream extraction.
+## Authentication and authorization
 
-See [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) for credential setup, connector isolation, source lineage and browser-automation rules.
+The default production identity path is standards-based OIDC:
+
+1. client obtains a token from the approved environment IdP;
+2. Corvis verifies issuer/audience/signature/timestamps from OIDC discovery/JWKS;
+3. requested tenant/workspace context remains untrusted input;
+4. Postgres re-resolves active membership, roles, resource/data-right entitlements and session state before authorization.
+
+The signed Corvis assertion contract remains available for a reviewed SAML/identity broker. It is not required for the default OIDC path.
+
+Browser/customer/admin SSO integration remains provider-specific and should be implemented only after the approved IdP/browser session contract is chosen; do not encode a speculative Firebase/Auth0/etc. dependency into baseline infrastructure.
 
 ## Cloudflare
 
-Cloudflare is the public-edge provider. Manage zone/DNS/proxy/TLS/WAF/rate-limit/cache/Worker configuration with Terraform where supported.
+Cloudflare owns authoritative public API DNS/TLS/DDoS/WAF/rate/cache controls. The API Worker:
 
-The API Worker:
+- is exposed only on the configured custom hostname route; `workers.dev` and previews are disabled;
+- proxies only `/api/v1`;
+- strips caller-supplied `x-api-key` and injects the restricted gateway key;
+- forwards application Authorization headers unchanged;
+- adds an acceptance marker header;
+- disables shared caching for API traffic.
 
-- is reachable through the custom API hostname route only; `workers.dev` and Worker preview URLs are disabled;
-- accepts only the `/api/v1` surface;
-- overwrites caller-supplied `x-api-key` with the Terraform-managed gateway key;
-- forwards normal application authorization headers/assertions unchanged;
-- adds `x-corvis-edge-proxy: cloudflare-worker` for acceptance evidence;
-- does not store or proxy ordinary source documents.
-
-Rules:
-
-- authenticated API responses must never be shared-cached;
-- block/directly test gateway and Cloud Run bypass paths;
-- Turnstile is appropriate for public abuse-prone surfaces but is not an authorization mechanism;
-- the edge key proves approved edge traversal only; it never proves customer identity or entitlement.
-
-The Cloudflare API token is an environment-scoped GitHub secret because Terraform requires provider authorization and there is no equivalent GCP-style GitHub federation baseline for this repository. The Cloudflare account ID and zone ID are derived from the configured zone lookup and must not become copied GitHub variables.
+Customer/admin hostnames remain unpublished until their separate web-runtime/security boundary exists.
 
 ## Supabase/Postgres
 
-Supabase Postgres Singapore is the primary structured data platform. The application writes only to Postgres. Project/settings resources may be Terraform-managed where supported; database objects are managed through SQL migrations.
+Supabase Postgres Singapore is the authoritative structured application/control/canonical platform. Use separate environment projects. SQL migrations own schemas, indexes, constraints, RLS, roles/grants/functions and replication definitions.
 
-Production uses a paid backup-capable tier. Free projects are suitable only for disposable development/prototypes and never production customer data.
+`terraform-deploy.yml` creates the Terraform plan first, then for a promoted runtime reads the DSN from Secret Manager, applies only pending checksum-verified migrations and uploads migration evidence before applying the exact Terraform plan. That keeps database and runtime promotion in one auditable GitHub path.
 
-Do not adopt Supabase Storage/Auth/Realtime/Edge Functions automatically. GCS, the approved identity layer, Cloud Run and Pub/Sub remain the baseline unless a documented simplification justifies a change.
+Backups/restore/PITR are provider operating capabilities and must be exercised in live UAT; their existence cannot be proven from Terraform alone.
 
 ## Snowflake
 
-Snowflake is absent initially unless a business/customer/workload activation trigger is approved. When enabled, it is downstream analytics/secure sharing only. Postgres remains authoritative and Snowflake failure must not block application transactions.
+Snowflake starts absent. Activate it only for an approved customer sharing/analytics/concurrency trigger. Postgres remains authoritative; no application dual writes. Snowflake failure cannot block core application writes.
 
-See [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
+## Observability and cost
 
-## Retention / cost controls
+Baseline Terraform provides API error, queue-depth and DLQ alerts plus a summary dashboard and optional budget. Notification channels and billing-account budget ownership are genuine environment inputs and remain inactive until configured.
 
-- Cloud Run min instances: zero by default.
-- API Gateway and Cloudflare Worker are usage-priced/serverless; do not replace them with always-on edge infrastructure without a documented requirement.
-- PR/preview environments: destroy within 24 hours of merge/close or inactivity.
-- Bound Artifact Registry, Secret Manager, transient GCS and log retention.
-- Prefer managed/serverless services before always-on infrastructure.
-- Keep Snowflake spend at zero until an activation trigger is approved.
-- Cost alerts and budgets are infrastructure code / deployment concerns; business spending thresholds remain governed in Confluence.
-- `modules/gcp-observability` implements the repository SLO alert policies that have corresponding GCP metrics, a summary dashboard, and an optional monthly billing budget.
+Cost guardrails:
 
-## Deployment responsibility
+- API/worker min instances = zero;
+- usage-priced API Gateway + Cloudflare Worker instead of fixed LB/Armor baseline;
+- bounded Artifact Registry retention;
+- lifecycle cleanup for transient GCS data;
+- Snowflake cost = zero until activation;
+- idle UAT removes runtime/public edge while retaining durable foundation/data/state.
 
-GitHub Actions should perform the following from reviewed code:
+Supabase is outside GCP teardown; an idle paid UAT Postgres project must be deliberately paused/down-sized/decommissioned according to provider capabilities and data-retention policy rather than assumed to disappear with Terraform.
 
-1. authenticate to GCP via OIDC/WIF;
-2. consume Cloudflare/Supabase provider tokens from GitHub Environment secrets only when those integrations are active;
-3. run Terraform plan/apply for the selected environment;
-4. run database migrations in controlled order;
-5. build immutable application images and push to Artifact Registry;
-6. create/update GCP Secret Manager secret versions from approved bootstrap flows or generated deployment secrets when required;
-7. deploy Cloud Run/Jobs referencing Secret Manager, not plaintext workflow output;
-8. provision/update API Gateway and Cloudflare Worker edge configuration through Terraform;
-9. run environment acceptance tests, including gateway-key bypass and Cloud Run IAM-policy checks;
-10. publish deployment/evidence metadata.
+## Terraform remote state and lifecycle
 
-Customer-created source-portal credentials are intentionally outside this GitHub propagation flow: customers submit/authorize them through the authenticated Corvis application, and the runtime writes them to managed secret storage.
+State is held in a private versioned GCS bucket created by the bootstrap workflow. Noncurrent versions are bounded by lifecycle policy.
 
-See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md), [`DEPLOYMENT.md`](DEPLOYMENT.md), and [`SECURITY_ACCEPTANCE.md`](SECURITY_ACCEPTANCE.md).
+`gcp-decommission.yml` owns lifecycle transitions:
 
-## Bootstrap exceptions
+- `idle` — remove public API/worker/runtime edge while preserving durable foundation/data/state;
+- `full` — explicitly prepare protected resources for deletion, detach the retained KMS bootstrap anchor, destroy remaining Terraform-managed resources, verify empty state, hibernate KMS and delete remote state last.
 
-A few items cannot safely cascade from GitHub before trust exists. They are one-time external bootstrap actions, not ongoing configuration sources:
+The external project/WIF/deploy trust anchor remains so the environment can be rebuilt without introducing static credentials.
 
-- ownership/billing for the GCP organization/projects or bootstrap project;
-- initial GCP Workload Identity Pool/provider and deploy-service-account trust granting GitHub OIDC permission;
-- domain registration and account ownership/billing for Cloudflare;
-- creation/ownership/billing of the Supabase organization and generation of its management token;
-- creation of GitHub Environments and entering their variables/secrets;
-- third-party account/billing/contract setup where an API cannot safely bootstrap ownership.
+## One-time bootstrap exceptions
 
-After bootstrap, infrastructure/configuration changes should flow from GitHub whenever the provider supports it.
+These cannot safely self-create before GitHub is trusted:
+
+- GCP project/billing ownership;
+- initial `corvis-deploy` service account and repository/environment-restricted WIF pool/provider/impersonation;
+- Cloudflare account/zone ownership and scoped provider token;
+- Supabase organization/project/billing ownership and provider-derived DSN activation;
+- approved IdP tenant/client ownership;
+- third-party account/contract setup for any enabled external provider.
+
+After those trust roots exist, routine resource/configuration changes should flow from reviewed GitHub workflows where the provider supports it.
+
+See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md), [`DEPLOYMENT.md`](DEPLOYMENT.md), [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md), and [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
