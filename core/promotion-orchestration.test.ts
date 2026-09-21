@@ -24,23 +24,40 @@ test("production-like promotion composes deployment then security acceptance", (
 
   assert.match(deploy, /workflow_call:/);
   assert.match(deploy, /case "\$\{\{ inputs\.action \}\}" in\n            plan\|apply\)/);
+  assert.match(deploy, /Resolve immutable release set/);
+  assert.match(deploy, /TF_VAR_control_loop_image/);
   assert.match(deploy, /Apply versioned Postgres migrations/);
   assert.match(deploy, /Terraform apply/);
 
   assert.match(acceptance, /workflow_call:/);
   assert.match(acceptance, /Security acceptance supports only uat or prod/);
-  assert.match(acceptance, /record-known-good-release:\n    needs: \[edge, postgres-rls\]/);
+  assert.match(acceptance, /control-loop:\n    needs: validate/);
+  assert.match(acceptance, /record-known-good-release:\n    needs: \[edge, postgres-rls, control-loop\]/);
   assert.match(acceptance, /if: \$\{\{ success\(\) \}\}/);
 });
 
-test("known-good cannot advance before both live acceptance families succeed", () => {
+test("known-good cannot advance before all live acceptance families succeed", () => {
   const acceptance = read(".github/workflows/security-acceptance.yml");
   const edgeIndex = acceptance.indexOf("  edge:");
   const rlsIndex = acceptance.indexOf("  postgres-rls:");
+  const controlLoopIndex = acceptance.indexOf("  control-loop:");
   const knownGoodIndex = acceptance.indexOf("  record-known-good-release:");
 
   assert.ok(edgeIndex >= 0, "edge acceptance job must exist");
   assert.ok(rlsIndex > edgeIndex, "Postgres/RLS acceptance must exist after edge job definition");
-  assert.ok(knownGoodIndex > rlsIndex, "known-good job must remain downstream of both acceptance job definitions");
-  assert.match(acceptance.slice(knownGoodIndex), /needs: \[edge, postgres-rls\]/);
+  assert.ok(controlLoopIndex > rlsIndex, "control-loop runtime acceptance must exist");
+  assert.ok(knownGoodIndex > controlLoopIndex, "known-good job must remain downstream of all acceptance job definitions");
+  assert.match(acceptance.slice(knownGoodIndex), /needs: \[edge, postgres-rls, control-loop\]/);
+  assert.match(acceptance.slice(knownGoodIndex), /controlLoopImage/);
+});
+
+test("release build emits separately attested API and control-loop images", () => {
+  const build = read(".github/workflows/build-release.yml");
+  assert.match(build, /Build and push immutable API image/);
+  assert.match(build, /Build and push immutable control-loop image/);
+  assert.match(build, /Dockerfile\.control-loop/);
+  assert.match(build, /Attest API build provenance/);
+  assert.match(build, /Attest control-loop build provenance/);
+  assert.match(build, /corvis\.release-image\.v2/);
+  assert.match(build, /controlLoopImage/);
 });
