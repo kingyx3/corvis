@@ -47,14 +47,20 @@ reviewed PR -> protected main -> immutable image + provenance
 
 A built image is not a known-good production release until live acceptance passes.
 
+The current release builder publishes into the selected environment registry. When Corvis uses separate GCP projects/registries for environments, strict build-once cross-project copying of an already-built physical digest remains a separate activation hardening item; do not claim rebuilds of the same source commit are byte-identical promotion.
+
 ## Promotion inputs
 
-`.github/workflows/terraform-deploy.yml` accepts either:
+`.github/workflows/promote-environment.yml` is the normal operator entry point for production-like `uat` and `prod` promotion. It accepts either:
 
 1. `release_sha` — full reviewed `main` commit already built in the target environment registry; or
 2. `rollback_known_good=true` — the last acceptance-approved digest for that environment.
 
-They are mutually exclusive. Normal `uat`/`prod` apply requires one of them. Runtime removal is never an accidental side-effect of an empty release input; use the guarded decommission workflow for lifecycle changes.
+They are mutually exclusive, and exactly one is required. The workflow itself must be dispatched from `main`.
+
+The lower-level `.github/workflows/terraform-deploy.yml` remains directly dispatchable for Terraform plans, diagnostics and explicitly controlled lower-level operations. `.github/workflows/security-acceptance.yml` remains directly dispatchable when acceptance needs to be rerun without a new deployment. Both are also reusable workflows consumed by the governed promotion path.
+
+Runtime removal is never an accidental side-effect of an empty release input; use the guarded decommission workflow for lifecycle changes.
 
 Before a production-like runtime can be promoted, the environment must also have:
 
@@ -64,9 +70,21 @@ Before a production-like runtime can be promoted, the environment must also have
 
 See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md).
 
-## One auditable apply path
+## One auditable promotion path
 
-For `action=apply`, `terraform-deploy.yml` executes this order:
+For a normal `uat` or `prod` promotion, `promote-environment.yml` executes one ordered GitHub Actions graph:
+
+1. validate that the request comes from `main`, targets only `uat`/`prod`, and selects exactly one release source;
+2. call `terraform-deploy.yml` with `action=apply`;
+3. complete release-governance verification, WIF authentication, remote-state validation, immutable release resolution, Terraform plan, Postgres secret readiness, live migrations with retained evidence, exact Terraform apply and public health;
+4. only after deployment succeeds, call `security-acceptance.yml`;
+5. run edge/IAM/worker-transport acceptance and live Postgres/RLS acceptance;
+6. advance the environment known-good pointer only when both acceptance families succeed;
+7. complete the parent promotion run only after the acceptance workflow and known-good recording succeed.
+
+This creates one top-level promotion audit trail while preserving the detailed migration, infrastructure and security evidence in the called workflows. A failed deployment never starts acceptance, and failed acceptance never advances known-good.
+
+For the deployment phase specifically, `terraform-deploy.yml` executes this order:
 
 1. verify the release commit is on `main` and the live ruleset/check governance is non-bypassable;
 2. authenticate through WIF;
@@ -87,7 +105,7 @@ The migration runner is forward-only, gap/checksum aware and records its own `co
 The promoted immutable image currently feeds two distinct runtime identities:
 
 - `corvis-api-${environment}` — public API backend, invokable only by the dedicated API Gateway service account;
-- `corvis-worker-${environment}` — background-processing/control-loop runtime, invokable only by its dedicated worker service account.
+- `corvis-worker-${environment}` — background-processing/delivery runtime, invokable only by its dedicated worker service account.
 
 Managed asynchronous transport is keyless:
 
@@ -98,6 +116,8 @@ Managed asynchronous transport is keyless:
 - no production `CORVIS_WORKER_SECRET` is required.
 
 The API uses the same worker identity only to enqueue authenticated scheduled retries; it cannot anonymously invoke the worker.
+
+A dedicated production Cloud Scheduler -> Cloud Run Job boundary for the continuous business/control loop remains separate from this request-serving worker and is still required before the first production customer. Customer-web/admin-web runtime separation must likewise be implemented together with application-level surface boundaries; merely deploying the same unrestricted Next.js image under extra service names would not create a meaningful security boundary.
 
 ## Authentication boundary
 
@@ -135,7 +155,7 @@ If acceptance fails or cannot run, the known-good pointer does not advance.
 
 ## Rollback
 
-`rollback_known_good=true` redeploys the last accepted immutable image. Rollback must preserve database/source history and never silently reverse a forward database migration.
+`rollback_known_good=true` through `promote-environment.yml` redeploys the last accepted immutable image and then reruns live acceptance before the promotion completes. Rollback must preserve database/source history and never silently reverse a forward database migration.
 
 Use expand/migrate/contract database changes and feature kill switches where they are safer than destructive schema reversal. A database restore is an incident-recovery procedure, not routine application rollback.
 
