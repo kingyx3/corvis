@@ -1,182 +1,97 @@
 # Continuous business-build / documentation control loop
 
-Implementation tracker: GitHub issue #27. Canonical requirement: Confluence
-[Continuous Business Build Documentation Control Loop](https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/2064451/Continuous+Business+Build+Documentation+Control+Loop).
+Implementation tracker: GitHub issue #27. Canonical requirement: Confluence [Continuous Business Build Documentation Control Loop](https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/2064451/Continuous+Business+Build+Documentation+Control+Loop).
 
-This document describes what `control-loop/` actually does today. It does not
-redefine the Confluence-owned requirement; where this document and the
-Confluence page disagree, the Confluence page governs.
+This document describes the repository implementation. Confluence remains authoritative for the business/control requirement.
 
-## What is implemented
+## Current implementation
 
-**Phase 1 — read-only scanners, rules, fingerprints and run report** (`control-loop/`):
+`control-loop/` provides the safety and scanning engine:
 
-- `rules/catalog.ts` — the versioned rule catalogue (`CL-DOC-*`, `CL-ARCH-*`,
-  `CL-ISSUE-*`, `CL-HEALTH-001`), each with a stable id, domain, owners,
-  severity, authority (`confluence` | `github`), remediation class
-  (`auto-fix` | `human-approval`) and an explicit allowlist.
-- `classifiers/fingerprint.ts` — deterministic `domain:owners:subject`
-  fingerprints, deduplication and stable sort order.
-- `scanners/documentation-authority.ts` — flags Confluence-owned business/
-  control truth stated in GitHub docs without a Confluence link
-  (`CL-DOC-001`), and GitHub-owned technical detail deferred to Confluence
-  instead of being implemented in GitHub (`CL-DOC-002`).
-- `scanners/internal-links.ts` — flags a canonical internal documentation
-  link that no longer resolves to a tracked repository path (`CL-DOC-003`),
-  proposing a safe rename when exactly one file shares the broken link's
-  basename.
-- `scanners/architecture-drift.ts` — flags `core/` importing a provider
-  adapter or server runtime module (`CL-ARCH-001`), and `features/`
-  importing server/provider modules instead of typed ports (`CL-ARCH-002`).
-- `scanners/issue-hygiene.ts` — given a snapshot of `control-loop`-labeled
-  GitHub issues, flags an issue with no parseable fingerprint
-  (`CL-ISSUE-001`), duplicate open issues sharing one fingerprint
-  (`CL-ISSUE-002`), and a closed issue whose finding recurred and must
-  reopen rather than duplicate (`CL-ISSUE-003`). With no issue snapshot
-  available (no `GITHUB_TOKEN` configured), it reports itself incomplete
-  rather than silently skipping.
-- `reports/health.ts` — the mandated health rule: unhealthy when no
-  successful daily run has completed within 36 hours, two consecutive runs
-  have not reached `complete` status, or the most recent weekly/monthly scan
-  did not complete. While unhealthy, `automaticClosureEnabled` is `false`.
-- `watermark.ts` / `state.ts` — a durable, versioned watermark
-  (`control-loop/state/watermark.json`, committed by the workflow after a
-  run) that a daily run reads to scan incrementally; a weekly or monthly run
-  always ignores it and scans fully.
-- `lock.ts` — a single-writer application-level lock (`control-loop/state/lock.json`)
-  with a bounded staleness window, so one crashed run cannot permanently wedge
-  the loop but two concurrent runs can never both proceed.
-- `plan.ts` / `apply.ts` — the mandated two-phase execution: `planActions`
-  classifies every finding into a proposed action and persists it in the run
-  report *before* anything is applied; `applyActions` then applies only
-  automatic, allowlisted actions, bounded by a mutation budget, and defaults
-  to `dry-run` (never calls an applier) unless the caller explicitly opts
-  into `execute` mode.
-- `orchestrator.ts` — ties all of the above into one `runControlLoop()` call
-  that acquires the lock, scans under the mode's scope rules, classifies and
-  (dry-run by default) applies findings, evaluates health, decides whether
-  automatic issue closure is allowed, and persists the watermark — returning
-  one `RunReport` (`schemaVersion: 1`) rather than scattered side effects.
-  It never throws: an unexpected scanner failure is caught and reported as a
-  `failed` run so a crash cannot corrupt the watermark.
-- `github.ts` — reads open/closed `control-loop`-labeled issues via the
-  GitHub REST API, extracting each issue's fingerprint from the same
-  `` Finding fingerprint: `...` `` convention this repository's own P0
-  tracker issues already use.
-- `cli.ts` — the entry point `.github/workflows/control-loop.yml` calls:
-  `node control-loop/cli.ts --mode <daily|weekly|monthly|manual> [--evidence path] [--apply]`.
-  Without `--apply` the run is dry-run. With `--apply`, an automatic action
-  still reports as `skipped: no_applier_configured` today, because **no
-  remediator is registered yet** (see "What is not implemented" below) — the
-  safety envelope exists and is tested, but nothing currently exercises it
-  end to end against a real edit.
+- versioned rule catalogue with stable finding fingerprints and explicit authority/remediation metadata;
+- documentation-authority, internal-link, architecture-drift and GitHub issue-hygiene scanners;
+- deterministic plan/apply envelope with dry-run default and mutation budget;
+- health/closure gates that fail closed on incomplete or failed scans;
+- daily incremental vs weekly/monthly full-scan scope;
+- durable watermark state;
+- single-writer lease with stale-lock recovery;
+- one structured `RunReport` instead of scattered side effects.
 
-### Scheduler contract
+No production remediator is registered. `--apply` therefore still cannot mutate GitHub or Confluence and reports an automatic action as skipped when no applier exists.
 
-`.github/workflows/control-loop.yml` runs on the build-phase GitHub Actions
-schedule from the issue, converted from Asia/Singapore (UTC+8, no DST) to the
-UTC cron GitHub Actions requires — the conversion is documented inline in the
-workflow file. `workflow_dispatch` allows a manual dry-run in any mode. A
-single `concurrency: group: control-loop` prevents two scheduled or manual
-runs from executing at the same time, on top of the application-level lock
-enforced by `lock.ts`.
+## State adapters
 
-The monthly-vs-weekly distinction on the shared Saturday-evening UTC slot is
-resolved against the **Asia/Singapore** calendar date inside the workflow
-(`TZ=Asia/Singapore date +%-d`), not the UTC date, since a Saturday-evening
-UTC run can already be the first Sunday of the next Singapore month.
+Two state adapters intentionally exist:
 
-### Execution safety
+1. `FileStateStore` — build-phase/manual GitHub Actions bootstrap. Actions cache restores `control-loop/state` between runs. Cache loss is safe because a missing watermark forces a full rescan.
+2. `GcsStateStore` — production-like Cloud Run Job runtime. The adapter obtains a short-lived token from the GCP metadata server and stores state in the environment's private GCS control-loop bucket.
 
-- Two-phase: `planActions` (persisted in the report) happens before
-  `applyActions` (bounded, dry-run by default).
-- Single global concurrency group (GitHub Actions) plus an independent
-  application-level lock (`lock.ts`), both tested.
-- A partial or failed scan can add a health finding but cannot allow issue
-  closure — `closureDecision()` requires `status === "complete"` and every
-  scanner to report `complete: true`.
-- The daily watermark and full weekly/monthly rescan behavior are enforced
-  by `selectScanScope()` and covered by tests.
-- The health rule disables automatic closure while unhealthy, and is
-  evaluated from the *post-run* watermark, so a genuinely successful,
-  fully-complete run can restore health in the same run that fixes the
-  underlying gap.
-- A corrupted watermark file degrades to a full rescan rather than crashing
-  or trusting partial state.
+The GCS adapter exposes generation-aware conditional writes. `lock.ts` uses Cloud Storage object-generation preconditions for atomic lease acquisition/release, so two overlapping Cloud Run Job executions cannot both become the writer. Watermark updates remain ordinary writes because only the lease holder is permitted to reach them.
 
-## What is NOT implemented
+The durable GCS state contains operational control-loop state and sanitized run reports, not customer documents or application secrets.
 
-This is deliberately a phase 1 (scanners, fingerprinting, health/watermark/
-lock, two-phase safety envelope) plus the phase-2 dry-run seam. Do not treat
-issue #27 as closeable on the strength of this document alone — per the
-issue itself, it stays open until scheduled runs are operating reliably with
-evidence, which requires all of the following still-outstanding work:
+## Production-like scheduler/runtime
 
-1. **No remediator is registered.** `applyActions` is fully tested against a
-   fake `EditApplier`, but no real file-editing remediator exists yet for
-   `CL-DOC-003`'s safe-rename suggestion or any other rule. `--apply` today
-   only proves the safety envelope (budget, allowlist, dry-run default); it
-   does not fix anything.
-2. **No GitHub issue mutation.** The orchestrator computes
-   `closureCandidates` / `reopenCandidates` (via `scanIssueHygiene`) and
-   reports them in the run output, but nothing in this repository creates,
-   updates, closes or reopens a GitHub issue. That is phase 3 of the
-   Confluence specification and is intentionally out of scope here: an
-   automated system that can open or close issues needs more scrutiny than
-   fits in this pass.
-3. **No Confluence read or write access.** The documentation-authority
-   scanner works entirely from the *GitHub side* — it looks for missing
-   links or misplaced technical detail in GitHub docs. It cannot detect
-   technical detail duplicated into Confluence (the requirement's other
-   direction) because that requires a Confluence API integration that does
-   not exist here.
-4. **No business-maturity comparison against Confluence registers** (phase
-   4), and **no production Cloud Scheduler → Cloud Run Job migration**
-   (phase 5, coordinated with issue #13's runtime provisioning) — GitHub
-   Actions remains the only scheduler.
-5. **No regression-rule feedback loop from incidents/postmortems** (phase 6).
-6. The daily-incremental `changedPaths` input in the workflow currently uses
-   `git diff HEAD~1 HEAD`, which is correct for a single push-driven event
-   but is not itself a substitute for the durable watermark — the watermark
-   is what actually gates incremental-vs-full scanning across scheduled runs.
+UAT/prod Terraform now defines a dedicated `corvis-control-loop-${environment}` service identity, private/versioned state bucket and three Cloud Run Jobs using the separately built `corvis/control-loop@sha256:...` image.
+
+| Job | Singapore schedule | CLI mode |
+| --- | --- | --- |
+| Daily | `02:17` every day | `daily` |
+| Weekly | Sunday `03:23` | `weekly` |
+| Monthly candidate | Sunday `04:31` | `monthly-candidate` |
+
+The monthly candidate resolves inside `schedule.ts` using the `Asia/Singapore` calendar: day 1–7 becomes `monthly`; later Sundays become `weekly`. This preserves the original monthly-first-Sunday contract without UTC/date-boundary ambiguity.
+
+Cloud Scheduler calls the Cloud Run Jobs `:run` API with OAuth as the dedicated control-loop service account. The job identity receives only logging, its private state-bucket object access, and the exact job-invoker bindings required for the schedules. It does not inherit API/worker/Postgres permissions.
+
+The purpose-built `Dockerfile.control-loop` contains the reviewed repository snapshot because the scanner inspects source/docs/infra. A Dockerfile-specific ignore file keeps credentials, build products and local state out without widening the API container build context.
+
+## GitHub issue reads
+
+`github.ts` reads the public repository's `control-loop`-labelled issues without requiring a long-lived GitHub token. If the repository becomes private, or when issue mutation is implemented, the runtime must receive a bounded managed GitHub credential; do not add a personal access token to source, Terraform state or image layers.
+
+## Scheduler cutover boundary
+
+`.github/workflows/control-loop.yml` remains the build-phase/read-only bootstrap scheduler for now. The Cloud Run Jobs are also dry-run/read-only. This overlap is acceptable only while neither path mutates external systems.
+
+Before #27 enables GitHub/Confluence writes, one scheduler must become authoritative and all mutation paths must share the same durable lease/state boundary. The intended production authority is Cloud Scheduler → Cloud Run Job; GitHub Actions should then remain manual/dry-run or be unscheduled.
+
+## Execution safety
+
+- plan before apply;
+- dry-run by default;
+- mutation budget and allowlist enforcement;
+- atomic production lease and stale-lock reclamation;
+- no automatic closure after partial/failed scans;
+- corrupted/missing watermark degrades to a full rescan;
+- weekly/monthly modes always perform full scans;
+- runtime image is immutable-digest pinned;
+- UAT/prod known-good cannot advance until the deployed jobs, schedules, invoker identity and state-bucket controls pass live acceptance.
+
+## Still open under issue #27
+
+The runtime/scheduler infrastructure is no longer the primary code gap, but #27 remains open because the business-control loop is not yet fully operational:
+
+1. live Confluence read/reconciliation is not wired into the scheduled runtime;
+2. GitHub issue create/update/close/reopen is not implemented;
+3. allowlisted documentation remediation is not implemented;
+4. business-maturity comparison against the Confluence gap/readiness/control/risk registers is not implemented;
+5. production scheduler cutover and recurring provider-backed execution evidence have not yet been demonstrated;
+6. incident/postmortem feedback into regression rules remains future work.
+
+These are functional/operating-control gaps, not reasons to weaken the runtime safety model.
 
 ## Runbook
 
-- **A scheduled run fails outright** (workflow-level failure, not a
-  `RunStatus: "failed"` report): check the uploaded
-  `control-loop-report-<mode>` artifact first — the orchestrator itself
-  should have produced one unless the failure happened before `node
-  control-loop/cli.ts` ran (checkout, `npm ci`). If a report exists with
-  `status: "failed"`, its `notes` array names the scan failure.
-- **The loop reports unhealthy** (`health.healthy: false`): read
-  `health.reasons`. `no_successful_daily_run_in_36h` and
-  `two_consecutive_failures` both resolve themselves once a run reaches
-  `status: "complete"`; `incomplete_weekly_scan` only resolves on a
-  successful weekly or monthly run. While unhealthy, no issue closure
-  happens even if every finding otherwise looks resolved — this is
-  intentional and requires no manual override.
-- **The lock appears stuck**: `control-loop/state/lock.json` self-expires
-  after the configured staleness window (default one hour) and the next run
-  reclaims it automatically. Deleting the file manually is safe but should
-  not be necessary.
-- **The watermark looks wrong or corrupted**: `readWatermark` already
-  degrades a corrupted or schema-mismatched file to a full rescan rather
-  than failing, so the safe recovery is simply to let the next run replace
-  it; manually deleting `control-loop/state/watermark.json` has the same
-  effect.
-- **Recovering from a bad remediation** is not currently a concern, because
-  no remediator writes anything yet (see "What is NOT implemented").
+- **Run reports failed:** inspect the structured report's `notes` and scanner completeness. Failed scans cannot close issues.
+- **Health is unhealthy:** inspect `health.reasons`; a complete daily/weekly/monthly run restores the relevant health state naturally.
+- **Cloud Run lock contention:** a fresh other-owner lease means the second run exits without becoming writer; stale leases are reclaimed after the configured staleness window.
+- **Corrupted/missing watermark:** no manual repair is required; the next run performs a full scan and rewrites a valid watermark after successful completion.
+- **GCS state errors:** verify the control-loop service account has object access only to `${project_id}-corvis-control-loop-${environment}`, public access prevention remains enforced, and Scheduler/job identities match Terraform.
+- **Bad remediation:** currently impossible in production because no remediator is registered. When remediation is added, its rollback/evidence contract must be added before enabling scheduler-side mutation.
 
 ## Testing
 
-`npm test` runs `control-loop/*.test.ts` alongside the rest of the suite. The
-tests cover: fingerprint formatting/parsing/dedup/sort, the health state
-machine and closure gate, every scanner (including no-Confluence-link
-detection, deferral detection, broken-link/rename suggestions, architecture
-boundary violations, and issue hygiene's closure/reopen/duplicate/missing-
-fingerprint cases), scan-scope selection (full vs. incremental), the state
-store/lock/watermark primitives (including stale-lock reclamation and
-corrupted-watermark recovery), the plan/apply classification and budget
-enforcement, and full end-to-end orchestrator runs (lock contention,
-consecutive-failure accounting, weekly-completeness tracking, and the
-dry-run-by-default safety guarantee).
+`npm test` includes all `control-loop/*.test.ts` tests. Coverage includes fingerprints, scanners, health/closure gates, scan scope, watermark recovery, stale-lock behavior, concurrent conditional-lock acquisition, GCS generation preconditions, plan/apply budgets, scheduler mode resolution and end-to-end orchestrator behavior.
+
+CI also builds the dedicated control-loop image as non-root and executes a scanner smoke run. Terraform CI validates the UAT/prod Cloud Run Job/Scheduler module before merge; provider-backed acceptance remains a UAT/prod deployment gate rather than a repository-only claim.

@@ -24,13 +24,12 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: asia-southeast1
       ARTIFACT_REPOSITORY: corvis
-      IMAGE_NAME: api
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
       - name: Guard release source
@@ -74,69 +73,90 @@ jobs:
             --location="${GCP_REGION}" >/dev/null
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
-      - name: Build and push immutable image
-        id: image
+      - name: Build and push immutable API image
+        id: api
         shell: bash
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/${IMAGE_NAME}"
-          tag="git-${GITHUB_SHA}"
-          tagged_ref="${image}:${tag}"
-
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
+          tagged_ref="${image}:git-${GITHUB_SHA}"
           docker build --pull --tag "${tagged_ref}" .
           docker push "${tagged_ref}"
-
-          digest="$(gcloud artifacts docker images describe "${tagged_ref}" \
-            --project="${GCP_PROJECT_ID}" \
-            --format='value(image_summary.digest)')"
-          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Artifact Registry did not return a valid immutable digest."
-            exit 1
-          fi
-
+          digest="$(gcloud artifacts docker images describe "${tagged_ref}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid API digest."; exit 1; }
           digest_ref="${image}@${digest}"
-          gcloud artifacts docker images describe "${digest_ref}" \
-            --project="${GCP_PROJECT_ID}" >/dev/null
-
+          gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
           echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
           echo "tagged_ref=${tagged_ref}" >> "${GITHUB_OUTPUT}"
 
-      - name: Attest build provenance
+      - name: Build and push immutable control-loop image
+        id: control_loop
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
+          tagged_ref="${image}:git-${GITHUB_SHA}"
+          docker build --pull --file Dockerfile.control-loop --tag "${tagged_ref}" .
+          docker push "${tagged_ref}"
+          digest="$(gcloud artifacts docker images describe "${tagged_ref}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid control-loop digest."; exit 1; }
+          digest_ref="${image}@${digest}"
+          gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
+          echo "tagged_ref=${tagged_ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Attest API build provenance
         uses: actions/attest@v4
         with:
-          subject-name: ${{ steps.image.outputs.image }}
-          subject-digest: ${{ steps.image.outputs.digest }}
+          subject-name: ${{ steps.api.outputs.image }}
+          subject-digest: ${{ steps.api.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest control-loop build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.control_loop.outputs.image }}
+          subject-digest: ${{ steps.control_loop.outputs.digest }}
           push-to-registry: true
 
       - name: Capture release metadata
         shell: bash
         env:
-          IMAGE_DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
-          IMAGE_TAGGED_REF: ${{ steps.image.outputs.tagged_ref }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          API_DIGEST_REF: ${{ steps.api.outputs.digest_ref }}
+          API_TAGGED_REF: ${{ steps.api.outputs.tagged_ref }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          CONTROL_LOOP_DIGEST_REF: ${{ steps.control_loop.outputs.digest_ref }}
+          CONTROL_LOOP_TAGGED_REF: ${{ steps.control_loop.outputs.tagged_ref }}
+          CONTROL_LOOP_DIGEST: ${{ steps.control_loop.outputs.digest }}
         run: |
           set -euo pipefail
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
-            --arg schemaVersion "corvis.release-image.v1" \
+            --arg schemaVersion "corvis.release-image.v2" \
             --arg environment "${{ inputs.environment }}" \
             --arg sourceSha "${GITHUB_SHA}" \
-            --arg image "${IMAGE_DIGEST_REF}" \
-            --arg taggedImage "${IMAGE_TAGGED_REF}" \
-            --arg digest "${IMAGE_DIGEST}" \
+            --arg image "${API_DIGEST_REF}" \
+            --arg taggedImage "${API_TAGGED_REF}" \
+            --arg digest "${API_DIGEST}" \
+            --arg controlLoopImage "${CONTROL_LOOP_DIGEST_REF}" \
+            --arg controlLoopTaggedImage "${CONTROL_LOOP_TAGGED_REF}" \
+            --arg controlLoopDigest "${CONTROL_LOOP_DIGEST}" \
             --arg builtAt "${built_at}" \
             --arg workflowRunId "${GITHUB_RUN_ID}" \
-            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions"}' \
+            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,controlLoopImage:$controlLoopImage,controlLoopTaggedImage:$controlLoopTaggedImage,controlLoopDigest:$controlLoopDigest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions"}' \
             > release-image.json
 
           {
-            echo "### Immutable release image"
+            echo "### Immutable release images"
             echo "- Environment registry: `${{ inputs.environment }}`"
             echo "- Source commit: `${GITHUB_SHA}`"
-            echo "- Image: `${IMAGE_DIGEST_REF}`"
-            echo "- Build provenance: GitHub artifact attestation"
+            echo "- API/worker image: `${API_DIGEST_REF}`"
+            echo "- Control-loop image: `${CONTROL_LOOP_DIGEST_REF}`"
+            echo "- Build provenance: GitHub artifact attestations for both images"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload release metadata
