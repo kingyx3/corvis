@@ -22,6 +22,46 @@ paths:
       responses:
         '200': { description: 'Entitled documents. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+  /funds:
+    get:
+      operationId: listFunds
+      description: Lists only global fund identities present in the caller's authoritative fund entitlement set. Missing fund entitlements fail closed to an empty result.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated entitled fund identities and governed name/identifier history. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+  /companies:
+    get:
+      operationId: listCompanies
+      description: Lists companies visible through approved observations for the caller's tenant and entitled funds; global identity alone never creates entitlement.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated tenant-visible company identities and governed name/identifier history. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+  /company-lifecycle-events:
+    get:
+      operationId: listCompanyLifecycleEvents
+      description: Lists lifecycle events only when every fund/company participant is visible through the caller's entitlement graph, preventing hidden relationship disclosure.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated visible company lifecycle events with durable participant identities. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+  /metric-definitions:
+    get:
+      operationId: listMetricDefinitions
+      description: Lists active governed metric dictionary definitions used by customer-facing observations and consolidated facts.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated active metric definitions. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /observations:
     get:
       operationId: listObservations
@@ -30,6 +70,16 @@ paths:
         - $ref: '#/components/parameters/cursor'
       responses:
         '200': { description: 'Entitled reviewed observations. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+  /consolidated-facts:
+    get:
+      operationId: listConsolidatedFacts
+      description: Lists tenant-scoped consolidated facts only for entitled funds and only when the fact is included in a published fund-period snapshot.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated published consolidated facts with contributing observation lineage. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
   /snapshots:
     get:
