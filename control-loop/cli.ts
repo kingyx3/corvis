@@ -3,18 +3,15 @@
 //
 //   node control-loop/cli.ts --mode daily [--evidence report.json] [--apply]
 //
-// --mode selects the scheduler contract (daily/weekly/monthly/manual).
-// Without --apply the run is dry-run: findings are scanned and classified but
-// nothing is written back to GitHub or Confluence. --apply is accepted for
-// forward compatibility with a future remediator; today no remediator is
-// registered, so an automatic action still reports as skipped rather than
-// silently mutating anything.
+// Cloud Run Job may also pass `monthly-candidate`; it resolves to monthly only
+// on the first Asia/Singapore Sunday window and otherwise performs the weekly
+// scan, preserving the documented scheduler contract.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
-import { FileStateStore } from "./state.ts";
-import type { RunMode } from "./types.ts";
+import { resolveRunMode } from "./schedule.ts";
+import { FileStateStore, GcsStateStore, type StateStore } from "./state.ts";
 
 const { values } = parseArgs({
   options: {
@@ -26,36 +23,39 @@ const { values } = parseArgs({
   },
 });
 
-const VALID_MODES: readonly RunMode[] = ["daily", "weekly", "monthly", "manual"];
-
-function parseMode(value: string | undefined): RunMode {
-  if (!value || !VALID_MODES.includes(value as RunMode)) {
-    throw new Error(`--mode must be one of ${VALID_MODES.join(", ")}`);
-  }
-  return value as RunMode;
-}
-
 function changedPathsFromEnv(): string[] | null {
   const raw = process.env.CONTROL_LOOP_CHANGED_PATHS;
   if (!raw) return null;
   return raw.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
+function createStateStore(): { store: StateStore; durable: boolean } {
+  const bucket = process.env.CONTROL_LOOP_STATE_BUCKET?.trim();
+  if (!bucket) return { store: new FileStateStore(`${values.root}/control-loop/state`), durable: false };
+  return {
+    store: new GcsStateStore({
+      bucket,
+      prefix: process.env.CONTROL_LOOP_STATE_PREFIX?.trim() || "control-loop",
+    }),
+    durable: true,
+  };
+}
+
 async function run() {
-  const mode = parseMode(values.mode);
-  const stateStore = new FileStateStore(`${values.root}/control-loop/state`);
+  const mode = resolveRunMode(values.mode);
+  const state = createStateStore();
 
   const owner = process.env.GITHUB_REPOSITORY_OWNER;
   const repoFull = process.env.GITHUB_REPOSITORY;
   const token = process.env.GITHUB_TOKEN;
   const repo = repoFull?.split("/")[1];
-  const issueSnapshot = owner && repo && token ? await fetchIssueSnapshot({ owner, repo, token }) : null;
+  const issueSnapshot = owner && repo ? await fetchIssueSnapshot({ owner, repo, token }) : null;
 
   const report = await runControlLoop({
     root: values.root ?? ".",
     mode,
     now: new Date(),
-    stateStore,
+    stateStore: state.store,
     changedPaths: changedPathsFromEnv(),
     issueSnapshot,
     applyMode: values.apply ? "execute" : "dry-run",
@@ -64,6 +64,7 @@ async function run() {
 
   const serialized = JSON.stringify(report, null, 2);
   if (values.evidence) await writeFile(values.evidence, `${serialized}\n`, "utf8");
+  if (state.durable) await state.store.write(`report_${mode}`, `${serialized}\n`);
   process.stdout.write(`${serialized}\n`);
   if (report.status === "failed") process.exitCode = 1;
 }
