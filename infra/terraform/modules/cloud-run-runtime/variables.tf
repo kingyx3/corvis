@@ -16,7 +16,7 @@ variable "environment" {
 }
 
 variable "api_image" {
-  description = "Immutable API image reference (digest preferred). Empty leaves the runtime unprovisioned until image promotion is configured."
+  description = "Immutable application image reference. Empty leaves API/worker runtimes unprovisioned until image promotion is configured."
   type        = string
   default     = ""
 }
@@ -25,16 +25,50 @@ variable "api_service_account_email" {
   type = string
 }
 
+variable "worker_service_account_email" {
+  type = string
+}
+
+variable "source_bucket_name" {
+  type = string
+}
+
+variable "processing_topic_name" {
+  type = string
+}
+
+variable "processing_queue_name" {
+  type = string
+}
+
+variable "auth_issuer" {
+  description = "Production OIDC issuer URL."
+  type        = string
+  default     = ""
+}
+
+variable "auth_audience" {
+  description = "Production OIDC audience/client identifier."
+  type        = string
+  default     = "corvis"
+}
+
+variable "auth_jwks_url" {
+  description = "Optional explicit JWKS URL for OIDC providers without standard discovery."
+  type        = string
+  default     = ""
+}
+
+variable "upload_allowed_origins" {
+  description = "Allowed customer/admin browser origins for direct GCS upload initiation."
+  type        = list(string)
+  default     = []
+}
+
 variable "postgres_dsn_secret_id" {
   description = "Secret Manager secret id containing the runtime Postgres DSN."
   type        = string
   default     = "corvis-postgres-dsn"
-}
-
-variable "gateway_identity_secret_id" {
-  description = "Secret Manager secret id containing the gateway identity verification secret."
-  type        = string
-  default     = "corvis-gateway-identity-secret"
 }
 
 variable "decommission_mode" {
