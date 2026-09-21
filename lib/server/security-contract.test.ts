@@ -119,10 +119,10 @@ test("browser and client adapter code cannot manufacture trusted identity gatewa
   }
 });
 
-test("all API routes are covered by the central browser CSRF/CORS boundary", async () => {
+test("all API routes remain covered by the central browser CSRF/CORS boundary when the proxy also gates runtime surfaces", async () => {
   const proxy = await source("proxy.ts");
-  assert.match(proxy, /checkBrowserRequest\(request\)/);
-  assert.match(proxy, /matcher:\s*["']\/api\/:path\*["']/);
+  assert.match(proxy, /matcher:\s*["']\/:path\*["']/);
+  assert.match(proxy, /pathname\.startsWith\(["']\/api\/["']\)[\s\S]*checkBrowserRequest\(request\)/);
   assert.match(proxy, /cache-control["']?,\s*["']no-store["']/i);
   assert.match(proxy, /Origin, Sec-Fetch-Site/);
 });
