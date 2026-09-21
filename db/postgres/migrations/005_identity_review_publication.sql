@@ -186,6 +186,8 @@ begin
 end;
 $$;
 
+-- CREATE OR REPLACE VIEW may only append columns; preserve the column prefix
+-- introduced by migration 002 so a clean migration chain is valid PostgreSQL.
 create or replace view corvis_serving.observations as
 with latest_correction as (
   select distinct on (tenant_id, observation_id)
@@ -197,7 +199,6 @@ select o.tenant_id,
        o.observation_id,
        o.fund_id,
        o.company_id,
-       c.canonical_name as company_name,
        o.holding_id,
        o.instrument_id,
        o.metric_code,
@@ -208,15 +209,16 @@ select o.tenant_id,
        o.report_date,
        o.review_state,
        o.source_reference_id,
+       o.version,
+       o.updated_at,
+       c.canonical_name as company_name,
        r.document_id,
        r.page_number,
        r.sheet_name,
        r.cell_range,
        o.confidence_score,
        o.delta_display,
-       o.risk_tier,
-       o.version,
-       o.updated_at
+       o.risk_tier
 from corvis_facts.observation o
 left join corvis_identity.company c on c.global_company_id = o.company_id
 left join corvis_source.source_reference r
@@ -225,20 +227,23 @@ left join latest_correction lc
   on lc.tenant_id=o.tenant_id and lc.observation_id=o.observation_id
 where o.review_state in ('approved','review_required');
 
+-- Likewise retain the complete migration-002 snapshot view prefix, then append
+-- display-only convenience columns instead of replacing/renaming existing ones.
 create or replace view corvis_serving.fund_period_snapshots as
 select s.tenant_id,
        s.snapshot_id,
        s.fund_id,
-       f.canonical_name as fund_name,
        s.report_period,
        s.version,
        s.status,
-       cardinality(s.fact_ids) as fact_count,
+       s.fact_ids,
        s.blocking_exception_count,
        s.schema_version,
        s.taxonomy_version,
        s.created_at,
-       s.published_at
+       s.published_at,
+       f.canonical_name as fund_name,
+       cardinality(s.fact_ids) as fact_count
 from corvis_consolidated.fund_period_snapshot s
 left join corvis_identity.fund f on f.global_fund_id=s.fund_id;
 
