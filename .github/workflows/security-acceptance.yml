@@ -9,6 +9,12 @@ on:
         type: choice
         options: [uat, prod]
         default: uat
+  workflow_call:
+    inputs:
+      environment:
+        description: Production-like environment to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,7 +25,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate production-like environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.environment }}" in
+            uat|prod) ;;
+            *) echo "Security acceptance supports only uat or prod."; exit 1 ;;
+          esac
+
   edge:
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: ${{ inputs.environment }}
@@ -133,6 +153,7 @@ jobs:
           unset dsn
 
   postgres-rls:
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: ${{ inputs.environment }}

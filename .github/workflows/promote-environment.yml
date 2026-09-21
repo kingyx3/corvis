@@ -1,0 +1,106 @@
+name: Promote environment
+
+run-name: Promote ${{ inputs.environment }} ${{ inputs.rollback_known_good && '(known-good rollback)' || inputs.release_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Production-like target environment
+        required: true
+        type: choice
+        options: [uat, prod]
+        default: uat
+      release_sha:
+        description: Full reviewed main commit already present in the target Artifact Registry
+        required: false
+        type: string
+      rollback_known_good:
+        description: Redeploy the last acceptance-approved digest instead of a new release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+  id-token: write
+
+concurrency:
+  group: promote-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate promotion request
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Production-like promotion may only run from main."
+            exit 1
+          fi
+          case "${{ inputs.environment }}" in
+            uat|prod) ;;
+            *) echo "Promotion supports only uat or prod."; exit 1 ;;
+          esac
+          if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
+            echo "Choose either release_sha or rollback_known_good, not both."
+            exit 1
+          fi
+          if [[ -z "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" != "true" ]]; then
+            echo "Promotion requires release_sha or rollback_known_good=true."
+            exit 1
+          fi
+          if [[ -n "${RELEASE_SHA}" && ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full 40-character lowercase Git commit SHA."
+            exit 1
+          fi
+
+  deploy:
+    needs: validate
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      action: apply
+      release_sha: ${{ inputs.release_sha }}
+      rollback_known_good: ${{ inputs.rollback_known_good }}
+    secrets: inherit
+
+  acceptance:
+    needs: deploy
+    uses: ./.github/workflows/security-acceptance.yml
+    with:
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  complete:
+    needs: acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record promotion completion
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Governed promotion complete"
+            echo "- Environment: `${{ inputs.environment }}`"
+            if [[ "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
+              echo "- Release selection: last acceptance-approved known-good digest"
+            else
+              echo "- Release source commit: `${RELEASE_SHA}`"
+            fi
+            echo "- Deployment: migrations + exact Terraform apply succeeded"
+            echo "- Acceptance: edge/IAM/worker transport + live Postgres RLS succeeded"
+            echo "- Known-good: advanced only by the successful acceptance workflow"
+          } >> "${GITHUB_STEP_SUMMARY}"

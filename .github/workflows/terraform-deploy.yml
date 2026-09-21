@@ -23,6 +23,26 @@ on:
         required: false
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      environment:
+        description: Target GitHub Environment
+        required: true
+        type: string
+      action:
+        description: Terraform action
+        required: true
+        type: string
+      release_sha:
+        description: Main commit previously built by Build release image
+        required: false
+        type: string
+        default: ""
+      rollback_known_good:
+        description: Deploy the last Security-acceptance-approved digest for this environment
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -66,6 +86,14 @@ jobs:
           ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
         run: |
           set -euo pipefail
+          case "${{ inputs.environment }}" in
+            dev|uat|prod) ;;
+            *) echo "Unsupported deployment environment: ${{ inputs.environment }}"; exit 1 ;;
+          esac
+          case "${{ inputs.action }}" in
+            plan|apply) ;;
+            *) echo "Unsupported Terraform action: ${{ inputs.action }}"; exit 1 ;;
+          esac
           if [[ -z "${TF_VAR_project_id}" ]]; then
             echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
             exit 1
