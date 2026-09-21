@@ -1,6 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import type { Entitlements, RequestIdentity, Role } from "../../core/enterprise.ts";
-import { getServerConfig } from "./config.ts";
+import { getServerConfig, type ServerConfig } from "./config.ts";
+import { OidcVerifier } from "./oidc.ts";
 
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;
@@ -87,9 +88,9 @@ function parseAssertionPayload(value: unknown, nowSeconds: number): GatewayIdent
 }
 
 /**
- * Production identity crosses one narrow cryptographic assertion boundary.
- * The gateway must first authenticate the IdP/session and resolve the effective
- * Corvis authorization context; clients cannot independently set tenant/roles.
+ * Optional trusted-proxy assertion boundary. This remains useful for SAML or a
+ * future identity broker, but production OIDC no longer depends on deploying a
+ * separate assertion-minting service: bearer tokens can be verified directly.
  */
 export function verifyGatewayIdentityAssertion(assertion: string | null, secret?: string, now = new Date()): RequestIdentity {
   if (!assertion || !secret) throw new AuthenticationError("Missing signed identity assertion");
@@ -152,7 +153,43 @@ function legacyTrustedGatewayIdentity(request: Request, secret?: string): Reques
   };
 }
 
-export function resolveRequestIdentity(request: Request): RequestIdentity {
+let oidcVerifier: OidcVerifier | undefined;
+function productionOidcVerifier(): OidcVerifier {
+  if (!oidcVerifier) oidcVerifier = new OidcVerifier();
+  return oidcVerifier;
+}
+
+async function directOidcIdentity(request: Request, config: ServerConfig): Promise<RequestIdentity> {
+  const tenantId = request.headers.get("x-corvis-tenant")?.trim();
+  const workspaceId = request.headers.get("x-corvis-workspace")?.trim();
+  if (!tenantId || !workspaceId) throw new AuthenticationError("Tenant and workspace context are required");
+  if (!config.authIssuer || !config.authAudience) throw new AuthenticationError("OIDC authentication is not configured");
+  try {
+    const verified = await productionOidcVerifier().verify({
+      authorization: request.headers.get("authorization"),
+      issuer: config.authIssuer,
+      audience: config.authAudience,
+      jwksUrl: config.authJwksUrl,
+    });
+    // Tenant/workspace are untrusted context selectors only. Production routes
+    // immediately re-resolve membership, roles, rights and session state from
+    // Postgres in resolveAuthorizedRequestIdentity before evaluating access.
+    return {
+      subject: verified.subject,
+      tenantId,
+      workspaceId,
+      roles: [],
+      entitlements: { workspaceIds: [workspaceId] },
+      authMethod: "oidc",
+      sessionId: verified.sessionId,
+    };
+  } catch (error) {
+    if (error instanceof AuthenticationError) throw error;
+    throw new AuthenticationError("OIDC authentication failed");
+  }
+}
+
+export async function resolveRequestIdentity(request: Request): Promise<RequestIdentity> {
   const config = getServerConfig();
   const correlation = request.headers.get("x-correlation-id") || randomUUID();
 
@@ -172,7 +209,7 @@ export function resolveRequestIdentity(request: Request): RequestIdentity {
 
   const assertion = request.headers.get("x-corvis-identity-assertion");
   if (assertion) return verifyGatewayIdentityAssertion(assertion, config.trustedAuthProxySecret);
-  if (config.environment === "production") throw new AuthenticationError("Signed identity assertion is required in production");
+  if (config.environment === "production") return directOidcIdentity(request, config);
 
   // Temporary non-production compatibility path only. Production deliberately
   // rejects independently mutable business-identity headers.
