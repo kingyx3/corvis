@@ -1,9 +1,27 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
-async function read(path: string): Promise<string> {
-  return (await readFile(path, "utf8")).toLowerCase();
+async function read(filePath: string): Promise<string> {
+  return (await readFile(filePath, "utf8")).toLowerCase();
+}
+
+async function routeFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(root)) {
+    const child = path.join(root, entry);
+    const info = await stat(child);
+    if (info.isDirectory()) files.push(...await routeFiles(child));
+    else if (entry === "route.ts") files.push(child.replaceAll("\\", "/"));
+  }
+  return files;
+}
+
+function isEdgeAllowlistedAdminRoute(filePath: string): boolean {
+  if (filePath.startsWith("app/api/v1/admin/")) return true;
+  if (filePath.startsWith("app/api/v1/source-connections/")) return true;
+  return /^app\/api\/v1\/jobs\/\[jobid\]\/(?:retry|recover)\/route\.ts$/i.test(filePath);
 }
 
 test("admin edge exposes only audited privileged API route families", async () => {
@@ -12,11 +30,23 @@ test("admin edge exposes only audited privileged API route families", async () =
   assert.match(worker, /\/api\/v1\/admin/);
   assert.match(worker, /\/api\/v1\/source-connections/);
   assert.match(worker, /retry\|recover/);
-  assert.match(worker, /api_request && !isprivilegedapi/);
+  assert.match(worker, /apirequest && !isprivilegedapi/);
   assert.match(worker, /headers\.delete\("host"\)/);
   assert.match(worker, /headers\.delete\("x-api-key"\)/);
   assert.match(worker, /x-frame-options/);
   assert.match(worker, /no-referrer/);
+});
+
+test("every route requiring admin:manage is represented by the admin edge allowlist", async () => {
+  const privilegedRoutes: string[] = [];
+  for (const filePath of await routeFiles("app/api/v1")) {
+    const source = await read(filePath);
+    if (source.includes("admin:manage")) privilegedRoutes.push(filePath.toLowerCase());
+  }
+
+  assert.ok(privilegedRoutes.length > 0, "expected at least one admin-managed API route");
+  const outsideAllowlist = privilegedRoutes.filter((filePath) => !isEdgeAllowlistedAdminRoute(filePath));
+  assert.deepEqual(outsideAllowlist, []);
 });
 
 test("admin presentation runtime has a distinct identity and no data-plane grants", async () => {
