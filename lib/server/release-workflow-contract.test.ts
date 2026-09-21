@@ -32,26 +32,28 @@ test("terraform deploy resolves release tags to immutable digests without API_IM
   assert.match(workflow, /@sha256:\[0-9a-f\]\{64\}/);
 });
 
-test("known-good rollback state advances only after both live acceptance jobs pass", async () => {
+test("known-good rollback state advances only after every live acceptance family passes", async () => {
   const workflow = await read(".github/workflows/security-acceptance.yml");
 
   assert.match(workflow, /record-known-good-release/);
-  assert.match(workflow, /needs:\s*\[edge, postgres-rls\]/);
+  assert.match(workflow, /needs:\s*\[edge, postgres-rls, control-loop\]/);
   assert.match(workflow, /if:\s*\$\{\{ success\(\) \}\}/);
   assert.match(workflow, /spec\.template\.spec\.containers\.image/);
   assert.match(workflow, /releases\/\$\{\{ inputs\.environment \}\}\/known-good\.json/);
   assert.match(workflow, /corvis\.known-good-release\.v1/);
+  assert.match(workflow, /control-loop-runtime-acceptance/);
 });
 
-test("deployment docs keep release images derived and known-good state acceptance-gated", async () => {
+test("deployment docs keep the release set derived and known-good state acceptance-gated", async () => {
   const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
   const deployment = await read("docs/DEPLOYMENT.md");
 
   assert.match(environments, /`api_image` is not a human-managed github environment variable/);
   assert.match(environments, /remove or avoid creating/);
   assert.match(environments, /runtime api\/worker image/);
-  assert.match(deployment, /a built image is not a known-good production release until live acceptance passes/);
-  assert.match(deployment, /only a fully successful acceptance run records/);
+  assert.match(deployment, /a built image set is not known-good until live acceptance passes/);
+  assert.match(deployment, /only a fully successful acceptance run writes/);
   assert.match(deployment, /known-good\.json/);
-  assert.match(deployment, /if acceptance fails or cannot run, the known-good pointer does not advance/);
+  assert.match(deployment, /failed or incomplete acceptance never advances known-good/);
+  assert.match(deployment, /accepted api\/worker image and accepted control-loop image/);
 });
