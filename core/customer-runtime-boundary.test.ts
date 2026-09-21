@@ -20,14 +20,17 @@ test("customer Cloud Run runtime is presentation-only and fail-closed", async ()
   assert.match(runtime, /@sha256:/);
 });
 
-test("customer edge sends UI and API traffic to different gateways", async () => {
+test("customer edge sends UI and only public API traffic to different gateways", async () => {
   const worker = await read("infra/terraform/modules/cloudflare-customer-edge/customer-proxy.mjs");
   const edge = await read("infra/terraform/modules/cloudflare-customer-edge/main.tf");
 
-  assert.match(worker, /pathname\.startswith\("\/api\/"\)/);
+  assert.match(worker, /pathname\.startswith\("\/api\/v1\/"\)/);
+  assert.match(worker, /!url\.pathname\.startswith\("\/api\/v1"\)/);
   assert.match(worker, /api_gateway_host/);
   assert.match(worker, /customer_gateway_host/);
-  assert.match(worker, /x-api-key/);
+  assert.match(worker, /headers\.delete\("host"\)/);
+  assert.match(worker, /headers\.delete\("x-api-key"\)/);
+  assert.match(worker, /x-corvis-edge-proxy/);
   assert.match(edge, /customer_gateway_api_key/);
   assert.match(edge, /api_gateway_api_key/);
 });
