@@ -1,186 +1,165 @@
 # Deployment and promotion
 
-This file defines the technical deployment flow. Business release/readiness approvals remain governed by Confluence; this document owns the mechanics.
+This file is the technical source of truth for Corvis deployment mechanics. Confluence owns business readiness and launch approval.
 
-## Deployment principle
+## Principle
 
-GitHub Actions is the deployment orchestration layer. A human should normally configure an environment once in GitHub and then use reviewed workflows to propagate infrastructure, database, runtime configuration and application releases.
+After the one-time external trust bootstrap, GitHub Actions is the deployment control plane. Routine Corvis environment changes do not require local `gcloud`, Terraform or manual provider-console edits.
 
 ```text
-GitHub Environment trust roots
-  ↓
-GitHub Actions
-  ├─ authenticate to GCP by OIDC/WIF
-  ├─ build reviewed main commit → Artifact Registry
-  ├─ resolve release tag → immutable digest
-  ├─ Terraform plan/apply Cloudflare + GCP + Supabase
-  ├─ apply versioned Postgres migrations
-  ├─ create/update Secret Manager versions
-  ├─ deploy Cloud Run/Jobs by digest
-  ├─ run acceptance checks / emit evidence
-  └─ record accepted digest as known-good rollback target
+reviewed PR -> protected main -> immutable image + provenance
+  -> GitHub OIDC/WIF
+  -> Terraform plan
+  -> Postgres secret readiness
+  -> checksum-verified forward migrations + evidence
+  -> exact Terraform apply
+       ├─ Cloud Run API
+       ├─ IAM-private Cloud Run worker
+       ├─ Pub/Sub push + DLQ
+       ├─ Cloud Tasks scheduled retry
+       ├─ Cloud Scheduler delivery drain
+       ├─ API Gateway
+       └─ Cloudflare Worker/DNS/WAF/rate controls
+  -> public health
+  -> live security/RLS acceptance
+  -> accepted digest recorded as known-good
 ```
 
 ## Environments
 
-- `dev` — continuous integration/development environment. Automatic deploys from approved default-branch changes are acceptable once safe.
-- `uat` — production-like pre-production / user acceptance environment. Use the same topology/security model as production where practical, with synthetic/sanitized data.
-- `prod` — production. Strongest approvals, least privilege and rollback requirements.
+- `dev` — disposable/low-cost development environment; no production customer data.
+- `uat` — separate production-like environment using synthetic or explicitly sanitized data.
+- `prod` — production environment with the strongest provider and release protections.
 
-The old environment name `staging` is deprecated; use `uat` for new infrastructure and workflows.
+`staging` is deprecated; use `uat`.
 
-## Workflow permissions
+## Release image
 
-A deployment workflow should request only the permissions it needs. GCP federation requires `contents: read` and `id-token: write`. Release-image provenance additionally uses GitHub artifact-attestation permissions. Do not use a stored GCP service-account JSON key.
+`.github/workflows/build-release.yml` is the image boundary.
 
-Provider tokens for Cloudflare/Supabase are read from the selected GitHub Environment and are available only to the deployment job that needs them.
+- Runs only from `main`.
+- Verifies effective release governance before provider authentication.
+- Authenticates to GCP through GitHub OIDC/WIF; no static GCP key exists.
+- Publishes `git-${GITHUB_SHA}` to `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api`.
+- Resolves and records the immutable registry digest.
+- Emits `release-image.json` and GitHub build-provenance attestation.
+- The same immutable image is used by the API and private worker runtime for that environment.
 
-## Release-image build
+A built image is not a known-good production release until live acceptance passes.
 
-`.github/workflows/build-release.yml` is the executable release-image boundary.
+## Promotion inputs
 
-- It is manual/protected and fails unless invoked from `main`.
-- It authenticates to the selected environment's GCP project through GitHub OIDC/WIF.
-- It uses the deterministic Artifact Registry path `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api`.
-- It builds the production Dockerfile once for that registry target and publishes only the source-addressable tag `git-${GITHUB_SHA}`; it does not use `latest` as a deployment contract.
-- It resolves the registry-generated `sha256` digest after push and emits a `release-image.json` artifact containing source SHA, digest reference, build timestamp and workflow run ID.
-- It generates GitHub build-provenance attestation for the exact container digest and pushes the attestation to the OCI registry.
+`.github/workflows/terraform-deploy.yml` accepts either:
 
-Repository CI remains responsible for lint/type/unit/build/browser/security checks. A release image does not become production-approved merely because it was built or attested.
+1. `release_sha` — full reviewed `main` commit already built in the target environment registry; or
+2. `rollback_known_good=true` — the last acceptance-approved digest for that environment.
 
-## Deployment selection
+They are mutually exclusive. Normal `uat`/`prod` apply requires one of them. Runtime removal is never an accidental side-effect of an empty release input; use the guarded decommission workflow for lifecycle changes.
 
-`.github/workflows/terraform-deploy.yml` no longer requires an operator-maintained `API_IMAGE` GitHub variable.
+Before a production-like runtime can be promoted, the environment must also have:
 
-The operator selects one of two mutually exclusive immutable release sources:
-
-1. `release_sha` — a full 40-character commit SHA previously published by `build-release.yml` into the target environment's Artifact Registry. The workflow resolves `git-${release_sha}` through Artifact Registry and passes Terraform the resulting `image@sha256:...` reference.
-2. `rollback_known_good` — reads the target environment's acceptance-approved `known-good.json` manifest and deploys its exact digest.
-
-The workflow refuses a mutable or malformed image reference. `uat`/`prod` Cloudflare activation still fails closed when no immutable API release is selected.
-
-## Known-good rollback state
-
-A build or Terraform apply is **not** enough to call a release known-good.
-
-`security-acceptance.yml` records `gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json` only after both independent live jobs succeed:
-
-- edge/origin security acceptance; and
-- live Postgres/RLS two-tenant acceptance.
-
-The recorded manifest contains only non-secret release evidence: environment, exact deployed Artifact Registry digest, acceptance timestamp, workflow SHA and run ID. The Terraform state bucket is versioned, so prior manifests remain recoverable through object history.
-
-If either acceptance job fails or is unavailable, known-good state is not advanced.
-
-## Workflow decomposition
-
-Current and target workflows remain intentionally auditable:
-
-1. Terraform validation/planning — provider/IaC validation and reviewed plan.
-2. Database migration — forward-only versioned Postgres replay with checksum/version checks.
-3. `build-release.yml` — build/push/attest reviewed API image and emit release metadata.
-4. `terraform-deploy.yml` — resolve selected release to digest and apply runtime/infrastructure changes.
-5. `security-acceptance.yml` — live edge/origin + RLS checks and, only on full success, advance the known-good rollback manifest.
-
-Customer/admin/worker release boundaries should reuse the same immutable-release contract when those distinct runtimes are added rather than sharing a mutable application tag.
-
-## Configuration handling
+- `CORVIS_AUTH_ISSUER` and `CORVIS_AUTH_AUDIENCE` configured as the approved OIDC contract;
+- an enabled `corvis-postgres-dsn-${environment}` Secret Manager version written by the environment Postgres activation path;
+- Cloudflare roots when public API publication is enabled.
 
 See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md).
 
-### Non-secret values
+## One auditable apply path
 
-GitHub Environment variables are the preferred human-managed source for environment-specific external roots. Terraform/deployment outputs should generate derived values so they are not duplicated manually.
+For `action=apply`, `terraform-deploy.yml` executes this order:
 
-### Deployment-only provider credentials
+1. verify the release commit is on `main` and the live ruleset/check governance is non-bypassable;
+2. authenticate through WIF;
+3. require the bootstrap-owned remote state bucket;
+4. resolve the selected release to an immutable digest;
+5. initialize/validate Terraform and create the exact locked plan;
+6. require an enabled Postgres DSN secret version;
+7. read that DSN through IAM without logging it;
+8. run `db/postgres/migrate.ts --apply` against the live environment;
+9. upload sanitized migration evidence;
+10. apply the exact previously created Terraform plan;
+11. when the edge is enabled, require `/api/v1/health` to succeed through Cloudflare -> API Gateway -> Cloud Run.
 
-`CLOUDFLARE_API_TOKEN`, `SUPABASE_ACCESS_TOKEN` and similar provider-management credentials are consumed only by CI/IaC jobs. They must not be injected into application runtime containers.
+The migration runner is forward-only, gap/checksum aware and records its own `corvis_migration.schema_migration` ledger. Re-running an already-current environment is a no-op for migration SQL.
 
-### Runtime secrets
+## Runtime topology
 
-Cloud Run/Jobs should consume GCP Secret Manager references. The deployment workflow may create/rotate a secret version from a GitHub bootstrap secret where unavoidable, but internal runtime secrets should preferably be generated/rotated automatically rather than copied between stores manually.
+The promoted immutable image currently feeds two distinct runtime identities:
 
-## Secret propagation pattern
+- `corvis-api-${environment}` — public API backend, invokable only by the dedicated API Gateway service account;
+- `corvis-worker-${environment}` — background-processing/control-loop runtime, invokable only by its dedicated worker service account.
 
-For a secret that must originate in GitHub:
+Managed asynchronous transport is keyless:
 
-1. read the GitHub Environment secret inside a protected deployment job;
-2. authenticate to GCP with WIF;
-3. create/update the named Secret Manager secret/version without printing the value;
-4. bind only the required runtime service account to that secret;
-5. deploy Cloud Run/Job with a Secret Manager reference;
-6. rotate/remove superseded versions according to the secret-retention policy.
+- Pub/Sub pushes immediate stage deliveries to `/api/internal/processing-stage` using Google OIDC;
+- Cloud Tasks schedules persisted retries to the same endpoint using the worker identity;
+- Cloud Scheduler calls `/api/internal/delivery` to drain durable processing/export/webhook outboxes;
+- the worker Cloud Run service uses an explicit custom OIDC audience derived from the environment;
+- no production `CORVIS_WORKER_SECRET` is required.
 
-Do not persist secret values in Terraform source, workflow artifacts, action outputs or deployment summaries. Avoid putting secret values into Terraform state when a provider-independent secret-version step can safely manage them outside Terraform.
+The API uses the same worker identity only to enqueue authenticated scheduled retries; it cannot anonymously invoke the worker.
 
-## Infrastructure apply order
+## Authentication boundary
 
-Recommended dependency order:
+Production OIDC bearer tokens are verified directly against the configured issuer/JWKS and audience. Tenant/workspace headers are untrusted context selectors only; effective membership, roles, entitlements, data rights and session state are re-resolved from Postgres before authorization.
 
-1. trust/bootstrap already exists (GCP WIF, provider account ownership);
-2. Terraform state/backend;
-3. GCP APIs/IAM/KMS/Artifact Registry/GCS/queues/secrets containers;
-4. release image is built, pushed and attested;
-5. Supabase project/settings;
-6. Postgres migrations/RLS/roles;
-7. GCP runtime/load-balancer resources deploy the selected image digest;
-8. Cloudflare DNS/proxy/WAF/origin rules once origin is healthy;
-9. acceptance/security tests;
-10. successful acceptance advances the known-good rollback digest.
+The signed Corvis gateway-assertion contract remains available for a future reviewed SAML/identity broker, but OIDC production does not depend on deploying an assertion-minting proxy first.
 
-Avoid switching public DNS to a new origin before the origin is deployed and tested.
+## Secret handling
 
-## Database release rules
+- GCP provider access uses WIF, not JSON keys.
+- The canonical application database secret is `corvis-postgres-dsn-${environment}` in Secret Manager.
+- API, worker, migration and Security-acceptance paths consume that same managed value through IAM.
+- The API Gateway edge key is Terraform-generated, restricted to the managed API and injected directly into the Cloudflare Worker secret binding.
+- Do not duplicate DSNs, worker secrets, gateway keys or provider-derived runtime URLs into GitHub variables.
 
-- Postgres is the application write authority.
-- Migrations are forward-reviewed and versioned in Git.
-- Prefer expand/migrate/contract changes for backwards compatibility.
-- Application code must tolerate the migration ordering used during deployment.
-- Do not application-dual-write to Snowflake as a migration technique.
-- Snowflake migrations/CDC are absent unless the optional warehouse has been approved and activated.
+Provider-management credentials such as the scoped Cloudflare API token are deployment-only and are never injected into application containers.
 
-## Promotion
+## Acceptance and known-good state
 
-Promote code by immutable commit/image digest, not by a mutable tag. The current workflow resolves a reviewed commit tag to a digest inside the target environment's Artifact Registry before Terraform sees it.
+`security-acceptance.yml` runs production-like provider checks after deployment. The harness covers at least:
 
-The longer-term preferred topology remains build-once promotion of the identical digest across `dev → uat → prod`. If environment registries live in separate GCP projects, cross-project copy/reader permissions must be implemented explicitly before claiming that one physical registry artifact is promoted across all three environments; the current workflow does not silently assume such trust exists.
+- Cloudflare Worker traversal, HTTPS/WAF/rate/cache controls;
+- missing/invalid direct API Gateway edge-key rejection;
+- direct unauthenticated API Cloud Run rejection and exact gateway-only invoker IAM;
+- direct unauthenticated worker rejection and exact worker-only invoker IAM;
+- Pub/Sub/Scheduler targets and OIDC identity/audience wiring;
+- live two-tenant Postgres/RLS isolation;
+- automated evidence persistence.
+
+Only a fully successful acceptance run records:
+
+`gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json`
+
+If acceptance fails or cannot run, the known-good pointer does not advance.
 
 ## Rollback
 
-Keep at least one acceptance-approved previous application release deployable. `terraform-deploy.yml` supports `rollback_known_good=true`, which reads the exact digest recorded by the most recent fully successful live Security acceptance run.
+`rollback_known_good=true` redeploys the last accepted immutable image. Rollback must preserve database/source history and never silently reverse a forward database migration.
 
-Rollback must:
+Use expand/migrate/contract database changes and feature kill switches where they are safer than destructive schema reversal. A database restore is an incident-recovery procedure, not routine application rollback.
 
-- redeploy an acceptance-approved image digest;
-- preserve source evidence and database history;
-- never automatically reverse a destructive database migration without an explicit tested procedure;
-- keep infrastructure changes forward-fixable or revertible from reviewed Terraform;
-- retain the acceptance/deployment evidence identifying what was restored.
+## Infrastructure lifecycle
 
-Use feature flags/kill switches for risky product behavior when they are the safer rollback mechanism, but do not use flags to bypass authorization or contractual rights.
+Environment teardown is owned exclusively by `.github/workflows/gcp-decommission.yml`:
 
-## Preview environments
+- `idle` removes API/worker/public-edge runtime while preserving durable foundation, data and Terraform state;
+- `full` explicitly removes Terraform-managed data/resources and deletes remote state last, while retaining the recoverable KMS bootstrap anchor and external WIF trust anchor.
 
-Preview environments are optional and must remain cheap:
+Destructive transitions require exact confirmation strings. See [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md).
 
-- scale-to-zero services;
-- no dedicated load balancer per preview;
-- no production data or secrets;
-- auto-destroy within 24 hours of PR merge/close or inactivity;
-- prefer shared non-production services when isolation risk is acceptable.
+## What remains external/provider-bound
 
-## Production release gate
+The repository cannot safely bootstrap ownership of an otherwise untrusted provider account. Before the first UAT apply, operators still must establish:
 
-At minimum, production promotion must have passing repository checks and environment acceptance checks. Current source gates include:
+- billed GCP project + `corvis-deploy` service account + repository-scoped WIF trust;
+- Cloudflare zone/account ownership and scoped Terraform token;
+- separate Supabase/Postgres environment project and secure DSN activation;
+- approved OIDC/SAML provider configuration;
+- any optional external AI/search/representation/extraction/delivery provider chosen for the UAT journey.
 
-- deterministic dependency install;
-- lint/type/unit/build;
-- critical-path browser E2E;
-- dependency vulnerability gate;
-- CodeQL;
-- Terraform formatting/validation for implemented roots;
-- reviewed database migrations;
-- immutable digest resolution and build provenance;
-- production-equivalent acceptance tests.
+Those roots are environment activation inputs, not excuses for ongoing undocumented manual deployment.
 
-Confluence owns whether the business/control readiness gate is approved; passing CI or producing an attestation alone never constitutes enterprise readiness.
+## Release gate
+
+Repository CI requires deterministic install, lint, TypeScript, unit tests, production build, browser E2E, dependency audit, CodeQL, secret/history guard, non-root container assertion, clean Postgres migration application and Terraform formatting/provider validation. Passing those checks proves the reviewed source contract; production readiness still requires the live provider/UAT evidence owned by Confluence and the open readiness trackers.
