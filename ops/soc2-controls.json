@@ -1,0 +1,182 @@
+{
+  "schemaVersion": "corvis.soc2-readiness.v1",
+  "authority": {
+    "businessControlSource": "https://corvis.atlassian.net/wiki/spaces/FUNDATA/pages/2523160",
+    "technicalImplementationSource": "https://github.com/kingyx3/corvis"
+  },
+  "target": {
+    "report": "SOC 2 Type II",
+    "mandatoryCategories": ["security", "availability", "confidentiality", "processing_integrity"],
+    "conditionalCategories": ["privacy"],
+    "claimState": "readiness_only_until_independent_report_issued"
+  },
+  "families": [
+    {
+      "id": "CC1",
+      "name": "control_environment",
+      "status": "operating_evidence_required",
+      "owners": ["leadership", "security", "people"],
+      "evidence": [
+        "Confluence: Company Operations — Finance, People, Insurance & Vendor Governance",
+        "Confluence: Company Roadmap, Organization & KPIs",
+        "approved policy acknowledgements, confidentiality/IP terms, training records and delegation of authority"
+      ]
+    },
+    {
+      "id": "CC2",
+      "name": "communication_and_information",
+      "status": "operating_evidence_required",
+      "owners": ["leadership", "security", "operations"],
+      "evidence": [
+        "Confluence policy set and DDQ response library",
+        "ops/RUNBOOK.md",
+        "onboarding and annual security/privacy training evidence"
+      ]
+    },
+    {
+      "id": "CC3",
+      "name": "risk_assessment",
+      "status": "operating_evidence_required",
+      "owners": ["leadership", "security", "risk"],
+      "evidence": [
+        "Confluence: Enterprise Business Risk Register & Strategic Assumptions",
+        "Confluence: Critical Vendor, Subprocessor, Data Location & AI System Register",
+        "quarterly risk review and residual-risk acceptance records"
+      ]
+    },
+    {
+      "id": "CC4",
+      "name": "monitoring_activities",
+      "status": "provider_gated",
+      "owners": ["security", "platform-engineering"],
+      "evidence": [
+        "lib/server/control-evidence-lifecycle.ts",
+        "lib/server/control-evidence-registry.ts",
+        "ops/slos.yaml",
+        "live provider monitoring, vulnerability and control-review evidence"
+      ]
+    },
+    {
+      "id": "CC5",
+      "name": "control_activities",
+      "status": "operating_evidence_required",
+      "owners": ["security", "platform-engineering", "privacy"],
+      "evidence": [
+        "Confluence: Enterprise Control Register & Evidence Pack",
+        ".github/workflows/ci.yml",
+        ".github/workflows/security-acceptance.yml",
+        "lib/server/data-lifecycle.ts"
+      ]
+    },
+    {
+      "id": "CC6",
+      "name": "logical_access",
+      "status": "provider_gated",
+      "owners": ["security", "platform-engineering"],
+      "evidence": [
+        "docs/SERVICE_IDENTITY_HARDENING.md",
+        "db/postgres/migrations",
+        ".github/workflows/security-acceptance.yml",
+        "live IdP MFA/SSO/JML and privileged-access review evidence"
+      ]
+    },
+    {
+      "id": "CC7",
+      "name": "system_operations",
+      "status": "provider_gated",
+      "owners": ["security", "platform-engineering", "operations"],
+      "evidence": [
+        "ops/RUNBOOK.md",
+        "ops/slos.yaml",
+        "infra/terraform/modules/gcp-observability",
+        "live incident, alert, vulnerability and recovery evidence"
+      ]
+    },
+    {
+      "id": "CC8",
+      "name": "change_management",
+      "status": "design_complete_live_evidence_required",
+      "owners": ["platform-engineering", "security"],
+      "evidence": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/terraform-deploy.yml",
+        ".github/workflows/build-release.yml",
+        "GitHub Protect Main ruleset"
+      ]
+    },
+    {
+      "id": "CC9",
+      "name": "risk_mitigation",
+      "status": "operating_evidence_required",
+      "owners": ["leadership", "security", "operations", "vendor-management"],
+      "evidence": [
+        "Confluence vendor governance and risk register",
+        "ops/RUNBOOK.md",
+        "critical-provider exit/fallback plans, insurance and business continuity exercises"
+      ]
+    },
+    {
+      "id": "A",
+      "name": "availability",
+      "status": "provider_gated",
+      "owners": ["platform-engineering", "operations"],
+      "evidence": [
+        "ops/slos.yaml",
+        "ops/RUNBOOK.md",
+        "infra/terraform/modules/gcp-observability",
+        "live backup/restore, DR, capacity and provider-health evidence"
+      ]
+    },
+    {
+      "id": "C",
+      "name": "confidentiality",
+      "status": "provider_gated",
+      "owners": ["security", "privacy", "platform-engineering"],
+      "evidence": [
+        "docs/INFRASTRUCTURE.md",
+        "docs/RUNTIME_SECRETS.md",
+        "db/postgres/migrations",
+        ".github/workflows/security-acceptance.yml",
+        "live KMS/IAM/TLS/retention/deletion evidence"
+      ]
+    },
+    {
+      "id": "PI",
+      "name": "processing_integrity",
+      "status": "production_like_uat_required",
+      "owners": ["data-product", "engineering", "operations"],
+      "evidence": [
+        "docs/ENTERPRISE_IMPLEMENTATION.md",
+        "core and lib/server processing/review/reconciliation/publication tests",
+        "production-like replay, correction, lineage, reconciliation and publication evidence"
+      ]
+    },
+    {
+      "id": "P",
+      "name": "privacy",
+      "status": "auditor_scope_required",
+      "owners": ["privacy", "legal", "security"],
+      "evidence": [
+        "Confluence privacy role/data-flow/retention/subprocessor records",
+        "lib/server/data-lifecycle.ts",
+        "incident/legal escalation and data-subject/customer request evidence where applicable"
+      ]
+    }
+  ],
+  "auditGates": [
+    "scope_and_system_description_approved",
+    "policies_approved_and_acknowledged",
+    "risk_assessment_operating",
+    "production_like_uat_evidence_current",
+    "access_reviews_current",
+    "backup_restore_dr_exercised",
+    "incident_tabletop_exercised",
+    "vulnerability_program_operating",
+    "vendor_diligence_current",
+    "independent_security_assessment_closed",
+    "auditor_readiness_and_sampling_agreed",
+    "type_ii_observation_period_completed",
+    "independent_report_issued"
+  ]
+}

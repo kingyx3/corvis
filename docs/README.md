@@ -26,6 +26,7 @@ When the same subject appears in both systems:
 - [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) — required GitHub Environments, variables/secrets, bootstrap exceptions and configuration propagation.
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — GitHub-centric deployment flow, environment promotion, secret propagation and rollback.
 - [`ENTERPRISE_IMPLEMENTATION.md`](ENTERPRISE_IMPLEMENTATION.md) — current implementation status and open technical gaps.
+- [`SOC2_READINESS.md`](SOC2_READINESS.md) — repository-side SOC 2 readiness boundary, technical evidence contract and remaining audit gates.
 - [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) — provider-side activation and evidence checks before production traffic.
 - [`../ops/RUNBOOK.md`](../ops/RUNBOOK.md) — incident/recovery operations.
 - [`../ops/slos.yaml`](../ops/slos.yaml) — machine-readable SLO/RPO/RTO implementation targets.
