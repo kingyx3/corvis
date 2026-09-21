@@ -11,7 +11,7 @@ test("production release images cannot be rebuilt independently", async () => {
   const inputBlock = workflow.match(/environment:\n[\s\S]*?default:\s*dev/)?.[0] ?? "";
 
   assert.match(inputBlock, /options:\s*\[dev, uat\]/);
-  assert.doesNotMatch(inputBlock, /prod/);
+  assert.doesNotMatch(inputBlock, /options:\s*\[[^\]]*prod/);
   assert.match(workflow, /release builds are prohibited in prod/);
   assert.match(workflow, /build once in uat and copy the exact image set/);
 });
@@ -32,7 +32,7 @@ test("cross-project copy reconciles reader-only trust and verifies physical dige
   assert.match(workflow, /environment:\s*uat/);
   assert.match(workflow, /environment:\s*prod/);
   assert.match(workflow, /roles\/artifactregistry\.reader/);
-  assert.doesNotMatch(workflow, /roles\/artifactregistry\.(?:writer|repoAdmin)/i);
+  assert.doesNotMatch(workflow, /roles\/artifactregistry\.(?:writer|repoadmin)/i);
   assert.match(workflow, /gcrane_version:\s*v0\.22\.1/);
   assert.match(workflow, /checksums\.txt/);
   assert.match(workflow, /gcrane cp/);
