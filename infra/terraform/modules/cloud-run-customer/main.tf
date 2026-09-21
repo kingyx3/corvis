@@ -8,13 +8,15 @@ terraform {
 
 locals {
   runtime_enabled = trimspace(var.image) != ""
+  service_name    = "corvis-${var.surface}-${var.environment}"
+  display_surface = var.surface == "admin" ? "admin" : "customer"
 }
 
 resource "google_service_account" "customer" {
   project      = var.project_id
-  account_id   = "corvis-customer-${var.environment}"
-  display_name = "Corvis customer web ${var.environment}"
-  description  = "Keyless, presentation-only identity for the Corvis customer web runtime. It receives no direct Postgres, GCS, queue or Secret Manager access."
+  account_id   = local.service_name
+  display_name = "Corvis ${local.display_surface} web ${var.environment}"
+  description  = "Keyless, presentation-only identity for the Corvis ${local.display_surface} web runtime. No direct data-plane credentials are attached."
 }
 
 resource "google_project_iam_member" "customer_log_writer" {
@@ -26,11 +28,11 @@ resource "google_project_iam_member" "customer_log_writer" {
 resource "google_cloud_run_v2_service" "customer" {
   count    = local.runtime_enabled ? 1 : 0
   project  = var.project_id
-  name     = "corvis-customer-${var.environment}"
+  name     = local.service_name
   location = var.region
 
-  # Network reachability is required for API Gateway, but Cloud Run IAM remains
-  # the invocation boundary. The gateway module grants the only invoker role.
+  # API Gateway needs network reachability, while Cloud Run IAM remains the
+  # invocation boundary. No public invoker is granted here.
   ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = var.environment == "prod" && !var.decommission_mode
@@ -60,7 +62,7 @@ resource "google_cloud_run_v2_service" "customer" {
       }
       env {
         name  = "CORVIS_RUNTIME_SURFACE"
-        value = "customer"
+        value = var.surface
       }
 
       resources {
@@ -75,7 +77,7 @@ resource "google_cloud_run_v2_service" "customer" {
   lifecycle {
     precondition {
       condition     = can(regex("@sha256:[0-9a-fA-F]{64}$", var.image))
-      error_message = "Customer web image must be an immutable digest reference ending in @sha256:<64 hex chars>."
+      error_message = "Presentation web image must be an immutable digest reference ending in @sha256:<64 hex chars>."
     }
   }
 
