@@ -70,7 +70,11 @@ function jsonParameter(values: string[] | undefined): string {
 }
 
 export class PostgresPublicServingResourceRepository {
-  constructor(private readonly db: PostgresSqlApi) {}
+  private readonly db: PostgresSqlApi;
+
+  constructor(db: PostgresSqlApi) {
+    this.db = db;
+  }
 
   async funds(identity: RequestIdentity): Promise<PublicFund[]> {
     const rows = await this.db.query(`
