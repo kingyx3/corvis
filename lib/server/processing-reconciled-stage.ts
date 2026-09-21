@@ -1,5 +1,6 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import { ProcessingStageBlockedError, type ProcessingStageEffectInput } from "./processing-stage-worker.ts";
+import { isReplayProcessingRun } from "./processing-run.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -129,6 +130,29 @@ export class PostgresReconciliationRepository {
     this.db = db;
   }
 
+  async findExisting(input: {
+    tenantId: string;
+    documentId: string;
+    predecessor: CanonicalizedPredecessorResult;
+  }): Promise<ReconciliationResult | undefined> {
+    const rows = await this.db.query(`select
+        reconciliation_run_id,canonicalization_run_id,snapshot_id,snapshot_version,
+        fund_id,report_period,schema_version,taxonomy_version,observation_count,
+        blocking_exception_count,
+        (status='ready' and blocking_exception_count=0) as reconciliation_ready
+      from corvis_consolidated.reconciliation_run
+      where tenant_id=$1::uuid
+        and document_id=$2::uuid
+        and canonicalization_run_id=$3::uuid
+      limit 1`, [
+      input.tenantId,
+      input.documentId,
+      input.predecessor.canonicalizationRunId,
+    ]);
+    const row = rows[0];
+    return row ? this.result(row, input.predecessor) : undefined;
+  }
+
   async reconcile(input: {
     tenantId: string;
     documentId: string;
@@ -150,7 +174,10 @@ export class PostgresReconciliationRepository {
     ]);
     const row = rows[0];
     if (!row) throw new Error("reconciled stage did not return reconciliation state");
+    return this.result(row, input.predecessor);
+  }
 
+  private result(row: PostgresRow, predecessor: CanonicalizedPredecessorResult): ReconciliationResult {
     const result: ReconciliationResult = {
       reconciliationRunId: text(row, "reconciliation_run_id"),
       canonicalizationRunId: text(row, "canonicalization_run_id"),
@@ -168,10 +195,10 @@ export class PostgresReconciliationRepository {
     if (!result.reconciliationRunId || !result.snapshotId || !result.fundId || !result.reportPeriod) {
       throw new Error("reconciled stage received incomplete reconciliation identity");
     }
-    if (result.canonicalizationRunId !== input.predecessor.canonicalizationRunId) {
+    if (result.canonicalizationRunId !== predecessor.canonicalizationRunId) {
       throw new Error("reconciled stage canonicalization lineage changed during persistence");
     }
-    if (result.observationCount !== input.predecessor.observationCount) {
+    if (result.observationCount !== predecessor.observationCount) {
       throw new Error("reconciled stage observation count no longer matches canonical predecessor");
     }
     if (result.reconciliationReady !== (result.blockingExceptionCount === 0)) {
@@ -186,7 +213,14 @@ export function createReconciledStageHandler(repository: PostgresReconciliationR
     if (effect.stage !== "reconciled") throw new Error(`reconciled handler cannot execute stage ${effect.stage}`);
     assertNotAborted(signal);
     const predecessor = canonicalizedPredecessorResult(effect);
-    const result = await repository.reconcile({
+    const reused = isReplayProcessingRun(effect.payload)
+      ? await repository.findExisting({
+        tenantId: effect.tenantId,
+        documentId: effect.documentId,
+        predecessor,
+      })
+      : undefined;
+    const result = reused ?? await repository.reconcile({
       tenantId: effect.tenantId,
       documentId: effect.documentId,
       predecessor,
