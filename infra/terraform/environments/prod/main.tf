@@ -99,6 +99,18 @@ module "api_runtime" {
   depends_on = [module.foundation]
 }
 
+module "control_loop_runtime" {
+  source                = "../../modules/control-loop-runtime"
+  project_id            = var.project_id
+  environment           = "prod"
+  control_loop_image    = var.control_loop_image
+  service_account_email = module.foundation.control_loop_service_account
+  state_bucket_name     = module.foundation.control_loop_state_bucket
+  decommission_mode     = var.decommission_mode
+
+  depends_on = [module.foundation]
+}
+
 module "api_gateway" {
   count = local.edge_enabled ? 1 : 0
 
