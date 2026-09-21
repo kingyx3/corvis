@@ -9,6 +9,10 @@ const gatewayHostname = process.env.API_GATEWAY_HOSTNAME || "";
 const directCloudRunStatus = process.env.DIRECT_CLOUD_RUN_BYPASS_STATUS || "";
 const cloudRunIamBoundary = process.env.CLOUD_RUN_IAM_BOUNDARY || "";
 const expectedGatewayInvoker = process.env.EXPECTED_GATEWAY_INVOKER || "";
+const directWorkerStatus = process.env.DIRECT_WORKER_BYPASS_STATUS || "";
+const workerIamBoundary = process.env.WORKER_IAM_BOUNDARY || "";
+const expectedWorkerInvoker = process.env.EXPECTED_WORKER_INVOKER || "";
+const workerTransportBoundary = process.env.WORKER_TRANSPORT_BOUNDARY || "";
 
 const checks = [];
 
@@ -164,6 +168,23 @@ await check("cloud-run-invoker-policy-is-gateway-only", async () => {
   invariant(expectedGatewayInvoker, "expected gateway invoker was not derived");
   invariant(cloudRunIamBoundary === "pass", "Cloud Run roles/run.invoker is not restricted to the dedicated gateway service account");
   return { expectedInvoker: expectedGatewayInvoker, allUsers: false, exclusiveGatewayInvoker: true };
+});
+
+await check("direct-worker-origin-bypass-blocked", async () => {
+  invariant(directWorkerStatus, "direct worker bypass probe did not run");
+  invariant(["401", "403"].includes(directWorkerStatus), `direct unauthenticated worker request returned ${directWorkerStatus}`);
+  return { status: Number(directWorkerStatus), protection: "cloud-run-iam" };
+});
+
+await check("worker-invoker-policy-is-worker-only", async () => {
+  invariant(expectedWorkerInvoker, "expected worker invoker was not derived");
+  invariant(workerIamBoundary === "pass", "Worker roles/run.invoker is not restricted to the dedicated worker service account");
+  return { expectedInvoker: expectedWorkerInvoker, allUsers: false, exclusiveWorkerInvoker: true };
+});
+
+await check("worker-managed-transport-is-keyless", async () => {
+  invariant(workerTransportBoundary === "pass", "Pub/Sub/Scheduler worker targets or OIDC identities do not match the managed worker boundary");
+  return { pubsubPush: true, schedulerDispatch: true, googleOidc: true };
 });
 
 const failed = checks.filter((entry) => entry.status === "fail");
