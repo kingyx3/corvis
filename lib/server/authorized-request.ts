@@ -15,18 +15,17 @@ type ResolveAuthorizedOptions = {
 /**
  * Authentication and authorization deliberately cross separate boundaries.
  *
- * The signed gateway assertion establishes subject/tenant/workspace/session. In
- * production, effective workspace membership, application roles, resource grants,
- * contractual data rights and session/service-identity lifecycle state are
- * re-resolved from Postgres before a route evaluates permissions. Signed resource
- * or data-right claims can only be hints at the authentication boundary; they
- * cannot widen authoritative Postgres access.
+ * Production OIDC establishes the immutable subject plus a requested
+ * tenant/workspace context (or an optional signed identity broker assertion does
+ * so for SAML/service identities). Effective membership, application roles,
+ * resource grants, contractual data rights and session/service-identity lifecycle
+ * state are always re-resolved from Postgres before a route evaluates access.
  */
 export async function resolveAuthorizedRequestIdentity(
   request: Request,
   options: ResolveAuthorizedOptions = {},
 ): Promise<RequestIdentity> {
-  const authenticated = resolveRequestIdentity(request);
+  const authenticated = await resolveRequestIdentity(request);
 
   // Every route that reaches this point has an authenticated tenant and
   // subject (a user or a service account), so this is the narrowest place

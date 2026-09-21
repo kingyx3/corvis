@@ -36,7 +36,7 @@ concurrency:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -45,6 +45,9 @@ jobs:
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
       TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      TF_VAR_auth_issuer: ${{ vars.CORVIS_AUTH_ISSUER }}
+      TF_VAR_auth_audience: ${{ vars.CORVIS_AUTH_AUDIENCE || 'corvis' }}
+      TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
       TF_VAR_decommission_mode: "false"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
@@ -52,6 +55,7 @@ jobs:
       GCP_REGION: asia-southeast1
       ARTIFACT_REPOSITORY: corvis
       API_IMAGE_NAME: api
+      POSTGRES_DSN_SECRET: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
       - name: Validate deployment roots
@@ -76,6 +80,18 @@ jobs:
           fi
           if [[ -n "${RELEASE_SHA}" && ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "release_sha must be a full 40-character lowercase Git commit SHA."
+            exit 1
+          fi
+          if [[ "${{ inputs.action }}" == "apply" && "${{ inputs.environment }}" != "dev" && -z "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" != "true" ]]; then
+            echo "Normal UAT/prod apply requires release_sha or rollback_known_good. Use the guarded decommission workflow to idle a runtime."
+            exit 1
+          fi
+          if [[ ( -n "${RELEASE_SHA}" || "${ROLLBACK_KNOWN_GOOD}" == "true" ) && -z "${TF_VAR_auth_issuer}" ]]; then
+            echo "CORVIS_AUTH_ISSUER is required before a production-like runtime can be promoted."
+            exit 1
+          fi
+          if [[ -n "${TF_VAR_auth_jwks_url}" && ! "${TF_VAR_auth_jwks_url}" =~ ^https:// ]]; then
+            echo "CORVIS_AUTH_JWKS_URL must use HTTPS when explicitly configured."
             exit 1
           fi
 
@@ -157,9 +173,9 @@ jobs:
           {
             echo "### Terraform release selection"
             if [[ -n "${api_image}" ]]; then
-              echo "- API image: `${api_image}`"
+              echo "- API/worker image: `${api_image}`"
             else
-              echo "- API image: disabled (no release selected)"
+              echo "- Runtime image: disabled (no release selected)"
             fi
             echo "- Rollback source: `${ROLLBACK_KNOWN_GOOD}`"
           } >> "${GITHUB_STEP_SUMMARY}"
@@ -204,6 +220,70 @@ jobs:
       - name: Terraform plan
         run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
 
+      - name: Require enabled Postgres runtime secret
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(gcloud secrets versions list "${POSTGRES_DSN_SECRET}" \
+            --project="${GCP_PROJECT_ID}" \
+            --filter='state=ENABLED' \
+            --sort-by='~createTime' \
+            --limit=1 \
+            --format='value(name)')"
+          if [[ -z "${version}" ]]; then
+            echo "${POSTGRES_DSN_SECRET} has no enabled version. Activate the environment Postgres provider before runtime promotion."
+            exit 1
+          fi
+          echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
+
+      - uses: actions/setup-node@v7
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install migration runtime
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        run: npm ci --ignore-scripts
+
+      - name: Apply versioned Postgres migrations
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET}")"
+          echo "::add-mask::${dsn}"
+          CORVIS_POSTGRES_DSN="${dsn}" node db/postgres/migrate.ts \
+            --apply \
+            --applied-by="github-actions:${GITHUB_RUN_ID}" \
+            --evidence=migration-evidence.json
+          unset dsn
+
+      - name: Upload migration evidence
+        if: always() && inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}
+          path: migration-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Terraform apply
         if: inputs.action == 'apply'
         run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Verify public health after apply
+        if: inputs.action == 'apply' && env.TF_VAR_cloudflare_zone_name != '' && env.TF_VAR_api_image != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.environment }}" in
+            prod) api_hostname="api.${TF_VAR_cloudflare_zone_name}" ;;
+            uat) api_hostname="api.uat.${TF_VAR_cloudflare_zone_name}" ;;
+            *) exit 0 ;;
+          esac
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 3 --retry-all-errors --max-time 20 \
+            "https://${api_hostname}/api/v1/health" >/dev/null
+          echo "Public health passed through Cloudflare -> API Gateway -> Cloud Run."

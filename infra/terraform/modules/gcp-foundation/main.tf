@@ -13,6 +13,7 @@ locals {
     "apikeys.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudkms.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "cloudtasks.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
@@ -26,6 +27,8 @@ locals {
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
   ])
+
+  deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
 }
 
 resource "google_project_service" "required" {
@@ -196,20 +199,50 @@ resource "google_project_iam_member" "worker_log_writer" {
   member  = "serviceAccount:${google_service_account.worker.email}"
 }
 
-resource "google_storage_bucket_iam_member" "api_source_writer" {
+# The API owns upload-session state and quarantine lifecycle in this bucket. Its
+# GCS adapter creates, reads/lists and deletes object-level records, so Creator
+# is insufficient; Object User is the narrow predefined object CRUD role and
+# does not grant bucket administration.
+resource "google_storage_bucket_iam_member" "api_source_objects" {
   bucket = google_storage_bucket.source.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.api.email}"
-
-  condition {
-    title       = "api_upload_prefix_only"
-    description = "The API may create objects only in the controlled uploads prefix."
-    expression  = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.source.name}/objects/uploads/')"
-  }
 }
 
 resource "google_storage_bucket_iam_member" "worker_source_reader" {
   bucket = google_storage_bucket.source.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.worker.email}"
+}
+
+# The API owns the durable outbox dispatch loop. Give it only the two transport
+# permissions required to move processing work into the managed topic/queue.
+resource "google_pubsub_topic_iam_member" "api_processing_publisher" {
+  project = var.project_id
+  topic   = google_pubsub_topic.document_registered.name
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_cloud_tasks_queue_iam_member" "api_processing_enqueuer" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_tasks_queue.processing.name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:${google_service_account.api.email}"
+}
+
+# Creating an authenticated Cloud Task requires the caller to be allowed to act
+# as the target worker identity. Terraform itself needs the same narrow grant to
+# configure provider-side authenticated push/scheduler bindings.
+resource "google_service_account_iam_member" "api_act_as_worker" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_service_account_iam_member" "deployer_act_as_worker" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.deployer_service_account_email}"
 }

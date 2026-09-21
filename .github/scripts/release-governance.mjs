@@ -9,12 +9,27 @@ export function evaluateGovernance(rules, rulesets, checks) {
   const trusted = new Set(rulesets.filter((set) => set.enforcement === 'active' &&
     Array.isArray(set.bypass_actors) && set.bypass_actors.length === 0).map((set) => set.id));
   const enforced = rules.filter((rule) => trusted.has(rule.ruleset_id));
-  if (!enforced.some((rule) => rule.type === 'pull_request' &&
-      rule.parameters?.required_approving_review_count >= 1 &&
-      rule.parameters?.dismiss_stale_reviews_on_push === true &&
-      rule.parameters?.require_last_push_approval === true)) {
-    failures.push('main requires independent current-change approval without bypass');
+
+  // Corvis currently operates as a solo-maintainer repository. GitHub cannot
+  // require an independent approval without deadlocking that operating model,
+  // so release governance accepts either:
+  //   * solo mode: PR-only changes + stale-review dismissal + no bypass actors;
+  //   * multi-operator mode: the same controls plus >=1 approval and last-push approval.
+  // The effective required checks below remain mandatory in both modes. When a
+  // second operator is introduced, the live ruleset should move to the latter
+  // without requiring a code change here.
+  const pullRequestRule = enforced.find((rule) => rule.type === 'pull_request');
+  if (!pullRequestRule || pullRequestRule.parameters?.dismiss_stale_reviews_on_push !== true) {
+    failures.push('main must require pull requests with stale-review dismissal and no bypass');
+  } else {
+    const approvals = pullRequestRule.parameters?.required_approving_review_count;
+    if (!Number.isInteger(approvals) || approvals < 0) {
+      failures.push('main pull-request approval policy is invalid');
+    } else if (approvals > 0 && pullRequestRule.parameters?.require_last_push_approval !== true) {
+      failures.push('multi-operator approval policy must require last-push approval');
+    }
   }
+
   if (!enforced.some((rule) => rule.type === 'non_fast_forward')) failures.push('main must reject force pushes');
   if (!enforced.some((rule) => rule.type === 'deletion')) failures.push('main must reject deletion');
   const required = enforced.filter((rule) => rule.type === 'required_status_checks' &&

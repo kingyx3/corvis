@@ -14,6 +14,7 @@ const tenantId = "11111111-1111-1111-1111-111111111111";
 const eventId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const documentId = "22222222-2222-2222-2222-222222222222";
 const workerUrl = "https://worker.example/api/internal/processing-stage";
+const workerAudience = "https://corvis-worker-prod.internal";
 const workerEmail = "corvis-worker-prod@example.iam.gserviceaccount.com";
 const workerSubject = "109876543210987654321";
 const payload = { artifactVersionId: "33333333-3333-3333-3333-333333333333", ingestionId: "ingestion-1" };
@@ -49,10 +50,10 @@ const identity: RequestIdentity = {
 
 function dependencies(overrides: Partial<ProcessingWorkerIngressDependencies> = {}): ProcessingWorkerIngressDependencies {
   return {
-    config: { workerUrl, serviceAccountEmail: workerEmail },
+    config: { workerAudience, serviceAccountEmail: workerEmail },
     verifyGoogleIdentity: async (input) => {
       assert.equal(input.authorization, "Bearer google-token");
-      assert.equal(input.audience, workerUrl);
+      assert.equal(input.audience, workerAudience);
       assert.equal(input.serviceAccountEmail, workerEmail);
       return { subject: workerSubject, email: workerEmail };
     },

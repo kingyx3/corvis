@@ -52,6 +52,9 @@ jobs:
       TF_VAR_source_bucket_name: ${{ format('{0}-documents', vars.GCP_PROJECT_ID) }}
       TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
       TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      TF_VAR_auth_issuer: ${{ vars.CORVIS_AUTH_ISSUER }}
+      TF_VAR_auth_audience: ${{ vars.CORVIS_AUTH_AUDIENCE || 'corvis' }}
+      TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
       TF_VAR_decommission_mode: "true"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
@@ -138,26 +141,38 @@ jobs:
         if: steps.managed_state.outputs.has_resources == 'true'
         run: bash .github/scripts/terraform-kms-state.sh adopt
 
-      - name: Resolve current runtime for safe protection removal
+      - name: Resolve current runtimes for safe protection removal
         if: steps.managed_state.outputs.has_resources == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          service="corvis-api-${CORVIS_ENVIRONMENT}"
           current_image=""
-          if gcloud run services describe "${service}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" >/dev/null 2>&1; then
-            current_image="$(gcloud run services describe "${service}" \
+          for service in "corvis-api-${CORVIS_ENVIRONMENT}" "corvis-worker-${CORVIS_ENVIRONMENT}"; do
+            if ! gcloud run services describe "${service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" >/dev/null 2>&1; then
+              continue
+            fi
+            service_image="$(gcloud run services describe "${service}" \
               --project="${GCP_PROJECT_ID}" \
               --region="${GCP_REGION}" \
               --format='value(template.containers[0].image)')"
-            if [[ ! "${current_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-              echo "Existing Cloud Run image is not an immutable digest; refusing destructive lifecycle operation."
+            if [[ ! "${service_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "${service} is not running an immutable digest; refusing destructive lifecycle operation."
               exit 1
             fi
-          fi
+            if [[ -n "${current_image}" && "${service_image}" != "${current_image}" ]]; then
+              echo "API and worker are not on the same immutable release; refusing lifecycle mutation until drift is reconciled."
+              exit 1
+            fi
+            current_image="${service_image}"
+          done
           echo "TF_VAR_api_image=${current_image}" >> "${GITHUB_ENV}"
+
+          if [[ -n "${current_image}" && ( -z "${TF_VAR_auth_issuer}" || -z "${TF_VAR_auth_audience}" ) ]]; then
+            echo "Existing runtime protection removal requires the same CORVIS_AUTH_ISSUER/AUDIENCE contract used for deployment."
+            exit 1
+          fi
 
           if terraform -chdir="${TF_ROOT}" state list | grep -q '^module.cloudflare_edge'; then
             if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
@@ -186,7 +201,7 @@ jobs:
             echo "### Full decommission preview"
             echo "- Terraform-managed resources currently tracked: `${count}`"
             if [[ "${{ steps.managed_state.outputs.has_resources }}" == "true" ]]; then
-              echo "- Apply will first make deletion-protected resources removable."
+              echo "- Apply will first make deletion-protected API/worker resources removable."
               echo "- Apply then detaches the recoverable KMS anchor from state, destroys all other Terraform-managed resources, verifies empty state, hibernates KMS rotation/versions, and deletes the remote state bucket last."
             else
               echo "- Managed state is already empty; apply will not recreate resources and will resume final KMS hibernation/state-bucket deletion only."
@@ -205,10 +220,22 @@ jobs:
           terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=idle.tfplan
           terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve idle.tfplan
 
-          if gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" >/dev/null 2>&1; then
-            echo "Cloud Run API still exists after idle transition."
+          for service in "corvis-api-${CORVIS_ENVIRONMENT}" "corvis-worker-${CORVIS_ENVIRONMENT}"; do
+            if gcloud run services describe "${service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" >/dev/null 2>&1; then
+              echo "${service} still exists after idle transition."
+              exit 1
+            fi
+          done
+          if gcloud scheduler jobs describe "corvis-delivery-${CORVIS_ENVIRONMENT}" \
+            --project="${GCP_PROJECT_ID}" --location="${GCP_REGION}" >/dev/null 2>&1; then
+            echo "Delivery scheduler still exists after idle transition."
+            exit 1
+          fi
+          if gcloud pubsub subscriptions describe "processing-worker-${CORVIS_ENVIRONMENT}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Processing push subscription still exists after idle transition."
             exit 1
           fi
           bash .github/scripts/terraform-state.sh require
@@ -267,7 +294,7 @@ jobs:
             echo "- Action: `${{ inputs.action }}`"
             if [[ "${{ inputs.action }}" == "apply" && "${{ inputs.mode }}" == "idle" ]]; then
               echo "- Durable foundation/data/state: retained"
-              echo "- Public API runtime/edge: decommissioned"
+              echo "- Public API, private worker, managed transport and edge: decommissioned"
               echo "- Re-provision: Build release image, then Terraform deploy"
             elif [[ "${{ inputs.action }}" == "apply" && "${{ inputs.mode }}" == "full" ]]; then
               echo "- Terraform-managed environment/data/state: decommissioned"

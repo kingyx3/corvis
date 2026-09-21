@@ -80,12 +80,23 @@ module "foundation" {
 }
 
 module "api_runtime" {
-  source                    = "../../modules/cloud-run-runtime"
-  project_id                = var.project_id
-  environment               = "prod"
-  api_image                 = var.api_image
-  api_service_account_email = module.foundation.api_service_account
-  decommission_mode         = var.decommission_mode
+  source                            = "../../modules/cloud-run-runtime"
+  project_id                        = var.project_id
+  environment                       = "prod"
+  api_image                         = var.api_image
+  api_service_account_email         = module.foundation.api_service_account
+  worker_service_account_email      = module.foundation.worker_service_account
+  source_bucket_name                = module.foundation.source_bucket
+  processing_topic_name             = module.foundation.document_registered_topic_name
+  processing_dead_letter_topic_name = module.foundation.dead_letter_topic_name
+  processing_queue_name             = module.foundation.processing_queue_name
+  auth_issuer                       = var.auth_issuer
+  auth_audience                     = var.auth_audience
+  auth_jwks_url                     = var.auth_jwks_url
+  upload_allowed_origins            = []
+  decommission_mode                 = var.decommission_mode
+
+  depends_on = [module.foundation]
 }
 
 module "api_gateway" {

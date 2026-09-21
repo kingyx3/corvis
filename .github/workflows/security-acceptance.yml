@@ -29,6 +29,7 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       GCP_REGION: asia-southeast1
+      POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -58,7 +59,9 @@ jobs:
             *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
           esac
           echo "API_HOSTNAME=${api_hostname}" >> "${GITHUB_ENV}"
-      - name: Probe gateway and Cloud Run IAM boundaries
+          echo "CUSTOMER_HOSTNAME=${{ vars.CUSTOMER_HOSTNAME }}" >> "${GITHUB_ENV}"
+          echo "ADMIN_HOSTNAME=${{ vars.ADMIN_HOSTNAME }}" >> "${GITHUB_ENV}"
+      - name: Probe API and worker IAM boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -66,26 +69,48 @@ jobs:
           [[ -n "${gateway_hostname}" ]] || { echo "Unable to derive API Gateway hostname."; exit 1; }
 
           cloud_run_url="$(gcloud run services describe "corvis-api-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
-          [[ -n "${cloud_run_url}" ]] || { echo "Unable to derive the Cloud Run service URL."; exit 1; }
+          worker_url="$(gcloud run services describe "corvis-worker-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
+          [[ -n "${cloud_run_url}" && -n "${worker_url}" ]] || { echo "Unable to derive Cloud Run service URLs."; exit 1; }
 
           gateway_service_account="corvis-gateway-${CORVIS_ENVIRONMENT}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
           expected_member="serviceAccount:${gateway_service_account}"
           iam_policy="$(gcloud run services get-iam-policy "corvis-api-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
           mapfile -t invokers < <(jq -r '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]?] | unique[]' <<<"${iam_policy}")
           iam_boundary="fail"
-          if [[ "${#invokers[@]}" -eq 1 && "${invokers[0]}" == "${expected_member}" ]]; then
-            iam_boundary="pass"
-          else
-            echo "Cloud Run invoker policy is not gateway-only. Observed members: ${invokers[*]:-none}"
+          if [[ "${#invokers[@]}" -eq 1 && "${invokers[0]}" == "${expected_member}" ]]; then iam_boundary="pass"; fi
+
+          worker_service_account="corvis-worker-${CORVIS_ENVIRONMENT}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+          expected_worker_member="serviceAccount:${worker_service_account}"
+          worker_policy="$(gcloud run services get-iam-policy "corvis-worker-${CORVIS_ENVIRONMENT}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+          mapfile -t worker_invokers < <(jq -r '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]?] | unique[]' <<<"${worker_policy}")
+          worker_iam_boundary="fail"
+          if [[ "${#worker_invokers[@]}" -eq 1 && "${worker_invokers[0]}" == "${expected_worker_member}" ]]; then worker_iam_boundary="pass"; fi
+
+          expected_audience="https://corvis-worker-${CORVIS_ENVIRONMENT}.internal"
+          subscription="$(gcloud pubsub subscriptions describe "processing-worker-${CORVIS_ENVIRONMENT}" --project="${GCP_PROJECT_ID}" --format=json)"
+          scheduler="$(gcloud scheduler jobs describe "corvis-delivery-${CORVIS_ENVIRONMENT}" --location="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+          worker_transport_boundary="fail"
+          if [[ "$(jq -r '.pushConfig.pushEndpoint // empty' <<<"${subscription}")" == "${worker_url}/api/internal/processing-stage" \
+             && "$(jq -r '.pushConfig.oidcToken.serviceAccountEmail // empty' <<<"${subscription}")" == "${worker_service_account}" \
+             && "$(jq -r '.pushConfig.oidcToken.audience // empty' <<<"${subscription}")" == "${expected_audience}" \
+             && "$(jq -r '.httpTarget.uri // empty' <<<"${scheduler}")" == "${worker_url}/api/internal/delivery" \
+             && "$(jq -r '.httpTarget.oidcToken.serviceAccountEmail // empty' <<<"${scheduler}")" == "${worker_service_account}" \
+             && "$(jq -r '.httpTarget.oidcToken.audience // empty' <<<"${scheduler}")" == "${expected_audience}" ]]; then
+            worker_transport_boundary="pass"
           fi
 
           cloud_run_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "${cloud_run_url}/api/v1/health" || true)"
+          worker_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "${worker_url}/api/internal/delivery" || true)"
 
           echo "API_GATEWAY_HOSTNAME=${gateway_hostname}" >> "${GITHUB_ENV}"
           echo "DIRECT_CLOUD_RUN_BYPASS_STATUS=${cloud_run_status}" >> "${GITHUB_ENV}"
           echo "CLOUD_RUN_IAM_BOUNDARY=${iam_boundary}" >> "${GITHUB_ENV}"
           echo "EXPECTED_GATEWAY_INVOKER=${expected_member}" >> "${GITHUB_ENV}"
-      - name: Verify edge, gateway and origin security
+          echo "DIRECT_WORKER_BYPASS_STATUS=${worker_status}" >> "${GITHUB_ENV}"
+          echo "WORKER_IAM_BOUNDARY=${worker_iam_boundary}" >> "${GITHUB_ENV}"
+          echo "EXPECTED_WORKER_INVOKER=${expected_worker_member}" >> "${GITHUB_ENV}"
+          echo "WORKER_TRANSPORT_BOUNDARY=${worker_transport_boundary}" >> "${GITHUB_ENV}"
+      - name: Verify edge, gateway, worker and origin security
         run: node .github/scripts/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()
@@ -97,10 +122,15 @@ jobs:
           retention-days: 30
       - name: Record control evidence
         if: always()
+        shell: bash
         env:
-          CORVIS_POSTGRES_DSN: ${{ secrets.CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN }}
           CORVIS_CONTROL_TENANT_ID: ${{ vars.CORVIS_CONTROL_TENANT_ID }}
-        run: node scripts/collect-control-evidence.ts security-acceptance-evidence.json
+        run: |
+          set -euo pipefail
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
+          echo "::add-mask::${dsn}"
+          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts security-acceptance-evidence.json
+          unset dsn
 
   postgres-rls:
     runs-on: ubuntu-latest
@@ -154,10 +184,15 @@ jobs:
           retention-days: 30
       - name: Record control evidence
         if: always()
+        shell: bash
         env:
-          CORVIS_POSTGRES_DSN: ${{ secrets.CORVIS_CONTROL_EVIDENCE_POSTGRES_DSN }}
           CORVIS_CONTROL_TENANT_ID: ${{ vars.CORVIS_CONTROL_TENANT_ID }}
-        run: node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
+        run: |
+          set -euo pipefail
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
+          echo "::add-mask::${dsn}"
+          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
+          unset dsn
 
   record-known-good-release:
     needs: [edge, postgres-rls]

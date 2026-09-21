@@ -6,16 +6,15 @@ async function read(path: string): Promise<string> {
   return (await readFile(path, "utf8")).toLowerCase();
 }
 
-test("runtime secret lifecycle is keyless and keeps payloads out of terraform", async () => {
+test("runtime secret lifecycle is keyless and audits only the provider-owned Postgres secret", async () => {
   const workflow = await read(".github/workflows/runtime-secrets.yml");
 
   assert.match(workflow, /google-github-actions\/auth@v3/);
   assert.match(workflow, /workload_identity_provider/);
-  assert.match(workflow, /rotate-gateway-identity/);
-  assert.match(workflow, /openssl rand -base64 48/);
-  assert.match(workflow, /gcloud secrets versions add/);
-  assert.match(workflow, /--data-file="\$\{secret_file\}"/);
-  assert.match(workflow, /github\.ref != 'refs\/heads\/main'/);
+  assert.match(workflow, /corvis-postgres-dsn-\{0\}/);
+  assert.match(workflow, /gcloud secrets describe/);
+  assert.match(workflow, /gcloud secrets versions list/);
+  assert.doesNotMatch(workflow, /rotate-gateway-identity|openssl rand|gcloud secrets versions add/);
   assert.doesNotMatch(workflow, /service-account.*json|google_application_credentials|tf_var_.*secret/);
 });
 
@@ -42,8 +41,7 @@ test("runtime secret docs preserve provider ownership of Postgres credentials", 
 
   assert.match(docs, /controlled supabase\/postgres activation path/);
   assert.match(docs, /must not be committed, persisted in terraform state/);
-  assert.match(
-    docs,
-    /audit`? verifies that both terraform-managed containers exist and each has an enabled version\. it reads version metadata only/,
-  );
+  assert.match(docs, /`runtime secret readiness` verifies that the terraform-managed postgres secret container exists and has an enabled version/);
+  assert.match(docs, /it reads version metadata only; it never accesses secret payloads/);
+  assert.match(docs, /real database credential never enters terraform state or a long-lived github secret/);
 });

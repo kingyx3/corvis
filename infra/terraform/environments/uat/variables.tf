@@ -2,7 +2,25 @@ variable "project_id" { type = string }
 variable "source_bucket_name" { type = string }
 
 variable "api_image" {
-  description = "Immutable UAT API image reference. Empty keeps the API runtime unprovisioned until image promotion is configured."
+  description = "Immutable UAT application image reference. Empty keeps API/worker runtimes unprovisioned until image promotion is configured."
+  type        = string
+  default     = ""
+}
+
+variable "auth_issuer" {
+  description = "Production-like OIDC issuer URL for this environment."
+  type        = string
+  default     = ""
+}
+
+variable "auth_audience" {
+  description = "OIDC audience/client identifier for Corvis."
+  type        = string
+  default     = "corvis"
+}
+
+variable "auth_jwks_url" {
+  description = "Optional explicit HTTPS JWKS URL; standard OIDC discovery is preferred."
   type        = string
   default     = ""
 }
