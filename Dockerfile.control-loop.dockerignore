@@ -1,0 +1,15 @@
+.git
+.next
+node_modules
+coverage
+playwright-report
+test-results
+*.log
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.tfstate
+*.tfstate.*
