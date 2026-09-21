@@ -236,15 +236,17 @@ select e.tenant_id,e.exception_id,e.snapshot_id,e.snapshot_version,e.exception_k
        e.created_by,e.created_at,e.resolved_by,e.resolved_at
 from corvis_consolidated.reconciliation_exception e;
 
+-- Preserve the complete serving-view column prefix established by migrations
+-- 002/005. PostgreSQL CREATE OR REPLACE VIEW permits expression changes for an
+-- existing column but does not permit reordering/renaming that prefix.
 create or replace view corvis_serving.fund_period_snapshots as
 select s.tenant_id,
        s.snapshot_id,
        s.fund_id,
-       f.canonical_name as fund_name,
        s.report_period,
        s.version,
        s.status,
-       cardinality(s.fact_ids) as fact_count,
+       s.fact_ids,
        case
          when exists (
            select 1 from corvis_consolidated.reconciliation_exception e
@@ -258,7 +260,9 @@ select s.tenant_id,
        s.schema_version,
        s.taxonomy_version,
        s.created_at,
-       s.published_at
+       s.published_at,
+       f.canonical_name as fund_name,
+       cardinality(s.fact_ids) as fact_count
 from corvis_consolidated.fund_period_snapshot s
 left join corvis_identity.fund f on f.global_fund_id=s.fund_id;
 
