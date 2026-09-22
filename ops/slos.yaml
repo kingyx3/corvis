@@ -45,3 +45,5 @@ alerts:
     severity: SEV2
   - condition: upload_initiation_latency_p95_ms > 500 for 10m
     severity: SEV2
+  - condition: publication_freshness_p95_minutes > 60 for 10m
+    severity: SEV2
