@@ -10,21 +10,6 @@ register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.met
 process.env.CORVIS_DEMO_MODE = "true";
 process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
 
-// The exports route's feature-flag gate (issue #10) calls
-// assertFeatureEnabled -> loadFeatureFlagSnapshot, which queries Postgres
-// directly rather than going through the demo in-memory platform. Fake just
-// those two queries; no row for either matches the real, currently-true
-// production state for every tenant, since nothing has ever written a
-// corvis_control.feature_flag row for exports.parquet_delivery.
-//
-// The route's Idempotency-Key wiring (issue #11, lib/server/idempotency.ts)
-// also queries Postgres directly -- corvis_control.idempotency_key -- even
-// in demo mode, the same way the feature-flag gate above does. This fake
-// backs that table with a real in-memory map keyed on its actual primary
-// key (tenant_id, scope, idempotency_key) and honors the same
-// "insert ... on conflict do nothing returning *" contract the module issues,
-// so these tests exercise the real route -> lib/server/idempotency.ts ->
-// PostgresHttpSqlApi -> fetch path rather than stubbing the module itself.
 const idempotencyRows = new Map<string, { response_status: number; response_body: string }>();
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -46,20 +31,22 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       rows = [row];
     }
   }
-  // Any other query (the feature-flag snapshot) gets no matching row, same
-  // as before this idempotency wiring existed.
   return new Response(JSON.stringify({ rows }), { status: 200, headers: { "content-type": "application/json" } });
 }) as typeof fetch;
 
 const { POST: exportsPost } = await import("@/app/api/v1/exports/route");
 
-function request(format: unknown, options: { idempotencyKey?: string; tenant?: string } = {}): Request {
+function request(
+  format: unknown,
+  options: { idempotencyKey?: string; tenant?: string; redistribution?: boolean } = {},
+): Request {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "x-corvis-demo-tenant": options.tenant ?? "tenant-alpha",
     "x-corvis-demo-workspace": "workspace-1",
     "x-corvis-demo-subject": "demo-user",
     "x-corvis-demo-roles": "admin",
+    "x-corvis-demo-redistribution": options.redistribution === false ? "false" : "true",
   };
   if (options.idempotencyKey) headers["idempotency-key"] = options.idempotencyKey;
   return new Request("https://corvis.test/api/v1/exports", {
@@ -69,13 +56,8 @@ function request(format: unknown, options: { idempotencyKey?: string; tenant?: s
   });
 }
 
-test("POST /exports blocks parquet delivery with 403 feature_disabled by default", async () => {
-  // The demo identity used here (like every real caller until an operator
-  // both grants the redistributionAllowed entitlement and enables the flag)
-  // is denied on the flag's entitlement gate before rollout state is even
-  // consulted -- proving the wiring enforces the real, registered gate
-  // rather than defaulting open.
-  const response = await exportsPost(request("parquet"));
+test("POST /exports blocks parquet delivery with 403 feature_disabled when redistribution is not granted", async () => {
+  const response = await exportsPost(request("parquet", { redistribution: false }));
   assert.equal(response.status, 403);
   const payload = await response.json() as { error: string; flagKey: string; reason: string };
   assert.equal(payload.error, "feature_disabled");
@@ -112,15 +94,17 @@ test("POST /exports replays the same export job for a retried Idempotency-Key in
 
 test("POST /exports treats an idempotencyKey sent in the body the same as the Idempotency-Key header", async () => {
   const tenant = "tenant-idem-body";
+  const headers = {
+    "content-type": "application/json",
+    "x-corvis-demo-tenant": tenant,
+    "x-corvis-demo-workspace": "workspace-1",
+    "x-corvis-demo-subject": "demo-user",
+    "x-corvis-demo-roles": "admin",
+    "x-corvis-demo-redistribution": "true",
+  };
   const first = await exportsPost(new Request("https://corvis.test/api/v1/exports", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-corvis-demo-tenant": tenant,
-      "x-corvis-demo-workspace": "workspace-1",
-      "x-corvis-demo-subject": "demo-user",
-      "x-corvis-demo-roles": "admin",
-    },
+    headers,
     body: JSON.stringify({ format: "csv", idempotencyKey: "body-key-1" }),
   }));
   assert.equal(first.status, 202);
@@ -128,13 +112,7 @@ test("POST /exports treats an idempotencyKey sent in the body the same as the Id
 
   const second = await exportsPost(new Request("https://corvis.test/api/v1/exports", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-corvis-demo-tenant": tenant,
-      "x-corvis-demo-workspace": "workspace-1",
-      "x-corvis-demo-subject": "demo-user",
-      "x-corvis-demo-roles": "admin",
-    },
+    headers,
     body: JSON.stringify({ format: "csv", idempotencyKey: "body-key-1" }),
   }));
   assert.equal(second.status, 202);
@@ -157,6 +135,8 @@ test("POST /exports never lets one tenant's Idempotency-Key replay satisfy anoth
   const key = "shared-key-across-tenants";
   const tenantA = await exportsPost(request("csv", { idempotencyKey: key, tenant: "tenant-idem-x" }));
   const tenantB = await exportsPost(request("csv", { idempotencyKey: key, tenant: "tenant-idem-y" }));
+  assert.equal(tenantA.status, 202);
+  assert.equal(tenantB.status, 202);
   const tenantAPayload = await tenantA.json() as { data: { exportId: string } };
   const tenantBPayload = await tenantB.json() as { data: { exportId: string } };
   assert.notEqual(tenantBPayload.data.exportId, tenantAPayload.data.exportId);
