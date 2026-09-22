@@ -39,7 +39,7 @@ v3 lifecycle events -> v2 holdings/instruments -> replay-safe v1
 
 The v4 identity step only accepts a fund/company candidate that already carries an explicit durable `global_fund_id` or `global_company_id`. It never manufactures an identity from a name, normalized-name match or model guess. A missing durable identity remains a governed resolution problem rather than becoming a new global entity accidentally.
 
-When an explicit reviewed ID does not yet exist, v4 may create the new global identity using the reviewed canonical/source name. When the ID already exists, tenant evidence does **not** overwrite its current global canonical name. The source label is instead retained in `tenant_entity_name` as approved tenant-scoped evidence, with source-reference lineage and a revision record. This allows historical/former/private labels to coexist without leaking them into the global directory.
+When an explicit reviewed ID does not yet exist, v4 may create the global identity only when review also supplies an explicit `canonical_name`/`canonicalName` suitable for globally visible identity metadata. A raw tenant `fund_name`, `company_name`, `name`, codename or source label is never sufficient to seed the global directory. When the ID already exists, tenant evidence does **not** overwrite its current global canonical name. The source label is retained in `tenant_entity_name` as approved tenant-scoped evidence, with source-reference lineage and a revision record. This allows historical/former/private labels to coexist without leaking them into the global directory.
 
 The entire v4 -> v3 -> v2 -> v1 call is one Postgres statement. A downstream holding, instrument, lifecycle or observation failure rolls back any new identity created by the same canonicalization attempt.
 
@@ -130,7 +130,7 @@ Search results should resolve to the durable entity ID and show relationship/his
 
 A private customer document can contain an alias or codename that another customer has never seen. That label must not become globally discoverable merely because both tenants resolve to the same `global_company_id` or `global_fund_id`.
 
-`tenant_entity_name` therefore carries `tenant_id`, optional source-reference lineage, confidence and review status, and is protected by forced RLS. Promotion from tenant-private alias to the global name registry must be an explicit governed decision supported by non-confidential/public or otherwise permitted evidence.
+`tenant_entity_name` therefore carries `tenant_id`, optional source-reference lineage, confidence and review status, and is protected by forced RLS. Promotion from tenant-private alias to the global name registry must be an explicit governed decision supported by non-confidential/public or otherwise permitted evidence. New global identity creation follows the same boundary: an explicit safe canonical name is required separately from the raw tenant source label.
 
 ## Invariants
 
@@ -141,5 +141,6 @@ A private customer document can contain an alias or codename that another custom
 - A split/merger can have multiple participants; the model must not assume one predecessor and one successor.
 - Historical names and identifiers remain queryable.
 - Tenant-private aliases remain tenant scoped.
+- A tenant source label cannot seed a globally visible canonical name unless review explicitly supplies a separate globally safe canonical name.
 - Source observations are never rewritten solely because current entity metadata changed.
 - Ambiguous continuity remains explicit rather than being guessed.
