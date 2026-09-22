@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/gcp-bootstrap.yml", "utf8");
+const trustVerifier = readFileSync(".github/scripts/verify-gcp-trust-anchor.sh", "utf8");
 const stateLifecycle = readFileSync(".github/scripts/terraform-state.sh", "utf8");
 const docs = readFileSync("docs/GCP_BOOTSTRAP.md", "utf8");
 
@@ -14,6 +15,18 @@ test("GCP bootstrap remains keyless and environment scoped", () => {
   assert.match(workflow, /service_account: \$\{\{ env\.GCP_DEPLOY_SERVICE_ACCOUNT \}\}/);
   assert.doesNotMatch(workflow, /credentials_json/);
   assert.doesNotMatch(workflow, /secrets\.GCP_/);
+});
+
+test("bootstrap verifies the external WIF trust anchor before Terraform", () => {
+  assert.match(workflow, /bash \.github\/scripts\/verify-gcp-trust-anchor\.sh/);
+  assert.match(trustVerifier, /EXPECTED_REPOSITORY="kingyx3\/corvis"/);
+  assert.match(trustVerifier, /attributeCondition/);
+  assert.match(trustVerifier, /assertion\.repository/);
+  assert.match(trustVerifier, /assertion\.environment/);
+  assert.match(trustVerifier, /google\.subject/);
+  assert.match(trustVerifier, /roles\/iam\.workloadIdentityUser/);
+  assert.match(trustVerifier, /attribute\.repository/);
+  assert.match(trustVerifier, /repo:\{repository\}:environment:\{environment\}/);
 });
 
 test("bootstrap cannot activate runtime or Cloudflare accidentally", () => {
