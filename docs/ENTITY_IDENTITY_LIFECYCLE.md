@@ -10,7 +10,7 @@ Confluence remains authoritative for business semantics. The primary references 
 - AI Extraction Skill — Quarterly Fund Reports
 - Reference — AI Agent Execution Contract & Structured Output Schema
 
-The Postgres implementation is in `db/postgres/migrations/032_economic_entity_identity_lifecycle.sql`.
+The Postgres implementation is in `db/postgres/migrations/032_economic_entity_identity_lifecycle.sql` and the reviewed-candidate materialization path is extended by migrations `036`–`038`.
 
 ## Core rule
 
@@ -20,6 +20,29 @@ The Postgres implementation is in `db/postgres/migrations/032_economic_entity_id
 
 Conversely, two records must not be merged merely because their names normalize to the same string. Name similarity is evidence for resolution, not an identity key.
 
+## Reviewed extraction materialization
+
+Reviewed extraction enters canonicalization through a layered transactional chain:
+
+```text
+reviewed candidate set
+        |
+        v
+v1 canonical ledger + source references + observations
+        |
+        v
+v4 reviewed fund/company identity materialization
+        |
+        v
+v3 lifecycle events -> v2 holdings/instruments -> replay-safe v1
+```
+
+The v4 identity step only accepts a fund/company candidate that already carries an explicit durable `global_fund_id` or `global_company_id`. It never manufactures an identity from a name, normalized-name match or model guess. A missing durable identity remains a governed resolution problem rather than becoming a new global entity accidentally.
+
+When an explicit reviewed ID does not yet exist, v4 may create the new global identity using the reviewed canonical/source name. When the ID already exists, tenant evidence does **not** overwrite its current global canonical name. The source label is instead retained in `tenant_entity_name` as approved tenant-scoped evidence, with source-reference lineage and a revision record. This allows historical/former/private labels to coexist without leaking them into the global directory.
+
+The entire v4 -> v3 -> v2 -> v1 call is one Postgres statement. A downstream holding, instrument, lifecycle or observation failure rolls back any new identity created by the same canonicalization attempt.
+
 ## Data structures
 
 | Structure | Purpose |
@@ -27,9 +50,11 @@ Conversely, two records must not be merged merely because their names normalize 
 | `corvis_identity.fund` / `company` | Durable global economic identity and current display/canonical name. |
 | `corvis_identity.entity_name` | Global non-confidential current and historical names/aliases. |
 | `corvis_identity.tenant_entity_name` | Tenant-private source labels, codenames and aliases protected by RLS. |
+| `corvis_identity.tenant_entity_revision` | Tenant-scoped immutable reviewed fund/company materialization lineage. |
 | `corvis_identity.entity_external_identifier` | LEI, CIK, registry IDs, tickers, security/vendor/GP-admin identifiers with history. |
 | `corvis_identity.entity_lifecycle_event` | What happened and when. |
 | `corvis_identity.entity_lifecycle_participant` | Which durable identities participated and in what role. |
+| `corvis_identity.tenant_lifecycle_revision` | Tenant-scoped reviewed lifecycle-event materialization lineage. |
 | `corvis_identity.entity_relationship` | Traversable current/historical relationships between identities. |
 | `corvis_serving.entity_directory` | Global directory read model with current and former names plus external identifiers. |
 | `corvis_serving.entity_relationships` | Relationship graph read model. |

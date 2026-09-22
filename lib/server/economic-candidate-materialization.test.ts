@@ -5,6 +5,7 @@ import test from "node:test";
 test("reviewed holding and instrument candidates materialize transactionally before observations", async () => {
   const v2 = (await readFile("db/postgres/migrations/036_materialize_economic_candidates.sql", "utf8")).toLowerCase();
   const v3 = (await readFile("db/postgres/migrations/037_materialize_lifecycle_events.sql", "utf8")).toLowerCase();
+  const v4 = (await readFile("db/postgres/migrations/038_materialize_reviewed_identities.sql", "utf8")).toLowerCase();
   const runtime = (await readFile("lib/server/processing-canonicalized-stage.ts", "utf8")).toLowerCase();
 
   assert.match(v2, /create or replace function corvis_facts\.canonicalize_reviewed_extraction_v2/);
@@ -21,10 +22,10 @@ test("reviewed holding and instrument candidates materialize transactionally bef
   assert.match(v2, /reviewed instrument parent holding is unresolved or not company-targeted/);
   assert.match(v2, /from corvis_facts\.canonicalize_reviewed_extraction\(/);
 
-  // Runtime always enters through the newest transactional wrapper. Each layer
-  // must explicitly delegate to its predecessor so the v2 economic-materialization
-  // guarantees cannot be bypassed when a later canonicalizer is introduced.
-  assert.match(runtime, /canonicalize_reviewed_extraction_v3/);
+  // Runtime always enters the newest transactional wrapper. Each layer delegates
+  // explicitly so identity materialization cannot bypass v2/v3 economic guarantees.
+  assert.match(runtime, /canonicalize_reviewed_extraction_v4/);
+  assert.match(v4, /from corvis_facts\.canonicalize_reviewed_extraction_v3\(/);
   assert.match(v3, /from corvis_facts\.canonicalize_reviewed_extraction_v2\(/);
 });
 
