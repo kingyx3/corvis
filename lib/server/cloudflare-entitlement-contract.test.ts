@@ -33,9 +33,9 @@ test("Cloudflare baseline remains deployable on Free while Pro managed WAF stays
   // The Free rate-limit expression supports Path plus IP counting only, with a
   // 10-second counting/mitigation period. Host/header/method matching would move
   // this baseline onto a higher entitlement.
-  assert.match(rateLimits, /starts_with\(http\.request\.uri\.path,\s*\\"\/api\/\\"\)/);
+  assert.ok(rateLimits.includes('expression  = "(starts_with(http.request.uri.path, \\"/api/\\"))"'));
   assert.doesNotMatch(rateLimits, /http\.host|http\.request\.headers|http\.request\.method/);
-  assert.match(rateLimits, /characteristics\s*=\s*\[\"cf\.colo\.id\",\s*\"ip\.src\"\]/);
+  assert.ok(rateLimits.includes('characteristics     = ["cf.colo.id", "ip.src"]'));
   assert.match(rateLimits, /period\s*=\s*10/);
   assert.match(rateLimits, /mitigation_timeout\s*=\s*10/);
   assert.match(rateLimits, /requests_per_period\s*=\s*local\.api_requests_per_10_seconds/);
@@ -43,7 +43,7 @@ test("Cloudflare baseline remains deployable on Free while Pro managed WAF stays
 
   // The deterministic WAF probe is path-based and does not consume a
   // request-header entitlement.
-  assert.match(customWaf, /http\.request\.uri\.path eq \\"\/__corvis\/security\/waf-block\\"/);
+  assert.ok(customWaf.includes('expression  = "(http.request.uri.path eq \\"/__corvis/security/waf-block\\")"'));
   assert.doesNotMatch(customWaf, /http\.request\.headers/);
 
   // Paid managed rules are an explicit Pro+ opt-in, never part of the Free
