@@ -63,10 +63,17 @@ test("admin presentation runtime has a distinct identity and no data-plane grant
   assert.doesNotMatch(runtime, /secret_key_ref|corvis_postgres_dsn|allusers|allauthenticatedusers/);
 });
 
-test("admin application surface uses only allowlisted admin APIs", async () => {
+test("admin application surface uses only allowlisted privileged APIs", async () => {
   const page = await read("app/admin/page.tsx");
-  assert.match(page, /\/api\/v1\/admin\/readiness/);
-  assert.match(page, /\/api\/v1\/admin\/feature-flags/);
-  assert.match(page, /\/api\/v1\/admin\/control-evidence/);
+  for (const endpoint of [
+    "/api/v1/admin/readiness",
+    "/api/v1/admin/feature-flags",
+    "/api/v1/admin/control-evidence",
+    "/api/v1/admin/access-review",
+    "/api/v1/admin/audit",
+    "/api/v1/admin/identity-lifecycle",
+    "/api/v1/admin/access-policy",
+    "/api/v1/admin/support-access",
+  ]) assert.ok(page.includes(endpoint), `admin console must expose ${endpoint}`);
   assert.doesNotMatch(page, /\/api\/v1\/funds|\/api\/v1\/workspace/);
 });
