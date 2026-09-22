@@ -4,17 +4,23 @@ on:
   pull_request:
     paths:
       - "infra/terraform/**"
+      - ".github/actions/setup-terraform-cached/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/terraform-deploy.yml"
   push:
     branches: [main]
     paths:
       - "infra/terraform/**"
+      - ".github/actions/setup-terraform-cached/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/terraform-deploy.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: terraform-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -22,9 +28,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/setup-terraform-cached
         with:
-          terraform_version: "1.13.3"
+          terraform-version: "1.13.3"
       - name: Format
         run: terraform fmt -check -recursive infra/terraform
       - name: Validate Terraform environment roots
