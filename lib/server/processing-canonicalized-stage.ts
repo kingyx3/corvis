@@ -106,7 +106,10 @@ export class PostgresCanonicalizationRepository {
     predecessor: ReviewedPredecessorResult;
     idempotencyKey: string;
   }): Promise<CanonicalizationResult> {
-    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction(
+    // v2 materializes reviewed holdings/instruments before the proven v1
+    // observation canonicalizer validates references to those economic objects.
+    // The database wrapper is transactional and reuses v1's exact review/hash gates.
+    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction_v2(
       $1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7
     )`, [
       input.tenantId,
