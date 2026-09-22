@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { assertRedistributionAllowed, type RequestIdentity } from "../../core/enterprise.ts";
 import { PostgresMembershipAuthorizationRepository } from "./authorization.ts";
 import { getServerConfig } from "./config.ts";
@@ -142,7 +142,10 @@ export async function deliverExportArtifact(
   const rendered = renderExport(format, rows);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");
-  const key = `exports/${identity.tenantId}/${exportId}/observations.${rendered.extension}`;
+  // Use an immutable per-attempt object. This keeps the worker on
+  // storage.objectCreator rather than granting delete/overwrite authority.
+  // Any object orphaned by a retry is bounded by the exports/ lifecycle rule.
+  const key = `exports/${identity.tenantId}/${exportId}/${randomUUID()}/observations.${rendered.extension}`;
   await objectStore.putObject(key, rendered.bytes, rendered.contentType);
   const ttlSeconds = getServerConfig().exportArtifactTtlSeconds;
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
