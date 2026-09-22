@@ -92,13 +92,6 @@ jobs:
           gcloud iam service-accounts describe "${GCP_DEPLOY_SERVICE_ACCOUNT}" \
             --project="${GCP_PROJECT_ID}" >/dev/null
 
-          project_number="$(gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectNumber)')"
-          expected_prefix="projects/${project_number}/locations/global/workloadIdentityPools/"
-          if [[ "${GCP_WIF_PROVIDER}" != "${expected_prefix}"* ]]; then
-            echo "GCP_WIF_PROVIDER belongs to a different GCP project."
-            exit 1
-          fi
-
           mapfile -t user_keys < <(
             gcloud iam service-accounts keys list \
               --iam-account="${GCP_DEPLOY_SERVICE_ACCOUNT}" \
@@ -109,6 +102,8 @@ jobs:
             echo "The deploy service account has user-managed keys. Corvis CI/CD is keyless; remove them before continuing."
             exit 1
           fi
+
+          bash .github/scripts/verify-gcp-trust-anchor.sh
 
       - name: Bootstrap protected Terraform state
         run: bash .github/scripts/terraform-state.sh ensure

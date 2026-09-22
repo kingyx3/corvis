@@ -6,6 +6,25 @@ The repository is allowed to prove **readiness to test** before bootstrap; it is
 
 CI must keep the acceptance-plan contract, customer implementation kit, security-assessment pack, Terraform roots, release workflows, runtime-secret workflow and security acceptance workflow internally consistent. No test may mark a live-provider scenario passed without provider-derived evidence.
 
+The final repository-side pre-bootstrap gate is intentionally narrow: the GCP bootstrap workflow must verify the live WIF provider is scoped to `kingyx3/corvis` and the selected GitHub Environment, that `corvis-deploy` impersonation is repository-scoped, that no user-managed deploy keys exist, and that bootstrap cannot publish a runtime or Cloudflare edge. After those checks are green, do not add speculative provider infrastructure before exercising UAT.
+
+## First UAT campaign order
+
+Use this order for the first production-like UAT activation. The order is a dependency sequence, not permission to mark later phases complete when earlier evidence is absent.
+
+1. **External trust roots** — billed GCP UAT project, environment-scoped GitHub WIF trust, `corvis-deploy` impersonation, GitHub `uat` Environment roots, Cloudflare zone/token ownership, approved IdP roots and isolated Postgres/Supabase ownership.
+2. **Foundation bootstrap** — run `Bootstrap GCP foundation` with `plan`, review it, then `apply` from `main`; retain the run and Terraform-state references.
+3. **Runtime provider activation** — activate the Postgres/Supabase tier, write the TLS-verified DSN directly to `corvis-postgres-dsn-uat`, configure approved OIDC issuer/audience/JWKS behavior and enable only the providers required by the UAT journey.
+4. **Immutable release and deploy** — build the reviewed `main` commit, retain provenance/digest, run Terraform plan/apply, execute forward migrations and prove Cloudflare -> API Gateway -> IAM-private Cloud Run health plus distinct customer/admin/API/worker/control-loop boundaries.
+5. **Identity and tenancy negatives** — seed at least two synthetic tenants; exercise OIDC/session/JML, RLS, resource/data-right, service-identity, unauthorized-admin and cross-tenant negatives before relying on functional success-path evidence.
+6. **Canonical processing journey** — upload/register -> represent -> extract -> review -> canonicalize -> reconcile -> consolidate -> publish using the real authenticated queue/worker/provider path; retain immutable source and stage lineage.
+7. **Admin and rollout controls** — exercise disable/reactivation, effective-dated entitlements/data rights, temporary support access expiry/revocation, access review, privileged audit, Parquet/hybrid-retrieval kill switches and tenant emergency stop.
+8. **Delivery/integration paths** — exercise physical export checksum/expiry/authorization, webhook signing/replay/retry/key rotation and any launch-enabled external provider paths.
+9. **Failure/recovery campaign** — duplicate delivery, worker crash after side effect, persisted retry, terminal dead letter, authorized recovery, correction replay/republication, scoped dependency degradation and known-good rollback.
+10. **Operational quality** — supported browser/accessibility checks, performance/load budgets, provider health/cost signals, backup/restore at the purchased tier, GCS inventory reconciliation and incident/runbook exercise.
+11. **Independent security assessment** — reconcile exact deployed targets into the rules of engagement, commission the independent production-equivalent assessment, remediate/retest launch blockers and retain confidential evidence outside the public repo.
+12. **Evidence reconciliation / launch review** — attach sanitized references to the owning readiness issues and Confluence control records; unresolved mandatory evidence blocks production and must not advance a readiness claim.
+
 ## Immediately after bootstrap
 
 Run the reviewed promotion/deployment path rather than ad-hoc console deployment. Capture sanitized references for the exact commit and OCI digest, Terraform apply, edge/gateway/IAM bindings, database migration revision, IdP configuration identifier and acceptance run IDs. Never commit DSNs, tokens, API keys, tenant secrets or confidential provider exports.
