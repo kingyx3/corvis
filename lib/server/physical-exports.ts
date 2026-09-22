@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
-import { assertRedistributionAllowed, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
+import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
@@ -82,7 +82,7 @@ async function assertCurrentArtifactAccess(
   if (snapshotIds.length === 0) return;
   const fundIds = identity.entitlements.fundIds ?? [];
   const documentIds = identity.entitlements.documentIds ?? [];
-  if (fundIds.length === 0 || documentIds.length === 0) throw new Error("export_access_denied");
+  if (fundIds.length === 0 || documentIds.length === 0) throw new AuthorizationError("exports:current_data_rights");
   const rows = await store.query(`with requested_snapshot as (
       select s.snapshot_id,s.fund_id,s.fact_ids
       from corvis_consolidated.fund_period_snapshot s
@@ -109,7 +109,7 @@ async function assertCurrentArtifactAccess(
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds), jsonIds(documentIds)]);
   if (Number(rows[0]?.snapshot_count ?? 0) !== snapshotIds.length || Number(rows[0]?.denied_observation_count ?? 0) > 0) {
-    throw new Error("export_access_denied");
+    throw new AuthorizationError("exports:current_data_rights");
   }
 }
 
