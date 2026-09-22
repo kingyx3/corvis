@@ -28,13 +28,16 @@ class FakeDb implements PostgresSqlApi {
 }
 
 function identity(): RequestIdentity {
+  const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   return {
     tenantId: "11111111-1111-4111-8111-111111111111",
-    workspaceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    workspaceId,
     subject: "admin-1",
     sessionId: "session-1",
-    roles: ["tenant_admin"],
+    roles: ["admin"],
+    authMethod: "oidc",
     entitlements: {
+      workspaceIds: [workspaceId],
       fundIds: [],
       documentIds: [],
       sourceDocumentAccessAllowed: false,
