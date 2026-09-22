@@ -7,8 +7,9 @@ terraform {
 }
 
 locals {
-  dynamic_host_expression = "(http.host eq \"${var.api_hostname}\")"
-  worker_name             = "corvis-api-${replace(var.api_hostname, ".", "-")}"
+  dynamic_host_expression       = "(http.host eq \"${var.api_hostname}\")"
+  worker_name                   = "corvis-api-${replace(var.api_hostname, ".", "-")}"
+  api_requests_per_10_seconds   = max(1, ceil(var.api_requests_per_minute / 6))
 }
 
 resource "cloudflare_worker" "api_proxy" {
@@ -140,8 +141,8 @@ resource "cloudflare_ruleset" "custom_waf" {
     },
     {
       ref         = "security_acceptance_waf_probe"
-      description = "Deterministic UAT probe proving Cloudflare WAF execution"
-      expression  = "(http.host eq \"${var.api_hostname}\" and http.request.headers[\"x-corvis-security-probe\"][0] eq \"waf-block\")"
+      description = "Deterministic path-based probe proving Cloudflare custom-WAF execution"
+      expression  = "(http.request.uri.path eq \"/__corvis/security/waf-block\")"
       action      = "block"
     },
   ]
@@ -152,7 +153,7 @@ resource "cloudflare_ruleset" "managed_waf" {
 
   zone_id     = var.zone_id
   name        = "Corvis managed WAF"
-  description = "Cloudflare and OWASP managed rulesets; enable only on a zone plan that supports them."
+  description = "Cloudflare and OWASP managed rulesets; enable only on Pro or a higher plan that supports them."
   kind        = "zone"
   phase       = "http_request_firewall_managed"
 
@@ -181,33 +182,21 @@ resource "cloudflare_ruleset" "managed_waf" {
 resource "cloudflare_ruleset" "rate_limits" {
   zone_id     = var.zone_id
   name        = "Corvis API rate limits"
-  description = "Bound abusive API request rates and provide a deterministic UAT rate-limit probe."
+  description = "Single path/IP API rate limit deliberately compatible with Cloudflare Free and Pro entitlements."
   kind        = "zone"
   phase       = "http_ratelimit"
 
   rules = [
     {
-      ref         = "security_acceptance_rate_probe"
-      description = "Deterministic UAT probe proving Cloudflare rate-limit enforcement"
-      expression  = "(http.host eq \"${var.api_hostname}\" and starts_with(http.request.uri.path, \"/api/\") and http.request.headers[\"x-corvis-security-probe\"][0] eq \"rate-limit\")"
-      action      = "block"
-      ratelimit = {
-        characteristics     = ["cf.colo.id", "ip.src"]
-        period              = 60
-        requests_per_period = 5
-        mitigation_timeout  = 60
-      }
-    },
-    {
       ref         = "rate_limit_api_by_ip"
-      description = "Bound public API requests per source IP"
-      expression  = "(http.host eq \"${var.api_hostname}\" and starts_with(http.request.uri.path, \"/api/\"))"
+      description = "Bound public API requests per source IP using the Free-plan 10-second window"
+      expression  = "(starts_with(http.request.uri.path, \"/api/\"))"
       action      = "block"
       ratelimit = {
         characteristics     = ["cf.colo.id", "ip.src"]
-        period              = 60
-        requests_per_period = var.api_requests_per_minute
-        mitigation_timeout  = 60
+        period              = 10
+        requests_per_period = local.api_requests_per_10_seconds
+        mitigation_timeout  = 10
       }
     },
   ]
