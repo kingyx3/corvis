@@ -12,16 +12,13 @@ alter table corvis_serving.export_job
 create table if not exists corvis_serving.export_download_grant (
   tenant_id uuid not null references corvis_control.tenant(tenant_id),
   grant_id uuid primary key default gen_random_uuid(),
-  export_id uuid not null,
+  export_id uuid not null references corvis_serving.export_job(export_id) on delete cascade,
   subject text not null,
   token_sha256 text not null,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
   unique (tenant_id, grant_id),
   unique (token_sha256),
-  foreign key (tenant_id, export_id)
-    references corvis_serving.export_job(tenant_id, export_id)
-    on delete cascade,
   check (expires_at > created_at)
 );
 
