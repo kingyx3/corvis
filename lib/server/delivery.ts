@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { countMetric, durationValueMetric } from "./telemetry.ts";
 import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 
 function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
@@ -24,6 +25,12 @@ export const WEBHOOK_RETRY_JITTER_RATIO = 0.2;
 
 export type RandomSource = () => number;
 
+function timestampMs(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const parsed = new Date(String(value)).getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource = Math.random): number {
   const exponent = Math.max(0, attempt - 1);
   const exponential = WEBHOOK_RETRY_BASE_DELAY_MS * (2 ** exponent);
@@ -36,7 +43,7 @@ export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource
 export async function processQueuedExports(limit=25): Promise<{processed:number;failed:number}> {
   const store=db();
   const rows=await store.query(`select tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,
-      format,snapshot_ids,manifest,delivery_attempts
+      format,snapshot_ids,manifest,delivery_attempts,created_at
     from corvis_serving.export_job
     where state in ('queued','retryable') and coalesce(delivery_attempts,0)<5
     order by created_at limit $1`,[limit]);
@@ -50,19 +57,28 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
       returning delivery_attempts`,[tenantId,exportId,priorAttempts]);
     if(!claimed[0]) continue;
     const attempt=Number(claimed[0].delivery_attempts??priorAttempts+1);
+    const context={correlationId:`export:${exportId}`,tenantId,workspaceId:row.workspace_id==null?undefined:String(row.workspace_id)};
     try{
       const delivered=await deliverExportArtifact(row,store);
-      await store.execute(`update corvis_serving.export_job
+      const completed=await store.query(`update corvis_serving.export_job
         set state='complete',object_uri=$1,expires_at=$2::timestamptz,checksum_sha256=$3,
             manifest=$4::jsonb,completed_at=now(),last_error=null
-        where tenant_id=$5 and export_id=$6::uuid and state='delivering' and delivery_attempts=$7`,
+        where tenant_id=$5 and export_id=$6::uuid and state='delivering' and delivery_attempts=$7
+        returning completed_at`,
       [delivered.objectUri,delivered.expiresAt,delivered.checksumSha256,JSON.stringify(delivered.manifest),tenantId,exportId,attempt]);
+      const startedAt=timestampMs(row.created_at),completedAt=timestampMs(completed[0]?.completed_at);
+      if(startedAt!==undefined&&completedAt!==undefined&&completedAt>=startedAt){
+        durationValueMetric("delivery.export",completedAt-startedAt,context,{format:String(row.format)});
+      }
+      countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
       processed++;
     }catch(error){
       failed++;
+      const state=attempt>=5?"failed":"retryable";
       await store.execute(`update corvis_serving.export_job set state=$1,last_error=$2
         where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
-      [attempt>=5?"failed":"retryable",error instanceof Error?error.message:"unknown",tenantId,exportId,attempt]);
+      [state,error instanceof Error?error.message:"unknown",tenantId,exportId,attempt]);
+      countMetric("delivery.export",1,context,{outcome:state,format:String(row.format)});
     }
   }
   return {processed,failed};
@@ -98,6 +114,7 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
     const envelope:WebhookEnvelope={id:eventId,type:String(row.event_type),createdAt:String(row.created_at),tenantId,data:row.payload};
     const body=JSON.stringify(envelope); const deliveryId=randomUUID();
     const attempt=Number(row.prior_attempts??0)+1;
+    const context={correlationId:`webhook:${deliveryId}`,tenantId};
     const claimed=await store.query(`insert into corvis_control.webhook_delivery
       (tenant_id,delivery_id,webhook_id,event_id,attempt,state,created_at)
       values ($1,$2::uuid,$3::uuid,$4::uuid,$5,'delivering',now())
@@ -109,10 +126,16 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
         method:"POST",headers:webhookHeaders(String(row.signing_secret),envelope),body,cache:"no-store"
       });
       if(!response.ok) throw new Error(`Webhook endpoint returned ${response.status}`);
-      await store.execute(`update corvis_control.webhook_delivery
+      const completed=await store.query(`update corvis_control.webhook_delivery
         set status_code=$1,state='complete',completed_at=now(),next_attempt_at=null,last_error=null
-        where tenant_id=$2 and delivery_id=$3::uuid and state='delivering'`,
+        where tenant_id=$2 and delivery_id=$3::uuid and state='delivering'
+        returning completed_at`,
       [response.status,tenantId,deliveryId]);
+      const startedAt=timestampMs(row.created_at),completedAt=timestampMs(completed[0]?.completed_at);
+      if(startedAt!==undefined&&completedAt!==undefined&&completedAt>=startedAt){
+        durationValueMetric("delivery.webhook",completedAt-startedAt,context,{eventType:String(row.event_type)});
+      }
+      countMetric("delivery.webhook",1,context,{outcome:"complete",eventType:String(row.event_type)});
       const pending=await store.query(`select count(*) as pending_count
         from corvis_control.webhook_subscription s
         where s.tenant_id=$1 and s.status='active'
@@ -140,6 +163,7 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
         set attempt_count=attempt_count+1,last_error=$1
         where tenant_id=$2 and event_id=$3::uuid`,
       [error instanceof Error?error.message:"unknown",tenantId,eventId]);
+      countMetric("delivery.webhook",1,context,{outcome:state,eventType:String(row.event_type)});
     }
   }
   return {processed,failed};
