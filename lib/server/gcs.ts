@@ -120,13 +120,27 @@ export class GcsControlClient implements UploadObjectStore {
   }
 
   async putJson(key: string, value: unknown): Promise<void> {
-    const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o?uploadType=media&name=${encodeObjectName(key)}`;
-    const response = await this.authorizedFetch(url, {
+    await this.putObject(key, Buffer.from(JSON.stringify(value)), "application/json");
+  }
+
+  async putObject(
+    key: string,
+    value: Buffer | Uint8Array,
+    contentType: string,
+    metadata: Record<string, string> = {},
+  ): Promise<void> {
+    const url = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+    url.searchParams.set("uploadType", "media");
+    url.searchParams.set("name", key);
+    if (Object.keys(metadata).length > 0) {
+      throw new Error("GCS media uploads do not support custom metadata; write metadata separately or use resumable upload");
+    }
+    const response = await this.authorizedFetch(url.toString(), {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(value),
+      headers: { "content-type": contentType, "content-length": String(value.byteLength) },
+      body: value,
     });
-    if (!response.ok) throw new Error(`GCS metadata write failed (${response.status})`);
+    if (!response.ok) throw new Error(`GCS object write failed (${response.status})`);
   }
 
   async getJson<T>(key: string): Promise<T | null> {
@@ -134,6 +148,16 @@ export class GcsControlClient implements UploadObjectStore {
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`GCS metadata read failed (${response.status})`);
     return response.json() as Promise<T>;
+  }
+
+  async getObject(key: string): Promise<{ bytes: Buffer; contentType?: string } | null> {
+    const response = await this.authorizedFetch(this.mediaUrl(key));
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GCS object read failed (${response.status})`);
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") ?? undefined,
+    };
   }
 
   async getObjectMetadata(key: string): Promise<GcsObject | null> {
