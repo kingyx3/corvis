@@ -4,6 +4,15 @@ import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type ExportFormat = ExportManifest["format"];
+type DeliveryManifest = ExportManifest & {
+  artifact?: {
+    contentType?: string;
+    sizeBytes?: number;
+    objectKey?: string;
+    fundIds?: string[];
+    documentIds?: string[];
+  };
+};
 
 export type ExportStatus = {
   exportId: string;
@@ -13,7 +22,7 @@ export type ExportStatus = {
   completedAt?: string;
   expiresAt?: string;
   checksumSha256?: string;
-  manifest: ExportManifest;
+  manifest: DeliveryManifest;
   downloadUrl?: string;
   downloadExpiresAt?: string;
 };
@@ -24,6 +33,11 @@ function text(row: PostgresRow, key: string, fallback = ""): string {
   return value == null ? fallback : value instanceof Date ? value.toISOString() : String(value);
 }
 function sha256(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
+function covers(current: readonly string[] | undefined, required: readonly string[] | undefined): boolean {
+  if (!required?.length) return true;
+  const allowed = new Set(current ?? []);
+  return required.every((value) => allowed.has(value));
+}
 
 export async function createPhysicalExport(
   identity: RequestIdentity,
@@ -76,39 +90,27 @@ export async function createPhysicalExport(
 async function assertCurrentArtifactAccess(
   identity: RequestIdentity,
   snapshotIds: readonly string[],
+  manifest: DeliveryManifest,
   store: PostgresSqlApi,
 ): Promise<void> {
   assertRedistributionAllowed(identity);
+  const artifact = manifest.artifact;
+  if (artifact) {
+    if (!covers(identity.entitlements.fundIds, artifact.fundIds) || !covers(identity.entitlements.documentIds, artifact.documentIds)) {
+      throw new AuthorizationError("exports:current_data_rights");
+    }
+    return;
+  }
   if (snapshotIds.length === 0) return;
   const fundIds = identity.entitlements.fundIds ?? [];
-  const documentIds = identity.entitlements.documentIds ?? [];
-  if (fundIds.length === 0 || documentIds.length === 0) throw new AuthorizationError("exports:current_data_rights");
-  const rows = await store.query(`with requested_snapshot as (
-      select s.snapshot_id,s.fund_id,s.fact_ids
-      from corvis_consolidated.fund_period_snapshot s
-      where s.tenant_id=$1 and s.status='published'
-        and s.snapshot_id::text in (select jsonb_array_elements_text($2::jsonb))
-    ), artifact_observation as (
-      select distinct rs.fund_id, fact_observation.observation_id
-      from requested_snapshot rs
-      join corvis_consolidated.consolidated_fact cf
-        on cf.tenant_id=$1 and cf.consolidated_fact_id=any(rs.fact_ids)
-      cross join lateral unnest(cf.source_observation_ids) as fact_observation(observation_id)
-    )
-    select
-      (select count(*) from requested_snapshot) as snapshot_count,
-      count(*) filter (
-        where ao.fund_id not in (select jsonb_array_elements_text($3::jsonb))
-           or r.document_id is null
-           or r.document_id::text not in (select jsonb_array_elements_text($4::jsonb))
-      ) as denied_observation_count
-    from artifact_observation ao
-    left join corvis_facts.observation o
-      on o.tenant_id=$1 and o.observation_id=ao.observation_id
-    left join corvis_source.source_reference r
-      on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id`,
-  [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds), jsonIds(documentIds)]);
-  if (Number(rows[0]?.snapshot_count ?? 0) !== snapshotIds.length || Number(rows[0]?.denied_observation_count ?? 0) > 0) {
+  if (fundIds.length === 0) throw new AuthorizationError("exports:current_data_rights");
+  const rows = await store.query(`select count(*) as snapshot_count
+    from corvis_consolidated.fund_period_snapshot s
+    where s.tenant_id=$1 and s.status='published'
+      and s.snapshot_id::text in (select jsonb_array_elements_text($2::jsonb))
+      and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
+  [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);
+  if (Number(rows[0]?.snapshot_count ?? 0) !== snapshotIds.length) {
     throw new AuthorizationError("exports:current_data_rights");
   }
 }
@@ -124,9 +126,9 @@ export async function getPhysicalExportStatus(
     limit 1`, [identity.tenantId, exportId, identity.subject]);
   const row = rows[0];
   if (!row) return null;
-  const manifest = row.manifest as ExportManifest;
+  const manifest = row.manifest as DeliveryManifest;
   const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
-  await assertCurrentArtifactAccess(identity, snapshotIds, store);
+  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
 
   const result: ExportStatus = {
     exportId: text(row, "export_id"),
@@ -168,9 +170,9 @@ export async function redeemPhysicalExportGrant(
     limit 1`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
   const row = rows[0];
   if (!row?.object_uri || !row?.checksum_sha256) return null;
-  const manifest = row.manifest as ExportManifest;
+  const manifest = row.manifest as DeliveryManifest;
   const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
-  await assertCurrentArtifactAccess(identity, snapshotIds, store);
+  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
   return {
     objectUri: String(row.object_uri),
     format: String(row.format) as ExportFormat,
