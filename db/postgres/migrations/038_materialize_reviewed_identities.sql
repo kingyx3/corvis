@@ -2,9 +2,10 @@
 -- Depends on migrations 001-037.
 --
 -- Reviewed fund/company candidates may establish a new durable global identity only
--- when the candidate already carries an explicit resolved immutable ID. Names never
--- create identity by similarity. Existing global identities are never silently
--- renamed from tenant evidence; tenant-observed labels remain tenant scoped.
+-- when the candidate already carries an explicit resolved immutable ID and an explicit
+-- reviewed global canonical name. Names never create identity by similarity. Existing
+-- global identities are never silently renamed from tenant evidence; tenant-observed
+-- labels remain tenant scoped.
 
 begin;
 
@@ -78,12 +79,11 @@ begin
         candidate_row.effective_payload->>'globalFundId',
         candidate_row.effective_payload->>'fund_id',
         candidate_row.effective_payload->>'fundId','')),'');
+      -- Only an explicitly reviewed canonical name may seed the global directory.
+      -- Raw/source labels can be tenant-private and therefore stay tenant scoped.
       canonical_name_value := nullif(btrim(coalesce(
         candidate_row.effective_payload->>'canonical_name',
-        candidate_row.effective_payload->>'canonicalName',
-        candidate_row.effective_payload->>'fund_name',
-        candidate_row.effective_payload->>'fundName',
-        candidate_row.effective_payload->>'name','')),'');
+        candidate_row.effective_payload->>'canonicalName','')),'');
       source_name_value := nullif(btrim(coalesce(
         candidate_row.effective_payload->>'source_name',
         candidate_row.effective_payload->>'sourceName',
@@ -97,7 +97,7 @@ begin
         candidate_row.effective_payload->>'gp_name',
         candidate_row.effective_payload->>'gpName','')),'');
       if entity_id_value is null then raise exception 'reviewed fund candidate requires resolved global_fund_id'; end if;
-      if canonical_name_value is null then raise exception 'reviewed fund candidate requires canonical/source name'; end if;
+      if source_name_value is null then raise exception 'reviewed fund candidate requires source or canonical name'; end if;
 
       select count(*)::integer into duplicate_count
       from corvis_facts.canonical_candidate c2
@@ -112,6 +112,9 @@ begin
       select exists(select 1 from corvis_identity.fund f where f.global_fund_id=entity_id_value)
         into identity_preexisted;
       if not identity_preexisted then
+        if canonical_name_value is null then
+          raise exception 'new reviewed fund identity requires explicit canonical_name';
+        end if;
         insert into corvis_identity.fund (global_fund_id,canonical_name,manager_name)
         values (entity_id_value,canonical_name_value,manager_name_value)
         on conflict (global_fund_id) do nothing;
@@ -127,10 +130,7 @@ begin
         candidate_row.effective_payload->>'companyId','')),'');
       canonical_name_value := nullif(btrim(coalesce(
         candidate_row.effective_payload->>'canonical_name',
-        candidate_row.effective_payload->>'canonicalName',
-        candidate_row.effective_payload->>'company_name',
-        candidate_row.effective_payload->>'companyName',
-        candidate_row.effective_payload->>'name','')),'');
+        candidate_row.effective_payload->>'canonicalName','')),'');
       source_name_value := nullif(btrim(coalesce(
         candidate_row.effective_payload->>'source_name',
         candidate_row.effective_payload->>'sourceName',
@@ -140,7 +140,7 @@ begin
         canonical_name_value,'')),'');
       manager_name_value := null;
       if entity_id_value is null then raise exception 'reviewed company candidate requires resolved global_company_id'; end if;
-      if canonical_name_value is null then raise exception 'reviewed company candidate requires canonical/source name'; end if;
+      if source_name_value is null then raise exception 'reviewed company candidate requires source or canonical name'; end if;
 
       select count(*)::integer into duplicate_count
       from corvis_facts.canonical_candidate c2
@@ -155,6 +155,9 @@ begin
       select exists(select 1 from corvis_identity.company c where c.global_company_id=entity_id_value)
         into identity_preexisted;
       if not identity_preexisted then
+        if canonical_name_value is null then
+          raise exception 'new reviewed company identity requires explicit canonical_name';
+        end if;
         insert into corvis_identity.company (global_company_id,canonical_name)
         values (entity_id_value,canonical_name_value)
         on conflict (global_company_id) do nothing;
@@ -172,7 +175,6 @@ begin
     exception when others then
       entity_confidence := null;
     end;
-    if source_name_value is null then source_name_value := canonical_name_value; end if;
 
     insert into corvis_identity.tenant_entity_name (
       tenant_id,tenant_entity_name_id,fund_id,company_id,name,name_kind,
