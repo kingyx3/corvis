@@ -171,9 +171,6 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
       audience: config.authAudience,
       jwksUrl: config.authJwksUrl,
     });
-    // Tenant/workspace are untrusted context selectors only. Production routes
-    // immediately re-resolve membership, roles, rights and session state from
-    // Postgres in resolveAuthorizedRequestIdentity before evaluating access.
     return {
       subject: verified.subject,
       tenantId,
@@ -204,7 +201,11 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
       tenantId: request.headers.get("x-corvis-demo-tenant") || "tenant_demo",
       workspaceId,
       roles: demoRoles.length ? demoRoles : ["admin"],
-      entitlements: { workspaceIds: [workspaceId], sourceDocumentAccessAllowed: true },
+      entitlements: {
+        workspaceIds: [workspaceId],
+        sourceDocumentAccessAllowed: true,
+        redistributionAllowed: request.headers.get("x-corvis-demo-redistribution") === "true",
+      },
       authMethod: "demo",
       sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
     };
@@ -214,11 +215,7 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
   if (assertion) return verifyGatewayIdentityAssertion(assertion, config.trustedAuthProxySecret);
   if (config.environment === "production") return directOidcIdentity(request, config);
 
-  // Temporary non-production compatibility path only. Production deliberately
-  // rejects independently mutable business-identity headers.
   return legacyTrustedGatewayIdentity(request, config.trustedAuthProxySecret);
 }
 
-export class AuthenticationError extends Error {
-  constructor(message: string) { super(message); this.name = "AuthenticationError"; }
-}
+export class AuthenticationError extends Error {}
