@@ -1,19 +1,21 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import {
   identityLifecycleRepository,
   type HumanAuthMethod,
   type IdentityLifecycleMembership,
-  type IdentityLifecycleOperation,
   type IdentityLifecycleRole,
 } from "@/lib/server/identity-lifecycle";
+import { postgres } from "@/lib/server/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLES = new Set<IdentityLifecycleRole>(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
+type LifecycleOperation = "sync" | "disable" | "reactivate";
 
-function operation(value: unknown): IdentityLifecycleOperation | undefined {
-  return value === "sync" || value === "disable" ? value : undefined;
+function operation(value: unknown): LifecycleOperation | undefined {
+  return value === "sync" || value === "disable" || value === "reactivate" ? value : undefined;
 }
 
 function authMethod(value: unknown): HumanAuthMethod | undefined {
@@ -63,6 +65,15 @@ export async function POST(request: Request) {
       (lifecycleOperation === "disable" && desiredMemberships.length !== 0)
     ) {
       return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    }
+
+    if (lifecycleOperation === "reactivate") {
+      const db = postgres(getServerConfig().postgresDsn);
+      const rows = await db.query(`select corvis_control.reactivate_identity_admin(
+        $1::uuid,$2,$3,$4::uuid,$5,$6,$7,$8::uuid,$9::jsonb,$10
+      ) as result`, [identity.tenantId, eventKey, identity.subject, identity.workspaceId, id,
+        lifecycleAuthMethod, subject, userId, JSON.stringify(desiredMemberships), reason]);
+      return json({ data: rows[0]?.result ?? null, correlationId: id }, { status: 200 });
     }
 
     const data = await identityLifecycleRepository().apply({
