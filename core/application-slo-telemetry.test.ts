@@ -49,3 +49,47 @@ test("successful publication transitions are attributable telemetry events", asy
   assert.match(route, /publicationeventid/);
   assert.match(route, /actorsubject:\s*identity\.subject/);
 });
+
+test("document-pipeline completion telemetry is emitted only after durable stage transitions", async () => {
+  const worker = await read("lib/server/processing-stage-worker.ts");
+  const publication = await read("lib/server/processing-published-stage.ts");
+  const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
+  const slos = await read("ops/slos.yaml");
+
+  assert.match(worker, /await stages\.complete/);
+  assert.match(worker, /expectedstage === "registered"[\s\S]*countmetric\("document_pipeline\.accepted"/);
+  assert.match(worker, /expectedstage === "published"[\s\S]*countmetric\("document_pipeline\.completed"/);
+  assert.match(worker, /nextstate === "dead_letter"[\s\S]*countmetric\("document_pipeline\.dead_letter"/);
+  assert.match(publication, /d\.created_at as document_created_at/);
+  assert.match(publication, /p\.completed_at as publication_completed_at/);
+  assert.match(publication, /durationvaluemetric\("document_pipeline\.publication_freshness"/);
+
+  for (const metric of ["document_pipeline.accepted", "document_pipeline.completed", "document_pipeline.dead_letter"]) {
+    assert.ok(terraform.includes(`jsonpayload.metric="${metric}"`), `missing Terraform metric for ${metric}`);
+  }
+  assert.match(terraform, /jsonpayload\.metric="document_pipeline\.publication_freshness"/);
+  assert.match(terraform, /threshold_value\s*=\s*3600000/);
+  assert.match(terraform, /align_percentile_95/);
+  assert.match(slos, /publication_freshness_p95_minutes > 60 for 10m/);
+});
+
+test("export and webhook delivery health uses durable completion/failure ledgers", async () => {
+  const delivery = await read("lib/server/delivery.ts");
+  const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
+
+  assert.match(delivery, /export_job[\s\S]*created_at/);
+  assert.match(delivery, /state='complete'[\s\S]*completed_at=now\(\)[\s\S]*returning completed_at/);
+  assert.match(delivery, /durationvaluemetric\("delivery\.export"/);
+  assert.match(delivery, /countmetric\("delivery\.export"[\s\S]*outcome:"complete"/);
+  assert.match(delivery, /countmetric\("delivery\.export"[\s\S]*outcome:state/);
+  assert.match(delivery, /webhook_delivery[\s\S]*state='complete'[\s\S]*completed_at=now\(\)[\s\S]*returning completed_at/);
+  assert.match(delivery, /durationvaluemetric\("delivery\.webhook"/);
+  assert.match(delivery, /countmetric\("delivery\.webhook"[\s\S]*outcome:"complete"/);
+  assert.match(delivery, /countmetric\("delivery\.webhook"[\s\S]*outcome:state/);
+
+  for (const metric of ["delivery.export", "delivery.webhook"]) {
+    assert.ok(terraform.includes(`jsonpayload.metric="${metric}"`), `missing Terraform delivery metric for ${metric}`);
+  }
+  assert.match(terraform, /jsonpayload\.metric="delivery\.export"[\s\S]*jsonpayload\.outcome="failed"/);
+  assert.match(terraform, /jsonpayload\.metric="delivery\.webhook"[\s\S]*jsonpayload\.outcome="failed"/);
+});

@@ -1,15 +1,13 @@
 # Cloud Monitoring alerting/dashboard/budget derived from ops/slos.yaml, the
-# machine-readable SLO/RPO/RTO source of truth (docs/README.md). Each alert
-# policy here corresponds to one entry in ops/slos.yaml's `alerts:` list.
+# machine-readable SLO/RPO/RTO source of truth (docs/README.md). Alert policies
+# live in this file or application-slo.tf depending on whether the source signal
+# is provider-native or application-emitted.
 #
-# Two of the four SLO alert conditions are deliberately NOT implemented here:
-# `cross_tenant_authorization_failure_detected` and
-# `published_fact_source_reference_coverage` have no corresponding structured
-# telemetry emitted by the application today (lib/server/telemetry.ts has no
-# such event). A log-based metric filtering for an event that is never
-# written would be a permanently silent, false-confidence alert — worse than
-# no alert. Wiring these requires adding the underlying application
-# instrumentation first (issue #9's own remaining-gap list).
+# The true cross-tenant SEV1 condition remains deliberately unwired here:
+# `cross_tenant_authorization_failure_detected` requires a real tenant-boundary
+# mismatch signal, not a generic 403. A log metric filtering for an event that
+# is never emitted would be false-confidence monitoring, so that detector stays
+# UAT/provider-bound until the deployed authorization path can prove its semantics.
 
 locals {
   api_monitoring_enabled   = trimspace(var.api_service_name) != ""

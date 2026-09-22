@@ -5,6 +5,7 @@ import type {
   PostgresProcessingStageRepository,
 } from "./orchestration-stage.ts";
 import type { PostgresProcessingStageEffectRepository } from "./orchestration-stage-effect.ts";
+import { countMetric } from "./telemetry.ts";
 
 export type ProcessingStageEffectInput = {
   tenantId: string;
@@ -51,6 +52,15 @@ function effectKey(delivery: ProcessingStageDelivery): string {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function telemetryContext(delivery: ProcessingStageDelivery) {
+  return {
+    correlationId: delivery.eventId,
+    tenantId: delivery.tenantId,
+    jobId: delivery.jobId,
+    documentId: delivery.documentId,
+  };
 }
 
 export async function runProcessingStageDelivery(input: {
@@ -106,6 +116,12 @@ export async function runProcessingStageDelivery(input: {
       jobId: delivery.jobId,
     });
     if (!completed?.completed) throw new Error("processing stage completion lease was lost");
+    if (delivery.expectedStage === "registered") {
+      countMetric("document_pipeline.accepted", 1, telemetryContext(delivery), { stage: delivery.expectedStage });
+    }
+    if (delivery.expectedStage === "published" && completed.nextStage === undefined) {
+      countMetric("document_pipeline.completed", 1, telemetryContext(delivery), { stage: delivery.expectedStage });
+    }
     return { outcome: "completed", nextJobId: completed.nextJobId, nextStage: completed.nextStage };
   } catch (error) {
     if (error instanceof ProcessingStageBlockedError) {
@@ -130,8 +146,10 @@ export async function runProcessingStageDelivery(input: {
       error: errorText(error),
     });
     if (!failed) throw error;
-    return failed.nextState === "retryable"
-      ? { outcome: "retryable", nextAttemptAt: failed.nextAttemptAt }
-      : { outcome: "dead_letter" };
+    if (failed.nextState === "dead_letter") {
+      countMetric("document_pipeline.dead_letter", 1, telemetryContext(delivery), { stage: delivery.expectedStage });
+      return { outcome: "dead_letter" };
+    }
+    return { outcome: "retryable", nextAttemptAt: failed.nextAttemptAt };
   }
 }

@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/lib/server/config";
+import { getServerConfig } from "./config.ts";
 
 export type LogLevel = "info" | "warn" | "error";
 export type TelemetryContext = { correlationId: string; tenantId?: string; workspaceId?: string; actorSubject?: string; jobId?: string; documentId?: string };
@@ -27,7 +27,11 @@ export function logEvent(level: LogLevel, event: string, context: TelemetryConte
 }
 
 export function durationMetric(name: string, startedAtMs: number, context: TelemetryContext, fields: Record<string, unknown> = {}) {
-  logEvent("info", "metric.duration", context, { metric: name, durationMs: Math.max(0, Date.now() - startedAtMs), ...fields });
+  durationValueMetric(name, Date.now() - startedAtMs, context, fields);
+}
+
+export function durationValueMetric(name: string, durationMs: number, context: TelemetryContext, fields: Record<string, unknown> = {}) {
+  logEvent("info", "metric.duration", context, { metric: name, durationMs: Math.max(0, durationMs), ...fields });
 }
 
 export function countMetric(name: string, value: number, context: TelemetryContext, fields: Record<string, unknown> = {}) {

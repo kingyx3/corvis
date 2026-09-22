@@ -55,6 +55,12 @@ class FakePostgres implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.queries.push({ sql, parameters });
+    if (sql.includes("publication_run p")) {
+      return [{
+        document_created_at: "2026-09-22T00:00:00.000Z",
+        publication_completed_at: "2026-09-22T00:30:00.000Z",
+      }];
+    }
     return this.rows;
   }
 
@@ -93,7 +99,7 @@ test("published stage accepts only a ready consolidation result", () => {
   }
 });
 
-test("Postgres publication repository passes exact consolidation lineage and idempotency", async () => {
+test("Postgres publication repository passes exact consolidation lineage and records persisted freshness boundaries", async () => {
   const db = new FakePostgres();
   const repository = new PostgresPublicationRepository(db);
   const predecessor = consolidatedPredecessorResult(base);
@@ -104,7 +110,7 @@ test("Postgres publication repository passes exact consolidation lineage and ide
     idempotencyKey: base.idempotencyKey,
   });
 
-  assert.equal(db.queries.length, 1);
+  assert.equal(db.queries.length, 2);
   assert.match(db.queries[0]?.sql ?? "", /corvis_consolidated\.publish_consolidation/);
   assert.deepEqual(db.queries[0]?.parameters, [
     tenantId,
@@ -114,6 +120,9 @@ test("Postgres publication repository passes exact consolidation lineage and ide
     1,
     base.idempotencyKey,
   ]);
+  assert.match(db.queries[1]?.sql ?? "", /document_created_at/);
+  assert.match(db.queries[1]?.sql ?? "", /publication_completed_at/);
+  assert.deepEqual(db.queries[1]?.parameters, [tenantId, documentId, publicationRunId]);
   assert.deepEqual(result, {
     publicationRunId,
     consolidationRunId,
