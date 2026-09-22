@@ -135,10 +135,11 @@ export class GcsControlClient implements UploadObjectStore {
     if (Object.keys(metadata).length > 0) {
       throw new Error("GCS media uploads do not support custom metadata; write metadata separately or use resumable upload");
     }
+    const body = Uint8Array.from(value).buffer;
     const response = await this.authorizedFetch(url.toString(), {
       method: "POST",
       headers: { "content-type": contentType, "content-length": String(value.byteLength) },
-      body: value,
+      body,
     });
     if (!response.ok) throw new Error(`GCS object write failed (${response.status})`);
   }
