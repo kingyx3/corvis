@@ -152,6 +152,11 @@ jobs:
             echo "Applying ${migration}"
             PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f "${migration}"
           done
+      - name: Exercise reviewed economic graph canonicalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/reviewed-economic-graph.sql
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql
