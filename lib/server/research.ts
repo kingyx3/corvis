@@ -7,6 +7,7 @@ import type {
   SourceCitation,
 } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { isFeatureEnabled } from "./feature-flags.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
 
@@ -114,6 +115,7 @@ export class PermissionedResearchService {
   private async search(identity: RequestIdentity, question: string, fundIds: string[], signal: AbortSignal): Promise<SearchHit[]> {
     const sourceDocumentIds = identity.entitlements.sourceDocumentIds ?? [];
     if (!identity.entitlements.sourceDocumentAccessAllowed || sourceDocumentIds.length === 0) return [];
+    if (!await isFeatureEnabled(identity, "retrieval.hybrid_search", "ai_retrieval", this.db)) return [];
     const config = getServerConfig();
     if (!config.searchEndpoint) throw new ResearchProviderError("search");
     let response: Response;
