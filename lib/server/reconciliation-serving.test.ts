@@ -63,3 +63,9 @@ test("reconciliation route uses customer read permission and opaque pagination",
   assert.match(route, /parselimit\(/);
   assert.doesNotMatch(route, /observations:review/);
 });
+
+test("reconciliation resource is part of the published v1 OpenAPI contract", async () => {
+  const openapi = await readFile("openapi/corvis-v1.yaml", "utf8");
+  assert.match(openapi, /^  \/reconciliations:\n    get:\n      operationId: listReconciliations/m);
+  assert.match(openapi, /blocking-exception counts/);
+});
