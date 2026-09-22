@@ -1,11 +1,11 @@
 -- Corvis reviewed fund/company identity materialization v1
 -- Depends on migrations 001-037.
 --
--- Reviewed fund/company candidates may establish a new durable global identity only
--- when the candidate already carries an explicit resolved immutable ID and an explicit
--- reviewed global canonical name. Names never create identity by similarity. Existing
--- global identities are never silently renamed from tenant evidence; tenant-observed
--- labels remain tenant scoped.
+-- New durable identities must exist before reviewed holdings/instruments and metric
+-- observations can validate their foreign economic graph. We therefore pre-materialize
+-- only the exact ready reviewed fund/company set, run the existing v3 -> v2 -> v1
+-- canonicalization chain, then attach canonical source-reference lineage. All work is
+-- one Postgres statement: any downstream validation failure rolls every pre-write back.
 
 begin;
 
@@ -37,7 +37,130 @@ create index if not exists tenant_entity_revision_identity_idx
   on corvis_identity.tenant_entity_revision
     (tenant_id,entity_type,global_entity_id,recorded_at desc);
 
-create or replace function corvis_identity.materialize_reviewed_entity_candidates(
+create or replace function corvis_identity.pre_materialize_reviewed_entity_candidates(
+  p_tenant_id uuid,
+  p_document_id uuid,
+  p_extraction_run_id uuid,
+  p_review_policy_version text,
+  p_candidate_set_sha256 text,
+  p_decision_set_sha256 text
+)
+returns void
+language plpgsql
+security invoker
+set search_path = pg_catalog, corvis_identity, corvis_source, corvis_review, corvis_control
+as $$
+declare
+  candidate_row record;
+  effective_payload jsonb;
+  entity_id_value text;
+  canonical_name_value text;
+  source_name_value text;
+  manager_name_value text;
+  seen_fund_ids text[] := '{}'::text[];
+  seen_company_ids text[] := '{}'::text[];
+begin
+  -- Mirror v2's proven fail-before-projection gate. v1 later rechecks this exact
+  -- gate plus the committed reviewed-stage predecessor and all evidence/identity
+  -- invariants; a failure there rolls these writes back atomically.
+  if not exists (
+    select 1
+    from corvis_review.extraction_review_gate g
+    join corvis_source.extraction_run r
+      on r.tenant_id=g.tenant_id and r.extraction_run_id=g.extraction_run_id
+    where g.tenant_id=p_tenant_id
+      and g.extraction_run_id=p_extraction_run_id
+      and r.document_id=p_document_id
+      and r.status='ready'
+      and g.review_policy_version=p_review_policy_version
+      and g.status='ready'
+      and g.blocking_candidate_count=0
+      and g.candidate_set_sha256=p_candidate_set_sha256
+      and g.decision_set_sha256=p_decision_set_sha256
+      and r.candidate_set_sha256=p_candidate_set_sha256
+  ) then
+    raise exception 'entity materialization requires exact ready reviewed candidate set';
+  end if;
+
+  for candidate_row in
+    select c.*,
+      c.payload || coalesce((
+        select e.correction_payload
+        from corvis_review.candidate_review_event e
+        where e.tenant_id=c.tenant_id
+          and e.extraction_run_id=c.extraction_run_id
+          and e.candidate_id=c.candidate_id
+          and e.review_policy_version=p_review_policy_version
+          and e.decision='correct'
+        order by e.event_sequence desc limit 1
+      ),'{}'::jsonb) as reviewed_payload
+    from corvis_source.extraction_candidate c
+    where c.tenant_id=p_tenant_id
+      and c.extraction_run_id=p_extraction_run_id
+      and c.candidate_type in ('fund','company')
+    order by c.candidate_type,c.candidate_key
+  loop
+    effective_payload := candidate_row.reviewed_payload;
+
+    if candidate_row.candidate_type='fund' then
+      entity_id_value := nullif(btrim(coalesce(
+        effective_payload->>'global_fund_id',effective_payload->>'globalFundId',
+        effective_payload->>'fund_id',effective_payload->>'fundId','')),'');
+      canonical_name_value := nullif(btrim(coalesce(
+        effective_payload->>'canonical_name',effective_payload->>'canonicalName','')),'');
+      source_name_value := nullif(btrim(coalesce(
+        effective_payload->>'source_name',effective_payload->>'sourceName',
+        effective_payload->>'fund_name',effective_payload->>'fundName',effective_payload->>'name',
+        canonical_name_value,'')),'');
+      manager_name_value := nullif(btrim(coalesce(
+        effective_payload->>'manager_name',effective_payload->>'managerName',
+        effective_payload->>'gp_name',effective_payload->>'gpName','')),'');
+
+      if entity_id_value is null then raise exception 'reviewed fund candidate requires resolved global_fund_id'; end if;
+      if source_name_value is null then raise exception 'reviewed fund candidate requires source or canonical name'; end if;
+      if entity_id_value=any(seen_fund_ids) then raise exception 'reviewed candidate set contains duplicate global_fund_id'; end if;
+      seen_fund_ids := array_append(seen_fund_ids,entity_id_value);
+
+      if not exists (select 1 from corvis_identity.fund f where f.global_fund_id=entity_id_value) then
+        if canonical_name_value is null then raise exception 'new reviewed fund identity requires explicit canonical_name'; end if;
+        insert into corvis_identity.fund (global_fund_id,canonical_name,manager_name)
+        values (entity_id_value,canonical_name_value,manager_name_value)
+        on conflict (global_fund_id) do nothing;
+      end if;
+      if not exists (select 1 from corvis_identity.fund f where f.global_fund_id=entity_id_value) then
+        raise exception 'reviewed fund identity could not be materialized';
+      end if;
+    else
+      entity_id_value := nullif(btrim(coalesce(
+        effective_payload->>'global_company_id',effective_payload->>'globalCompanyId',
+        effective_payload->>'company_id',effective_payload->>'companyId','')),'');
+      canonical_name_value := nullif(btrim(coalesce(
+        effective_payload->>'canonical_name',effective_payload->>'canonicalName','')),'');
+      source_name_value := nullif(btrim(coalesce(
+        effective_payload->>'source_name',effective_payload->>'sourceName',
+        effective_payload->>'company_name',effective_payload->>'companyName',effective_payload->>'name',
+        canonical_name_value,'')),'');
+
+      if entity_id_value is null then raise exception 'reviewed company candidate requires resolved global_company_id'; end if;
+      if source_name_value is null then raise exception 'reviewed company candidate requires source or canonical name'; end if;
+      if entity_id_value=any(seen_company_ids) then raise exception 'reviewed candidate set contains duplicate global_company_id'; end if;
+      seen_company_ids := array_append(seen_company_ids,entity_id_value);
+
+      if not exists (select 1 from corvis_identity.company c where c.global_company_id=entity_id_value) then
+        if canonical_name_value is null then raise exception 'new reviewed company identity requires explicit canonical_name'; end if;
+        insert into corvis_identity.company (global_company_id,canonical_name)
+        values (entity_id_value,canonical_name_value)
+        on conflict (global_company_id) do nothing;
+      end if;
+      if not exists (select 1 from corvis_identity.company c where c.global_company_id=entity_id_value) then
+        raise exception 'reviewed company identity could not be materialized';
+      end if;
+    end if;
+  end loop;
+end;
+$$;
+
+create or replace function corvis_identity.record_reviewed_entity_candidate_lineage(
   p_tenant_id uuid,
   p_canonicalization_run_id uuid
 )
@@ -49,12 +172,8 @@ as $$
 declare
   candidate_row record;
   entity_id_value text;
-  canonical_name_value text;
   source_name_value text;
-  manager_name_value text;
-  duplicate_count integer;
   entity_confidence numeric(5,4);
-  identity_preexisted boolean;
 begin
   if not exists (
     select 1 from corvis_facts.canonicalization_run r
@@ -62,7 +181,7 @@ begin
       and r.canonicalization_run_id=p_canonicalization_run_id
       and r.status='ready'
   ) then
-    raise exception 'entity materialization requires finalized reviewed canonicalization';
+    raise exception 'entity lineage requires finalized reviewed canonicalization';
   end if;
 
   for candidate_row in
@@ -75,107 +194,43 @@ begin
   loop
     if candidate_row.candidate_type='fund' then
       entity_id_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'global_fund_id',
-        candidate_row.effective_payload->>'globalFundId',
-        candidate_row.effective_payload->>'fund_id',
-        candidate_row.effective_payload->>'fundId','')),'');
-      -- Only an explicitly reviewed canonical name may seed the global directory.
-      -- Raw/source labels can be tenant-private and therefore stay tenant scoped.
-      canonical_name_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'canonical_name',
-        candidate_row.effective_payload->>'canonicalName','')),'');
+        candidate_row.effective_payload->>'global_fund_id',candidate_row.effective_payload->>'globalFundId',
+        candidate_row.effective_payload->>'fund_id',candidate_row.effective_payload->>'fundId','')),'');
       source_name_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'source_name',
-        candidate_row.effective_payload->>'sourceName',
-        candidate_row.effective_payload->>'fund_name',
-        candidate_row.effective_payload->>'fundName',
-        candidate_row.effective_payload->>'name',
-        canonical_name_value,'')),'');
-      manager_name_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'manager_name',
-        candidate_row.effective_payload->>'managerName',
-        candidate_row.effective_payload->>'gp_name',
-        candidate_row.effective_payload->>'gpName','')),'');
-      if entity_id_value is null then raise exception 'reviewed fund candidate requires resolved global_fund_id'; end if;
-      if source_name_value is null then raise exception 'reviewed fund candidate requires source or canonical name'; end if;
-
-      select count(*)::integer into duplicate_count
-      from corvis_facts.canonical_candidate c2
-      where c2.tenant_id=p_tenant_id
-        and c2.canonicalization_run_id=p_canonicalization_run_id
-        and c2.candidate_type='fund'
-        and nullif(btrim(coalesce(
-          c2.effective_payload->>'global_fund_id',c2.effective_payload->>'globalFundId',
-          c2.effective_payload->>'fund_id',c2.effective_payload->>'fundId','')),'')=entity_id_value;
-      if duplicate_count <> 1 then raise exception 'reviewed candidate set contains duplicate global_fund_id'; end if;
-
-      select exists(select 1 from corvis_identity.fund f where f.global_fund_id=entity_id_value)
-        into identity_preexisted;
-      if not identity_preexisted then
-        if canonical_name_value is null then
-          raise exception 'new reviewed fund identity requires explicit canonical_name';
-        end if;
-        insert into corvis_identity.fund (global_fund_id,canonical_name,manager_name)
-        values (entity_id_value,canonical_name_value,manager_name_value)
-        on conflict (global_fund_id) do nothing;
+        candidate_row.effective_payload->>'source_name',candidate_row.effective_payload->>'sourceName',
+        candidate_row.effective_payload->>'fund_name',candidate_row.effective_payload->>'fundName',
+        candidate_row.effective_payload->>'name',candidate_row.effective_payload->>'canonical_name',
+        candidate_row.effective_payload->>'canonicalName','')),'');
+      if entity_id_value is null or source_name_value is null then
+        raise exception 'canonical fund candidate lost reviewed identity/name lineage';
       end if;
       if not exists (select 1 from corvis_identity.fund f where f.global_fund_id=entity_id_value) then
-        raise exception 'reviewed fund identity could not be materialized';
+        raise exception 'canonical fund identity is unresolved after materialization';
       end if;
     else
       entity_id_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'global_company_id',
-        candidate_row.effective_payload->>'globalCompanyId',
-        candidate_row.effective_payload->>'company_id',
-        candidate_row.effective_payload->>'companyId','')),'');
-      canonical_name_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'canonical_name',
-        candidate_row.effective_payload->>'canonicalName','')),'');
+        candidate_row.effective_payload->>'global_company_id',candidate_row.effective_payload->>'globalCompanyId',
+        candidate_row.effective_payload->>'company_id',candidate_row.effective_payload->>'companyId','')),'');
       source_name_value := nullif(btrim(coalesce(
-        candidate_row.effective_payload->>'source_name',
-        candidate_row.effective_payload->>'sourceName',
-        candidate_row.effective_payload->>'company_name',
-        candidate_row.effective_payload->>'companyName',
-        candidate_row.effective_payload->>'name',
-        canonical_name_value,'')),'');
-      manager_name_value := null;
-      if entity_id_value is null then raise exception 'reviewed company candidate requires resolved global_company_id'; end if;
-      if source_name_value is null then raise exception 'reviewed company candidate requires source or canonical name'; end if;
-
-      select count(*)::integer into duplicate_count
-      from corvis_facts.canonical_candidate c2
-      where c2.tenant_id=p_tenant_id
-        and c2.canonicalization_run_id=p_canonicalization_run_id
-        and c2.candidate_type='company'
-        and nullif(btrim(coalesce(
-          c2.effective_payload->>'global_company_id',c2.effective_payload->>'globalCompanyId',
-          c2.effective_payload->>'company_id',c2.effective_payload->>'companyId','')),'')=entity_id_value;
-      if duplicate_count <> 1 then raise exception 'reviewed candidate set contains duplicate global_company_id'; end if;
-
-      select exists(select 1 from corvis_identity.company c where c.global_company_id=entity_id_value)
-        into identity_preexisted;
-      if not identity_preexisted then
-        if canonical_name_value is null then
-          raise exception 'new reviewed company identity requires explicit canonical_name';
-        end if;
-        insert into corvis_identity.company (global_company_id,canonical_name)
-        values (entity_id_value,canonical_name_value)
-        on conflict (global_company_id) do nothing;
+        candidate_row.effective_payload->>'source_name',candidate_row.effective_payload->>'sourceName',
+        candidate_row.effective_payload->>'company_name',candidate_row.effective_payload->>'companyName',
+        candidate_row.effective_payload->>'name',candidate_row.effective_payload->>'canonical_name',
+        candidate_row.effective_payload->>'canonicalName','')),'');
+      if entity_id_value is null or source_name_value is null then
+        raise exception 'canonical company candidate lost reviewed identity/name lineage';
       end if;
       if not exists (select 1 from corvis_identity.company c where c.global_company_id=entity_id_value) then
-        raise exception 'reviewed company identity could not be materialized';
+        raise exception 'canonical company identity is unresolved after materialization';
       end if;
     end if;
 
-    -- A private report may use a former/legal/trading/codename label. Preserve it
-    -- as tenant-scoped evidence even when the global identity already has a different
-    -- current canonical name. Never promote a tenant label into the global name table.
     begin
       entity_confidence := nullif(candidate_row.confidence->>'entity','')::numeric(5,4);
     exception when others then
       entity_confidence := null;
     end;
 
+    -- Canonical source references exist only after v1 has finalized the reviewed set.
     insert into corvis_identity.tenant_entity_name (
       tenant_id,tenant_entity_name_id,fund_id,company_id,name,name_kind,
       source_reference_id,confidence,review_status
@@ -233,37 +288,27 @@ security invoker
 set search_path = pg_catalog, corvis_facts, corvis_identity, corvis_source, corvis_review, corvis_control
 as $$
 declare
-  v_seed record;
   v_result record;
 begin
-  -- v1 owns exact reviewed-gate validation and canonical-candidate/source-reference
-  -- creation. Establish that immutable reviewed ledger first so identity materialization
-  -- consumes the same effective payload used by all downstream canonical facts.
-  select * into v_seed
-  from corvis_facts.canonicalize_reviewed_extraction(
+  -- Dependency order for a new graph in one report:
+  -- identity -> v2 holding/instrument preprojection -> v1 observations -> lifecycle.
+  perform corvis_identity.pre_materialize_reviewed_entity_candidates(
     p_tenant_id,p_document_id,p_extraction_run_id,p_review_policy_version,
-    p_candidate_set_sha256,p_decision_set_sha256,p_idempotency_key
-  );
-  if v_seed.canonicalization_run_id is null then
-    raise exception 'entity materialization requires finalized canonicalization';
-  end if;
-
-  perform corvis_identity.materialize_reviewed_entity_candidates(
-    p_tenant_id,v_seed.canonicalization_run_id
+    p_candidate_set_sha256,p_decision_set_sha256
   );
 
-  -- v3 re-enters the replay-safe v2/v1 chain, then materializes holdings,
-  -- instruments and lifecycle events. Because identities now exist, a newly reviewed
-  -- fund/company can be referenced by those downstream candidates in the same atomic
-  -- canonicalization statement. Any later failure rolls the entire v4 statement back.
   select * into v_result
   from corvis_facts.canonicalize_reviewed_extraction_v3(
     p_tenant_id,p_document_id,p_extraction_run_id,p_review_policy_version,
     p_candidate_set_sha256,p_decision_set_sha256,p_idempotency_key
   );
-  if v_result.canonicalization_run_id is distinct from v_seed.canonicalization_run_id then
-    raise exception 'entity materialization canonicalization lineage changed during replay';
+  if v_result.canonicalization_run_id is null then
+    raise exception 'entity materialization requires finalized canonicalization';
   end if;
+
+  perform corvis_identity.record_reviewed_entity_candidate_lineage(
+    p_tenant_id,v_result.canonicalization_run_id
+  );
 
   return query select
     v_result.canonicalization_run_id,
