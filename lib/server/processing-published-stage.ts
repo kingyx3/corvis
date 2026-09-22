@@ -1,6 +1,7 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { durationValueMetric, logEvent } from "./telemetry.ts";
 
 export type ConsolidatedPredecessorResult = {
   consolidationRunId: string;
@@ -61,6 +62,12 @@ function boolean(row: PostgresRow, key: string): boolean {
   throw new Error(`published stage received invalid persisted ${key}`);
 }
 
+function timestampMs(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const parsed = new Date(String(value)).getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function assertNotAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
@@ -102,6 +109,44 @@ export class PostgresPublicationRepository {
 
   constructor(db: PostgresSqlApi) {
     this.db = db;
+  }
+
+  private async recordPublicationFreshness(input: {
+    tenantId: string;
+    documentId: string;
+    publicationRunId: string;
+    snapshotVersion: number;
+  }): Promise<void> {
+    try {
+      const rows = await this.db.query(`select d.created_at as document_created_at, p.completed_at as publication_completed_at
+        from corvis_source.document d
+        join corvis_consolidated.publication_run p
+          on p.tenant_id=d.tenant_id and p.document_id=d.document_id
+        where d.tenant_id=$1::uuid and d.document_id=$2::uuid and p.publication_run_id=$3::uuid
+        limit 1`, [input.tenantId, input.documentId, input.publicationRunId]);
+      const row = rows[0];
+      const startedAt = row ? timestampMs(row.document_created_at) : undefined;
+      const completedAt = row ? timestampMs(row.publication_completed_at) : undefined;
+      if (startedAt === undefined || completedAt === undefined || completedAt < startedAt) {
+        logEvent("warn", "telemetry.publication_freshness_unavailable", {
+          correlationId: input.publicationRunId,
+          tenantId: input.tenantId,
+          documentId: input.documentId,
+        });
+        return;
+      }
+      durationValueMetric("document_pipeline.publication_freshness", completedAt - startedAt, {
+        correlationId: input.publicationRunId,
+        tenantId: input.tenantId,
+        documentId: input.documentId,
+      }, { snapshotVersion: input.snapshotVersion });
+    } catch (error) {
+      logEvent("warn", "telemetry.publication_freshness_unavailable", {
+        correlationId: input.publicationRunId,
+        tenantId: input.tenantId,
+        documentId: input.documentId,
+      }, { errorName: error instanceof Error ? error.name : "unknown" });
+    }
   }
 
   async publish(input: {
@@ -155,6 +200,12 @@ export class PostgresPublicationRepository {
     if (result.factCount < input.predecessor.factCount) {
       throw new Error("published stage snapshot lost consolidated facts");
     }
+    await this.recordPublicationFreshness({
+      tenantId: input.tenantId,
+      documentId: input.documentId,
+      publicationRunId: result.publicationRunId,
+      snapshotVersion: result.snapshotVersion,
+    });
     return result;
   }
 }
