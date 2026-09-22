@@ -1,0 +1,36 @@
+name: Capture export typecheck diagnostics
+
+on:
+  push:
+    branches:
+      - feature/physical-export-delivery
+    paths:
+      - .github/workflows/capture-export-typecheck.yml
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/physical-export-delivery
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Capture typecheck output
+        shell: bash
+        run: npm run typecheck > export-typecheck.txt 2>&1 || true
+      - name: Commit diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add export-typecheck.txt
+          git commit -m "chore: capture export typecheck diagnostics"
+          git push origin HEAD:feature/physical-export-delivery
