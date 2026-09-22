@@ -101,6 +101,16 @@ paths:
       responses:
         '200': { description: Paginated published consolidated facts with contributing observation lineage. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+  /reconciliations:
+    get:
+      operationId: listReconciliations
+      description: Lists tenant-scoped reconciliation status for entitled funds without exposing internal canonicalization, document or idempotency identifiers.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200': { description: Paginated reconciliation runs with snapshot, period, readiness and blocking-exception counts. }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
   /snapshots:
     get:
       operationId: listSnapshots
