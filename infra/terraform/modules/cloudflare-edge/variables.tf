@@ -30,7 +30,7 @@ variable "api_hostname" {
 }
 
 variable "api_requests_per_minute" {
-  description = "Per-IP API request ceiling enforced at the Cloudflare edge."
+  description = "Desired per-IP API request ceiling. Terraform converts it to Cloudflare Free's supported 10-second rate-limit window."
   type        = number
   default     = 300
 
@@ -41,7 +41,7 @@ variable "api_requests_per_minute" {
 }
 
 variable "enable_managed_waf" {
-  description = "Deploy Cloudflare Managed and OWASP managed rulesets when the zone plan supports them."
+  description = "Deploy Cloudflare Managed and OWASP managed rulesets on Pro or a higher plan. Keep false on Free, which retains the baseline custom WAF plus Cloudflare Free Managed Ruleset."
   type        = bool
   default     = false
 }
