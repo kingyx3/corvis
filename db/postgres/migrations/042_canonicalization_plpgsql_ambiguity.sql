@@ -50,6 +50,12 @@ begin
 
   patched := replace(
     patched,
+    'and c.effective_payload=effective_payload',
+    'and c.effective_payload=(candidate_row.payload || coalesce(correction_payload,''{}''::jsonb))'
+  );
+
+  patched := replace(
+    patched,
     E'update corvis_facts.canonicalization_run\n  set status=''ready'',canonical_candidate_count=actual_candidate_count,\n      observation_count=actual_observation_count,source_reference_count=actual_reference_count,\n      completed_at=coalesce(completed_at,now())\n  where tenant_id=p_tenant_id and canonicalization_run_id=canonical_run_id and status=''writing''',
     E'update corvis_facts.canonicalization_run cr\n  set status=''ready'',canonical_candidate_count=actual_candidate_count,\n      observation_count=actual_observation_count,source_reference_count=actual_reference_count,\n      completed_at=coalesce(cr.completed_at,now())\n  where cr.tenant_id=p_tenant_id and cr.canonicalization_run_id=canonical_run_id and cr.status=''writing'''
   );
@@ -66,7 +72,8 @@ begin
   if position('on conflict (tenant_id,canonicalization_run_id)' in patched) > 0
     or position('on conflict (tenant_id,canonicalization_run_id,candidate_id)' in patched) > 0
     or position('where tenant_id=p_tenant_id and canonicalization_run_id=canonical_run_id' in patched) > 0
-    or position('select review_event_id,correction_payload' in patched) > 0 then
+    or position('select review_event_id,correction_payload' in patched) > 0
+    or position('and c.effective_payload=effective_payload' in patched) > 0 then
     raise exception 'migration 042 left an ambiguous canonicalization reference';
   end if;
 
