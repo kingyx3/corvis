@@ -34,6 +34,9 @@ function cell(value: unknown): string | number | boolean | null {
   if (value instanceof Date) return value.toISOString();
   return String(value);
 }
+function uniqueStringColumn(rows: readonly ExportRow[], key: string): string[] {
+  return [...new Set(rows.map((row) => row[key]).filter((value): value is string => typeof value === "string" && value.length > 0))].sort();
+}
 
 async function resolveRequestIdentity(row: QueuedExportRow, store: PostgresSqlApi): Promise<RequestIdentity> {
   const authMethod = required(row, "auth_method");
@@ -142,9 +145,6 @@ export async function deliverExportArtifact(
   const rendered = renderExport(format, rows);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");
-  // Use an immutable per-attempt object. This keeps the worker on
-  // storage.objectCreator rather than granting delete/overwrite authority.
-  // Any object orphaned by a retry is bounded by the exports/ lifecycle rule.
   const key = `exports/${identity.tenantId}/${exportId}/${randomUUID()}/observations.${rendered.extension}`;
   await objectStore.putObject(key, rendered.bytes, rendered.contentType);
   const ttlSeconds = getServerConfig().exportArtifactTtlSeconds;
@@ -154,7 +154,13 @@ export async function deliverExportArtifact(
     ...existingManifest,
     checksumSha256,
     rowCounts: { ...((existingManifest.rowCounts as Record<string, number> | undefined) ?? {}), observations: rows.length, snapshots: snapshotIds.length },
-    artifact: { contentType: rendered.contentType, sizeBytes: rendered.bytes.length, objectKey: key },
+    artifact: {
+      contentType: rendered.contentType,
+      sizeBytes: rendered.bytes.length,
+      objectKey: key,
+      fundIds: uniqueStringColumn(rows, "fund_id"),
+      documentIds: uniqueStringColumn(rows, "document_id"),
+    },
   };
   return { objectUri: `gs://${objectStore.bucket}/${key}`, checksumSha256, expiresAt, manifest };
 }
