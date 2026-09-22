@@ -22,26 +22,32 @@ Conversely, two records must not be merged merely because their names normalize 
 
 ## Reviewed extraction materialization
 
-Reviewed extraction enters canonicalization through a layered transactional chain:
+A reviewed report may introduce an entire economic graph at once. Canonicalization therefore respects dependency order before validating metric observations:
 
 ```text
-reviewed candidate set
+exact ready reviewed candidate set
         |
         v
-v1 canonical ledger + source references + observations
+v4 pre-materialize reviewed fund/company identities
         |
         v
-v4 reviewed fund/company identity materialization
+v3 -> v2 pre-materialize holdings, then instruments
         |
         v
-v3 lifecycle events -> v2 holdings/instruments -> replay-safe v1
+v1 canonical ledger + source references + metric observations
+        |
+        v
+v3 lifecycle-event materialization
+        |
+        v
+v4 tenant-private identity labels + immutable revision lineage
 ```
 
 The v4 identity step only accepts a fund/company candidate that already carries an explicit durable `global_fund_id` or `global_company_id`. It never manufactures an identity from a name, normalized-name match or model guess. A missing durable identity remains a governed resolution problem rather than becoming a new global entity accidentally.
 
 When an explicit reviewed ID does not yet exist, v4 may create the global identity only when review also supplies an explicit `canonical_name`/`canonicalName` suitable for globally visible identity metadata. A raw tenant `fund_name`, `company_name`, `name`, codename or source label is never sufficient to seed the global directory. When the ID already exists, tenant evidence does **not** overwrite its current global canonical name. The source label is retained in `tenant_entity_name` as approved tenant-scoped evidence, with source-reference lineage and a revision record. This allows historical/former/private labels to coexist without leaking them into the global directory.
 
-The entire v4 -> v3 -> v2 -> v1 call is one Postgres statement. A downstream holding, instrument, lifecycle or observation failure rolls back any new identity created by the same canonicalization attempt.
+The entire v4 → v3 → v2 → v1 chain executes inside one Postgres statement. Pre-materialized identities, holdings and instruments are not independently committed: any later review/hash/evidence, observation, lifecycle or lineage failure rolls the complete canonicalization attempt back. Tenant source-label rows are attached only after v1 has created the canonical source references they cite.
 
 ## Data structures
 
