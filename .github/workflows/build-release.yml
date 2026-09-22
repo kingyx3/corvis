@@ -77,41 +77,84 @@ jobs:
             --location="${GCP_REGION}" >/dev/null
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Prepare immutable image references
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
+          control_loop_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
+          echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
+          echo "api_tagged_ref=${api_image}:git-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "control_loop_image=${control_loop_image}" >> "${GITHUB_OUTPUT}"
+          echo "control_loop_tagged_ref=${control_loop_image}:git-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
       - name: Build and push immutable API image
+        id: api_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.refs.outputs.api_tagged_ref }}
+          cache-from: type=gha,scope=release-api
+          cache-to: type=gha,mode=max,scope=release-api
+
+      - name: Verify immutable API image
         id: api
         shell: bash
+        env:
+          IMAGE: ${{ steps.refs.outputs.api_image }}
+          TAGGED_REF: ${{ steps.refs.outputs.api_tagged_ref }}
+          BUILDX_DIGEST: ${{ steps.api_build.outputs.digest }}
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
-          tagged_ref="${image}:git-${GITHUB_SHA}"
-          docker build --pull --tag "${tagged_ref}" .
-          docker push "${tagged_ref}"
-          digest="$(gcloud artifacts docker images describe "${tagged_ref}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid API digest."; exit 1; }
-          digest_ref="${image}@${digest}"
+          registry_digest="$(gcloud artifacts docker images describe "${TAGGED_REF}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid API digest."; exit 1; }
+          [[ "${registry_digest}" == "${BUILDX_DIGEST}" ]] || { echo "BuildKit and Artifact Registry API digests disagree."; exit 1; }
+          digest_ref="${IMAGE}@${registry_digest}"
           gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
-          echo "image=${image}" >> "${GITHUB_OUTPUT}"
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
           echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
-          echo "tagged_ref=${tagged_ref}" >> "${GITHUB_OUTPUT}"
+          echo "tagged_ref=${TAGGED_REF}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push immutable control-loop image
+        id: control_loop_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.control-loop
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.refs.outputs.control_loop_tagged_ref }}
+          cache-from: type=gha,scope=release-control-loop
+          cache-to: type=gha,mode=max,scope=release-control-loop
+
+      - name: Verify immutable control-loop image
         id: control_loop
         shell: bash
+        env:
+          IMAGE: ${{ steps.refs.outputs.control_loop_image }}
+          TAGGED_REF: ${{ steps.refs.outputs.control_loop_tagged_ref }}
+          BUILDX_DIGEST: ${{ steps.control_loop_build.outputs.digest }}
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
-          tagged_ref="${image}:git-${GITHUB_SHA}"
-          docker build --pull --file Dockerfile.control-loop --tag "${tagged_ref}" .
-          docker push "${tagged_ref}"
-          digest="$(gcloud artifacts docker images describe "${tagged_ref}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid control-loop digest."; exit 1; }
-          digest_ref="${image}@${digest}"
+          registry_digest="$(gcloud artifacts docker images describe "${TAGGED_REF}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid control-loop digest."; exit 1; }
+          [[ "${registry_digest}" == "${BUILDX_DIGEST}" ]] || { echo "BuildKit and Artifact Registry control-loop digests disagree."; exit 1; }
+          digest_ref="${IMAGE}@${registry_digest}"
           gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
-          echo "image=${image}" >> "${GITHUB_OUTPUT}"
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
           echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
-          echo "tagged_ref=${tagged_ref}" >> "${GITHUB_OUTPUT}"
+          echo "tagged_ref=${TAGGED_REF}" >> "${GITHUB_OUTPUT}"
 
       - name: Attest API build provenance
         uses: actions/attest@v4
