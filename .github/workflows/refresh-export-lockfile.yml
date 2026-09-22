@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - feature/physical-export-delivery
+    paths:
+      - package.json
 
 permissions:
   contents: write
 
 jobs:
   lockfile:
-    if: ${{ !contains(github.event.head_commit.message, 'chore: refresh export dependency lockfile') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
