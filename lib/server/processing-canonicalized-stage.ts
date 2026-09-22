@@ -106,10 +106,10 @@ export class PostgresCanonicalizationRepository {
     predecessor: ReviewedPredecessorResult;
     idempotencyKey: string;
   }): Promise<CanonicalizationResult> {
-    // v2 materializes reviewed holdings/instruments before the proven v1
-    // observation canonicalizer validates references to those economic objects.
-    // The database wrapper is transactional and reuses v1's exact review/hash gates.
-    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction_v2(
+    // v3 layers lifecycle-event materialization on top of v2's reviewed
+    // holding/instrument projection and v1's proven observation canonicalizer.
+    // All layers execute in one Postgres transaction and preserve exact review/hash gates.
+    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction_v3(
       $1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7
     )`, [
       input.tenantId,
