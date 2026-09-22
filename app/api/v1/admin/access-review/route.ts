@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const db = postgres(getServerConfig().postgresDsn);
-    const [memberships, entitlements, rights, serviceGrants] = await Promise.all([
+    const [memberships, entitlements, rights, serviceGrants, supportGrants] = await Promise.all([
       db.query(`select s.subject,s.auth_method,s.user_id::text,s.status as subject_status,
           m.workspace_id::text,w.display_name as workspace_name,m.role_name,m.status as membership_status,
           m.valid_from,m.valid_until
@@ -39,6 +39,12 @@ export async function GET(request: Request) {
         where tenant_id=$1
         order by subject
         limit 500`, [identity.tenantId]),
+      db.query(`select support_grant_id::text,subject,user_id::text,workspace_id::text,role_name,purpose,approval_reference,
+          valid_from,valid_until,status,approved_by_subject,revoked_at,revoked_by_subject,revoke_reason
+        from corvis_control.support_access_grant
+        where tenant_id=$1
+        order by created_at desc
+        limit 500`, [identity.tenantId]),
     ]);
 
     return json({
@@ -47,6 +53,7 @@ export async function GET(request: Request) {
         resourceEntitlements: entitlements,
         dataRights: rights,
         serviceIdentityGrants: serviceGrants,
+        supportAccessGrants: supportGrants,
       },
       correlationId: id,
     });
