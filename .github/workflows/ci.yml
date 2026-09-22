@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -18,9 +22,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/setup-terraform-cached
         with:
-          terraform_version: "1.13.3"
+          terraform-version: "1.13.3"
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -49,8 +53,25 @@ jobs:
             terraform -chdir="${root}" init -backend=false
             terraform -chdir="${root}" validate
           done
+      - name: Cache Next.js compiler output
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx', 'next.config.*') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
-      - name: Install browsers
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install browser system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium webkit
+      - name: Install browsers and system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E
         run: npm run test:e2e
@@ -62,8 +83,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
       - name: Build production API container
-        run: docker build --pull --tag "corvis-ci:${GITHUB_SHA}" .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          pull: true
+          load: true
+          tags: corvis-ci:${{ github.sha }}
+          cache-from: type=gha,scope=ci-api
+          cache-to: type=gha,mode=max,scope=ci-api
       - name: Assert non-root standalone API runtime
         shell: bash
         run: |
@@ -71,7 +100,15 @@ jobs:
           test "$(docker image inspect "corvis-ci:${GITHUB_SHA}" --format '{{.Config.User}}')" = "corvis"
           docker run --rm --entrypoint node "corvis-ci:${GITHUB_SHA}" --version
       - name: Build control-loop container
-        run: docker build --pull --file Dockerfile.control-loop --tag "corvis-control-loop-ci:${GITHUB_SHA}" .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.control-loop
+          pull: true
+          load: true
+          tags: corvis-control-loop-ci:${{ github.sha }}
+          cache-from: type=gha,scope=ci-control-loop
+          cache-to: type=gha,mode=max,scope=ci-control-loop
       - name: Assert non-root control-loop runtime and execute scanner smoke test
         shell: bash
         run: |
@@ -104,6 +141,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
       - name: Apply full Postgres migration chain on a clean database
         shell: bash
         run: |
