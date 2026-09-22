@@ -8,6 +8,7 @@ type Call = { kind: "query" | "execute"; sql: string; parameters: PostgresPrimit
 
 class FakeDb implements PostgresSqlApi {
   calls: Call[] = [];
+  hybridSearchEnabled = true;
   candidates: PostgresRow[] = [{
     metric_code: "revenue",
     display_name: "Revenue",
@@ -34,6 +35,15 @@ class FakeDb implements PostgresSqlApi {
     this.calls.push({ kind: "query", sql, parameters });
     if (sql.includes("bool_or(o.value_number is not null)")) return this.candidates;
     if (sql.includes("with scoped as")) return this.factRows;
+    if (sql.includes("from corvis_control.feature_flag where")) {
+      return this.hybridSearchEnabled ? [{
+        flag_key: "retrieval.hybrid_search",
+        enabled: true,
+        kill_switch: false,
+        configuration: {},
+      }] : [];
+    }
+    if (sql.includes("feature_flag_emergency_stop")) return [];
     return [];
   }
 
@@ -179,6 +189,42 @@ test("source retrieval receives only the authoritative document subset and the g
     const filters = (searchBody as { filters: { documentIds: string[]; fundIds: string[] } }).filters;
     assert.deepEqual(filters.documentIds, sourceScoped.entitlements.sourceDocumentIds);
     assert.deepEqual(filters.fundIds, ["fund-a"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
+    else process.env.CORVIS_AI_ENDPOINT = originalAi;
+    if (originalSearch === undefined) delete process.env.CORVIS_SEARCH_ENDPOINT;
+    else process.env.CORVIS_SEARCH_ENDPOINT = originalSearch;
+  }
+});
+
+test("hybrid retrieval fails closed when its server-authoritative flag is not enabled", async () => {
+  const db = new FakeDb();
+  db.hybridSearchEnabled = false;
+  const originalAi = process.env.CORVIS_AI_ENDPOINT;
+  const originalSearch = process.env.CORVIS_SEARCH_ENDPOINT;
+  process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
+  process.env.CORVIS_SEARCH_ENDPOINT = "https://search.example.test";
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    urls.push(String(input));
+    return new Response(JSON.stringify({ answer: "Revenue was 100." }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const sourceScoped: RequestIdentity = {
+      ...identity,
+      entitlements: {
+        ...identity.entitlements,
+        sourceDocumentAccessAllowed: true,
+        sourceDocumentIds: ["00000000-0000-0000-0000-000000000101"],
+      },
+    };
+    const result = await new PermissionedResearchService(db).answer(sourceScoped, "Show source evidence");
+    assert.deepEqual(urls, ["https://ai.example.test/answer"]);
+    assert.equal(result.citations.length, 0);
+    assert.ok(db.calls.some((call) => call.kind === "query" && call.sql.includes("corvis_control.feature_flag")));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
