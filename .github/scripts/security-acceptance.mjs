@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const timeoutMs = 15_000;
 const environment = process.env.CORVIS_ENVIRONMENT || "unknown";
@@ -120,26 +121,33 @@ await check("csrf-cors-cross-site-block", async () => {
 
 await check("cloudflare-waf-probe", async () => {
   invariant(apiHostname, "API hostname is not configured");
-  const response = await request(`https://${apiHostname}/api/v1/health`, {
-    headers: { "x-corvis-security-probe": "waf-block" },
-  });
+  const response = await request(`https://${apiHostname}/__corvis/security/waf-block`);
   assertCloudflare(response, "WAF probe");
   invariant(response.status === 403, `WAF probe returned ${response.status} instead of 403`);
-  return { status: response.status };
+  return { status: response.status, probe: "path" };
 });
 
 await check("cloudflare-rate-limit-probe", async () => {
   invariant(apiHostname, "API hostname is not configured");
+
+  // Cloudflare Free supports one rate-limit rule, IP counting, and a 10-second
+  // window/mitigation period. Wait out any preceding health traffic, then drive
+  // the real API-wide rule instead of relying on a second probe-only rule or an
+  // Enterprise-only request-header expression.
+  await sleep(11_000);
+
   const statuses = [];
-  for (let index = 0; index < 7; index += 1) {
-    const response = await request(`https://${apiHostname}/api/v1/health`, {
-      headers: { "x-corvis-security-probe": "rate-limit" },
-    });
+  const maxProbeRequests = 80;
+  for (let index = 0; index < maxProbeRequests; index += 1) {
+    const response = await request(`https://${apiHostname}/api/v1/health`);
+    assertCloudflare(response, "rate-limit probe");
     statuses.push(response.status);
+    if (response.status === 403 || response.status === 429) break;
   }
-  invariant(statuses.slice(0, 5).every((status) => status === 200), `rate probe blocked before threshold: ${statuses.join(",")}`);
-  invariant(statuses.slice(5).some((status) => status === 403 || status === 429), `rate probe did not trigger enforcement: ${statuses.join(",")}`);
-  return { statuses };
+
+  invariant(statuses.some((status) => status === 200), `rate probe never observed healthy API traffic: ${statuses.join(",")}`);
+  invariant(statuses.some((status) => status === 403 || status === 429), `rate probe did not trigger Cloudflare enforcement within ${maxProbeRequests} requests: ${statuses.join(",")}`);
+  return { statuses, maxProbeRequests, windowSeconds: 10, probe: "api-health-path" };
 });
 
 await check("direct-api-gateway-missing-edge-key-blocked", async () => {
