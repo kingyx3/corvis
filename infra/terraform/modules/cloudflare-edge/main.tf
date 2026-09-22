@@ -7,9 +7,9 @@ terraform {
 }
 
 locals {
-  dynamic_host_expression       = "(http.host eq \"${var.api_hostname}\")"
-  worker_name                   = "corvis-api-${replace(var.api_hostname, ".", "-")}"
-  api_requests_per_10_seconds   = max(1, ceil(var.api_requests_per_minute / 6))
+  dynamic_host_expression     = "(http.host eq \"${var.api_hostname}\")"
+  worker_name                 = "corvis-api-${replace(var.api_hostname, ".", "-")}"
+  api_requests_per_10_seconds = max(1, ceil(var.api_requests_per_minute / 6))
 }
 
 resource "cloudflare_worker" "api_proxy" {
@@ -78,7 +78,7 @@ resource "cloudflare_workers_deployment" "api_proxy" {
 resource "cloudflare_workers_route" "api" {
   zone_id = var.zone_id
   pattern = "${var.api_hostname}/*"
-  script  = cloudflare_worker.api_proxy.name
+  script  = local.worker_name
 
   depends_on = [cloudflare_workers_deployment.api_proxy]
 }
