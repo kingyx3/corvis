@@ -137,6 +137,23 @@ where tenant_id='11111111-1111-4111-8111-111111111111'
   and job_id='reviewed:22222222-2222-4222-8222-222222222222'
   and stage='reviewed' and state='running';
 
+-- Migration 031 scopes predecessor lookup through the currently executing
+-- canonicalized effect. Model that exact runtime boundary so this acceptance
+-- proves the production correlation contract instead of bypassing it.
+insert into corvis_control.processing_job (
+  tenant_id,job_id,document_id,stage,state,attempt,max_attempts,correlation_id,version
+) values (
+  '11111111-1111-4111-8111-111111111111','canonicalized:22222222-2222-4222-8222-222222222222',
+  '22222222-2222-4222-8222-222222222222','canonicalized','running',1,3,'economic-graph-ci',1
+);
+
+insert into corvis_control.processing_stage_effect (
+  tenant_id,job_id,effect_key,document_id,stage,state,attempt_count
+) values (
+  '11111111-1111-4111-8111-111111111111','canonicalized:22222222-2222-4222-8222-222222222222',
+  'economic-graph-ci','22222222-2222-4222-8222-222222222222','canonicalized','started',1
+);
+
 insert into corvis_semantic.metric_definition (
   metric_code,definition_version,display_name,data_type,aggregation_behavior,unit_type,active
 ) values ('fair_value','1','Fair value','numeric','none','currency',true)
