@@ -3,23 +3,29 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("reviewed holding and instrument candidates materialize transactionally before observations", async () => {
-  const sql = (await readFile("db/postgres/migrations/036_materialize_economic_candidates.sql", "utf8")).toLowerCase();
+  const v2 = (await readFile("db/postgres/migrations/036_materialize_economic_candidates.sql", "utf8")).toLowerCase();
+  const v3 = (await readFile("db/postgres/migrations/037_materialize_lifecycle_events.sql", "utf8")).toLowerCase();
   const runtime = (await readFile("lib/server/processing-canonicalized-stage.ts", "utf8")).toLowerCase();
 
-  assert.match(sql, /create or replace function corvis_facts\.canonicalize_reviewed_extraction_v2/);
-  assert.match(sql, /from corvis_review\.extraction_review_gate/);
-  assert.match(sql, /g\.status='ready'/);
-  assert.match(sql, /g\.blocking_candidate_count=0/);
-  assert.match(sql, /g\.candidate_set_sha256=p_candidate_set_sha256/);
-  assert.match(sql, /g\.decision_set_sha256=p_decision_set_sha256/);
-  assert.match(sql, /candidate_type='holding'/);
-  assert.match(sql, /candidate_type='instrument'/);
-  assert.match(sql, /reviewed holding candidate requires uuid holding_id/);
-  assert.match(sql, /reviewed company holding requires exactly target_company_id/);
-  assert.match(sql, /reviewed fund holding requires exactly target_fund_id/);
-  assert.match(sql, /reviewed instrument parent holding is unresolved or not company-targeted/);
-  assert.match(sql, /from corvis_facts\.canonicalize_reviewed_extraction\(/);
-  assert.match(runtime, /canonicalize_reviewed_extraction_v2/);
+  assert.match(v2, /create or replace function corvis_facts\.canonicalize_reviewed_extraction_v2/);
+  assert.match(v2, /from corvis_review\.extraction_review_gate/);
+  assert.match(v2, /g\.status='ready'/);
+  assert.match(v2, /g\.blocking_candidate_count=0/);
+  assert.match(v2, /g\.candidate_set_sha256=p_candidate_set_sha256/);
+  assert.match(v2, /g\.decision_set_sha256=p_decision_set_sha256/);
+  assert.match(v2, /candidate_type='holding'/);
+  assert.match(v2, /candidate_type='instrument'/);
+  assert.match(v2, /reviewed holding candidate requires uuid holding_id/);
+  assert.match(v2, /reviewed company holding requires exactly target_company_id/);
+  assert.match(v2, /reviewed fund holding requires exactly target_fund_id/);
+  assert.match(v2, /reviewed instrument parent holding is unresolved or not company-targeted/);
+  assert.match(v2, /from corvis_facts\.canonicalize_reviewed_extraction\(/);
+
+  // Runtime always enters through the newest transactional wrapper. Each layer
+  // must explicitly delegate to its predecessor so the v2 economic-materialization
+  // guarantees cannot be bypassed when a later canonicalizer is introduced.
+  assert.match(runtime, /canonicalize_reviewed_extraction_v3/);
+  assert.match(v3, /from corvis_facts\.canonicalize_reviewed_extraction_v2\(/);
 });
 
 test("materialization is replay-safe and preserves immutable revision lineage", async () => {

@@ -199,7 +199,17 @@ export class PostgresPublicServingResourceRepository {
       from corvis_identity.entity_lifecycle_event e
       join visible_event v on v.lifecycle_event_id=e.lifecycle_event_id
       join corvis_identity.entity_lifecycle_participant p on p.lifecycle_event_id=e.lifecycle_event_id
-      where not exists (
+      where (
+        e.source_kind in ('governed','public_registry')
+        or exists (
+          select 1
+          from corvis_identity.tenant_entity_lifecycle_evidence te
+          where te.tenant_id=$1::uuid
+            and te.lifecycle_event_id=e.lifecycle_event_id
+            and te.review_status='approved'
+        )
+      )
+      and not exists (
         select 1
         from corvis_identity.entity_lifecycle_participant hidden
         where hidden.lifecycle_event_id=e.lifecycle_event_id
