@@ -204,7 +204,11 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
       tenantId: request.headers.get("x-corvis-demo-tenant") || "tenant_demo",
       workspaceId,
       roles: demoRoles.length ? demoRoles : ["admin"],
-      entitlements: { workspaceIds: [workspaceId], sourceDocumentAccessAllowed: true },
+      entitlements: {
+        workspaceIds: [workspaceId],
+        sourceDocumentAccessAllowed: true,
+        redistributionAllowed: request.headers.get("x-corvis-demo-redistribution") === "true",
+      },
       authMethod: "demo",
       sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
     };

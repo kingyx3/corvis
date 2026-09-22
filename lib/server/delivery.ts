@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
+import { deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 
-function bearer(token?: string): Record<string,string> { return token ? { authorization:`Bearer ${token}` } : {}; }
 function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
 /**
@@ -34,10 +34,9 @@ export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource
 }
 
 export async function processQueuedExports(limit=25): Promise<{processed:number;failed:number}> {
-  const config=getServerConfig();
-  if(!config.exportDeliveryEndpoint) throw new Error("Export delivery adapter is not configured");
   const store=db();
-  const rows=await store.query(`select tenant_id,export_id,format,snapshot_ids,manifest,delivery_attempts
+  const rows=await store.query(`select tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,
+      format,snapshot_ids,manifest,delivery_attempts
     from corvis_serving.export_job
     where state in ('queued','retryable') and coalesce(delivery_attempts,0)<5
     order by created_at limit $1`,[limit]);
@@ -52,17 +51,12 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
     if(!claimed[0]) continue;
     const attempt=Number(claimed[0].delivery_attempts??priorAttempts+1);
     try{
-      const response=await fetch(`${config.exportDeliveryEndpoint.replace(/\/$/,"")}/exports`,{
-        method:"POST",headers:{"content-type":"application/json",...bearer(config.exportDeliveryToken)},
-        body:JSON.stringify({tenantId,exportId,format:row.format,snapshotIds:row.snapshot_ids,manifest:row.manifest}),cache:"no-store"
-      });
-      if(!response.ok) throw new Error(`Export delivery failed (${response.status})`);
-      const body=await response.json() as {objectUri?:string;checksumSha256?:string;expiresAt?:string};
-      if(!body.objectUri || !body.checksumSha256) throw new Error("Export delivery adapter returned incomplete result");
+      const delivered=await deliverExportArtifact(row,store);
       await store.execute(`update corvis_serving.export_job
-        set state='complete',object_uri=$1,expires_at=$2::timestamptz,checksum_sha256=$3,completed_at=now()
-        where tenant_id=$4 and export_id=$5::uuid and state='delivering' and delivery_attempts=$6`,
-      [body.objectUri,body.expiresAt??new Date(Date.now()+3600_000).toISOString(),body.checksumSha256,tenantId,exportId,attempt]);
+        set state='complete',object_uri=$1,expires_at=$2::timestamptz,checksum_sha256=$3,
+            manifest=$4::jsonb,completed_at=now(),last_error=null
+        where tenant_id=$5 and export_id=$6::uuid and state='delivering' and delivery_attempts=$7`,
+      [delivered.objectUri,delivered.expiresAt,delivered.checksumSha256,JSON.stringify(delivered.manifest),tenantId,exportId,attempt]);
       processed++;
     }catch(error){
       failed++;
