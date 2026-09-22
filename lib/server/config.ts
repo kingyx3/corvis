@@ -39,8 +39,12 @@ export type ServerConfig = {
   rateLimitRequestsPerMinute: number;
   dataLifecycleEndpoint?: string;
   dataLifecycleToken?: string;
+  // Deprecated compatibility fields. Physical exports are rendered by the
+  // existing delivery worker and stored in private GCS; no standalone export
+  // service is required for the production path.
   exportDeliveryEndpoint?: string;
   exportDeliveryToken?: string;
+  exportArtifactTtlSeconds: number;
   // Non-production compatibility only. Production internal calls use Google
   // workload OIDC instead of a shared secret.
   workerSecret?: string;
@@ -59,6 +63,7 @@ function csv(value?: string): string[] {
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const environment = (env.NODE_ENV || "development") as ServerConfig["environment"];
   const demoMode = truthy(env.CORVIS_DEMO_MODE);
+  const exportArtifactTtlSeconds = Math.min(positiveInteger(env.CORVIS_EXPORT_ARTIFACT_TTL_SECONDS) ?? 24 * 60 * 60, 7 * 24 * 60 * 60);
   const config: ServerConfig = {
     environment,
     demoMode,
@@ -92,6 +97,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     dataLifecycleToken: env.CORVIS_DATA_LIFECYCLE_TOKEN,
     exportDeliveryEndpoint: env.CORVIS_EXPORT_DELIVERY_ENDPOINT,
     exportDeliveryToken: env.CORVIS_EXPORT_DELIVERY_TOKEN,
+    exportArtifactTtlSeconds,
     workerSecret: env.CORVIS_WORKER_SECRET,
   };
 
@@ -102,9 +108,9 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   if (environment === "production") {
     if (demoMode) throw new Error("CORVIS_DEMO_MODE must be disabled in production");
     // Startup requires only authoritative cross-cutting bindings. Optional
-    // capability configuration (upload CORS, AI/search, observability,
-    // lifecycle/export delivery) fails closed at its own adapter boundary and
-    // is reported as incomplete readiness instead of taking unrelated paths down.
+    // capability configuration (upload CORS, AI/search, observability and
+    // lifecycle adapters) fails closed at its own boundary and is reported as
+    // incomplete readiness instead of taking unrelated paths down.
     const missing = [
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
