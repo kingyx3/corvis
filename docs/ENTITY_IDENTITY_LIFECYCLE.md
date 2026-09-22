@@ -10,7 +10,7 @@ Confluence remains authoritative for business semantics. The primary references 
 - AI Extraction Skill — Quarterly Fund Reports
 - Reference — AI Agent Execution Contract & Structured Output Schema
 
-The Postgres implementation is in `db/postgres/migrations/032_economic_entity_identity_lifecycle.sql`.
+The Postgres implementation is in `db/postgres/migrations/032_economic_entity_identity_lifecycle.sql` and the reviewed-candidate materialization path is extended by migrations `036`–`038`.
 
 ## Core rule
 
@@ -20,6 +20,35 @@ The Postgres implementation is in `db/postgres/migrations/032_economic_entity_id
 
 Conversely, two records must not be merged merely because their names normalize to the same string. Name similarity is evidence for resolution, not an identity key.
 
+## Reviewed extraction materialization
+
+A reviewed report may introduce an entire economic graph at once. Canonicalization therefore respects dependency order before validating metric observations:
+
+```text
+exact ready reviewed candidate set
+        |
+        v
+v4 pre-materialize reviewed fund/company identities
+        |
+        v
+v3 -> v2 pre-materialize holdings, then instruments
+        |
+        v
+v1 canonical ledger + source references + metric observations
+        |
+        v
+v3 lifecycle-event materialization
+        |
+        v
+v4 tenant-private identity labels + immutable revision lineage
+```
+
+The v4 identity step only accepts a fund/company candidate that already carries an explicit durable `global_fund_id` or `global_company_id`. It never manufactures an identity from a name, normalized-name match or model guess. A missing durable identity remains a governed resolution problem rather than becoming a new global entity accidentally.
+
+When an explicit reviewed ID does not yet exist, v4 may create the global identity only when review also supplies an explicit `canonical_name`/`canonicalName` suitable for globally visible identity metadata. A raw tenant `fund_name`, `company_name`, `name`, codename or source label is never sufficient to seed the global directory. When the ID already exists, tenant evidence does **not** overwrite its current global canonical name. The source label is retained in `tenant_entity_name` as approved tenant-scoped evidence, with source-reference lineage and a revision record. This allows historical/former/private labels to coexist without leaking them into the global directory.
+
+The entire v4 → v3 → v2 → v1 chain executes inside one Postgres statement. Pre-materialized identities, holdings and instruments are not independently committed: any later review/hash/evidence, observation, lifecycle or lineage failure rolls the complete canonicalization attempt back. Tenant source-label rows are attached only after v1 has created the canonical source references they cite.
+
 ## Data structures
 
 | Structure | Purpose |
@@ -27,9 +56,11 @@ Conversely, two records must not be merged merely because their names normalize 
 | `corvis_identity.fund` / `company` | Durable global economic identity and current display/canonical name. |
 | `corvis_identity.entity_name` | Global non-confidential current and historical names/aliases. |
 | `corvis_identity.tenant_entity_name` | Tenant-private source labels, codenames and aliases protected by RLS. |
+| `corvis_identity.tenant_entity_revision` | Tenant-scoped immutable reviewed fund/company materialization lineage. |
 | `corvis_identity.entity_external_identifier` | LEI, CIK, registry IDs, tickers, security/vendor/GP-admin identifiers with history. |
 | `corvis_identity.entity_lifecycle_event` | What happened and when. |
 | `corvis_identity.entity_lifecycle_participant` | Which durable identities participated and in what role. |
+| `corvis_identity.tenant_lifecycle_revision` | Tenant-scoped reviewed lifecycle-event materialization lineage. |
 | `corvis_identity.entity_relationship` | Traversable current/historical relationships between identities. |
 | `corvis_serving.entity_directory` | Global directory read model with current and former names plus external identifiers. |
 | `corvis_serving.entity_relationships` | Relationship graph read model. |
@@ -105,7 +136,7 @@ Search results should resolve to the durable entity ID and show relationship/his
 
 A private customer document can contain an alias or codename that another customer has never seen. That label must not become globally discoverable merely because both tenants resolve to the same `global_company_id` or `global_fund_id`.
 
-`tenant_entity_name` therefore carries `tenant_id`, optional source-reference lineage, confidence and review status, and is protected by forced RLS. Promotion from tenant-private alias to the global name registry must be an explicit governed decision supported by non-confidential/public or otherwise permitted evidence.
+`tenant_entity_name` therefore carries `tenant_id`, optional source-reference lineage, confidence and review status, and is protected by forced RLS. Promotion from tenant-private alias to the global name registry must be an explicit governed decision supported by non-confidential/public or otherwise permitted evidence. New global identity creation follows the same boundary: an explicit safe canonical name is required separately from the raw tenant source label.
 
 ## Invariants
 
@@ -116,5 +147,6 @@ A private customer document can contain an alias or codename that another custom
 - A split/merger can have multiple participants; the model must not assume one predecessor and one successor.
 - Historical names and identifiers remain queryable.
 - Tenant-private aliases remain tenant scoped.
+- A tenant source label cannot seed a globally visible canonical name unless review explicitly supplies a separate globally safe canonical name.
 - Source observations are never rewritten solely because current entity metadata changed.
 - Ambiguous continuity remains explicit rather than being guessed.

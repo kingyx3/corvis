@@ -106,10 +106,10 @@ export class PostgresCanonicalizationRepository {
     predecessor: ReviewedPredecessorResult;
     idempotencyKey: string;
   }): Promise<CanonicalizationResult> {
-    // v3 layers lifecycle-event materialization on top of v2's reviewed
-    // holding/instrument projection and v1's proven observation canonicalizer.
-    // All layers execute in one Postgres transaction and preserve exact review/hash gates.
-    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction_v3(
+    // v4 establishes reviewed fund/company identities before delegating to v3,
+    // which layers lifecycle materialization on v2 holdings/instruments and the
+    // v1 observation canonicalizer. All layers retain the same review/hash gates.
+    const rows = await this.db.query(`select * from corvis_facts.canonicalize_reviewed_extraction_v4(
       $1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7
     )`, [
       input.tenantId,
