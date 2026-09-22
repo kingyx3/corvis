@@ -1,10 +1,10 @@
--- Fix PL/pgSQL output-column ambiguity in canonicalization.
+-- Fix PL/pgSQL variable/column ambiguity in canonicalization.
 -- Depends on migrations 001-041.
 --
--- canonicalize_reviewed_extraction returns a column named canonicalization_run_id.
--- Unqualified references to the same table column therefore fail at runtime under
--- PostgreSQL's default variable-conflict policy. Preserve the existing reviewed /
--- correction-replay semantics and qualify the affected persistence references.
+-- canonicalize_reviewed_extraction has output/local variables whose names overlap
+-- table columns. PostgreSQL correctly treats those unqualified references as
+-- ambiguous at runtime. Preserve the existing reviewed/correction-replay semantics
+-- and qualify the affected persistence/review references in a forward migration.
 
 begin;
 
@@ -44,6 +44,12 @@ begin
 
   patched := replace(
     patched,
+    E'select review_event_id,correction_payload\n      into correction_event_id,correction_payload\n    from corvis_review.candidate_review_event\n    where tenant_id=p_tenant_id\n      and extraction_run_id=p_extraction_run_id\n      and candidate_id=candidate_row.candidate_id\n      and review_policy_version=p_review_policy_version\n      and decision=''correct''\n    order by event_sequence desc',
+    E'select cre.review_event_id,cre.correction_payload\n      into correction_event_id,correction_payload\n    from corvis_review.candidate_review_event cre\n    where cre.tenant_id=p_tenant_id\n      and cre.extraction_run_id=p_extraction_run_id\n      and cre.candidate_id=candidate_row.candidate_id\n      and cre.review_policy_version=p_review_policy_version\n      and cre.decision=''correct''\n    order by cre.event_sequence desc'
+  );
+
+  patched := replace(
+    patched,
     E'update corvis_facts.canonicalization_run\n  set status=''ready'',canonical_candidate_count=actual_candidate_count,\n      observation_count=actual_observation_count,source_reference_count=actual_reference_count,\n      completed_at=coalesce(completed_at,now())\n  where tenant_id=p_tenant_id and canonicalization_run_id=canonical_run_id and status=''writing''',
     E'update corvis_facts.canonicalization_run cr\n  set status=''ready'',canonical_candidate_count=actual_candidate_count,\n      observation_count=actual_observation_count,source_reference_count=actual_reference_count,\n      completed_at=coalesce(cr.completed_at,now())\n  where cr.tenant_id=p_tenant_id and cr.canonicalization_run_id=canonical_run_id and cr.status=''writing'''
   );
@@ -59,8 +65,9 @@ begin
   end if;
   if position('on conflict (tenant_id,canonicalization_run_id)' in patched) > 0
     or position('on conflict (tenant_id,canonicalization_run_id,candidate_id)' in patched) > 0
-    or position('where tenant_id=p_tenant_id and canonicalization_run_id=canonical_run_id' in patched) > 0 then
-    raise exception 'migration 042 left an ambiguous canonicalization_run_id reference';
+    or position('where tenant_id=p_tenant_id and canonicalization_run_id=canonical_run_id' in patched) > 0
+    or position('select review_event_id,correction_payload' in patched) > 0 then
+    raise exception 'migration 042 left an ambiguous canonicalization reference';
   end if;
 
   execute patched;
