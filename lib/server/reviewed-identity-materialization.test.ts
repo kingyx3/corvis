@@ -10,8 +10,10 @@ test("reviewed fund and company candidates materialize before downstream economi
   assert.match(sql, /candidate_type in \('fund','company'\)/);
   assert.match(sql, /reviewed fund candidate requires resolved global_fund_id/);
   assert.match(sql, /reviewed company candidate requires resolved global_company_id/);
-  assert.match(sql, /reviewed fund candidate requires canonical\/source name/);
-  assert.match(sql, /reviewed company candidate requires canonical\/source name/);
+  assert.match(sql, /reviewed fund candidate requires source or canonical name/);
+  assert.match(sql, /reviewed company candidate requires source or canonical name/);
+  assert.match(sql, /new reviewed fund identity requires explicit canonical_name/);
+  assert.match(sql, /new reviewed company identity requires explicit canonical_name/);
   assert.match(sql, /reviewed candidate set contains duplicate global_fund_id/);
   assert.match(sql, /reviewed candidate set contains duplicate global_company_id/);
   assert.match(sql, /insert into corvis_identity\.fund/);
@@ -26,7 +28,7 @@ test("reviewed fund and company candidates materialize before downstream economi
   assert.match(runtime, /canonicalize_reviewed_extraction_v4/);
 });
 
-test("tenant source labels never silently rename an existing global identity", async () => {
+test("tenant source labels never silently rename or seed an existing global identity", async () => {
   const sql = (await readFile("db/postgres/migrations/038_materialize_reviewed_identities.sql", "utf8")).toLowerCase();
 
   assert.match(sql, /tenant_entity_name/);
@@ -38,6 +40,12 @@ test("tenant source labels never silently rename an existing global identity", a
   assert.match(sql, /source_reference_ids uuid\[\] not null/);
   assert.doesNotMatch(sql, /update corvis_identity\.fund\s+set canonical_name/);
   assert.doesNotMatch(sql, /update corvis_identity\.company\s+set canonical_name/);
+
+  // Raw/source aliases are accepted only for tenant evidence. The global canonical
+  // seed is read exclusively from the explicitly reviewed canonical-name keys.
+  assert.match(sql, /canonical_name_value := nullif\(btrim\(coalesce\([\s\S]*canonical_name[\s\S]*canonicalname/);
+  assert.match(sql, /source_name_value := nullif\(btrim\(coalesce\([\s\S]*source_name[\s\S]*fund_name/);
+  assert.match(sql, /source_name_value := nullif\(btrim\(coalesce\([\s\S]*source_name[\s\S]*company_name/);
 });
 
 test("identity creation never derives a global id from a name", async () => {
