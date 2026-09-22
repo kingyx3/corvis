@@ -54,13 +54,18 @@ test("missing fund entitlements fail closed instead of widening access", async (
   assert.equal(db.calls[0]!.parameters[0], "[]");
 });
 
-test("company visibility comes only from approved tenant observations on entitled funds", async () => {
+test("company visibility comes from approved observations or approved company holdings on entitled funds", async () => {
   const db = new FakeDb();
   await new PostgresPublicServingResourceRepository(db).companies(identity);
   const sql = normalized(db.calls[0]!.sql);
   assert.match(sql, /o\.tenant_id=\$1::uuid/);
   assert.match(sql, /o\.review_state='approved'/);
-  assert.match(sql, /join allowed_fund/);
+  assert.match(sql, /from corvis_serving\.holdings h/);
+  assert.match(sql, /h\.tenant_id=\$1::uuid/);
+  assert.match(sql, /h\.target_type='company'/);
+  assert.match(sql, /h\.target_company_id is not null/);
+  assert.match(sql, /join allowed_fund a on a\.fund_id=h\.fund_id/);
+  assert.match(sql, /union/);
   assert.match(sql, /join visible_company/);
 });
 
@@ -74,10 +79,13 @@ test("consolidated facts require entitlement and membership in a published snaps
   assert.match(sql, /f\.consolidated_fact_id=any\(s\.fact_ids\)/);
 });
 
-test("lifecycle API refuses events containing participants outside the visible entitlement graph", async () => {
+test("lifecycle API uses holding-derived visibility and refuses hidden participants", async () => {
   const db = new FakeDb();
   await new PostgresPublicServingResourceRepository(db).companyLifecycleEvents(identity);
   const sql = normalized(db.calls[0]!.sql);
+  assert.match(sql, /from corvis_serving\.holdings h/);
+  assert.match(sql, /h\.tenant_id=\$1::uuid/);
+  assert.match(sql, /join allowed_fund a on a\.fund_id=h\.fund_id/);
   assert.match(sql, /not exists \( select 1 from corvis_identity\.entity_lifecycle_participant hidden/);
   assert.match(sql, /not exists \(select 1 from visible_company/);
   assert.match(sql, /not exists \(select 1 from allowed_fund/);
