@@ -106,6 +106,13 @@ export class PostgresPublicServingResourceRepository {
         where o.tenant_id=$1::uuid
           and o.review_state='approved'
           and o.company_id is not null
+        union
+        select distinct h.target_company_id as company_id
+        from corvis_serving.holdings h
+        join allowed_fund a on a.fund_id=h.fund_id
+        where h.tenant_id=$1::uuid
+          and h.target_type='company'
+          and h.target_company_id is not null
       )
       select d.entity_id,d.canonical_name,d.names,d.external_identifiers
       from corvis_serving.entity_directory d
@@ -183,6 +190,13 @@ export class PostgresPublicServingResourceRepository {
         where o.tenant_id=$1::uuid
           and o.review_state='approved'
           and o.company_id is not null
+        union
+        select distinct h.target_company_id as company_id
+        from corvis_serving.holdings h
+        join allowed_fund a on a.fund_id=h.fund_id
+        where h.tenant_id=$1::uuid
+          and h.target_type='company'
+          and h.target_company_id is not null
       ), visible_event as (
         select distinct p.lifecycle_event_id
         from corvis_identity.entity_lifecycle_participant p
