@@ -76,6 +76,10 @@ class TenantAwareDb implements PostgresSqlApi {
         version: 1,
       }];
     }
+    if (sql.includes("from corvis_control.feature_flag where")) {
+      return [{ flag_key: "retrieval.hybrid_search", enabled: true, kill_switch: false, configuration: {} }];
+    }
+    if (sql.includes("feature_flag_emergency_stop")) return [];
     if (sql.includes("select\n    (select count(*) from corvis_control.audit_event")) {
       return [{ audit_events: isA ? 5 : 9, failed_jobs: 0, completed_deletions: 1, published_snapshots: 1 }];
     }
