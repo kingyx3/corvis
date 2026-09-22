@@ -106,6 +106,7 @@ declare
   v_now timestamptz := now();
   v_rights_id uuid;
   v_changed integer := 0;
+  v_updated integer := 0;
 begin
   if p_operation not in ('set','revoke') then raise exception 'invalid data-right operation'; end if;
   if p_resource_type not in ('workspace','fund','document') then raise exception 'invalid resource type'; end if;
@@ -145,7 +146,8 @@ begin
       set effective_to=v_now
       where tenant_id=p_tenant_id and resource_type=p_resource_type and resource_id=p_resource_id
         and effective_from < v_now and (effective_to is null or effective_to > v_now);
-    v_changed := v_changed + found::integer;
+    get diagnostics v_updated = row_count;
+    v_changed := v_changed + v_updated;
   end if;
 
   insert into corvis_control.audit_event
