@@ -8,7 +8,9 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
 
 /**
  * Standard modal-dialog focus behaviour: focus moves inside the dialog on
- * mount, Tab/Shift+Tab cycle only among the dialog's own focusable elements,
+ * mount (to the element marked `data-autofocus` when present, e.g. Cancel in
+ * a destructive confirmation, otherwise the first focusable element),
+ * Tab/Shift+Tab cycle only among the dialog's own focusable elements,
  * Escape triggers `onClose`, and focus returns to whatever was focused
  * before the dialog opened once it unmounts.
  */
@@ -22,7 +24,8 @@ export function useFocusTrap(containerRef: RefObject<HTMLElement | null>, onClos
     const previouslyFocused = document.activeElement as HTMLElement | null;
 
     const focusables = focusableElements(container);
-    (focusables[0] ?? container).focus();
+    const preferred = focusables.find((element) => element.hasAttribute("data-autofocus"));
+    (preferred ?? focusables[0] ?? container).focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {

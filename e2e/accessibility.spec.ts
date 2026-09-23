@@ -39,6 +39,26 @@ test("admin console has no serious or critical accessibility violations @matrix"
   expect(unnamed, unnamed.join("\n")).toEqual([]);
 });
 
+test("admin destructive confirmation shows the exact endpoint, focuses Cancel and is accessible", async ({ page }) => {
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: /admin console/i })).toBeVisible();
+  const deletion = page.locator("section").filter({ has: page.getByRole("heading", { name: "Retention-aware deletion" }) });
+  await deletion.getByRole("combobox", { name: /^action/i }).selectOption("execute");
+  await deletion.getByRole("textbox", { name: /deletion request id/i }).fill("req-2026-0042");
+  const trigger = deletion.getByRole("button", { name: /review change/i });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: /confirm retention-aware deletion/i });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: /confirm destructive change/i })).toBeVisible();
+  await expect(dialog.getByText("POST /api/v1/admin/deletion-requests/req-2026-0042/execute", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^cancel$/i })).toBeFocused();
+  const violations = await blockingViolations(page, '[role="dialog"]');
+  expect(violations, describe(violations)).toEqual([]);
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 test("upload dialog has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /^documents$/i }).first().click();

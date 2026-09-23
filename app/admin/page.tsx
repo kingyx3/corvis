@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { GovernanceForms } from "@/features/admin/governance-forms";
+import { GovernanceForms, type AdminFeatureFlag } from "@/features/admin/governance-forms";
 
 type PanelState = { loading: boolean; status: number | null; data: unknown; error: string | null };
 const EMPTY: PanelState = { loading: true, status: null, data: null, error: null };
@@ -16,14 +16,25 @@ async function loadJson(path: string): Promise<PanelState> {
   } catch { return { loading: false, status: null, data: null, error: "Request unavailable" }; }
 }
 
-async function loadPanels(): Promise<[PanelState, PanelState, PanelState, PanelState, PanelState]> {
+type Panels = [PanelState, PanelState, PanelState, PanelState, PanelState, PanelState];
+
+async function loadPanels(): Promise<Panels> {
   return Promise.all([
     loadJson("/api/v1/admin/readiness"),
     loadJson("/api/v1/admin/feature-flags"),
     loadJson("/api/v1/admin/control-evidence"),
     loadJson("/api/v1/admin/access-review"),
     loadJson("/api/v1/admin/audit?limit=100"),
+    loadJson("/api/v1/admin/feature-flags/governance"),
   ]);
+}
+
+// The rollout form edits flags in place, so it needs each registered flag's
+// current enabled/config/owner/retireBy state from the governance report.
+function governanceFlags(state: PanelState): AdminFeatureFlag[] | null {
+  if (state.loading || state.error) return null;
+  const report = unwrap(state.data) as { flags?: unknown } | null;
+  return Array.isArray(report?.flags) ? report.flags as AdminFeatureFlag[] : null;
 }
 
 function unwrap(value: unknown): unknown {
@@ -58,12 +69,13 @@ export default function AdminPage() {
   const [evidence, setEvidence] = useState<PanelState>(EMPTY);
   const [accessReview, setAccessReview] = useState<PanelState>(EMPTY);
   const [audit, setAudit] = useState<PanelState>(EMPTY);
+  const [flagGovernance, setFlagGovernance] = useState<PanelState>(EMPTY);
 
-  const applyPanels = useCallback((states: [PanelState, PanelState, PanelState, PanelState, PanelState]) => {
-    setReadiness(states[0]); setFlags(states[1]); setEvidence(states[2]); setAccessReview(states[3]); setAudit(states[4]);
+  const applyPanels = useCallback((states: Panels) => {
+    setReadiness(states[0]); setFlags(states[1]); setEvidence(states[2]); setAccessReview(states[3]); setAudit(states[4]); setFlagGovernance(states[5]);
   }, []);
   const refresh = useCallback(async () => {
-    setReadiness(EMPTY); setFlags(EMPTY); setEvidence(EMPTY); setAccessReview(EMPTY); setAudit(EMPTY);
+    setReadiness(EMPTY); setFlags(EMPTY); setEvidence(EMPTY); setAccessReview(EMPTY); setAudit(EMPTY); setFlagGovernance(EMPTY);
     applyPanels(await loadPanels());
   }, [applyPanels]);
 
@@ -79,10 +91,10 @@ export default function AdminPage() {
       <button type="button" onClick={() => void refresh()} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #9ca3af", background: "#fff", cursor: "pointer" }}>Refresh control state</button>
     </header>
 
-    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", marginBottom: 24 }}><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
-    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", marginBottom: 30 }}><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
+    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", marginBottom: 24 }}><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
+    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", marginBottom: 30 }}><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
 
     <section style={{ marginBottom: 18 }}><p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em" }}>PRIVILEGED OPERATIONS</p><h2 style={{ margin: "0 0 6px", fontSize: 24 }}>Governed production workflows</h2><p style={{ margin: 0, color: "#4b5563", maxWidth: 940 }}>Use identifiers from Access review and the relevant incident/change record. Consequential changes require explicit preview/confirmation and return an attributable operation receipt.</p></section>
-    <GovernanceForms onSuccess={refresh}/>
+    <GovernanceForms onSuccess={refresh} featureFlags={governanceFlags(flagGovernance)}/>
   </main>;
 }
