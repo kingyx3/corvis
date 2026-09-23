@@ -1,5 +1,6 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type {
+  Permission,
   ReconciliationException,
   ReconciliationResolutionCommand,
   ReconciliationResolutionOutcome,
@@ -20,7 +21,14 @@ export type SourceEvidence = {
   excerpt?: string;
 };
 
+export type WorkspaceCapabilities = {
+  permissions: Permission[];
+  sourceDocumentAccessAllowed: boolean;
+  redistributionAllowed: boolean;
+};
+
 export interface WorkspacePort {
+  capabilities(): Promise<WorkspaceCapabilities>;
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;
