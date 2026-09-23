@@ -41,6 +41,7 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
   ]);
   const identityOnlyRoutes = new Set([
     "app/api/v1/me/route.ts",
+    "app/api/v1/capabilities/route.ts",
   ]);
 
   for (const file of files) {
@@ -169,5 +170,4 @@ test("authoritative session revocation is tenant-scoped, server-managed, and che
   assert.match(authorization, /r\.auth_method=s\.auth_method/);
   assert.match(authorization, /r\.subject=s\.subject/);
   assert.match(authorization, /r\.session_id=\$4/);
-}
-);
+});

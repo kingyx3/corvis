@@ -23,6 +23,8 @@ export type ExportStatus = {
   expiresAt?: string;
   checksumSha256?: string;
   manifest: DeliveryManifest;
+  /** True when the export is complete and unexpired; a grant is issued only by the single-export read. */
+  downloadAvailable: boolean;
   downloadUrl?: string;
   downloadExpiresAt?: string;
 };
@@ -115,32 +117,55 @@ async function assertCurrentArtifactAccess(
   }
 }
 
+export const EXPORT_STATUS_COLUMNS = "export_id,format,state,manifest,checksum_sha256,created_at,completed_at,expires_at,snapshot_ids";
+
+/**
+ * Builds a caller-visible status from one export_job row after re-checking the
+ * caller's current rights to the exported data. Read-only: it never issues a
+ * download grant. Throws AuthorizationError when current rights no longer
+ * cover the artifact.
+ */
+export async function exportStatusFromJob(
+  identity: RequestIdentity,
+  row: PostgresRow,
+  store: PostgresSqlApi,
+): Promise<ExportStatus> {
+  const manifest = row.manifest as DeliveryManifest;
+  const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
+  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
+  const state = text(row, "state");
+  const expiresAt = row.expires_at == null ? undefined : text(row, "expires_at");
+  return {
+    exportId: text(row, "export_id"),
+    format: text(row, "format") as ExportFormat,
+    state,
+    createdAt: text(row, "created_at"),
+    completedAt: row.completed_at == null ? undefined : text(row, "completed_at"),
+    expiresAt,
+    checksumSha256: row.checksum_sha256 == null ? undefined : text(row, "checksum_sha256"),
+    manifest,
+    downloadAvailable: state === "complete" && expiresAt != null && Date.parse(expiresAt) > Date.now(),
+  };
+}
+
+/**
+ * Reads one of the caller's exports and, when it is downloadable, issues a
+ * fresh short-lived single-subject download grant. Clients call this on
+ * demand when the user asks to download, never from a polling loop.
+ */
 export async function getPhysicalExportStatus(
   identity: RequestIdentity,
   exportId: string,
   store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
 ): Promise<ExportStatus | null> {
-  const rows = await store.query(`select export_id,format,state,manifest,checksum_sha256,created_at,completed_at,expires_at,snapshot_ids
+  const rows = await store.query(`select ${EXPORT_STATUS_COLUMNS}
     from corvis_serving.export_job
     where tenant_id=$1 and export_id=$2::uuid and requested_by=$3
     limit 1`, [identity.tenantId, exportId, identity.subject]);
   const row = rows[0];
   if (!row) return null;
-  const manifest = row.manifest as DeliveryManifest;
-  const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
-  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
-
-  const result: ExportStatus = {
-    exportId: text(row, "export_id"),
-    format: text(row, "format") as ExportFormat,
-    state: text(row, "state"),
-    createdAt: text(row, "created_at"),
-    completedAt: row.completed_at == null ? undefined : text(row, "completed_at"),
-    expiresAt: row.expires_at == null ? undefined : text(row, "expires_at"),
-    checksumSha256: row.checksum_sha256 == null ? undefined : text(row, "checksum_sha256"),
-    manifest,
-  };
-  if (result.state === "complete" && result.expiresAt && Date.parse(result.expiresAt) > Date.now()) {
+  const result = await exportStatusFromJob(identity, row, store);
+  if (result.downloadAvailable && result.expiresAt) {
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Math.min(Date.parse(result.expiresAt), Date.now() + 10 * 60_000)).toISOString();
     await store.execute(`insert into corvis_serving.export_download_grant

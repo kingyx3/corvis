@@ -1,208 +1,67 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { GovernanceForms, type AdminFeatureFlag } from "@/features/admin/governance-forms";
 
-const subscribeNever = () => () => {};
-
-type PanelState = {
-  loading: boolean;
-  status: number | null;
-  data: unknown;
-  error: string | null;
-};
-
-type CommandState = {
-  sending: boolean;
-  status: number | null;
-  result: unknown;
-  error: string | null;
-};
-
+type PanelState = { loading: boolean; status: number | null; data: unknown; error: string | null };
 const EMPTY: PanelState = { loading: true, status: null, data: null, error: null };
-const EMPTY_COMMAND: CommandState = { sending: false, status: null, result: null, error: null };
+const card = { border: "1px solid #d5d8dc", borderRadius: 12, padding: 20, background: "#fff" } as const;
 
 async function loadJson(path: string): Promise<PanelState> {
   try {
-    const response = await fetch(path, {
-      credentials: "include",
-      headers: { accept: "application/json" },
-      cache: "no-store",
-    });
+    const response = await fetch(path, { credentials: "include", headers: { accept: "application/json" }, cache: "no-store" });
     const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      return { loading: false, status: response.status, data: null, error: `Request failed (${response.status})` };
-    }
+    if (!response.ok) return { loading: false, status: response.status, data: null, error: `Request failed (${response.status})` };
     return { loading: false, status: response.status, data, error: null };
-  } catch {
-    return { loading: false, status: null, data: null, error: "Request unavailable" };
-  }
+  } catch { return { loading: false, status: null, data: null, error: "Request unavailable" }; }
 }
 
-async function loadPanels(): Promise<[PanelState, PanelState, PanelState, PanelState, PanelState]> {
+type Panels = [PanelState, PanelState, PanelState, PanelState, PanelState, PanelState];
+
+async function loadPanels(): Promise<Panels> {
   return Promise.all([
     loadJson("/api/v1/admin/readiness"),
     loadJson("/api/v1/admin/feature-flags"),
     loadJson("/api/v1/admin/control-evidence"),
     loadJson("/api/v1/admin/access-review"),
     loadJson("/api/v1/admin/audit?limit=100"),
+    loadJson("/api/v1/admin/feature-flags/governance"),
   ]);
 }
 
-function Panel({ title, state, height = 320 }: { title: string; state: PanelState; height?: number }) {
-  return (
-    <section style={{ border: "1px solid #d5d8dc", borderRadius: 12, padding: 20, background: "#fff" }}>
-      <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>{title}</h2>
-      {state.loading ? <p>Loading…</p> : null}
-      {state.error ? <p role="alert">{state.error}</p> : null}
-      {!state.loading && !state.error ? (
-        <pre style={{ margin: 0, overflow: "auto", maxHeight: height, fontSize: 12, whiteSpace: "pre-wrap" }}>
-          {JSON.stringify(state.data, null, 2)}
-        </pre>
-      ) : null}
-    </section>
-  );
+// The rollout form edits flags in place, so it needs each registered flag's
+// current enabled/config/owner/retireBy state from the governance report.
+function governanceFlags(state: PanelState): AdminFeatureFlag[] | null {
+  if (state.loading || state.error) return null;
+  const report = unwrap(state.data) as { flags?: unknown } | null;
+  return Array.isArray(report?.flags) ? report.flags as AdminFeatureFlag[] : null;
 }
 
-function JsonCommand({
-  title,
-  description,
-  endpoint,
-  buildInitialValue,
-  onSuccess,
-}: {
-  title: string;
-  description: string;
-  endpoint: string;
-  buildInitialValue: (now: Date) => string;
-  onSuccess: () => Promise<void>;
-}) {
-  // The prerendered HTML and the hydrating render show an empty editor; the
-  // example is rendered only once hydrated, stamped with the time the page was
-  // opened in the browser. `edited` is null until the operator types.
-  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
-  const [openedAt] = useState(() => new Date());
-  const [edited, setValue] = useState<string | null>(null);
-  const value = edited ?? (hydrated ? buildInitialValue(openedAt) : null);
-  const [state, setState] = useState<CommandState>(EMPTY_COMMAND);
-
-  const submit = async () => {
-    if (value === null) return;
-    let body: unknown;
-    try {
-      body = JSON.parse(value);
-    } catch {
-      setState({ sending: false, status: null, result: null, error: "Command must be valid JSON." });
-      return;
-    }
-    setState({ ...EMPTY_COMMAND, sending: true });
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(body),
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) {
-        setState({ sending: false, status: response.status, result, error: `Command failed (${response.status}).` });
-        return;
-      }
-      setState({ sending: false, status: response.status, result, error: null });
-      await onSuccess();
-    } catch {
-      setState({ sending: false, status: null, result: null, error: "Command unavailable." });
-    }
-  };
-
-  return (
-    <section style={{ border: "1px solid #d5d8dc", borderRadius: 12, padding: 20, background: "#fff" }}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>{title}</h2>
-      <p style={{ margin: "0 0 12px", color: "#4b5563", fontSize: 13 }}>{description}</p>
-      <textarea
-        aria-label={`${title} JSON command`}
-        value={value ?? ""}
-        placeholder="Loading example command…"
-        onChange={(event) => setValue(event.target.value)}
-        rows={13}
-        spellCheck={false}
-        style={{ width: "100%", boxSizing: "border-box", fontFamily: "monospace", fontSize: 12, padding: 12, borderRadius: 8, border: "1px solid #9ca3af" }}
-      />
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
-        <button
-          type="button"
-          disabled={state.sending}
-          onClick={() => void submit()}
-          style={{ padding: "9px 14px", borderRadius: 8, border: "1px solid #111827", background: "#111827", color: "#fff", cursor: state.sending ? "wait" : "pointer" }}
-        >
-          {state.sending ? "Applying…" : "Apply"}
-        </button>
-        {state.error ? <span role="alert" style={{ color: "#991b1b", fontSize: 13 }}>{state.error}</span> : null}
-        {!state.error && state.status ? <span style={{ color: "#166534", fontSize: 13 }}>Applied ({state.status})</span> : null}
-      </div>
-      {state.result ? (
-        <pre style={{ margin: "12px 0 0", overflow: "auto", maxHeight: 180, fontSize: 11, whiteSpace: "pre-wrap", background: "#f9fafb", padding: 10, borderRadius: 8 }}>
-          {JSON.stringify(state.result, null, 2)}
-        </pre>
-      ) : null}
-    </section>
-  );
+function unwrap(value: unknown): unknown {
+  return value && typeof value === "object" && !Array.isArray(value) && "data" in value ? (value as { data: unknown }).data : value;
+}
+function scalar(value: unknown): string {
+  if (value == null) return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  return "Structured data";
 }
 
-// Example commands are built in the browser after hydration, not at
-// module scope: module-scope timestamps are baked in at prerender time
-// (hydration mismatch, and a stale validity window for the support grant).
-const identityCommand = () => JSON.stringify({
-  operation: "sync",
-  authMethod: "oidc",
-  subject: "oidc-subject",
-  userId: "00000000-0000-4000-8000-000000000001",
-  eventKey: "uat-user-change-001",
-  memberships: [{ workspaceId: "00000000-0000-4000-8000-000000000002", roleName: "analyst" }],
-  reason: "UAT access provisioning",
-}, null, 2);
-
-const entitlementCommand = (now: Date) => JSON.stringify({
-  kind: "resource_entitlement",
-  operation: "grant",
-  subjectUserId: "00000000-0000-4000-8000-000000000001",
-  workspaceId: "00000000-0000-4000-8000-000000000002",
-  resourceType: "fund",
-  resourceId: "fund-id",
-  permission: "read",
-  validFrom: now.toISOString(),
-  validUntil: null,
-  reason: "UAT fund access",
-}, null, 2);
-
-const dataRightCommand = (now: Date) => JSON.stringify({
-  kind: "data_right",
-  operation: "set",
-  resourceType: "workspace",
-  resourceId: "00000000-0000-4000-8000-000000000002",
-  clientVisible: true,
-  internalAnalyticsAllowed: false,
-  modelTrainingAllowed: false,
-  redistributionAllowed: true,
-  sourceDocumentAccessAllowed: false,
-  effectiveFrom: now.toISOString(),
-  effectiveTo: null,
-  contractReference: "UAT approval",
-  reason: "Enable approved UAT delivery rights",
-}, null, 2);
-
-const supportCommand = (now: Date) => JSON.stringify({
-  operation: "grant",
-  authMethod: "oidc",
-  subject: "support-oidc-subject",
-  userId: "00000000-0000-4000-8000-000000000003",
-  workspaceId: "00000000-0000-4000-8000-000000000002",
-  roleName: "viewer",
-  purpose: "Investigate UAT customer-reported issue",
-  approvalReference: "UAT-support-approval-001",
-  validFrom: now.toISOString(),
-  validUntil: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
-  reason: "Approved temporary support access",
-}, null, 2);
+function StructuredPanel({ title, state }: { title: string; state: PanelState }) {
+  const value = unwrap(state.data);
+  const entries = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
+  const rows = Array.isArray(value) ? value : [];
+  return <section style={card}>
+    <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>{title}</h2>
+    {state.loading && <p>Loading…</p>}
+    {state.error && <p role="alert" style={{ color: "#991b1b" }}>{state.error}</p>}
+    {!state.loading && !state.error && entries.length > 0 && <dl style={{ display: "grid", gridTemplateColumns: "minmax(130px, 1fr) 2fr", gap: "9px 14px", margin: 0 }}>{entries.map(([key, item]) => <div key={key} style={{ display: "contents" }}><dt style={{ fontWeight: 700, overflowWrap: "anywhere" }}>{key.replaceAll("_", " ")}</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{scalar(item)}</dd></div>)}</dl>}
+    {!state.loading && !state.error && rows.length > 0 && <div style={{ display: "grid", gap: 8 }}>{rows.slice(0, 12).map((item, index) => <div key={index} style={{ borderTop: index ? "1px solid #e5e7eb" : undefined, paddingTop: index ? 8 : 0 }}>{item && typeof item === "object" ? Object.entries(item as Record<string, unknown>).slice(0, 5).map(([key, cell]) => <span key={key} style={{ display: "block", fontSize: 13 }}><strong>{key.replaceAll("_", " ")}:</strong> {scalar(cell)}</span>) : scalar(item)}</div>)}</div>}
+    {!state.loading && !state.error && !entries.length && !rows.length && <p>No records returned.</p>}
+    {!state.loading && !state.error && <details style={{ marginTop: 14 }}><summary>Advanced raw response</summary><pre style={{ overflow: "auto", maxHeight: 320, fontSize: 11, whiteSpace: "pre-wrap", background: "#f9fafb", padding: 10, borderRadius: 8 }}>{JSON.stringify(state.data, null, 2)}</pre></details>}
+  </section>;
+}
 
 export default function AdminPage() {
   const [readiness, setReadiness] = useState<PanelState>(EMPTY);
@@ -210,94 +69,32 @@ export default function AdminPage() {
   const [evidence, setEvidence] = useState<PanelState>(EMPTY);
   const [accessReview, setAccessReview] = useState<PanelState>(EMPTY);
   const [audit, setAudit] = useState<PanelState>(EMPTY);
+  const [flagGovernance, setFlagGovernance] = useState<PanelState>(EMPTY);
 
-  const applyPanels = useCallback((states: [PanelState, PanelState, PanelState, PanelState, PanelState]) => {
-    setReadiness(states[0]);
-    setFlags(states[1]);
-    setEvidence(states[2]);
-    setAccessReview(states[3]);
-    setAudit(states[4]);
+  const applyPanels = useCallback((states: Panels) => {
+    setReadiness(states[0]); setFlags(states[1]); setEvidence(states[2]); setAccessReview(states[3]); setAudit(states[4]); setFlagGovernance(states[5]);
   }, []);
-
   const refresh = useCallback(async () => {
-    setReadiness(EMPTY);
-    setFlags(EMPTY);
-    setEvidence(EMPTY);
-    setAccessReview(EMPTY);
-    setAudit(EMPTY);
+    setReadiness(EMPTY); setFlags(EMPTY); setEvidence(EMPTY); setAccessReview(EMPTY); setAudit(EMPTY); setFlagGovernance(EMPTY);
     applyPanels(await loadPanels());
   }, [applyPanels]);
 
   useEffect(() => {
     let active = true;
-    void loadPanels().then((states) => {
-      if (active) applyPanels(states);
-    });
-    return () => {
-      active = false;
-    };
+    void loadPanels().then((states) => { if (active) applyPanels(states); });
+    return () => { active = false; };
   }, [applyPanels]);
 
-  return (
-    <main style={{ minHeight: "100vh", background: "#f4f6f8", color: "#111827", padding: "32px clamp(16px, 4vw, 56px)" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28 }}>
-        <div>
-          <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase" }}>Corvis Operations</p>
-          <h1 style={{ margin: 0, fontSize: 32 }}>Admin Console</h1>
-          <p style={{ maxWidth: 760, color: "#4b5563" }}>
-            Launch-critical UAT administration. Every command is re-authorized server-side with admin:manage; identity, access-policy and support changes are tenant-scoped and audited.
-          </p>
-        </div>
-        <button type="button" onClick={() => void refresh()} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #9ca3af", background: "#fff", cursor: "pointer" }}>
-          Refresh
-        </button>
-      </header>
+  return <main style={{ minHeight: "100vh", background: "#f4f6f8", color: "#111827", padding: "32px clamp(16px, 4vw, 56px)" }}>
+    <header style={{ display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28, flexWrap: "wrap" }}>
+      <div><p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase" }}>Corvis Operations</p><h1 style={{ margin: 0, fontSize: 32 }}>Admin Console</h1><p style={{ maxWidth: 820, color: "#4b5563" }}>Production administration through typed, tenant-scoped and audited workflows. Every mutation is previewed here and re-authorized server-side with <code>admin:manage</code>.</p></div>
+      <button type="button" onClick={() => void refresh()} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #9ca3af", background: "#fff", cursor: "pointer" }}>Refresh control state</button>
+    </header>
 
-      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", marginBottom: 24 }}>
-        <Panel title="Runtime readiness" state={readiness} />
-        <Panel title="Feature flags" state={flags} />
-        <Panel title="Control evidence" state={evidence} />
-      </div>
+    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", marginBottom: 24 }}><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
+    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", marginBottom: 30 }}><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
 
-      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", marginBottom: 24 }}>
-        <Panel title="Access review" state={accessReview} height={520} />
-        <Panel title="Privileged audit" state={audit} height={520} />
-      </div>
-
-      <h2 style={{ margin: "30px 0 8px", fontSize: 24 }}>UAT access operations</h2>
-      <p style={{ margin: "0 0 18px", color: "#4b5563", maxWidth: 850 }}>
-        Replace the example identifiers with values from Access review. Use identity operation <code>reactivate</code> only for a deliberately disabled human identity; ordinary <code>sync</code> remains unable to revive one.
-      </p>
-      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))" }}>
-        <JsonCommand
-          title="Identity lifecycle"
-          description="Sync roles/workspaces, disable an identity, or explicitly reactivate a disabled identity. Event keys make retries replay-safe."
-          endpoint="/api/v1/admin/identity-lifecycle"
-          buildInitialValue={identityCommand}
-          onSuccess={refresh}
-        />
-        <JsonCommand
-          title="Resource entitlement"
-          description="Grant or revoke a fund/document entitlement with optional effective expiry. Revocation never broadens access."
-          endpoint="/api/v1/admin/access-policy"
-          buildInitialValue={entitlementCommand}
-          onSuccess={refresh}
-        />
-        <JsonCommand
-          title="Data rights"
-          description="Set or revoke the contractual policy used by authorization for visibility, source access, analytics, training and redistribution."
-          endpoint="/api/v1/admin/access-policy"
-          buildInitialValue={dataRightCommand}
-          onSuccess={refresh}
-        />
-        <JsonCommand
-          title="Temporary support access"
-          description="Grant a time-bounded existing role to an active support identity with explicit purpose and approval reference, or revoke by supportGrantId."
-          endpoint="/api/v1/admin/support-access"
-          buildInitialValue={supportCommand}
-          onSuccess={refresh}
-        />
-      </div>
-    </main>
-  );
+    <section style={{ marginBottom: 18 }}><p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em" }}>PRIVILEGED OPERATIONS</p><h2 style={{ margin: "0 0 6px", fontSize: 24 }}>Governed production workflows</h2><p style={{ margin: 0, color: "#4b5563", maxWidth: 940 }}>Use identifiers from Access review and the relevant incident/change record. Consequential changes require explicit preview/confirmation and return an attributable operation receipt.</p></section>
+    <GovernanceForms onSuccess={refresh} featureFlags={governanceFlags(flagGovernance)}/>
+  </main>;
 }

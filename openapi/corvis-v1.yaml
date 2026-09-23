@@ -13,6 +13,21 @@ paths:
       operationId: getSession
       responses:
         '200': { description: Authenticated tenant/workspace session }
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      description: Presentation hints for the signed-in identity. The server re-authorizes every request independently; clients use this only to decide which actions to offer.
+      responses:
+        '200':
+          description: Effective permissions and data rights for the current tenant/workspace session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data: { $ref: '#/components/schemas/WorkspaceCapabilities' }
+                  correlationId: { type: string }
   /documents:
     get:
       operationId: listDocuments
@@ -158,6 +173,28 @@ paths:
       responses:
         '200': { description: Semantic and source-grounded answer }
   /exports:
+    get:
+      operationId: listExports
+      description: Lists the caller's own most recent exports, newest first. Read-only; never issues download grants. Exports whose artifact the caller's current data rights no longer cover are omitted. Requires exports:create and current redistribution rights.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Export history for the signed-in user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExportStatus' }
+                  correlationId: { type: string }
+        '403': { description: Missing exports:create permission or redistribution rights }
     post:
       operationId: createExport
       requestBody:
@@ -345,6 +382,49 @@ components:
               error: { type: string, enum: [invalid_cursor] }
               correlationId: { type: string }
   schemas:
+    WorkspaceCapabilities:
+      type: object
+      required: [permissions, sourceDocumentAccessAllowed, redistributionAllowed]
+      properties:
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: ['documents:read', 'documents:write', 'sources:read', 'observations:read', 'observations:review', 'snapshots:publish', 'research:query', 'exports:create', 'admin:manage']
+        sourceDocumentAccessAllowed: { type: boolean }
+        redistributionAllowed: { type: boolean }
+    ExportManifest:
+      type: object
+      required: [exportId, tenantId, generatedAt, schemaVersion, taxonomyVersion, snapshotIds, format, rowCounts, checksumSha256]
+      properties:
+        exportId: { type: string }
+        tenantId: { type: string }
+        generatedAt: { type: string, format: date-time }
+        schemaVersion: { type: string }
+        taxonomyVersion: { type: string }
+        snapshotIds: { type: array, items: { type: string } }
+        format: { type: string, enum: [parquet, csv, xlsx] }
+        rowCounts: { type: object, additionalProperties: { type: integer } }
+        checksumSha256: { type: string }
+    ExportStatus:
+      type: object
+      required: [exportId, format, state, createdAt, manifest, downloadAvailable]
+      properties:
+        exportId: { type: string }
+        format: { type: string, enum: [parquet, csv, xlsx] }
+        state: { type: string, description: 'Delivery state, e.g. queued, delivering, retryable, complete, failed.' }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        checksumSha256: { type: string }
+        manifest: { $ref: '#/components/schemas/ExportManifest' }
+        downloadAvailable:
+          type: boolean
+          description: True when the export is complete and unexpired. Listings never include a download link; the single-export read issues a fresh short-lived grant.
+        downloadUrl:
+          type: string
+          description: Short-lived single-subject download grant. Present only on the single-export read, never on the listing.
+        downloadExpiresAt: { type: string, format: date-time }
     UploadSession:
       type: object
       required: [uploadId, documentId, artifactVersionId, ingestionId, chunkSize, state]

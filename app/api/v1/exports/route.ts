@@ -4,6 +4,19 @@ import { assertFeatureEnabled } from "@/lib/server/feature-flags";
 import { withIdempotency } from "@/lib/server/idempotency";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { createPhysicalExport } from "@/lib/server/physical-exports";
+import { listPhysicalExportStatuses } from "@/lib/server/export-history";
+
+export async function GET(request: Request) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAuthorizedRequestIdentity(request);
+    assertPermission(identity, "exports:create");
+    const url = new URL(request.url);
+    const parsed = Number(url.searchParams.get("limit") || 20);
+    const limit = Number.isFinite(parsed) ? parsed : 20;
+    return json({ data: await listPhysicalExportStatuses(identity, limit), correlationId: id });
+  } catch (error) { return apiError(error, id); }
+}
 
 export async function POST(request: Request) {
   const id = correlationId(request);
