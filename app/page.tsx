@@ -5,6 +5,7 @@ import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/co
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { Modal } from "@/components/ui/modal";
 import { OverviewView } from "@/features/overview/overview-view";
 import { DocumentsView } from "@/features/documents/documents-view";
 import { UploadModal } from "@/features/documents/upload-modal";
@@ -60,7 +61,6 @@ export default function CorvisApp() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearchOpen(true); }
-      if (event.key === "Escape") setSearchOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -110,7 +110,7 @@ export default function CorvisApp() {
       {!loading && view === "delivery" && <DeliveryView publishedSnapshots={publishedSnapshots}/>} 
       {!loading && view === "research" && <ResearchView suggestions={researchSuggestions}/>} 
     </div></main>
-    {searchOpen && <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(15,23,42,.45)", display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: "10vh" }}><section role="dialog" aria-modal="true" aria-label="Global workspace search" style={{ width: "min(720px, calc(100vw - 32px))", background: "white", borderRadius: 14, boxShadow: "0 24px 80px rgba(15,23,42,.24)", overflow: "hidden" }}><label style={{ display: "flex", gap: 10, alignItems: "center", padding: 16, borderBottom: "1px solid #e5e7eb" }}><Icon name="search" size={18}/><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search funds, companies, documents or metrics" aria-label="Search workspace" style={{ flex: 1, border: 0, outline: 0, fontSize: 16 }}/><kbd>Esc</kbd></label><div style={{ maxHeight: "55vh", overflow: "auto", padding: 8 }}>{searchQuery.trim() && searchResults.length === 0 ? <p style={{ padding: 14, margin: 0 }}>No entitled workspace results match “{searchQuery}”.</p> : searchResults.map((result) => <button key={result.key} onClick={() => chooseSearchResult(result)} style={{ width: "100%", textAlign: "left", border: 0, background: "transparent", padding: 12, borderRadius: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 16 }}><span><strong>{result.title}</strong><small style={{ display: "block", marginTop: 4 }}>{result.detail}</small></span><span style={{ textTransform: "capitalize" }}>{result.kind}</span></button>)}</div></section></div>}
+    {searchOpen && <Modal label="Global workspace search" onClose={() => setSearchOpen(false)} align="top" width="min(720px, calc(100vw - 32px))"><label style={{ display: "flex", gap: 10, alignItems: "center", padding: 16, borderBottom: "1px solid #e5e7eb" }}><Icon name="search" size={18}/><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search funds, companies, documents or metrics" aria-label="Search workspace" style={{ flex: 1, border: 0, outline: 0, fontSize: 16 }}/><kbd>Esc</kbd></label><div style={{ maxHeight: "55vh", overflow: "auto", padding: 8 }}>{searchQuery.trim() && searchResults.length === 0 ? <p style={{ padding: 14, margin: 0 }}>No entitled workspace results match “{searchQuery}”.</p> : searchResults.map((result) => <button key={result.key} onClick={() => chooseSearchResult(result)} style={{ width: "100%", textAlign: "left", border: 0, background: "transparent", padding: 12, borderRadius: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 16 }}><span><strong>{result.title}</strong><small style={{ display: "block", marginTop: 4 }}>{result.detail}</small></span><span style={{ textTransform: "capitalize" }}>{result.kind}</span></button>)}</div></Modal>}
     {uploadOpen && <UploadModal onClose={() => { setUploadOpen(false); setView("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>} 
     {selectedDoc && <DocumentDrawer doc={selectedDoc} onClose={() => setSelectedDoc(null)} onReview={() => { const match = snapshots.find((snapshot) => snapshot.fund === selectedDoc.fund && snapshot.period === selectedDoc.period); if (match?.id) setSelectedSnapshotId(match.id); setSelectedDoc(null); setView("review"); }}/>} 
   </div>;
