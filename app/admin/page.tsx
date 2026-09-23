@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { Icon } from "@/components/ui/icon";
 import { GovernanceForms, type AdminFeatureFlag } from "@/features/admin/governance-forms";
 
 type PanelState = { loading: boolean; status: number | null; data: unknown; error: string | null };
 const EMPTY: PanelState = { loading: true, status: null, data: null, error: null };
-const card = { border: "1px solid #d5d8dc", borderRadius: 12, padding: 20, background: "#fff" } as const;
 
 async function loadJson(path: string): Promise<PanelState> {
   try {
@@ -48,18 +49,23 @@ function scalar(value: unknown): string {
   return "Structured data";
 }
 
+function humanize(key: string): string {
+  return key.replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 function StructuredPanel({ title, state }: { title: string; state: PanelState }) {
   const value = unwrap(state.data);
   const entries = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
   const rows = Array.isArray(value) ? value : [];
-  return <section style={card}>
-    <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>{title}</h2>
-    {state.loading && <p>Loading…</p>}
-    {state.error && <p role="alert" style={{ color: "#991b1b" }}>{state.error}</p>}
-    {!state.loading && !state.error && entries.length > 0 && <dl style={{ display: "grid", gridTemplateColumns: "minmax(130px, 1fr) 2fr", gap: "9px 14px", margin: 0 }}>{entries.map(([key, item]) => <div key={key} style={{ display: "contents" }}><dt style={{ fontWeight: 700, overflowWrap: "anywhere" }}>{key.replaceAll("_", " ")}</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{scalar(item)}</dd></div>)}</dl>}
-    {!state.loading && !state.error && rows.length > 0 && <div style={{ display: "grid", gap: 8 }}>{rows.slice(0, 12).map((item, index) => <div key={index} style={{ borderTop: index ? "1px solid #e5e7eb" : undefined, paddingTop: index ? 8 : 0 }}>{item && typeof item === "object" ? Object.entries(item as Record<string, unknown>).slice(0, 5).map(([key, cell]) => <span key={key} style={{ display: "block", fontSize: 13 }}><strong>{key.replaceAll("_", " ")}:</strong> {scalar(cell)}</span>) : scalar(item)}</div>)}</div>}
-    {!state.loading && !state.error && !entries.length && !rows.length && <p>No records returned.</p>}
-    {!state.loading && !state.error && <details style={{ marginTop: 14 }}><summary>Advanced raw response</summary><pre style={{ overflow: "auto", maxHeight: 320, fontSize: 11, whiteSpace: "pre-wrap", background: "#f9fafb", padding: 10, borderRadius: 8 }}>{JSON.stringify(state.data, null, 2)}</pre></details>}
+  const ready = !state.loading && !state.error;
+  return <section className="admin-card" aria-busy={state.loading}>
+    <div className="admin-card-head"><h2>{title}</h2>{ready && Array.isArray(value) && <span className="status-pill">{rows.length} record{rows.length === 1 ? "" : "s"}</span>}</div>
+    {state.loading && <div className="skeleton" role="status" aria-label={`Loading ${title}`}><i/><i/><i/></div>}
+    {state.error && <p role="alert" className="admin-state error"><Icon name="alert" size={16}/>{state.error}</p>}
+    {ready && entries.length > 0 && <dl className="admin-dl">{entries.map(([key, item]) => <div key={key} className="contents"><dt>{humanize(key)}</dt><dd>{scalar(item)}</dd></div>)}</dl>}
+    {ready && rows.length > 0 && <div className="admin-records">{rows.slice(0, 12).map((item, index) => <div key={index}>{item && typeof item === "object" ? Object.entries(item as Record<string, unknown>).slice(0, 5).map(([key, cell]) => <span key={key}><strong>{humanize(key)}:</strong> {scalar(cell)}</span>) : scalar(item)}</div>)}</div>}
+    {ready && !entries.length && !rows.length && <p className="admin-state">No records returned.</p>}
+    {ready && <details><summary>Advanced raw response</summary><pre className="code-block">{JSON.stringify(state.data, null, 2)}</pre></details>}
   </section>;
 }
 
@@ -85,16 +91,16 @@ export default function AdminPage() {
     return () => { active = false; };
   }, [applyPanels]);
 
-  return <main style={{ minHeight: "100vh", background: "#f4f6f8", color: "#111827", padding: "32px clamp(16px, 4vw, 56px)" }}>
-    <header style={{ display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28, flexWrap: "wrap" }}>
-      <div><p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase" }}>Corvis Operations</p><h1 style={{ margin: 0, fontSize: 32 }}>Admin Console</h1><p style={{ maxWidth: 820, color: "#4b5563" }}>Production administration through typed, tenant-scoped and audited workflows. Every mutation is previewed here and re-authorized server-side with <code>admin:manage</code>.</p></div>
-      <button type="button" onClick={() => void refresh()} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #9ca3af", background: "#fff", cursor: "pointer" }}>Refresh control state</button>
-    </header>
+  return <div className="admin-shell">
+    <header className="admin-topbar"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span><small>OPERATIONS</small></div><Link href="/">Back to workspace</Link></header>
+    <main className="admin-content">
+      <section className="page-heading"><div><p className="eyebrow">Corvis operations</p><h1>Admin Console</h1><p className="lede">Production administration through typed, tenant-scoped and audited workflows. Every mutation is previewed here and re-authorized server-side with <code>admin:manage</code>.</p></div><button type="button" className="secondary-button" onClick={() => void refresh()}><Icon name="clock" size={15}/>Refresh control state</button></section>
 
-    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", marginBottom: 24 }}><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
-    <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", marginBottom: 30 }}><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
+      <div className="admin-grid"><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
+      <div className="admin-grid wide"><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
 
-    <section style={{ marginBottom: 18 }}><p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: ".12em" }}>PRIVILEGED OPERATIONS</p><h2 style={{ margin: "0 0 6px", fontSize: 24 }}>Governed production workflows</h2><p style={{ margin: 0, color: "#4b5563", maxWidth: 940 }}>Use identifiers from Access review and the relevant incident/change record. Consequential changes require explicit preview/confirmation and return an attributable operation receipt.</p></section>
-    <GovernanceForms onSuccess={refresh} featureFlags={governanceFlags(flagGovernance)}/>
-  </main>;
+      <section className="admin-section-heading"><p className="eyebrow">Privileged operations</p><h2>Governed production workflows</h2><p>Use identifiers from Access review and the relevant incident/change record. Consequential changes require explicit preview/confirmation and return an attributable operation receipt.</p></section>
+      <GovernanceForms onSuccess={refresh} featureFlags={governanceFlags(flagGovernance)}/>
+    </main>
+  </div>;
 }

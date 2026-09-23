@@ -7,7 +7,7 @@ export function Modal({
   label,
   onClose,
   children,
-  width = "min(620px, calc(100vw - 32px))",
+  width = "min(620px, 100%)",
   align = "center",
 }: {
   label: string;
@@ -21,33 +21,10 @@ export function Modal({
 
   return <div
     role="presentation"
+    className={`dialog-backdrop${align === "top" ? " align-top" : ""}`}
     onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
-    style={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 100,
-      background: "rgba(15,23,42,.48)",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: align === "top" ? "flex-start" : "center",
-      padding: align === "top" ? "10vh 16px 16px" : 20,
-    }}
   >
-    <section
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-label={label}
-      tabIndex={-1}
-      style={{
-        width,
-        maxHeight: "80vh",
-        overflow: "auto",
-        background: "#fff",
-        borderRadius: 14,
-        boxShadow: "0 24px 80px rgba(15,23,42,.24)",
-      }}
-    >
+    <section ref={ref} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} className="dialog-surface" style={{ width }}>
       {children}
     </section>
   </div>;
