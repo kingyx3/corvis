@@ -3,6 +3,22 @@ import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/
 
 export function createDemoWorkspacePort(): WorkspacePort {
   return {
+    async capabilities() {
+      return {
+        permissions: [
+          "documents:read",
+          "documents:write",
+          "sources:read",
+          "observations:read",
+          "observations:review",
+          "snapshots:publish",
+          "research:query",
+          "exports:create",
+        ],
+        sourceDocumentAccessAllowed: true,
+        redistributionAllowed: true,
+      };
+    },
     async listDocuments() {
       assertDemoModuleAvailable("documents");
       return demoCustomerJourneyStore.listDocuments();
