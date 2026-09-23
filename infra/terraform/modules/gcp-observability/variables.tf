@@ -17,8 +17,8 @@ variable "api_service_name" {
   default     = ""
 }
 
-variable "dead_letter_topic_name" {
-  description = "Pub/Sub dead-letter topic short name (gcp-foundation's dead_letter_topic_name output). Empty disables the alert policy."
+variable "dead_letter_subscription_name" {
+  description = "Pub/Sub dead-letter pull subscription short name (gcp-foundation's dead_letter_subscription_name output). Empty disables the alert policy."
   type        = string
   default     = ""
 }

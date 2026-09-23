@@ -48,6 +48,15 @@ No extra GitHub variable is required for API Gateway, Cloud Run IAM checks, Clou
 
 No GitHub variable is required for the Postgres DSN secret name. The canonical Terraform-owned Secret Manager container is `corvis-postgres-dsn-${environment}`.
 
+### Cost and alert routing (optional, `uat` / `prod`)
+
+| Variable | Purpose | Why it remains a root |
+| --- | --- | --- |
+| `GCP_BILLING_ACCOUNT_ID` | Billing account (`XXXXXX-XXXXXX-XXXXXX`) that receives the Terraform-managed monthly budget | Externally owned billing relationship; not derivable from the project through the deploy identity. Unset disables budget creation. |
+| `MONITORING_NOTIFICATION_CHANNEL_IDS` | Existing Cloud Monitoring notification channels attached to SLO alerts and the budget, as an HCL/JSON list of full resource names, e.g. `["projects/<project>/notificationChannels/123"]` | Channels (email/pager/chat) are created once outside Terraform. Unset defaults to `[]` (alerts are created without routing). |
+
+Bootstrap, Terraform deploy and decommission all pass these as `TF_VAR_billing_account_id` / `TF_VAR_monitoring_notification_channel_ids`, so every workflow plans the same budget/alert routing. When `GCP_BILLING_ACCOUNT_ID` is set, `corvis-deploy` additionally needs budget permissions **on the billing account** (for example `roles/billing.costsManager`, which includes `billing.budgets.*`); project-level roles are not sufficient.
+
 ## Active GitHub secrets
 
 | Secret | Scope | Purpose |
@@ -77,8 +86,8 @@ The build, deployment and acceptance workflows derive these instead of storing t
 | Runtime API/worker image | Artifact Registry resolution of the selected release tag to the same `image@sha256:<digest>` |
 | Known-good rollback image | Versioned `gs://${GCP_PROJECT_ID}-corvis-tf-state/releases/${environment}/known-good.json`, advanced only after live acceptance passes |
 | Cloudflare zone/account IDs | Provider lookup by `CLOUDFLARE_ZONE_NAME` using `CLOUDFLARE_API_TOKEN` |
-| Production API hostname | `api.${zone}` |
-| UAT API hostname | `api.uat.${zone}` |
+| Production API / customer / admin hostnames | `api.${zone}` / `app.${zone}` / `admin.${zone}` |
+| UAT API / customer / admin hostnames | `api-uat.${zone}` / `app-uat.${zone}` / `admin-uat.${zone}` (single-level labels so Cloudflare Universal SSL on Free/Pro covers them; `*.uat.${zone}` would not be) |
 | API Gateway IDs/default hostname | Terraform names/provider output from project + environment |
 | Gateway service account | `corvis-gateway-${environment}@${GCP_PROJECT_ID}.iam.gserviceaccount.com` |
 | Gateway edge API key | Terraform-generated Google API key restricted to the generated Corvis managed API and injected into the Worker secret binding |

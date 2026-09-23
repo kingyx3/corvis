@@ -258,6 +258,12 @@ resource "google_pubsub_subscription" "processing_worker" {
     max_delivery_attempts = 8
   }
 
+  # Pub/Sub deletes subscriptions after 31 days without activity by default;
+  # a quiet environment must not silently lose its processing push path.
+  expiration_policy {
+    ttl = ""
+  }
+
   depends_on = [google_cloud_run_v2_service_iam_member.worker_invoker]
 }
 

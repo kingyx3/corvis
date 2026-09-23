@@ -35,9 +35,9 @@ locals {
   edge_requested                 = trimspace(var.cloudflare_zone_name) != ""
   api_runtime_enabled            = trimspace(var.api_image) != ""
   edge_enabled                   = local.edge_requested && local.api_runtime_enabled
-  api_hostname                   = local.edge_enabled ? "api.uat.${trimspace(var.cloudflare_zone_name)}" : ""
-  customer_hostname              = local.edge_enabled ? "app.uat.${trimspace(var.cloudflare_zone_name)}" : ""
-  admin_hostname                 = local.edge_enabled ? "admin.uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  api_hostname                   = local.edge_enabled ? "api-uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  customer_hostname              = local.edge_enabled ? "app-uat.${trimspace(var.cloudflare_zone_name)}" : ""
+  admin_hostname                 = local.edge_enabled ? "admin-uat.${trimspace(var.cloudflare_zone_name)}" : ""
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
   cloudflare_zone_id             = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].id, "") : ""
   cloudflare_account_id          = local.edge_enabled ? try(data.cloudflare_zones.corvis[0].result[0].account.id, "") : ""
@@ -227,13 +227,13 @@ module "cloudflare_admin_edge" {
 }
 
 module "observability" {
-  source                    = "../../modules/gcp-observability"
-  project_id                = var.project_id
-  environment               = "uat"
-  api_service_name          = coalesce(module.api_runtime.api_service_name, "")
-  dead_letter_topic_name    = module.foundation.dead_letter_topic_name
-  processing_queue_name     = module.foundation.processing_queue_name
-  notification_channel_ids  = var.monitoring_notification_channel_ids
-  billing_account_id        = var.billing_account_id
-  monthly_budget_amount_usd = var.monthly_budget_amount_usd
+  source                        = "../../modules/gcp-observability"
+  project_id                    = var.project_id
+  environment                   = "uat"
+  api_service_name              = module.api_runtime.api_service_name == null ? "" : module.api_runtime.api_service_name
+  dead_letter_subscription_name = module.foundation.dead_letter_subscription_name
+  processing_queue_name         = module.foundation.processing_queue_name
+  notification_channel_ids      = var.monitoring_notification_channel_ids
+  billing_account_id            = var.billing_account_id
+  monthly_budget_amount_usd     = var.monthly_budget_amount_usd
 }

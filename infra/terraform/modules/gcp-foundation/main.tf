@@ -75,6 +75,20 @@ resource "google_kms_crypto_key" "source" {
   }
 }
 
+# CMEK on the source bucket is used by the Cloud Storage service agent, not by
+# the deployer or runtime identities. Grant it exactly the key it must use,
+# before the bucket (and its default_kms_key_name) is created.
+data "google_storage_project_service_account" "gcs" {
+  project    = var.project_id
+  depends_on = [google_project_service.required]
+}
+
+resource "google_kms_crypto_key_iam_member" "source_gcs_service_agent" {
+  crypto_key_id = google_kms_crypto_key.source.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${data.google_storage_project_service_account.gcs.email_address}"
+}
+
 resource "google_storage_bucket" "source" {
   project                     = var.project_id
   name                        = var.source_bucket_name
@@ -113,6 +127,22 @@ resource "google_storage_bucket" "source" {
       type = "Delete"
     }
   }
+
+  # Versioning turns a lifecycle Delete of a live object into a noncurrent
+  # version. Expire those noncurrent versions for the same lifecycle-managed
+  # prefixes so transient/export storage does not grow without bound.
+  lifecycle_rule {
+    condition {
+      days_since_noncurrent_time = 7
+      matches_prefix             = ["uploads/abandoned/", "quarantine/", "intermediate/", "exports/"]
+    }
+
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_kms_crypto_key_iam_member.source_gcs_service_agent]
 }
 
 resource "google_artifact_registry_repository" "containers" {
@@ -155,6 +185,22 @@ resource "google_pubsub_topic" "processing_dead_letter" {
   name       = "processing-dead-letter-${var.environment}"
   labels     = local.labels
   depends_on = [google_project_service.required]
+}
+
+# Pub/Sub drops messages published to a topic with no subscription. Retain
+# dead-lettered processing messages on a durable pull subscription so they can be
+# inspected/replayed and so the backlog is observable as a subscription metric.
+resource "google_pubsub_subscription" "processing_dead_letter" {
+  project                    = var.project_id
+  name                       = "processing-dead-letter-${var.environment}"
+  topic                      = google_pubsub_topic.processing_dead_letter.id
+  ack_deadline_seconds       = 60
+  message_retention_duration = "604800s"
+  labels                     = local.labels
+
+  expiration_policy {
+    ttl = ""
+  }
 }
 
 resource "google_cloud_tasks_queue" "processing" {
@@ -239,6 +285,38 @@ resource "google_service_account_iam_member" "api_act_as_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.api.email}"
+}
+
+# Cloud Scheduler invokes /api/internal/delivery on the worker, which drains the
+# same processing outbox as the worker identity: it publishes to the processing
+# topic and creates OIDC Cloud Tasks that run as the worker itself.
+resource "google_pubsub_topic_iam_member" "worker_processing_publisher" {
+  project = var.project_id
+  topic   = google_pubsub_topic.document_registered.name
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_cloud_tasks_queue_iam_member" "worker_processing_enqueuer" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_tasks_queue.processing.name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_service_account_iam_member" "worker_act_as_worker" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.worker.email}"
+}
+
+# Deploying a Cloud Run service that runs as a service account requires the
+# deployer to act as that identity; keep each grant resource-scoped.
+resource "google_service_account_iam_member" "deployer_act_as_api" {
+  service_account_id = google_service_account.api.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.deployer_service_account_email}"
 }
 
 resource "google_service_account_iam_member" "deployer_act_as_worker" {

@@ -229,13 +229,13 @@ module "cloudflare_admin_edge" {
 }
 
 module "observability" {
-  source                    = "../../modules/gcp-observability"
-  project_id                = var.project_id
-  environment               = "prod"
-  api_service_name          = coalesce(module.api_runtime.api_service_name, "")
-  dead_letter_topic_name    = module.foundation.dead_letter_topic_name
-  processing_queue_name     = module.foundation.processing_queue_name
-  notification_channel_ids  = var.monitoring_notification_channel_ids
-  billing_account_id        = var.billing_account_id
-  monthly_budget_amount_usd = var.monthly_budget_amount_usd
+  source                        = "../../modules/gcp-observability"
+  project_id                    = var.project_id
+  environment                   = "prod"
+  api_service_name              = module.api_runtime.api_service_name == null ? "" : module.api_runtime.api_service_name
+  dead_letter_subscription_name = module.foundation.dead_letter_subscription_name
+  processing_queue_name         = module.foundation.processing_queue_name
+  notification_channel_ids      = var.monitoring_notification_channel_ids
+  billing_account_id            = var.billing_account_id
+  monthly_budget_amount_usd     = var.monthly_budget_amount_usd
 }

@@ -5,6 +5,7 @@ output "document_registered_topic" { value = google_pubsub_topic.document_regist
 output "document_registered_topic_name" { value = google_pubsub_topic.document_registered.name }
 output "dead_letter_topic" { value = google_pubsub_topic.processing_dead_letter.id }
 output "dead_letter_topic_name" { value = google_pubsub_topic.processing_dead_letter.name }
+output "dead_letter_subscription_name" { value = google_pubsub_subscription.processing_dead_letter.name }
 output "processing_queue" { value = google_cloud_tasks_queue.processing.id }
 output "processing_queue_name" { value = google_cloud_tasks_queue.processing.name }
 output "api_service_account" { value = google_service_account.api.email }
