@@ -82,6 +82,8 @@ export interface HealthState {
 export interface ScannerStatus {
   name: string;
   complete: boolean;
+  /** True when the scanner was intentionally not run (unconfigured), as opposed to failing. */
+  skipped?: boolean;
   reason: string | null;
 }
 

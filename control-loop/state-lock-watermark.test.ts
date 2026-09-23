@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { acquireLock, releaseLock } from "./lock.ts";
 import { InMemoryStateStore } from "./state.ts";
-import { emptyWatermark, readWatermark, writeWatermark } from "./watermark.ts";
+import { emptyWatermark, readWatermark, readWatermarkVersioned, writeWatermark, writeWatermarkIfUnchanged } from "./watermark.ts";
 
 test("InMemoryStateStore round-trips a write through read and clears on a null write", async () => {
   const store = new InMemoryStateStore();
@@ -74,4 +74,31 @@ test("releaseLock on an already-clear lock is a safe no-op", async () => {
   const store = new InMemoryStateStore();
   await releaseLock(store, "runner-a");
   assert.equal((await acquireLock(store, "runner-b", new Date(), 60_000)).acquired, true);
+});
+
+test("a corrupt lock object is treated as expired instead of crashing every run, and is never released by a non-owner", async () => {
+  const store = new InMemoryStateStore();
+  const now = new Date("2026-09-19T00:00:00.000Z");
+  await store.write("lock", "{not json");
+  await releaseLock(store, "runner-a");
+  assert.equal(await store.read("lock"), "{not json", "release must not delete a lease it cannot prove it owns");
+  assert.deepEqual(await acquireLock(store, "runner-a", now, 60_000), { acquired: true });
+  assert.equal((await acquireLock(store, "runner-b", now, 60_000)).acquired, false, "the replaced lease is live and exclusive");
+
+  await store.write("lock", JSON.stringify({ unexpected: true }));
+  assert.deepEqual(await acquireLock(store, "runner-b", now, 60_000), { acquired: true });
+});
+
+test("writeWatermarkIfUnchanged refuses to overwrite a watermark another run wrote after this run read it", async () => {
+  const store = new InMemoryStateStore();
+  const read = await readWatermarkVersioned(store);
+  assert.equal(read.version, null);
+  const other = { ...emptyWatermark(), lastRunId: "other-run" };
+  await writeWatermark(store, other);
+  assert.equal(await writeWatermarkIfUnchanged(store, { ...emptyWatermark(), lastRunId: "stale-run" }, read), false);
+  assert.deepEqual(await readWatermark(store), other);
+
+  const fresh = await readWatermarkVersioned(store);
+  assert.equal(await writeWatermarkIfUnchanged(store, { ...emptyWatermark(), lastRunId: "next-run" }, fresh), true);
+  assert.equal((await readWatermark(store)).lastRunId, "next-run");
 });

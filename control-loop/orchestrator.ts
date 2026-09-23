@@ -11,9 +11,9 @@ import { loadRepoSnapshot, selectScanScope } from "./scanners/repo-snapshot.ts";
 import type { StateStore } from "./state.ts";
 import type { Finding, RunMode, RunReport, RunStatus, ScannerStatus, Watermark } from "./types.ts";
 import { acquireLock, releaseLock } from "./lock.ts";
-import { readWatermark, writeWatermark } from "./watermark.ts";
+import { readWatermark, readWatermarkVersioned, writeWatermarkIfUnchanged } from "./watermark.ts";
 
-const DEFAULT_LOCK_OWNER = "control-loop";
+const LOCK_OWNER_PREFIX = "control-loop";
 const DEFAULT_LOCK_STALE_AFTER_MS = 60 * 60 * 1000;
 const DEFAULT_MUTATION_BUDGET = 20;
 
@@ -27,6 +27,15 @@ export type RunDependencies = {
   changedPaths?: string[] | null;
   /** Open/closed control-loop-labeled issues. `null`/omitted means unavailable. */
   issueSnapshot?: IssueSnapshot | null;
+  /**
+   * Whether a missing issue snapshot is a run failure. Defaults to true. The CLI
+   * sets it only when a GitHub credential is configured: without one, issue
+   * hygiene is an unconfigured optional scanner (anonymous API access is
+   * best-effort and rate-limited), so its absence is reported as skipped
+   * rather than driving the failure streak and health degradation forever.
+   */
+  issueSnapshotRequired?: boolean;
+  /** Lease owner. Defaults to a per-run unique id so concurrent runs exclude each other. */
   lockOwner?: string;
   lockStaleAfterMs?: number;
   applyMode?: ApplyMode;
@@ -34,12 +43,12 @@ export type RunDependencies = {
   applier?: EditApplier;
 };
 
-function scannerStatuses(issueHygieneComplete: boolean, issueHygieneReason: string | null): ScannerStatus[] {
+function scannerStatuses(issueHygiene: ScannerStatus): ScannerStatus[] {
   return [
     { name: "documentation-authority", complete: true, reason: null },
     { name: "internal-links", complete: true, reason: null },
     { name: "architecture-drift", complete: true, reason: null },
-    { name: "issue-hygiene", complete: issueHygieneComplete, reason: issueHygieneReason },
+    issueHygiene,
   ];
 }
 
@@ -77,7 +86,10 @@ function nextWatermark(input: {
 export async function runControlLoop(deps: RunDependencies): Promise<RunReport> {
   const runId = deps.runId ?? randomUUID();
   const startedAt = deps.now.toISOString();
-  const lockOwner = deps.lockOwner ?? DEFAULT_LOCK_OWNER;
+  // A constant owner would make every run treat a live lease as its own, so
+  // there would be no mutual exclusion and the first finisher would release
+  // the other run's lease. The run id is random per invocation.
+  const lockOwner = deps.lockOwner ?? `${LOCK_OWNER_PREFIX}:${runId}`;
   const lockStaleAfterMs = deps.lockStaleAfterMs ?? DEFAULT_LOCK_STALE_AFTER_MS;
 
   const lock = await acquireLock(deps.stateStore, lockOwner, deps.now, lockStaleAfterMs);
@@ -104,7 +116,8 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
   }
 
   try {
-    const previousWatermark = await readWatermark(deps.stateStore);
+    const previousRead = await readWatermarkVersioned(deps.stateStore);
+    const previousWatermark = previousRead.watermark;
     let status: RunStatus = "complete";
     const notes: string[] = [];
     let findings: Finding[] = [];
@@ -132,14 +145,22 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
 
       const hygiene = scanIssueHygiene({ snapshot: deps.issueSnapshot ?? null, findings: preHygiene, mode: deps.mode });
       findings = dedupeFindings(sortFindings([...preHygiene, ...hygiene.findings]));
-      scanners = scannerStatuses(hygiene.complete, hygiene.reason);
-      if (!hygiene.complete) status = "incomplete";
+      const hygieneSkipped = !hygiene.complete && !deps.issueSnapshot && deps.issueSnapshotRequired === false;
+      scanners = scannerStatuses(hygieneSkipped
+        ? { name: "issue-hygiene", complete: false, skipped: true, reason: "issue_snapshot_unavailable_no_github_token" }
+        : { name: "issue-hygiene", complete: hygiene.complete, reason: hygiene.reason });
+      if (hygieneSkipped) notes.push("issue_hygiene_skipped:no_github_token");
+      else if (!hygiene.complete) status = "incomplete";
     } catch (error) {
       status = "failed";
       notes.push(`scan_failed:${error instanceof Error ? error.message : String(error)}`);
     }
 
-    const scanComplete = status !== "failed" && scanners.every((scanner) => scanner.complete);
+    // Coverage for health/watermark purposes ignores explicitly skipped
+    // (unconfigured) scanners; closure additionally needs every scanner,
+    // since closing issues without an issue snapshot is meaningless.
+    const scanComplete = status !== "failed" && scanners.every((scanner) => scanner.complete || scanner.skipped === true);
+    const allScannersComplete = status !== "failed" && scanners.every((scanner) => scanner.complete);
     const nextWatermarkValue = nextWatermark({ previous: previousWatermark, mode: deps.mode, now: deps.now, runId, status, scanComplete });
     const health = evaluateHealth({ now: deps.now, watermark: nextWatermarkValue, weeklyScanComplete: nextWatermarkValue.lastWeeklyScanComplete });
     const degraded = healthFinding(health);
@@ -151,9 +172,14 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       : await applyActions(plan, { mode: deps.applyMode ?? "dry-run", budget: deps.mutationBudget ?? DEFAULT_MUTATION_BUDGET, applier: deps.applier });
     if (applyResult?.budgetExceeded) notes.push("mutation_budget_exceeded");
 
-    const closure = closureDecision({ status, health, scanComplete });
+    const closure = closureDecision({ status, health, scanComplete: allScannersComplete, fullScan: scanFull });
 
-    await writeWatermark(deps.stateStore, nextWatermarkValue);
+    // Conditional stores only persist if no other run wrote the watermark since
+    // this run read it (e.g. after this run's lease went stale), instead of
+    // last-writer-wins.
+    if (!(await writeWatermarkIfUnchanged(deps.stateStore, nextWatermarkValue, previousRead))) {
+      notes.push("watermark_write_conflict");
+    }
 
     return {
       schemaVersion: 1,

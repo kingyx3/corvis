@@ -43,9 +43,15 @@ export interface ClosureDecision {
   reason: string | null;
 }
 
-export function closureDecision(input: { status: RunStatus; health: HealthState; scanComplete: boolean }): ClosureDecision {
+/**
+ * Automatic closure needs a full scan: an incremental daily scan only produces
+ * active fingerprints for changed files, so every open issue about an
+ * unchanged file would otherwise look resolved.
+ */
+export function closureDecision(input: { status: RunStatus; health: HealthState; scanComplete: boolean; fullScan: boolean }): ClosureDecision {
   if (input.status !== "complete") return { allowed: false, reason: `run_status_${input.status}` };
   if (!input.scanComplete) return { allowed: false, reason: "incomplete_scan" };
+  if (!input.fullScan) return { allowed: false, reason: "incremental_scan" };
   if (!input.health.automaticClosureEnabled) return { allowed: false, reason: `unhealthy:${input.health.reasons.join(",")}` };
   return { allowed: true, reason: null };
 }

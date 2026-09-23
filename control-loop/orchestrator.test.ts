@@ -151,3 +151,88 @@ test("apply defaults to dry-run and never calls a configured applier unless the 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("concurrent runs with default lock owners exclude each other, and a finishing run never releases another run's lease", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    // Simulate run A mid-flight holding its default per-run lease.
+    await acquireLock(store, "control-loop:run-a", NOW, 60 * 60 * 1000);
+    const runB = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: store, runId: "run-b", issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.equal(runB.skipped, true, "a second run must not treat the first run's live lease as its own");
+    const runC = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: store, runId: "run-c", issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.equal(runC.skipped, true, "run B's exit must not have released run A's lease");
+    assert.equal(JSON.parse((await store.read("lock"))!).owner, "control-loop:run-a");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a run whose watermark changed underneath it does not overwrite the newer watermark", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    const racing = {
+      read: (key: string) => store.read(key),
+      write: (key: string, value: string | null) => store.write(key, value),
+      readVersioned: (key: string) => store.readVersioned(key),
+      async writeIfVersion(key: string, value: string | null, expected: string | null) {
+        // Another writer lands a watermark just before this run persists its own.
+        if (key === "watermark") await store.write("watermark", JSON.stringify({ ...(await readWatermark(store)), lastRunId: "newer-run" }));
+        return store.writeIfVersion(key, value, expected);
+      },
+    };
+    const report = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: racing, runId: "stale-run", issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.ok(report.notes.includes("watermark_write_conflict"));
+    assert.equal((await readWatermark(store)).lastRunId, "newer-run");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("without a GitHub token a missing issue snapshot is a skipped scanner, not a failure, while closure stays disabled", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    const first = await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, runId: "run-1", issueSnapshot: null, issueSnapshotRequired: false });
+    assert.equal(first.status, "complete");
+    assert.equal(first.watermark.consecutiveFailures, 0);
+    assert.equal(first.watermark.lastWeeklyScanComplete, true);
+    const hygiene = first.scan.scanners.find((scanner) => scanner.name === "issue-hygiene");
+    assert.deepEqual(hygiene, { name: "issue-hygiene", complete: false, skipped: true, reason: "issue_snapshot_unavailable_no_github_token" });
+    assert.equal(first.closure.allowed, false, "closure needs the issue snapshot");
+
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const second = await runControlLoop({ root, mode: "daily", now: later, stateStore: store, runId: "run-2", issueSnapshot: null, issueSnapshotRequired: false });
+    assert.equal(second.health.healthy, true, "an unconfigured optional scanner must not degrade health forever");
+    assert.equal(second.closure.allowed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("with a GitHub token configured, a failed issue fetch still marks the run incomplete", async () => {
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    const report = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(), issueSnapshot: null, issueSnapshotRequired: true });
+    assert.equal(report.status, "incomplete");
+    assert.equal(report.watermark.consecutiveFailures, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an incremental daily scan never allows automatic closure even when the loop is healthy", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const report = await runControlLoop({ root, mode: "daily", now: later, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, changedPaths: ["docs/README.md"] });
+    assert.equal(report.scan.full, false);
+    assert.equal(report.health.healthy, true);
+    assert.deepEqual(report.closure, { allowed: false, reason: "incremental_scan" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
