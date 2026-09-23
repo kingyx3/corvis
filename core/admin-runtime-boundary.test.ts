@@ -64,7 +64,11 @@ test("admin presentation runtime has a distinct identity and no data-plane grant
 });
 
 test("admin application surface uses only allowlisted privileged APIs", async () => {
-  const page = await read("app/admin/page.tsx");
+  const surface = [
+    await read("app/admin/page.tsx"),
+    await read("features/admin/governance-forms.tsx"),
+  ].join("\n");
+
   for (const endpoint of [
     "/api/v1/admin/readiness",
     "/api/v1/admin/feature-flags",
@@ -74,6 +78,13 @@ test("admin application surface uses only allowlisted privileged APIs", async ()
     "/api/v1/admin/identity-lifecycle",
     "/api/v1/admin/access-policy",
     "/api/v1/admin/support-access",
-  ]) assert.ok(page.includes(endpoint), `admin console must expose ${endpoint}`);
-  assert.doesNotMatch(page, /\/api\/v1\/funds|\/api\/v1\/workspace/);
+    "/api/v1/admin/session-revocations",
+    "/api/v1/admin/data-corrections",
+    "/api/v1/admin/deletion-requests",
+  ]) assert.ok(surface.includes(endpoint), `admin console must expose ${endpoint}`);
+
+  assert.doesNotMatch(surface, /\/api\/v1\/funds|\/api\/v1\/workspace/);
+  const apiPaths = [...surface.matchAll(/\/api\/v1\/[a-z0-9_\-/\[\]]+/g)].map((match) => match[0]);
+  const outsidePrivilegedSurface = apiPaths.filter((endpoint) => !endpoint.startsWith("/api/v1/admin/"));
+  assert.deepEqual(outsidePrivilegedSurface, [], "admin browser surface must not call customer/data-plane API families directly");
 });
