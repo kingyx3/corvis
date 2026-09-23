@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ResearchAnswer, ResearchProgressPhase } from "@/core/enterprise";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon } from "@/components/ui/icon";
@@ -30,6 +30,10 @@ export function ResearchView({ suggestions }: { suggestions: string[] }) {
   const [phase, setPhase] = useState<ResearchProgressPhase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+
+  // Leaving the view must not leave a research stream (and its server-side
+  // work) running in the background.
+  useEffect(() => () => controllerRef.current?.abort(), []);
 
   const ask = async (value: string) => {
     const next = value.trim();

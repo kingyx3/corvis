@@ -7,6 +7,7 @@ import type { SourceEvidence } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
+import { toCsv } from "@/lib/csv";
 
 function actionLabel(action: ReconciliationResolutionAction): string {
   if (action === "select_source") return "Select authoritative source";
@@ -26,7 +27,15 @@ export function ReviewView({
   onPublished?: (snapshot: FundSnapshot) => void;
 }) {
   const [onlyReview, setOnlyReview] = useState(false);
-  const [rows, setRows] = useState(observations);
+  // Props are the source of truth so a parent refresh (new versions, new rows)
+  // is always reflected. Local decisions are kept only as overrides until the
+  // parent catches up to (or passes) that version, so a caller without
+  // onObservationUpdated still sees its own decision immediately.
+  const [overrides, setOverrides] = useState<Record<string, ObservationRecord>>({});
+  const rows = observations.map((row) => {
+    const override = overrides[row.id];
+    return override && (override.version ?? 0) > (row.version ?? 0) ? override : row;
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
@@ -66,9 +75,11 @@ export function ReviewView({
   const exportCsv = () => {
     const header = ["Company","Metric","Value","Period","Source","Confidence","State"];
     const csvRows = scopedRows.map((row) => [row.company,row.metric,row.value,row.period,row.source,`${row.confidence}%`,row.state]);
-    const csv = [header, ...csvRows].map((row) => row.map((value) => `"${String(value).replaceAll('"','""')}"`).join(",")).join("\n");
+    const csv = toCsv([header, ...csvRows]);
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = "corvis-reviewed-observations.csv"; link.click(); URL.revokeObjectURL(url);
+    const link = document.createElement("a"); link.href = url; link.download = "corvis-reviewed-observations.csv"; link.click();
+    // Revoking synchronously can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const decide = async (row: ObservationRecord, decision: "approve" | "reject" | "correct") => {
@@ -87,7 +98,7 @@ export function ReviewView({
         state: outcome.nextState === "approved" ? "Approved" : outcome.nextState === "rejected" ? "Rejected" : "Needs review",
         version: outcome.newVersion,
       };
-      setRows((current) => current.map((item) => item.id === row.id ? updated : item));
+      setOverrides((current) => ({ ...current, [row.id]: updated }));
       onObservationUpdated?.(updated);
       if (decision === "approve" && outcome.nextState === "review_required") {
         setMessage("First critical approval recorded; an independent second reviewer is still required.");
