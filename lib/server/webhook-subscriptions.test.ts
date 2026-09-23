@@ -5,6 +5,7 @@ import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.
 import {
   createWebhookSubscription, listWebhookDeliveries, listWebhookSubscriptions, pauseWebhookSubscription,
   resumeWebhookSubscription, revokeWebhookSubscription, rotateWebhookSigningKey, sweepExpiredWebhookSigningKeys,
+  webhookSubscriptionTransition,
   WebhookSubscriptionError,
 } from "./webhook-subscriptions.ts";
 
@@ -94,7 +95,7 @@ class FakeWebhookDb implements PostgresSqlApi {
 test("createWebhookSubscription rejects a non-https endpoint and empty event types", async () => {
   const db = new FakeWebhookDb();
   await assert.rejects(
-    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: "http://example.com/hook", eventTypes: ["DocumentRegistered"] }, db),
+    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: "http://example.com/hook", eventTypes: ["SnapshotPublicationChanged"] }, db),
     WebhookSubscriptionError,
   );
   await assert.rejects(
@@ -105,7 +106,7 @@ test("createWebhookSubscription rejects a non-https endpoint and empty event typ
 
 test("createWebhookSubscription returns the signing secret exactly once; later reads never include it", async () => {
   const db = new FakeWebhookDb();
-  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["DocumentRegistered", "DocumentRegistered"] }, db);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged", "SnapshotPublicationChanged"] }, db);
   assert.equal(created.eventTypes.length, 1, "duplicate event types are deduplicated");
   assert.equal(created.signingSecret.length >= 32, true);
 
@@ -116,7 +117,7 @@ test("createWebhookSubscription returns the signing secret exactly once; later r
 
 test("a tenant cannot see or mutate another tenant's subscription", async () => {
   const db = new FakeWebhookDb();
-  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["DocumentRegistered"] }, db);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged"] }, db);
 
   assert.deepEqual(await listWebhookSubscriptions(identity(TENANT_B), db), []);
   await assert.rejects(() => pauseWebhookSubscription(identity(TENANT_B), created.webhookId, db), WebhookSubscriptionError);
@@ -125,7 +126,7 @@ test("a tenant cannot see or mutate another tenant's subscription", async () => 
 
 test("pause/resume/revoke enforce valid transitions and revoke is terminal", async () => {
   const db = new FakeWebhookDb();
-  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["DocumentRegistered"] }, db);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged"] }, db);
 
   await assert.rejects(() => resumeWebhookSubscription(identity(TENANT_A), created.webhookId, db), WebhookSubscriptionError, "cannot resume an already-active subscription");
 
@@ -144,7 +145,7 @@ test("pause/resume/revoke enforce valid transitions and revoke is terminal", asy
 
 test("rotateWebhookSigningKey retires the old key and activates exactly one new key; revoked subscriptions cannot rotate", async () => {
   const db = new FakeWebhookDb();
-  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["DocumentRegistered"] }, db);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged"] }, db);
   const rotated = await rotateWebhookSigningKey(identity(TENANT_A), created.webhookId, db);
   assert.notEqual(rotated.signingKeyId, created.signingKeyId);
   assert.notEqual(rotated.signingSecret, created.signingSecret);
@@ -177,11 +178,79 @@ test("sweepExpiredWebhookSigningKeys revokes only past-due retiring keys", async
 test("listWebhookDeliveries returns diagnostics scoped to the tenant and subscription", async () => {
   const db = new FakeWebhookDb();
   db.deliveries.push(
-    { tenant_id: TENANT_A, webhook_id: "w1", delivery_id: "d1", event_id: "e1", attempt: 1, state: "failed", status_code: 500, last_error: "boom", created_at: "2026-01-01T00:00:00Z", completed_at: null },
-    { tenant_id: TENANT_B, webhook_id: "w1", delivery_id: "d2", event_id: "e2", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T00:00:01Z" },
+    { tenant_id: TENANT_A, webhook_id: "00000000-0000-4000-8000-0000000000c1", delivery_id: "d1", event_id: "e1", attempt: 1, state: "failed", status_code: 500, last_error: "boom", created_at: "2026-01-01T00:00:00Z", completed_at: null },
+    { tenant_id: TENANT_B, webhook_id: "00000000-0000-4000-8000-0000000000c1", delivery_id: "d2", event_id: "e2", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T00:00:01Z" },
   );
-  const diagnostics = await listWebhookDeliveries(identity(TENANT_A), "w1", db);
+  const diagnostics = await listWebhookDeliveries(identity(TENANT_A), "00000000-0000-4000-8000-0000000000c1", db);
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0]?.deliveryId, "d1");
   assert.equal(diagnostics[0]?.lastError, "boom");
+});
+
+async function rejectsWithCode(promise: () => Promise<unknown>, code: string): Promise<void> {
+  await assert.rejects(promise, (error: unknown) => {
+    assert.ok(error instanceof WebhookSubscriptionError);
+    assert.equal(error.code, code);
+    return true;
+  });
+}
+
+test("createWebhookSubscription rejects internal processing-transport and unknown event types", async () => {
+  const db = new FakeWebhookDb();
+  for (const eventType of ["DocumentRegistered", "ProcessingStageReady", "ProcessingStageRetryScheduled", "ProcessingJobRetryRequested", "NotARealEvent"]) {
+    await rejectsWithCode(
+      () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged", eventType] }, db),
+      "event_type_not_supported",
+    );
+  }
+  assert.equal(db.subscriptions.length, 0, "a rejected subscription must never reach the database");
+});
+
+test("createWebhookSubscription rejects loopback, private, link-local and metadata endpoints", async () => {
+  const db = new FakeWebhookDb();
+  for (const endpointUrl of [
+    "https://localhost/hook",
+    "https://api.localhost/hook",
+    "https://metadata.google.internal/computeMetadata/v1/",
+    "https://127.0.0.1/hook",
+    "https://2130706433/hook",
+    "https://10.1.2.3/hook",
+    "https://172.16.0.1/hook",
+    "https://192.168.1.10/hook",
+    "https://169.254.169.254/latest/meta-data",
+    "https://100.64.0.1/hook",
+    "https://0.0.0.0/hook",
+    "https://[::1]/hook",
+    "https://[fd00:ec2::254]/hook",
+    "https://[fe80::1]/hook",
+    "https://[::ffff:127.0.0.1]/hook",
+  ]) {
+    await rejectsWithCode(
+      () => createWebhookSubscription(identity(TENANT_A), { endpointUrl, eventTypes: ["SnapshotPublicationChanged"] }, db),
+      "endpoint_url_host_not_allowed",
+    );
+  }
+  assert.equal(db.subscriptions.length, 0);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://hooks.example.com/corvis", eventTypes: ["SnapshotPublicationChanged"] }, db);
+  assert.equal(created.endpointUrl, "https://hooks.example.com/corvis");
+});
+
+test("a non-UUID webhook id is rejected as not-found before any database access", async () => {
+  const db = new FakeWebhookDb();
+  let queried = false;
+  const original = db.query.bind(db);
+  db.query = async (sql, parameters) => { queried = true; return original(sql, parameters); };
+  await rejectsWithCode(() => pauseWebhookSubscription(identity(TENANT_A), "not-a-uuid", db), "webhook_subscription_not_found");
+  await rejectsWithCode(() => rotateWebhookSigningKey(identity(TENANT_A), "1; drop table x", db), "webhook_subscription_not_found");
+  await rejectsWithCode(() => listWebhookDeliveries(identity(TENANT_A), "w1", db), "webhook_subscription_not_found");
+  assert.equal(queried, false);
+});
+
+test("webhookSubscriptionTransition resolves only own actions, never prototype members", () => {
+  assert.equal(webhookSubscriptionTransition("pause"), pauseWebhookSubscription);
+  assert.equal(webhookSubscriptionTransition("resume"), resumeWebhookSubscription);
+  assert.equal(webhookSubscriptionTransition("revoke"), revokeWebhookSubscription);
+  for (const action of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "", undefined, null, 1, {}]) {
+    assert.equal(webhookSubscriptionTransition(action), undefined, `action ${String(action)} must not resolve`);
+  }
 });

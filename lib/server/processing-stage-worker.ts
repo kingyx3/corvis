@@ -42,7 +42,16 @@ export type ProcessingStageWorkerResult =
   | { outcome: "completed"; nextJobId?: string; nextStage?: ProcessingStage }
   | { outcome: "blocked"; reason: string; metadata: Record<string, unknown> }
   | { outcome: "retryable"; nextAttemptAt?: string }
-  | { outcome: "dead_letter" };
+  | { outcome: "dead_letter" }
+  /** The delivery is superseded (job already succeeded/blocked/failed, or this inbox event is exhausted); acknowledge and drop it. */
+  | { outcome: "stale"; state: string };
+
+/**
+ * Job states in which a non-claimed delivery is terminal for this event.
+ * `claim_processing_stage_delivery` (migration 043) returns these instead of
+ * raising, having already marked the inbox row `failed`.
+ */
+const TERMINAL_UNCLAIMED_JOB_STATES: ReadonlySet<string> = new Set(["succeeded", "blocked", "failed", "missing"]);
 
 function effectKey(delivery: ProcessingStageDelivery): string {
   return createHash("sha256")
@@ -77,7 +86,16 @@ export async function runProcessingStageDelivery(input: {
 
   const claim = await stages.claim(delivery);
   if (claim.duplicateComplete) return { outcome: "duplicate" };
-  if (!claim.claimed || !claim.leaseToken) return { outcome: "busy", state: claim.jobState };
+  if (!claim.claimed || !claim.leaseToken) {
+    // A terminally-handled delivery must be acknowledged (2xx), never answered
+    // with a retryable 503/500: redelivering it can never succeed and would
+    // loop in Pub/Sub or Cloud Tasks indefinitely.
+    if (claim.jobState === "dead_letter") return { outcome: "dead_letter" };
+    if (claim.inboxState === "failed" || TERMINAL_UNCLAIMED_JOB_STATES.has(claim.jobState)) {
+      return { outcome: "stale", state: claim.jobState };
+    }
+    return { outcome: "busy", state: claim.jobState };
+  }
 
   const idempotencyKey = effectKey(delivery);
   try {

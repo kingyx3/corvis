@@ -69,17 +69,31 @@ export function parseLimit(raw: string | null, fallback = DEFAULT_PAGE_LIMIT): n
   return Math.min(value, MAX_PAGE_LIMIT);
 }
 
+function compareKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /**
- * Paginates `items` (already sorted ascending by `keyOf`) starting just
- * after `cursor`'s sort key, if given. A cursor whose key no longer appears
- * in `items` (an already-consumed item was deleted, for example) still
+ * Paginates `items` in ascending `keyOf` order, starting just after
+ * `cursor`'s sort key, if given. A cursor whose key no longer appears in
+ * `items` (an already-consumed item was deleted, for example) still
  * paginates correctly: it starts from the first item whose key sorts after
  * the cursor rather than throwing or silently restarting from page one.
+ *
+ * The cursor contract ("every key after the cursor key") only holds when the
+ * page walk is in the same order the cursor comparison uses, so this sorts a
+ * copy by the key itself rather than trusting the caller's order. A caller
+ * that passed rows in SQL `desc` order (or ordered by a different column than
+ * its composite key) would otherwise loop forever or skip rows. The input
+ * array is never mutated.
  */
 export function paginate<T>(items: readonly T[], keyOf: (item: T) => string, limit: number, cursor?: string | null): Page<T> {
   const afterKey = cursor ? decodeCursor(cursor) : null;
-  const startIndex = afterKey === null ? 0 : items.findIndex((item) => keyOf(item) > afterKey);
-  const remaining = startIndex === -1 ? [] : items.slice(startIndex);
+  const ordered = items
+    .map((item) => ({ item, key: keyOf(item) }))
+    .sort((a, b) => compareKeys(a.key, b.key));
+  const startIndex = afterKey === null ? 0 : ordered.findIndex((entry) => entry.key > afterKey);
+  const remaining = startIndex === -1 ? [] : ordered.slice(startIndex).map((entry) => entry.item);
   const page = remaining.slice(0, limit);
   const hasMore = remaining.length > limit;
   return {

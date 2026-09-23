@@ -250,8 +250,13 @@ paths:
               type: object
               required: [endpointUrl, eventTypes]
               properties:
-                endpointUrl: { type: string, format: uri, description: Must be https. }
-                eventTypes: { type: array, items: { type: string }, minItems: 1 }
+                endpointUrl: { type: string, format: uri, description: "Must be https, without credentials, and must not target localhost, *.internal/metadata hosts or a loopback, private, link-local or reserved IP address." }
+                eventTypes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum: [SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested, ProcessingStageBlocked, ProcessingStageDeadLettered]
       responses:
         '201':
           description: Subscription created with its first signing key. The signing secret is returned exactly once, in this response.

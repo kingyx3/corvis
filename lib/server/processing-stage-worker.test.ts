@@ -112,6 +112,34 @@ test("duplicate-complete delivery performs no stage effect", async () => {
   assert.equal(executions, 0);
 });
 
+test("terminally-handled unclaimed deliveries are acknowledged, not reported busy", async () => {
+  const noEffects = { async begin(): Promise<never> { throw new Error("unexpected"); }, async complete() { return true; } };
+  const cases: Array<[Partial<ProcessingStageClaim>, unknown]> = [
+    // Exhausted job dead-lettered by claim_processing_stage_delivery (migration 043).
+    [{ inboxState: "failed", jobState: "dead_letter" }, { outcome: "dead_letter" }],
+    // Superseded delivery for a job that already moved on.
+    [{ inboxState: "failed", jobState: "succeeded" }, { outcome: "stale", state: "succeeded" }],
+    [{ inboxState: "retryable", jobState: "blocked" }, { outcome: "stale", state: "blocked" }],
+    // Inbox event exhausted while the job still waits on a newer event.
+    [{ inboxState: "failed", jobState: "retryable" }, { outcome: "stale", state: "retryable" }],
+    // Genuinely transient: another delivery holds the job lease.
+    [{ inboxState: "processing", jobState: "running" }, { outcome: "busy", state: "running" }],
+    [{ inboxState: "retryable", jobState: "retryable" }, { outcome: "busy", state: "retryable" }],
+  ];
+  for (const [claim, expected] of cases) {
+    let executions = 0;
+    const result = await runProcessingStageDelivery({
+      identity,
+      delivery,
+      stages: claimedStages({ claimed: false, duplicateComplete: false, leaseToken: undefined, ...claim }),
+      effects: noEffects,
+      handler: { async execute() { executions += 1; } },
+    });
+    assert.deepEqual(result, expected, JSON.stringify(claim));
+    assert.equal(executions, 0);
+  }
+});
+
 test("completed effect is not executed again after redelivery", async () => {
   let executions = 0;
   let completed = 0;

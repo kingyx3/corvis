@@ -162,6 +162,11 @@ jobs:
         run: |
           set -euo pipefail
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/reviewed-economic-graph.sql
+      - name: Exercise processing retry exhaustion and delivery hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-retry-exhaustion.sql
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql

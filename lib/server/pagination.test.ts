@@ -96,3 +96,36 @@ test("inserting a new item after a cursor was issued surfaces it on the next pag
   // Nothing already returned on the first page reappears.
   assert.equal(second.items.some((item) => first.items.some((seen) => seen.id === item.id)), false);
 });
+
+function walk<T>(all: readonly T[], keyOf: (item: T) => string, limit: number): string[] {
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  for (let guard = 0; guard < 100; guard += 1) {
+    const page: Page<T> = paginate(all, keyOf, limit, cursor);
+    seen.push(...page.items.map(keyOf));
+    cursor = page.nextCursor;
+    if (!cursor) return seen;
+  }
+  throw new Error("pagination did not terminate");
+}
+
+test("rows supplied in SQL desc order are still walked exactly once and the walk terminates", () => {
+  const descending = items(23).reverse();
+  const seen = walk(descending, (item) => item.id, 5);
+  assert.equal(seen.length, 23);
+  assert.equal(new Set(seen).size, 23);
+  assert.deepEqual(seen, [...seen].sort());
+  assert.equal(descending[0]?.id, "id-0022", "the caller's array is not mutated");
+});
+
+test("a composite key whose SQL order differs from its string order skips no rows", () => {
+  // SQL `order by metric_code, definition_version` puts version 9 before 10,
+  // but the string key "m:10" sorts before "m:9".
+  const rows = [
+    { metricCode: "irr", definitionVersion: 9 }, { metricCode: "irr", definitionVersion: 10 },
+    { metricCode: "nav", definitionVersion: 1 }, { metricCode: "nav", definitionVersion: 2 },
+    { metricCode: "tvpi", definitionVersion: 9 }, { metricCode: "tvpi", definitionVersion: 11 },
+  ];
+  const seen = walk(rows, (row) => `${row.metricCode}:${row.definitionVersion}`, 1);
+  assert.deepEqual([...seen].sort(), rows.map((row) => `${row.metricCode}:${row.definitionVersion}`).sort());
+});
