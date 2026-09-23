@@ -70,7 +70,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
       {state.error && <span role="alert" style={{ color: "#991b1b", fontSize: 13 }}>{state.error}</span>}
       {!state.error && state.status && <span role="status" style={{ color: "#166534", fontSize: 13 }}>Applied and audited ({state.status})</span>}
     </div>
-    {state.result && <details style={{ marginTop: 12 }}><summary>Operation receipt</summary><pre style={{ fontSize: 11, whiteSpace: "pre-wrap" }}>{JSON.stringify(state.result, null, 2)}</pre></details>}
+    {state.result != null && <details style={{ marginTop: 12 }}><summary>Operation receipt</summary><pre style={{ fontSize: 11, whiteSpace: "pre-wrap" }}>{JSON.stringify(state.result, null, 2)}</pre></details>}
     {preview && <Modal label={`Confirm ${title}`} onClose={() => setPreview(false)}><div style={{ padding: 20 }}>
       <h2 style={{ marginTop: 0 }}>Confirm privileged change</h2>
       <p>The exact command below will be re-authorized and audited by the server.</p>
