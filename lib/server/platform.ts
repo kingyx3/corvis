@@ -88,6 +88,18 @@ function allowedActions(type: ReconciliationExceptionType): ReconciliationResolu
   return ["accept_reconciliation"];
 }
 
+/**
+ * Cursor key for `/snapshots` pagination. Every publish/withdraw/supersede transition appends a
+ * new row under the same snapshot id (the primary key is tenant + snapshot id + version), so the
+ * id alone is not unique: a page boundary between two versions of one snapshot would skip the
+ * remaining versions. The zero-padded version keeps the string order numeric. A snapshot without
+ * an id (demo composition) falls back to fund/period/version, which is stable within one listing.
+ */
+export function snapshotPaginationKey(snapshot: FundSnapshot): string {
+  const version = String(snapshot.version ?? 0).padStart(10, "0");
+  return snapshot.id ? `${snapshot.id}\u0000${version}` : `${snapshot.fund}\u0000${snapshot.period}\u0000${version}`;
+}
+
 class DemoPlatform implements PlatformPort {
   private auditEvents: AuditEvent[] = [];
   async listDocuments() { return documents; }

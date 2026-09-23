@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
-import { ConflictError, PostgresProductionPlatform, PublicationGateError } from "./platform.ts";
+import { ConflictError, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
+import { paginate, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
@@ -287,4 +288,22 @@ test("exports require the independent authoritative redistribution right", async
     (error: unknown) => error instanceof AuthorizationError && error.requiredPermission === "data_rights:redistribution",
   );
   assert.equal(db.calls.length, 0);
+});
+
+test("snapshot pagination walks every version of a snapshot even when a page boundary splits them", () => {
+  const otherSnapshotId = "00000000-0000-0000-0000-000000000402";
+  const rows = [
+    { id: snapshotId, version: 1 }, { id: snapshotId, version: 2 }, { id: snapshotId, version: 10 },
+    { id: otherSnapshotId, version: 1 }, { id: otherSnapshotId, version: 2 },
+  ].map((row) => ({ ...row, fund: "Fund A", period: "2026 Q2", status: "Review" as const, holdings: 0, facts: 0, changed: "" }));
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: Page<(typeof rows)[number]> = paginate(rows, snapshotPaginationKey, 1, cursor);
+    seen.push(...page.items.map((row) => `${row.id}@${row.version}`));
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.deepEqual(seen, [
+    `${snapshotId}@1`, `${snapshotId}@2`, `${snapshotId}@10`, `${otherSnapshotId}@1`, `${otherSnapshotId}@2`,
+  ]);
 });
