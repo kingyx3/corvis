@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
@@ -18,6 +18,10 @@ function actionLabel(action: ReconciliationResolutionAction): string {
 
 type ReviewDialog = { row: ObservationRecord; decision: "correct" | "reject" };
 type ExceptionDialog = { item: ReconciliationException; action: ReconciliationResolutionAction };
+/** A drill-through request (e.g. from global search) to focus one observation; a new key re-applies it. */
+export type ReviewFocusRequest = { observationId: string; key: number };
+// Queue focus is a position (Previous/Next) or a specific observation (drill-through).
+type QueueFocus = { index: number } | { observationId: string };
 
 export function ReviewView({
   observations,
@@ -27,6 +31,8 @@ export function ReviewView({
   canReview,
   canPublish,
   canReadSources,
+  canExport,
+  focusRequest,
 }: {
   observations: ObservationRecord[];
   snapshot?: FundSnapshot;
@@ -35,6 +41,8 @@ export function ReviewView({
   canReview: boolean;
   canPublish: boolean;
   canReadSources: boolean;
+  canExport: boolean;
+  focusRequest?: ReviewFocusRequest | null;
 }) {
   const [stateFilter, setStateFilter] = useState<"all" | ObservationRecord["state"]>("all");
   const [query, setQuery] = useState("");
@@ -55,7 +63,20 @@ export function ReviewView({
   const [reviewReason, setReviewReason] = useState("reviewer_corrected");
   const [exceptionDialog, setExceptionDialog] = useState<ExceptionDialog | null>(null);
   const [exceptionNote, setExceptionNote] = useState("");
-  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [queueFocus, setQueueFocus] = useState<QueueFocus>(focusRequest ? { observationId: focusRequest.observationId } : { index: 0 });
+  const [appliedFocusKey, setAppliedFocusKey] = useState(focusRequest?.key);
+  const [scrollTarget, setScrollTarget] = useState<{ observationId: string; request: number } | null>(focusRequest ? { observationId: focusRequest.observationId, request: focusRequest.key } : null);
+  const evidenceRequestRef = useRef(0);
+  // A new drill-through while mounted: clear filters that could hide the
+  // requested observation, focus it and scroll it into view.
+  if (focusRequest && focusRequest.key !== appliedFocusKey) {
+    setAppliedFocusKey(focusRequest.key);
+    setQueueFocus({ observationId: focusRequest.observationId });
+    setScrollTarget({ observationId: focusRequest.observationId, request: focusRequest.key });
+    setQuery("");
+    setStateFilter("all");
+    setConfidenceFilter("all");
+  }
   const snapshotId = snapshot?.id;
   const snapshotVersion = snapshot?.version;
   const exceptionKey = snapshotId && snapshotVersion ? `${snapshotId}:${snapshotVersion}` : "";
@@ -100,8 +121,21 @@ export function ReviewView({
   const blockingExceptions = useGovernedExceptionCount ? openExceptions.length : snapshot?.blockingExceptions ?? 0;
   const alreadyPublished = snapshot?.status === "Published";
   const publishBlocked = !snapshot?.id || !snapshot.version || alreadyPublished || needsReview > 0 || blockingExceptions > 0;
-  const clampedFocusedIndex = Math.min(focusedIndex, Math.max(visible.length - 1, 0));
+  const requestedFocusIndex = "observationId" in queueFocus ? visible.findIndex((row) => row.id === queueFocus.observationId) : queueFocus.index;
+  const clampedFocusedIndex = Math.min(Math.max(requestedFocusIndex, 0), Math.max(visible.length - 1, 0));
   const focused = visible[clampedFocusedIndex];
+  const moveFocus = (delta: number) => {
+    const index = Math.min(Math.max(clampedFocusedIndex + delta, 0), Math.max(visible.length - 1, 0));
+    const row = visible[index];
+    if (!row) return;
+    setQueueFocus({ index });
+    setScrollTarget((current) => ({ observationId: row.id, request: (current?.request ?? 0) + 1 }));
+  };
+
+  useEffect(() => {
+    if (!scrollTarget) return;
+    document.querySelector(`[data-observation-id="${CSS.escape(scrollTarget.observationId)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [scrollTarget]);
 
   const exportCsv = () => {
     const header = ["Company","Metric","Value","Period","Source","Confidence","State"];
@@ -141,12 +175,18 @@ export function ReviewView({
     await applyDecision(dialog.row, dialog.decision, value, reviewReason);
   };
 
+  // Only the latest evidence request may update the panel; a slower earlier
+  // response must not replace evidence the reviewer opened afterwards.
   const showSourceReference = async (sourceReferenceId: string, busyKey: string) => {
     if (!canReadSources) return;
+    const requestId = ++evidenceRequestRef.current;
     setBusy(busyKey); setMessage(null);
-    try { setEvidence(await workspacePort.sourceEvidence(sourceReferenceId)); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "Source evidence could not be opened"); }
-    finally { setBusy(null); }
+    try {
+      const opened = await workspacePort.sourceEvidence(sourceReferenceId);
+      if (requestId === evidenceRequestRef.current) setEvidence(opened);
+    } catch (error) {
+      if (requestId === evidenceRequestRef.current) setMessage(error instanceof Error ? error.message : "Source evidence could not be opened");
+    } finally { setBusy((current) => current === busyKey ? null : current); }
   };
 
   const resolveException = async (item: ReconciliationException, action: ReconciliationResolutionAction, note: string) => {
@@ -178,11 +218,11 @@ export function ReviewView({
   };
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">TRUSTED DATA</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions"><button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
+    <section className="page-heading"><div><p className="eyebrow">TRUSTED DATA</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && <button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
     {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} observations need review and {blockingExceptions} reconciliation exceptions remain open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
     {message && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Workflow status</strong><span>{message}</span></div></div>}
-    {evidence && <div className="lineage-note" role="region" aria-label="Source evidence"><Icon name="source"/><div><strong>Exact source evidence</strong><span>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}</span>{evidence.excerpt && <span>{evidence.excerpt}</span>}</div><button className="text-button" onClick={() => setEvidence(null)}>Close</button></div>}
+    {evidence && <div className="lineage-note" role="region" aria-label="Source evidence"><Icon name="source"/><div><strong>Exact source evidence</strong><span>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}</span>{evidence.excerpt && <span>{evidence.excerpt}</span>}</div><button className="text-button" onClick={() => { evidenceRequestRef.current += 1; setEvidence(null); }}>Close</button></div>}
     <div className="review-summary"><div><span>Observations</span><strong>{scopedRows.length}</strong></div><div><span>Approved</span><strong>{approved}</strong></div><div><span>Needs review</span><strong className="amber">{needsReview}</strong></div><div><span>Holdings</span><strong>{snapshot?.holdings ?? "—"}</strong></div><div><span>Blocking exceptions</span><strong>{blockingExceptions}</strong></div></div>
 
     {canReview && snapshot?.id && <div className="table-card" tabIndex={0} role="region" aria-label="Reconciliation exceptions table"><table className="data-table"><thead><tr><th>Exception</th><th>Context</th><th>Competing evidence</th><th>Status</th><th>Resolution</th></tr></thead><tbody>
@@ -194,11 +234,11 @@ export function ReviewView({
       })}
     </tbody></table></div>}
 
-    <div className="toolbar" aria-label="Review filters"><label className="search-field"><Icon name="search"/><input aria-label="Search review observations" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search company, metric, value or source"/></label><select className="filter-button" aria-label="Review state" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}><option value="all">All states</option><option value="Needs review">Needs review</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option></select><select className="filter-button" aria-label="Confidence risk" value={confidenceFilter} onChange={(event) => setConfidenceFilter(event.target.value as typeof confidenceFilter)}><option value="all">All confidence</option><option value="under90">Under 90%</option><option value="under75">Under 75%</option></select><select className="filter-button" aria-label="Review sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="risk">Risk first</option><option value="confidence">Lowest confidence</option><option value="company">Company / metric</option></select><span className="table-muted" role="status">{visible.length} shown</span><div className="toolbar-spacer"/><button className="text-button" disabled={!visible.length || clampedFocusedIndex <= 0} onClick={() => setFocusedIndex(Math.max(0, clampedFocusedIndex - 1))}>Previous</button><button className="text-button" disabled={!visible.length || clampedFocusedIndex >= visible.length - 1} onClick={() => setFocusedIndex(Math.min(visible.length - 1, clampedFocusedIndex + 1))}>Next</button></div>
+    <div className="toolbar" aria-label="Review filters"><label className="search-field"><Icon name="search"/><input aria-label="Search review observations" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search company, metric, value or source"/></label><select className="filter-button" aria-label="Review state" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}><option value="all">All states</option><option value="Needs review">Needs review</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option></select><select className="filter-button" aria-label="Confidence risk" value={confidenceFilter} onChange={(event) => setConfidenceFilter(event.target.value as typeof confidenceFilter)}><option value="all">All confidence</option><option value="under90">Under 90%</option><option value="under75">Under 75%</option></select><select className="filter-button" aria-label="Review sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="risk">Risk first</option><option value="confidence">Lowest confidence</option><option value="company">Company / metric</option></select><span className="table-muted" role="status">{visible.length} shown</span><div className="toolbar-spacer"/><button className="text-button" disabled={!visible.length || clampedFocusedIndex <= 0} onClick={() => moveFocus(-1)}>Previous</button><button className="text-button" disabled={!visible.length || clampedFocusedIndex >= visible.length - 1} onClick={() => moveFocus(1)}>Next</button></div>
     {focused && <div className="lineage-note" role="status" aria-label="Focused review item"><Icon name="table"/><div><strong>Review queue {clampedFocusedIndex + 1} of {visible.length}</strong><span>{focused.company} · {focused.metric} · {focused.confidence}% confidence</span></div></div>}
     <div className="table-card" tabIndex={0} role="region" aria-label="Data review observations table"><table className="data-table review-table"><thead><tr><th>Company</th><th>Metric</th><th>Value</th><th>Period</th><th>Change</th><th>Confidence</th><th>Source evidence</th><th>State / action</th></tr></thead><tbody>
       {visible.length === 0 && <tr><td colSpan={8}>No observations match the current review filters.</td></tr>}
-      {visible.map((row, index) => <tr key={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><strong>{row.company}</strong></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={row.delta.startsWith("+") ? "positive" : ""}>{row.delta}</td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy === `source:${row.id}`} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="heading-actions"><button className="secondary-button" disabled={busy === row.id} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div> : <StatusPill status={row.state}/>}</td></tr>)}
+      {visible.map((row, index) => <tr key={row.id} data-observation-id={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><strong>{row.company}</strong></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={row.delta.startsWith("+") ? "positive" : ""}>{row.delta}</td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy === `source:${row.id}`} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="heading-actions"><button className="secondary-button" disabled={busy === row.id} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div> : <StatusPill status={row.state}/>}</td></tr>)}
     </tbody></table></div>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Every published value must be traceable.</strong><span>Snapshot → consolidated fact → reviewed observation → source reference → original document. Exception resolutions are versioned and attributable.</span></div></div>
 

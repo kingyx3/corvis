@@ -1,9 +1,19 @@
 import type { WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 
+// Demo sessions can simulate a read-only viewer (sessionStorage
+// "corvis:demo:role" = "read_only") to exercise capability-aware presentation.
+function demoReadOnly(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.sessionStorage.getItem("corvis:demo:role") === "read_only";
+}
+
 export function createDemoWorkspacePort(): WorkspacePort {
   return {
     async capabilities() {
+      if (demoReadOnly()) {
+        return { permissions: ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false };
+      }
       return {
         permissions: [
           "documents:read",
