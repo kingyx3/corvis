@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { isWebhookEventType, webhookEndpointBlockReason } from "./webhook-endpoint-policy.ts";
 
 export class WebhookSubscriptionError extends Error {
   readonly code: string;
@@ -10,6 +11,13 @@ export class WebhookSubscriptionError extends Error {
     this.name = "WebhookSubscriptionError";
     this.code = code;
   }
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A webhook id that is not a UUID can never exist; reject it as not-found before it reaches a `::uuid` cast. */
+export function assertWebhookId(webhookId: string): void {
+  if (!UUID_PATTERN.test(webhookId)) throw new WebhookSubscriptionError("webhook_subscription_not_found");
 }
 
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
@@ -76,6 +84,9 @@ function validateEventTypes(eventTypes: unknown): string[] {
   if (!Array.isArray(eventTypes)) throw new WebhookSubscriptionError("event_types_required");
   const normalized = eventTypes.map((value) => String(value).trim()).filter((value) => value.length > 0);
   if (normalized.length === 0) throw new WebhookSubscriptionError("event_types_required");
+  // Only customer-facing event types may be subscribed. Internal processing
+  // transport signals share the outbox but are not webhook events.
+  if (normalized.some((value) => !isWebhookEventType(value))) throw new WebhookSubscriptionError("event_type_not_supported");
   return [...new Set(normalized)];
 }
 
@@ -84,6 +95,8 @@ function validateEndpointUrl(endpointUrl: unknown): string {
   let parsed: URL;
   try { parsed = new URL(endpointUrl.trim()); } catch { throw new WebhookSubscriptionError("endpoint_url_invalid"); }
   if (parsed.protocol !== "https:") throw new WebhookSubscriptionError("endpoint_url_must_be_https");
+  const blocked = webhookEndpointBlockReason(parsed.toString());
+  if (blocked) throw new WebhookSubscriptionError(blocked);
   return parsed.toString();
 }
 
@@ -131,6 +144,7 @@ async function transitionStatus(
   actorColumn: "paused_by" | "revoked_by" | null,
   db: PostgresSqlApi,
 ): Promise<WebhookSubscriptionRecord> {
+  assertWebhookId(webhookId);
   const actorAssignment = actorColumn ? `,${actorColumn}=$5,${actorColumn === "paused_by" ? "paused_at" : "revoked_at"}=now()` : "";
   const rows = await db.query(`update corvis_control.webhook_subscription
     set status=$3, updated_at=now()${actorAssignment}
@@ -154,6 +168,25 @@ export async function revokeWebhookSubscription(identity: RequestIdentity, webho
   return transitionStatus(identity, webhookId, ["active", "paused"], "revoked", "revoked_by", db);
 }
 
+const WEBHOOK_SUBSCRIPTION_ACTIONS = {
+  pause: pauseWebhookSubscription,
+  resume: resumeWebhookSubscription,
+  revoke: revokeWebhookSubscription,
+} as const;
+
+export type WebhookSubscriptionAction = keyof typeof WEBHOOK_SUBSCRIPTION_ACTIONS;
+
+/**
+ * Resolves a PATCH `action` to its transition by own-property lookup only, so
+ * a body such as `{"action":"constructor"}` can never resolve through the
+ * prototype chain to a non-transition function.
+ */
+export function webhookSubscriptionTransition(action: unknown): (typeof WEBHOOK_SUBSCRIPTION_ACTIONS)[WebhookSubscriptionAction] | undefined {
+  return typeof action === "string" && Object.hasOwn(WEBHOOK_SUBSCRIPTION_ACTIONS, action)
+    ? WEBHOOK_SUBSCRIPTION_ACTIONS[action as WebhookSubscriptionAction]
+    : undefined;
+}
+
 /**
  * Rotates the subscription's signing key: the current active key is marked
  * `retiring` (kept only as lifecycle/audit metadata — outbound delivery
@@ -165,6 +198,7 @@ export async function rotateWebhookSigningKey(
   webhookId: string,
   db: PostgresSqlApi = controlDb(),
 ): Promise<WebhookSigningKeyRotated> {
+  assertWebhookId(webhookId);
   const existing = await db.query(`select status from corvis_control.webhook_subscription
     where tenant_id=$1 and webhook_id=$2::uuid limit 1`, [identity.tenantId, webhookId]);
   const status = text(existing[0] ?? {}, "status");
@@ -185,6 +219,7 @@ export async function listWebhookDeliveries(
   webhookId: string,
   db: PostgresSqlApi = controlDb(),
 ): Promise<WebhookDeliveryDiagnostic[]> {
+  assertWebhookId(webhookId);
   const rows = await db.query(`select delivery_id, event_id, attempt, state, status_code, last_error, created_at, completed_at
     from corvis_control.webhook_delivery
     where tenant_id=$1 and webhook_id=$2::uuid

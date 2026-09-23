@@ -3,6 +3,12 @@ import { deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { countMetric, durationValueMetric } from "./telemetry.ts";
+import {
+  assertWebhookEndpointAllowed,
+  defaultWebhookHostLookup,
+  processingTransportEventTypesSqlList,
+  type WebhookHostLookup,
+} from "./webhook-endpoint-policy.ts";
 import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 
 function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
@@ -22,6 +28,16 @@ function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); 
 export const WEBHOOK_RETRY_BASE_DELAY_MS = 5 * 60_000;
 export const WEBHOOK_RETRY_MAX_DELAY_MS = 60 * 60_000;
 export const WEBHOOK_RETRY_JITTER_RATIO = 0.2;
+export const WEBHOOK_MAX_ATTEMPTS = 5;
+/** Per-request budget for one outbound webhook POST. */
+export const WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
+export const EXPORT_MAX_ATTEMPTS = 5;
+/**
+ * A `delivering` row older than this was claimed by a worker that crashed or
+ * was killed mid-delivery; nothing else would ever move it, so the next run
+ * reclaims it as retryable (or failed once attempts are exhausted).
+ */
+export const DELIVERING_RECLAIM_AFTER_MINUTES = 10;
 
 export type RandomSource = () => number;
 
@@ -40,19 +56,29 @@ export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource
   return Math.max(0, Math.round(capped + jitter));
 }
 
-export async function processQueuedExports(limit=25): Promise<{processed:number;failed:number}> {
-  const store=db();
+export async function reclaimStaleExportDeliveries(store: PostgresSqlApi): Promise<number> {
+  const rows = await store.query(`update corvis_serving.export_job
+    set state=case when coalesce(delivery_attempts,0)>=$1 then 'failed' else 'retryable' end,
+        last_error='export delivery lease expired before completion'
+    where state='delivering'
+      and coalesce(delivery_started_at,'-infinity'::timestamptz) < now()-make_interval(mins => $2)
+    returning export_id`, [EXPORT_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+  return rows.length;
+}
+
+export async function processQueuedExports(limit=25, store: PostgresSqlApi = db()): Promise<{processed:number;failed:number}> {
+  await reclaimStaleExportDeliveries(store);
   const rows=await store.query(`select tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,
       format,snapshot_ids,manifest,delivery_attempts,created_at
     from corvis_serving.export_job
-    where state in ('queued','retryable') and coalesce(delivery_attempts,0)<5
+    where state in ('queued','retryable') and coalesce(delivery_attempts,0)<${EXPORT_MAX_ATTEMPTS}
     order by created_at limit $1`,[limit]);
   let processed=0,failed=0;
   for(const row of rows){
     const tenantId=String(row.tenant_id); const exportId=String(row.export_id);
     const priorAttempts=Number(row.delivery_attempts??0);
     const claimed=await store.query(`update corvis_serving.export_job
-      set state='delivering',delivery_attempts=coalesce(delivery_attempts,0)+1,last_error=null
+      set state='delivering',delivery_attempts=coalesce(delivery_attempts,0)+1,delivery_started_at=now(),last_error=null
       where tenant_id=$1 and export_id=$2::uuid and state in ('queued','retryable') and coalesce(delivery_attempts,0)=$3
       returning delivery_attempts`,[tenantId,exportId,priorAttempts]);
     if(!claimed[0]) continue;
@@ -74,7 +100,7 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
       processed++;
     }catch(error){
       failed++;
-      const state=attempt>=5?"failed":"retryable";
+      const state=attempt>=EXPORT_MAX_ATTEMPTS?"failed":"retryable";
       await store.execute(`update corvis_serving.export_job set state=$1,last_error=$2
         where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
       [state,error instanceof Error?error.message:"unknown",tenantId,exportId,attempt]);
@@ -84,8 +110,79 @@ export async function processQueuedExports(limit=25): Promise<{processed:number;
   return {processed,failed};
 }
 
-export async function processWebhookDeliveries(limit=50, random: RandomSource = Math.random): Promise<{processed:number;failed:number}> {
-  const store=db();
+export type WebhookDeliveryDependencies = {
+  store?: PostgresSqlApi;
+  fetchImpl?: typeof fetch;
+  lookup?: WebhookHostLookup;
+};
+
+/**
+ * Webhook fan-out tracks its own completion on `outbox_event.webhook_fanout_completed_at`
+ * (migration 043). It never reads or writes `published_at`, `attempt_count` or
+ * `last_error`: those columns are the processing transport's dispatch and
+ * dead-letter bookkeeping (migration 021), and sharing them let a webhook
+ * success hide a document from the pipeline or a transport dispatch hide a
+ * webhook retry. Transport event types are also excluded outright.
+ */
+async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: string, eventId: string): Promise<void> {
+  await store.execute(`update corvis_control.outbox_event e
+    set webhook_fanout_completed_at=now()
+    where e.tenant_id=$1 and e.event_id=$2::uuid and e.webhook_fanout_completed_at is null
+      and not exists (
+        select 1 from corvis_control.webhook_subscription s
+        where s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
+          and not exists (
+            select 1 from corvis_control.webhook_delivery d
+            where d.tenant_id=s.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id
+              and d.state in ('complete','failed')
+          )
+      )`,[tenantId,eventId]);
+}
+
+export async function reclaimStaleWebhookDeliveries(store: PostgresSqlApi): Promise<number> {
+  const rows = await store.query(`update corvis_control.webhook_delivery
+    set state=case when attempt>=$1 then 'failed' else 'retryable' end,
+        next_attempt_at=case when attempt>=$1 then null else now() end,
+        last_error='webhook delivery lease expired before completion'
+    where state='delivering' and created_at < now()-make_interval(mins => $2)
+    returning tenant_id,event_id,state`, [WEBHOOK_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+  for (const row of rows) {
+    if (String(row.state) === "failed") await markWebhookFanoutCompleteIfDone(store, String(row.tenant_id), String(row.event_id));
+  }
+  return rows.length;
+}
+
+async function postWebhook(
+  fetchImpl: typeof fetch,
+  endpointUrl: string,
+  init: { headers: Record<string, string>; body: string },
+): Promise<Response> {
+  const response = await fetchImpl(endpointUrl, {
+    method: "POST",
+    headers: init.headers,
+    body: init.body,
+    cache: "no-store",
+    // Never follow a redirect: the policy-checked endpoint is the only host we
+    // will talk to, and a 3xx to an internal address must not be chased.
+    redirect: "manual",
+    signal: AbortSignal.timeout(WEBHOOK_DELIVERY_TIMEOUT_MS),
+  });
+  try { await response.body?.cancel(); } catch { /* body already consumed or closed */ }
+  if (response.status >= 300 && response.status < 400) throw new Error(`Webhook endpoint redirect refused (${response.status})`);
+  if (response.type === "opaqueredirect") throw new Error("Webhook endpoint redirect refused");
+  if (!response.ok) throw new Error(`Webhook endpoint returned ${response.status}`);
+  return response;
+}
+
+export async function processWebhookDeliveries(
+  limit=50,
+  random: RandomSource = Math.random,
+  dependencies: WebhookDeliveryDependencies = {},
+): Promise<{processed:number;failed:number}> {
+  const store=dependencies.store ?? db();
+  const fetchImpl=dependencies.fetchImpl ?? fetch;
+  const lookup=dependencies.lookup ?? defaultWebhookHostLookup;
+  await reclaimStaleWebhookDeliveries(store);
   const events=await store.query(`select e.tenant_id,e.event_id,e.event_type,e.aggregate_id,e.payload,e.created_at,
       s.webhook_id,s.endpoint_url,
       k.secret as signing_secret,
@@ -96,7 +193,8 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
       on s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
     join corvis_control.webhook_signing_key k
       on k.tenant_id=s.tenant_id and k.webhook_id=s.webhook_id and k.status='active'
-    where e.published_at is null
+    where e.webhook_fanout_completed_at is null
+      and e.event_type not in (${processingTransportEventTypesSqlList()})
       and coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
         where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0)<5
       and not exists (
@@ -122,10 +220,9 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
       returning delivery_id`,[tenantId,deliveryId,webhookId,eventId,attempt]);
     if(!claimed[0]) continue;
     try{
-      const response=await fetch(String(row.endpoint_url),{
-        method:"POST",headers:webhookHeaders(String(row.signing_secret),envelope),body,cache:"no-store"
-      });
-      if(!response.ok) throw new Error(`Webhook endpoint returned ${response.status}`);
+      const endpointUrl=String(row.endpoint_url);
+      await assertWebhookEndpointAllowed(endpointUrl,lookup);
+      const response=await postWebhook(fetchImpl,endpointUrl,{headers:webhookHeaders(String(row.signing_secret),envelope),body});
       const completed=await store.query(`update corvis_control.webhook_delivery
         set status_code=$1,state='complete',completed_at=now(),next_attempt_at=null,last_error=null
         where tenant_id=$2 and delivery_id=$3::uuid and state='delivering'
@@ -136,33 +233,19 @@ export async function processWebhookDeliveries(limit=50, random: RandomSource = 
         durationValueMetric("delivery.webhook",completedAt-startedAt,context,{eventType:String(row.event_type)});
       }
       countMetric("delivery.webhook",1,context,{outcome:"complete",eventType:String(row.event_type)});
-      const pending=await store.query(`select count(*) as pending_count
-        from corvis_control.webhook_subscription s
-        where s.tenant_id=$1 and s.status='active'
-          and $2=any(s.event_types)
-          and not exists (
-            select 1 from corvis_control.webhook_delivery d
-            where d.tenant_id=s.tenant_id and d.webhook_id=s.webhook_id and d.event_id=$3::uuid and d.state='complete'
-          )`,[tenantId,String(row.event_type),eventId]);
-      if(Number(pending[0]?.pending_count??0)===0){
-        await store.execute(`update corvis_control.outbox_event
-          set published_at=now(),attempt_count=attempt_count+1,last_error=null
-          where tenant_id=$1 and event_id=$2::uuid`,[tenantId,eventId]);
-      }
+      await markWebhookFanoutCompleteIfDone(store,tenantId,eventId);
       processed++;
     }catch(error){
       failed++;
       const state=attempt>=5?"failed":"retryable";
       const nextAttemptAt=state==="retryable"?new Date(Date.now()+computeWebhookRetryDelayMs(attempt,random)).toISOString():null;
+      const message=error instanceof Error?(error.name==="TimeoutError"?"Webhook endpoint timed out":error.message):"unknown";
       await store.execute(`update corvis_control.webhook_delivery
         set state=$1,next_attempt_at=$2::timestamptz,
             last_error=$3
         where tenant_id=$4 and delivery_id=$5::uuid and state='delivering'`,
-      [state,nextAttemptAt,error instanceof Error?error.message:"unknown",tenantId,deliveryId]);
-      await store.execute(`update corvis_control.outbox_event
-        set attempt_count=attempt_count+1,last_error=$1
-        where tenant_id=$2 and event_id=$3::uuid`,
-      [error instanceof Error?error.message:"unknown",tenantId,eventId]);
+      [state,nextAttemptAt,message.slice(0,2000),tenantId,deliveryId]);
+      if(state==="failed") await markWebhookFanoutCompleteIfDone(store,tenantId,eventId);
       countMetric("delivery.webhook",1,context,{outcome:state,eventType:String(row.event_type)});
     }
   }

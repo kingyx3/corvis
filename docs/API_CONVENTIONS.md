@@ -113,7 +113,12 @@ outbox events for each active subscription with an idempotent
 `on conflict (tenant_id,webhook_id,event_id,attempt) do nothing` insert,
 bounded to 5 attempts, and marks the fifth failure terminal
 (`docs/API_CONVENTIONS.md`'s own idempotency rule applies here too: a
-redelivered attempt is a no-op, not a duplicate).
+redelivered attempt is a no-op, not a duplicate). Fan-out completion is
+tracked on `outbox_event.webhook_fanout_completed_at` (migration 043); webhook
+delivery never reads or writes `published_at`/`attempt_count`/`last_error`,
+which belong to the processing transport. A delivery left in `delivering` for
+more than 10 minutes (worker crash) is reclaimed as retryable; export jobs are
+reclaimed the same way via `export_job.delivery_started_at`.
 
 Subscription administration and per-subscription signing-key rotation
 (migration `019_webhook_subscription_management.sql`,
@@ -121,8 +126,16 @@ Subscription administration and per-subscription signing-key rotation
 `/admin/webhooks/subscriptions`, gated by `admin:manage`:
 
 - `POST /admin/webhooks/subscriptions` — create (`endpointUrl` must be
-  `https://`, `eventTypes` a non-empty array). The response includes the
-  signing secret exactly once; it is never re-readable afterward.
+  `https://`, `eventTypes` a non-empty array of customer-facing event types
+  from `WEBHOOK_EVENT_TYPES` in `lib/server/webhook-endpoint-policy.ts`;
+  internal processing-transport signals such as `DocumentRegistered` are
+  rejected with `event_type_not_supported`). Endpoints naming `localhost`,
+  `*.internal`/metadata hosts or a loopback/private/link-local/reserved IP
+  literal are rejected with `endpoint_url_host_not_allowed`; at send time the
+  host is re-checked and its DNS answers must all be public, redirects are
+  never followed (a 3xx is a failed attempt) and each POST has a 10s timeout.
+  The response includes the signing secret exactly once; it is never
+  re-readable afterward.
 - `GET /admin/webhooks/subscriptions` — list (metadata only, never a secret).
 - `PATCH /admin/webhooks/subscriptions/{webhookId}` — `{ "action": "pause" | "resume" | "revoke" }`.
   `revoke` is terminal; `pause`/`resume` are reversible. An invalid transition
