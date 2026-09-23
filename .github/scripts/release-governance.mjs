@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 export const REQUIRED_CHECKS = ['frontend', 'container', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts'];
 
 export const MISSING_BYPASS_VISIBILITY = 'Release governance token lacks ruleset admin visibility: GitHub omitted bypass_actors ' +
-  'from every applicable ruleset. Configure the RELEASE_GOVERNANCE_TOKEN repository secret with a fine-grained PAT or ' +
+  'from every applicable ruleset. Configure the RELEASE_GOVERNANCE_TOKEN environment secret with a fine-grained PAT or ' +
   'GitHub App installation token that has repository Administration: read and write (plus Contents: read and Checks: read) ' +
   'on this repository; the workflow GITHUB_TOKEN cannot read ruleset bypass actors. See docs/GITHUB_ENVIRONMENTS.md.';
 
