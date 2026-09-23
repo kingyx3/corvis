@@ -17,15 +17,17 @@ export const PROCESSING_TRANSPORT_EVENT_TYPES = [
   "ProcessingJobRetryRequested",
 ] as const;
 
-/** Customer-facing outbox event types a tenant may subscribe a webhook to. */
+/**
+ * Customer-facing outbox event types a tenant may subscribe a webhook to.
+ * Internal processing signals (stage blocked/dead-lettered, transport events)
+ * carry job ids and operator state and are deliberately not exposed.
+ */
 export const WEBHOOK_EVENT_TYPES = [
   "SnapshotPublicationChanged",
   "DataCorrectionOpened",
   "DataCorrectionResolved",
   "CorrectionReplacementDeliveryRequested",
   "ExportRequested",
-  "ProcessingStageBlocked",
-  "ProcessingStageDeadLettered",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
@@ -34,6 +36,11 @@ const WEBHOOK_EVENT_TYPE_SET: ReadonlySet<string> = new Set(WEBHOOK_EVENT_TYPES)
 
 export function isWebhookEventType(value: string): value is WebhookEventType {
   return WEBHOOK_EVENT_TYPE_SET.has(value);
+}
+
+/** SQL list literal of the customer-facing webhook event types, built from a static constant (never user input). */
+export function webhookEventTypesSqlList(): string {
+  return WEBHOOK_EVENT_TYPES.map((type) => `'${type}'`).join(",");
 }
 
 /** SQL list literal of the transport-only event types, built from a static constant (never user input). */

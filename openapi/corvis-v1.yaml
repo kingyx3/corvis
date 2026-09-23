@@ -256,7 +256,7 @@ paths:
                   minItems: 1
                   items:
                     type: string
-                    enum: [SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested, ProcessingStageBlocked, ProcessingStageDeadLettered]
+                    enum: [SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested]
       responses:
         '201':
           description: Subscription created with its first signing key. The signing secret is returned exactly once, in this response.
