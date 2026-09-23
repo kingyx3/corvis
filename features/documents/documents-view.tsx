@@ -5,7 +5,7 @@ import type { DocumentRecord } from "@/core/contracts";
 import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 
-export function DocumentsView({ docs, onUpload, onSelect }: { docs: DocumentRecord[]; onUpload: () => void; onSelect: (doc: DocumentRecord) => void }) {
+export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: DocumentRecord[]; onUpload: () => void; onSelect: (doc: DocumentRecord) => void; canUpload: boolean }) {
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState("all");
   const [status, setStatus] = useState("all");
@@ -19,7 +19,7 @@ export function DocumentsView({ docs, onUpload, onSelect }: { docs: DocumentReco
   }), [docs, period, query, status]);
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">SOURCE LIBRARY</p><h1>Documents</h1><p className="lede">Every source file, its processing state, and its relationship to a fund period.</p></div><button className="primary-button" onClick={onUpload}><Icon name="upload"/>Upload documents</button></section>
+    <section className="page-heading"><div><p className="eyebrow">SOURCE LIBRARY</p><h1>Documents</h1><p className="lede">Every source file, its processing state, and its relationship to a fund period.</p></div>{canUpload && <button className="primary-button" onClick={onUpload}><Icon name="upload"/>Upload documents</button>}</section>
     <div className="toolbar">
       <label className="search-field"><Icon name="search"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search documents, funds or periods" aria-label="Search documents"/></label>
       <select className="filter-button" aria-label="Reporting period" value={period} onChange={(event) => setPeriod(event.target.value)}><option value="all">All periods</option>{periods.map((item) => <option key={item} value={item}>{item}</option>)}</select>
