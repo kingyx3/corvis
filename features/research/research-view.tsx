@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ResearchAnswer, ResearchProgressPhase } from "@/core/enterprise";
+import type { SourceEvidence } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon } from "@/components/ui/icon";
 
@@ -29,10 +30,10 @@ export function ResearchView({ suggestions }: { suggestions: string[] }) {
   const [loading, setLoading] = useState(false);
   const [phase, setPhase] = useState<ResearchProgressPhase | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
-  // Leaving the view must not leave a research stream (and its server-side
-  // work) running in the background.
   useEffect(() => () => controllerRef.current?.abort(), []);
 
   const ask = async (value: string) => {
@@ -43,6 +44,7 @@ export function ResearchView({ suggestions }: { suggestions: string[] }) {
     setQuestion(next);
     setInput("");
     setAnswer(null);
+    setEvidence(null);
     setLoading(true);
     setPhase(null);
     setError(null);
@@ -65,8 +67,18 @@ export function ResearchView({ suggestions }: { suggestions: string[] }) {
     }
   };
 
-  const cancel = () => {
-    controllerRef.current?.abort();
+  const cancel = () => controllerRef.current?.abort();
+
+  const openEvidence = async (sourceReferenceId: string) => {
+    setEvidenceLoading(sourceReferenceId);
+    setError(null);
+    try {
+      setEvidence(await workspacePort.sourceEvidence(sourceReferenceId));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Source evidence could not be opened");
+    } finally {
+      setEvidenceLoading(null);
+    }
   };
 
   return <div className="research-page">
@@ -74,11 +86,14 @@ export function ResearchView({ suggestions }: { suggestions: string[] }) {
     <div className="research-layout">
       <div className="conversation-panel">
         <div className="user-question"><div className="avatar user-avatar">U</div><div><span>You</span><p>{question}</p></div></div>
-        <div className="assistant-answer"><div className="avatar corvis-avatar">C</div><div className="answer-body"><span>Corvis</span>{loading ? <><div className="thinking"><i/><i/><i/></div><p className="answer-footnote">{phaseLabel(phase)}</p></> : error ? <p>{error}</p> : answer ? <><p>{answer.answer}</p>{answer.uncertainty && <p className="answer-footnote">{answer.uncertainty}</p>}<div className="citation-row">{answer.citations.map((citation, index) => <button key={citation.sourceReferenceId}>[{index + 1}] {citation.label}{citation.page ? ` · p.${citation.page}` : ""}</button>)}</div><p className="answer-footnote">Quantitative claims must resolve to semantic queries; source citations are entitlement-checked before retrieval.</p></> : <p>Ask a question to query your entitled Corvis data.</p>}</div></div>
+        <div className="assistant-answer"><div className="avatar corvis-avatar">C</div><div className="answer-body"><span>Corvis</span>{loading ? <><div className="thinking"><i/><i/><i/></div><p className="answer-footnote">{phaseLabel(phase)}</p></> : error ? <p role="alert">{error}</p> : answer ? <><p>{answer.answer}</p>{answer.uncertainty && <p className="answer-footnote">{answer.uncertainty}</p>}<div className="citation-row">{answer.citations.map((citation, index) => <button key={citation.sourceReferenceId} disabled={evidenceLoading === citation.sourceReferenceId} onClick={() => void openEvidence(citation.sourceReferenceId)}>[{index + 1}] {citation.label}{citation.page ? ` · p.${citation.page}` : ""}</button>)}</div><p className="answer-footnote">Quantitative claims must resolve to semantic queries; source citations are entitlement-checked before retrieval.</p></> : <p>Ask a question to query your entitled Corvis data.</p>}</div></div>
         <div className="suggestion-wrap"><span>Try asking</span><div>{suggestions.filter((x) => x !== question).slice(0,3).map((suggestion) => <button key={suggestion} disabled={loading} onClick={() => void ask(suggestion)}>{suggestion}<Icon name="arrow" size={14}/></button>)}</div></div>
         <form className="ask-box" onSubmit={(event) => { event.preventDefault(); void ask(input); }}><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about a fund, company, metric, change or source document…" rows={2} disabled={loading}/><div className="ask-footer"><span><Icon name="shield" size={14}/>Uses only data you can access</span>{loading ? <button type="button" className="text-button" onClick={cancel}>Cancel</button> : <button disabled={!input.trim()} aria-label="Send question"><Icon name="send" size={17}/></button>}</div></form>
       </div>
-      <aside className="evidence-panel"><p className="eyebrow">EVIDENCE</p><h3>Sources used</h3>{answer?.citations.length ? answer.citations.map((citation) => <div className="evidence-card" key={citation.sourceReferenceId}><div><strong>{citation.label}</strong><span>{citation.page ? `Page ${citation.page}` : "Source reference"}</span></div><button>Open entitled source <Icon name="arrow" size={14}/></button></div>) : <div className="evidence-policy"><Icon name="shield"/><p>No source evidence is shown until a permission-checked answer returns citations.</p></div>}</aside>
+      <aside className="evidence-panel" aria-live="polite"><p className="eyebrow">EVIDENCE</p><h3>Sources used</h3>
+        {evidence && <div className="evidence-policy"><Icon name="source"/><p><strong>Opened entitled evidence</strong><br/>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}{evidence.excerpt ? <><br/><br/>{evidence.excerpt}</> : null}</p><button className="text-button" onClick={() => setEvidence(null)}>Close</button></div>}
+        {answer?.citations.length ? answer.citations.map((citation) => <div className="evidence-card" key={citation.sourceReferenceId}><div><strong>{citation.label}</strong><span>{citation.page ? `Page ${citation.page}` : "Source reference"}</span></div><button disabled={evidenceLoading === citation.sourceReferenceId} onClick={() => void openEvidence(citation.sourceReferenceId)}>{evidenceLoading === citation.sourceReferenceId ? "Opening…" : "Open entitled source"} <Icon name="arrow" size={14}/></button></div>) : <div className="evidence-policy"><Icon name="shield"/><p>No source evidence is shown until a permission-checked answer returns citations.</p></div>}
+      </aside>
     </div>
   </div>;
 }
