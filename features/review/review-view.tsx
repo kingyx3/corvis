@@ -98,7 +98,8 @@ export function ReviewView({
   const openExceptions = exceptions.filter((item) => item.status === "open");
   const useGovernedExceptionCount = canReview && exceptionsLoaded && (exceptions.length > 0 || (snapshot?.blockingExceptions ?? 0) === 0);
   const blockingExceptions = useGovernedExceptionCount ? openExceptions.length : snapshot?.blockingExceptions ?? 0;
-  const publishBlocked = !snapshot?.id || !snapshot.version || needsReview > 0 || blockingExceptions > 0;
+  const alreadyPublished = snapshot?.status === "Published";
+  const publishBlocked = !snapshot?.id || !snapshot.version || alreadyPublished || needsReview > 0 || blockingExceptions > 0;
   const clampedFocusedIndex = Math.min(focusedIndex, Math.max(visible.length - 1, 0));
   const focused = visible[clampedFocusedIndex];
 
@@ -177,8 +178,8 @@ export function ReviewView({
   };
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">TRUSTED DATA</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions"><button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : "Publish snapshot"}</button>}</div></section>
-    {canPublish && publishBlocked && snapshot?.id && <div className="lineage-note" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} observations need review and {blockingExceptions} reconciliation exceptions remain open.</span></div></div>}
+    <section className="page-heading"><div><p className="eyebrow">TRUSTED DATA</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions"><button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
+    {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} observations need review and {blockingExceptions} reconciliation exceptions remain open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
     {message && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Workflow status</strong><span>{message}</span></div></div>}
     {evidence && <div className="lineage-note" role="region" aria-label="Source evidence"><Icon name="source"/><div><strong>Exact source evidence</strong><span>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}</span>{evidence.excerpt && <span>{evidence.excerpt}</span>}</div><button className="text-button" onClick={() => setEvidence(null)}>Close</button></div>}
