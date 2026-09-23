@@ -22,6 +22,16 @@ test("transport event types are exactly what the transport claims and are never 
   assert.equal(isWebhookEventType("constructor"), false);
 });
 
+test("internal processing signals are not subscribable and delivery only selects allow-listed types", async () => {
+  for (const type of ["ProcessingStageBlocked", "ProcessingStageDeadLettered"]) {
+    assert.equal(isWebhookEventType(type), false, `${type} carries internal job state and must not be a webhook event type`);
+  }
+  const delivery = await readFile("lib/server/delivery.ts", "utf8");
+  assert.match(delivery, /e\.event_type in \(\$\{webhookEventTypesSqlList\(\)\}\)/);
+  const openapi = await readFile("openapi/corvis-v1.yaml", "utf8");
+  assert.match(openapi, /enum: \[SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested\]/);
+});
+
 test("blocked address ranges cover loopback, private, link-local, CGNAT, metadata and IPv6 local forms", () => {
   for (const address of [
     "127.0.0.1", "10.0.0.1", "172.31.255.255", "192.168.0.1", "169.254.169.254", "100.100.100.200", "0.0.0.0",

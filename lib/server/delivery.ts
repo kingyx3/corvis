@@ -7,6 +7,7 @@ import {
   assertWebhookEndpointAllowed,
   defaultWebhookHostLookup,
   processingTransportEventTypesSqlList,
+  webhookEventTypesSqlList,
   type WebhookHostLookup,
 } from "./webhook-endpoint-policy.ts";
 import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
@@ -122,7 +123,9 @@ export type WebhookDeliveryDependencies = {
  * `last_error`: those columns are the processing transport's dispatch and
  * dead-letter bookkeeping (migration 021), and sharing them let a webhook
  * success hide a document from the pipeline or a transport dispatch hide a
- * webhook retry. Transport event types are also excluded outright.
+ * webhook retry. Transport event types are also excluded outright, and only
+ * allow-listed customer-facing types are delivered even if a legacy
+ * subscription row names another type.
  */
 async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: string, eventId: string): Promise<void> {
   await store.execute(`update corvis_control.outbox_event e
@@ -195,6 +198,7 @@ export async function processWebhookDeliveries(
       on k.tenant_id=s.tenant_id and k.webhook_id=s.webhook_id and k.status='active'
     where e.webhook_fanout_completed_at is null
       and e.event_type not in (${processingTransportEventTypesSqlList()})
+      and e.event_type in (${webhookEventTypesSqlList()})
       and coalesce((select max(d.attempt) from corvis_control.webhook_delivery d
         where d.tenant_id=e.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id),0)<5
       and not exists (

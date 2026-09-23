@@ -48,6 +48,31 @@ test("upload dialog is accessible and reports lifecycle", async ({ page }) => {
   await expect(dialog).toBeHidden();
 });
 
+test("closing the upload dialog mid-upload asks before cancelling", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /documents/i }).first().click();
+  await page.getByRole("button", { name: /upload documents/i }).first().click();
+
+  const dialog = page.getByRole("dialog", { name: /upload documents/i });
+  await dialog.locator('input[type="file"]').setInputFiles(["One", "Two", "Three"].map((name) => ({
+    name: `In-flight ${name}.pdf`,
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\nCorvis end-to-end fixture\n"),
+  })));
+
+  await dialog.getByRole("button", { name: /close upload dialog/i }).click();
+  await expect(dialog.getByRole("alert")).toContainText(/still in progress/i);
+  await expect(dialog.getByRole("button", { name: /keep uploading/i })).toBeFocused();
+  await dialog.getByRole("button", { name: /keep uploading/i }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert")).toBeHidden();
+  await expect(dialog.getByRole("button", { name: /^done$/i })).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: /cancel uploads/i }).click();
+  await expect(dialog).toBeHidden();
+});
+
 test("customer can upload, review, publish and request structured delivery", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /documents/i }).first().click();
