@@ -7,76 +7,82 @@ executable quality gates in `e2e/` and what they do and do not prove.
 
 `e2e/accessibility.spec.ts` runs [axe-core](https://github.com/dequelabs/axe-core)
 against every critical customer surface (Overview, Documents, Data review,
-Data delivery, Ask Corvis) plus the upload dialog, tagged against WCAG 2.1
-A/AA (`e2e/quality-budgets.ts` → `accessibilityBudget.tags`). A `serious` or
-`critical` finding fails the run; `moderate`/`minor` findings do not, since
-the contractual bar is WCAG 2.1 AA, not a zero-finding ideal.
+Data delivery, Ask Corvis), the upload dialog, and the production admin console,
+tagged against WCAG 2.1 A/AA (`e2e/quality-budgets.ts` →
+`accessibilityBudget.tags`). A `serious` or `critical` finding fails the run;
+`moderate`/`minor` findings do not, since the contractual bar is WCAG 2.1 AA,
+not a zero-finding ideal.
 
-It also asserts, independent of axe: the workspace shell exposes the
-expected semantic landmarks (`banner`, `navigation` named "Workspace
-sections", `main`, `complementary` named "Workspace navigation") and exactly
-one top-level heading; primary navigation is fully keyboard-operable in
-visual order; every focusable control in the shell has an accessible name;
-and the upload dialog traps focus, cycles it with Tab/Shift+Tab, and closes
-on Escape.
+The customer shell additionally asserts semantic landmarks, exactly one
+primary heading, keyboard-operable primary navigation, accessible names for
+focusable controls, and focus containment/restoration for modal workflows.
+The shared `components/ui/modal.tsx` uses the same focus-trap primitive as the
+upload dialog, so global search, reviewer correction/reconciliation dialogs,
+and privileged admin confirmations all close on Escape, contain Tab focus and
+restore focus on close. The document-details drawer is also an accessible,
+focus-trapped modal surface.
 
-**Fixed while building this gate** (all verified against the real
-application, not asserted from source reading):
-- 28 distinct muted-gray/status text colors across the app fell below the
-  4.5:1 WCAG AA contrast ratio for normal text. Each was replaced with a
-  version of the same hue darkened (or, on the dark sidebar, lightened)
-  just enough to clear the ratio with a safety margin, computed against
-  every background it actually appears on.
-- The topbar "more options" button and the Ask Corvis send button were
-  icon-only with no accessible name.
-- `<nav>` and the sidebar `<aside>` carried no landmark label, and the
-  in-app `<header>` had no explicit `role="banner"` (it is nested inside
-  `<main>`, so it does not get that role implicitly).
-- Active-nav-item state was expressed only via a CSS class, not
-  `aria-current`.
-- At the mobile breakpoint the sidebar's nav-item text becomes
-  `display:none`, which removed the button's only accessible name; each nav
-  button now also carries an explicit `aria-label`.
-- The upload dialog had `role="dialog" aria-modal="true"` but no actual
-  focus trap, initial-focus, or Escape handling — `components/ui/use-focus-trap.ts`
-  is a small reusable hook that now provides all three plus focus
-  restoration on close.
-- On narrow viewports, `.table-card` becomes a horizontally-scrollable
-  region with no keyboard access (`overflow-x: auto` with no
-  `tabindex`); the three table containers (documents, data-review
-  observations, reconciliation exceptions) are now `tabIndex={0} role="region"`
-  with a descriptive label.
+The admin console is scanned independently for serious/critical axe findings
+and unnamed visible focusable controls. Privileged mutations use typed labelled
+controls plus a separate confirmation dialog rather than raw JSON textareas.
+Raw API payloads remain available only inside advanced diagnostic disclosures.
 
-**Known, not fixed here:** the design tokens for status colors (warning
-amber, danger red) were only checked for the two specific text usages axe
-flagged; a full design-system contrast audit of every color combination is
-out of scope for this pass.
+**Fixed while building these gates** (verified against the running application):
+- muted/status text contrast was raised to the WCAG AA threshold where axe
+  identified failures;
+- icon-only customer controls received accessible names;
+- navigation/sidebar/banner landmarks and active-page semantics were added;
+- mobile navigation retains accessible names when visible text is hidden;
+- upload and subsequent shared modal workflows gained focus trapping, initial
+  focus, Escape handling and focus restoration;
+- horizontally scrollable document/review/reconciliation/export tables are
+  keyboard-reachable labelled regions;
+- document-row drill-through moved from a mouse-only clickable table row to an
+  explicit keyboard-accessible named button;
+- fake/dead-looking controls were either implemented (search, filters, source
+  citations, export history/download) or removed from the production surface.
+
+A full design-token contrast audit beyond rendered production surfaces remains
+separate design-system work; rendered serious/critical WCAG findings remain a
+CI failure.
 
 ## Browser / responsive matrix
 
 `playwright.config.ts` runs three projects:
 - `chromium` (Desktop Chrome viewport) — the full test suite.
-- `mobile-chromium` (Pixel 5 viewport) — only `@matrix`-tagged tests, to
-  keep CI affordable while still catching viewport-specific regressions
-  (this is exactly how the mobile-breakpoint nav-label and scrollable-table
-  bugs above were caught).
-- `webkit` (Desktop Safari viewport) — only `@matrix`-tagged tests. Skipped
-  locally when the WebKit engine is not installed (checked via
-  `webkit.executablePath()`), but always required in CI, where the
-  workflow installs every engine explicitly — a missing engine there is a
-  failure, not a silent skip.
+- `mobile-chromium` (Pixel 5 viewport) — `@matrix`-tagged tests.
+- `webkit` (Desktop Safari viewport) — `@matrix`-tagged tests. CI installs the
+  engine explicitly, so a missing CI engine is a failure rather than a skip.
 
-Currently `@matrix` covers the five accessibility surface checks. Extending
-it to the canonical E2E journey in `e2e/workspace.spec.ts` is a natural next
-step, deferred to keep the initial matrix small and fast.
+The matrix now includes the five customer accessibility surfaces and the admin
+console. The canonical customer workflow still runs fully on Chromium; its
+provider-backed multi-browser execution remains part of production-like UAT.
+
+## Presentation workflow regressions
+
+`e2e/workspace.spec.ts` covers the production presentation seams in demo-mode CI,
+including:
+- navigation across every entitled customer module;
+- actionable global workspace search;
+- functional document period/status filtering;
+- upload lifecycle and accessible modal behavior;
+- upload → review → publish → structured delivery;
+- persisted/recent export-history presentation;
+- structured reviewer correction instead of browser prompts;
+- bounded degraded-module behavior; and
+- Ask Corvis through the research adapter rather than hard-coded UI evidence.
+
+Authorization remains server-authoritative. The customer UI consumes the
+read-only current-user capability summary only to hide or disable unavailable
+features; it never treats browser state as authorization. Capability lookup
+failure fails closed for mutating actions.
 
 ## Performance budgets
 
-`e2e/quality-budgets.ts` defines version-controlled ceilings, separately for
-`development` (the demo-mode Next dev server CI/local runs against) and
-`production` (`CORVIS_E2E_TARGET=production`, a built-and-started app).
-Every number is deliberately generous — it exists to catch a hang or an
-order-of-magnitude regression, not to police day-to-day runner jitter:
+`e2e/quality-budgets.ts` defines version-controlled ceilings separately for
+`development` (demo-mode Next dev server) and `production`
+(`CORVIS_E2E_TARGET=production`, a built-and-started app). The budgets catch
+hangs/order-of-magnitude regressions rather than normal runner jitter:
 
 | Budget | development | production |
 | --- | --- | --- |
@@ -88,22 +94,19 @@ order-of-magnitude regression, not to police day-to-day runner jitter:
 | Script transfer bytes | 48 MiB | 3 MiB |
 | Horizontal overflow | 1 px | 1 px |
 
-`e2e/performance.spec.ts` asserts each of these against the real running
-app: navigation and per-surface switch wall-clock time, DOM node count,
-script request count/bytes, and that the shell never introduces horizontal
-page scroll at desktop width. The workspace-API-timing assertion is a no-op
-under the default demo composition (`CORVIS_DEMO_MODE=true` serves the
-workspace port entirely client-side, with no `/api/v1/*` traffic) and is
-only meaningfully exercised against `CORVIS_E2E_TARGET=production`.
+`e2e/performance.spec.ts` asserts these against the running app. Workspace API
+timing is meaningful only against the production HTTP composition; default
+demo composition serves the workspace adapter client-side.
 
-**Not yet covered:** representative large-dataset/large-document/quarter-end
-load scenarios, and production-equivalent network conditions (throttled
-connection, cold cache). Those need a production-like environment and
-belong with #13's UAT activation evidence, not the demo-mode CI gate.
+Representative large-dataset/large-document/quarter-end load, production-like
+network conditions, real IdP/Postgres/RLS/GCS behavior and asynchronous provider
+bindings still require the production-like environment defined by #12/#13.
 
 ## What this does not prove
 
-This is CI/local demo-mode evidence. It is not a substitute for the
-production-like UAT run against a real IdP, Postgres/RLS, GCS and
-export/webhook bindings that #12's remaining gap calls for — see
-`docs/MODULARITY.md` and `docs/PRODUCTION_ACTIVATION.md` for that contract.
+These gates prove repository/demo and built-application presentation behavior.
+They are not a substitute for production-like UAT against real IdP,
+Postgres/RLS, GCS, durable processing, export/webhook providers and deployed
+customer/admin runtime boundaries. Provider-backed accessibility, browser,
+responsive and load evidence remains an explicit launch gate rather than being
+inferred from CI.
