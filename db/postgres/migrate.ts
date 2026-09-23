@@ -11,10 +11,12 @@ import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   MIGRATION_DIRECTORY,
+  MigrationApplyError,
   MigrationContractError,
   applyMigrations,
   planFromDirectory,
 } from "../../lib/server/postgres-migration-runner.ts";
+import { PostgresDriverError } from "../../lib/server/postgres-native.ts";
 import { postgres } from "../../lib/server/postgres.ts";
 
 const { values } = parseArgs({
@@ -54,8 +56,18 @@ try {
     result: "fail",
     mode: values.apply ? "apply" : "dry-run",
     directory,
-    code: error instanceof MigrationContractError ? error.code : "migration_failed",
+    code: error instanceof MigrationContractError || error instanceof MigrationApplyError ? error.code : "migration_failed",
+    // Driver messages are already reduced to closed diagnostic codes
+    // (SQLSTATE / Node error code) by the Postgres adapter; no DSN or SQL.
     detail: error instanceof Error ? error.message : String(error),
+    ...(error instanceof PostgresDriverError ? { phase: error.phase, driverCode: error.code } : {}),
+    ...(error instanceof MigrationApplyError ? {
+      failedVersion: error.failedVersion,
+      failedMigration: error.failedMigration,
+      alreadyApplied: error.alreadyApplied,
+      appliedThisRun: error.appliedThisRun,
+      driverCode: error.driverCode,
+    } : {}),
   };
 }
 

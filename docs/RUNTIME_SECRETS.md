@@ -10,6 +10,10 @@ Terraform owns the Secret Manager container and workload IAM bindings needed by 
 
 Cloud Run consumes the latest enabled version through its service identity. The DSN value is not a Terraform input.
 
+The Postgres server CA bundle is **not** a secret. When the provider's certificates chain to a private root (Supabase), set the PEM bundle as the `CORVIS_POSTGRES_CA_CERT` GitHub Environment variable (default empty). The deploy workflow passes it to Terraform as `postgres_ca_cert` (a plain `CORVIS_POSTGRES_CA_CERT` env var on the API and worker services) and to the migration and security-acceptance steps. It narrows trust for Postgres TLS only; verification is never disabled. See `docs/DATA_PLATFORM.md`.
+
+The API service also receives `CORVIS_BROWSER_ALLOWED_ORIGINS` (the public customer and admin origins derived from the environment's hostnames) for the CSRF Origin allow-list; it is configuration, not a secret.
+
 The baseline production transport does **not** use a shared gateway/worker identity secret. API Gateway authenticates to Cloud Run with its dedicated Google service account, and Pub/Sub / Cloud Tasks / Cloud Scheduler authenticate to private worker endpoints with Google-signed OIDC tokens. A separate Corvis HMAC assertion secret is therefore not required for the normal OIDC path. If a future SAML or identity-broker deployment uses the optional signed Corvis assertion contract, its signing material is a separate explicitly activated provider/runtime secret and must not be confused with the baseline deployment contract.
 
 ## Lifecycle workflow

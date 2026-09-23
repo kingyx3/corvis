@@ -50,6 +50,7 @@ jobs:
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       GCP_REGION: asia-southeast1
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
+      CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -175,6 +176,7 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
+      CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -243,6 +245,7 @@ jobs:
       GCP_REGION: asia-southeast1
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
+      CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

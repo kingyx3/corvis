@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { GcsObject, UploadObjectStore } from "./gcs.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, type UploadSession } from "./uploads.ts";
+import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, UploadRequestError, type UploadSession } from "./uploads.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 type FakeObject = { bytes: Buffer; object: GcsObject };
@@ -453,4 +454,42 @@ test("a sweep never touches another tenant's sessions", async () => {
   assert.equal(summary.scanned, 1);
   assert.deepEqual(store.deleted, [mine.objectKey]);
   assert.equal(storedSession(store, theirs).state, "initiated");
+});
+
+async function rejectsWith(operation: Promise<unknown>, code: string, status: number): Promise<void> {
+  await assert.rejects(operation, (error: unknown) => {
+    assert.ok(error instanceof UploadRequestError, `expected UploadRequestError, got ${String(error)}`);
+    assert.equal(error.code, code);
+    assert.equal(error.status, status);
+    return true;
+  });
+}
+
+test("client-attributable upload failures are typed 4xx errors instead of generic 500s", { concurrency: false }, async () => {
+  const previous = process.env.CORVIS_UPLOAD_ALLOWED_ORIGINS;
+  process.env.CORVIS_UPLOAD_ALLOWED_ORIGINS = "https://app.corvis.example";
+  try {
+    const { uploads, store } = harness();
+    const actor = identity();
+    await rejectsWith(uploads.initiate(actor, initiateInput({ fileName: "payload.exe" })), "unsupported_file_type", 415);
+    await rejectsWith(uploads.initiate(actor, initiateInput({ contentType: "application/x-msdownload" })), "unsupported_media_type", 415);
+    await rejectsWith(uploads.initiate(actor, initiateInput({ sizeBytes: 0 })), "invalid_file_size", 400);
+    await rejectsWith(uploads.initiate(actor, initiateInput({ sizeBytes: Number.NaN })), "invalid_file_size", 400);
+    await rejectsWith(uploads.initiate(actor, initiateInput({ origin: "https://attacker.example" })), "upload_origin_not_allowed", 403);
+    assert.equal(store.resumable.size, 0, "no resumable session is authorized for a rejected request");
+
+    await rejectsWith(uploads.get(actor, "00000000-0000-0000-0000-00000000dead"), "upload_not_found", 404);
+    const session = await uploads.initiate(actor, initiateInput({ origin: "https://app.corvis.example" }));
+    await rejectsWith(uploads.complete(identity({ subject: "oidc|uploader-2" }), session.uploadId, session.idempotencyKey), "upload_not_found", 404);
+    await rejectsWith(uploads.complete(actor, session.uploadId, "oidc|uploader-1:other"), "upload_idempotency_mismatch", 409);
+    await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "upload_incomplete", 409);
+  } finally {
+    if (previous === undefined) delete process.env.CORVIS_UPLOAD_ALLOWED_ORIGINS;
+    else process.env.CORVIS_UPLOAD_ALLOWED_ORIGINS = previous;
+  }
+});
+
+test("apiError maps UploadRequestError to its typed status and stable code", async () => {
+  const source = await readFile("lib/server/http.ts", "utf8");
+  assert.match(source, /error instanceof UploadRequestError[\s\S]*error: error\.code[\s\S]*status: error\.status/);
 });

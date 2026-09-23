@@ -53,6 +53,33 @@ export class MigrationContractError extends Error {
   }
 }
 
+/**
+ * A pending migration failed to execute. Carries only non-sensitive evidence:
+ * which version failed, which versions were already applied or applied by this
+ * run, and the driver's closed diagnostic code (SQLSTATE / Node error code).
+ */
+export class MigrationApplyError extends Error {
+  readonly code = "migration_apply_failed";
+  readonly failedVersion: number;
+  readonly failedMigration: string;
+  readonly alreadyApplied: number[];
+  readonly appliedThisRun: number[];
+  readonly driverCode?: string;
+  constructor(migration: Pick<MigrationFile, "version" | "name">, alreadyApplied: number[], appliedThisRun: number[], cause: unknown) {
+    const driverCode = cause && typeof cause === "object" && typeof (cause as { code?: unknown }).code === "string"
+      ? String((cause as { code: string }).code)
+      : undefined;
+    const detail = cause instanceof Error ? cause.message : "unknown error";
+    super(`migration ${migration.name} failed: ${detail}`);
+    this.name = "MigrationApplyError";
+    this.failedVersion = migration.version;
+    this.failedMigration = migration.name;
+    this.alreadyApplied = alreadyApplied;
+    this.appliedThisRun = appliedThisRun;
+    this.driverCode = driverCode;
+  }
+}
+
 export interface MigrationSqlClient {
   query(sql: string, parameters?: PostgresPrimitive[]): Promise<PostgresRow[]>;
   execute(sql: string, parameters?: PostgresPrimitive[]): Promise<void>;
@@ -265,11 +292,16 @@ export async function applyMigrations(client: MigrationSqlClient, options: Apply
   const plan = planMigrations(migrations, await readAppliedMigrations(client));
 
   const applied: AppliedMigrationResult[] = [];
+  const alreadyApplied = plan.applied.map((record) => record.version);
   for (const pending of plan.pending) {
     const migration = migrations.find((candidate) => candidate.version === pending.version);
     if (!migration) continue;
     const startedAt = clock();
-    await client.execute(transactionalMigrationSql(migration, options.appliedBy));
+    try {
+      await client.execute(transactionalMigrationSql(migration, options.appliedBy));
+    } catch (error) {
+      throw new MigrationApplyError(migration, alreadyApplied, applied.map((record) => record.version), error);
+    }
     applied.push({ ...pending, durationMs: Math.max(0, clock() - startedAt) });
   }
 

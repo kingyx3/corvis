@@ -106,6 +106,17 @@ test("readiness is Postgres-primary and ignores optional Snowflake bindings", { 
   });
 });
 
+test("readiness reports identity from direct OIDC issuer/audience without a trusted-proxy secret", { concurrency: false }, async () => {
+  await withReadinessEnv(async () => {
+    delete process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET;
+    assert.equal((await new PostgresProductionPlatform(new FakeDb()).readiness()).identity, "configured");
+    delete process.env.CORVIS_AUTH_AUDIENCE;
+    assert.equal((await new PostgresProductionPlatform(new FakeDb()).readiness()).identity, "missing");
+    process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = "test-secret";
+    assert.equal((await new PostgresProductionPlatform(new FakeDb()).readiness()).identity, "configured");
+  });
+});
+
 test("readiness fails the authoritative structured-data binding when Postgres health fails", { concurrency: false }, async () => {
   await withReadinessEnv(async () => {
     const readiness = await new PostgresProductionPlatform(new UnhealthyDb()).readiness();

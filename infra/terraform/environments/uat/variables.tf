@@ -31,6 +31,12 @@ variable "auth_jwks_url" {
   default     = ""
 }
 
+variable "postgres_ca_cert" {
+  description = "Optional PEM CA bundle for Postgres TLS (e.g. the Supabase root CA). Public certificate material supplied via the CORVIS_POSTGRES_CA_CERT GitHub Environment variable."
+  type        = string
+  default     = ""
+}
+
 variable "cloudflare_zone_name" {
   description = "Cloudflare zone name. The provider resolves the zone ID at plan/apply time."
   type        = string

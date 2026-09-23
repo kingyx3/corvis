@@ -159,14 +159,41 @@ function productionOidcVerifier(): OidcVerifier {
   return oidcVerifier;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The caller's end-user bearer token.
+ *
+ * Deployed traffic reaches the API service through Google API Gateway, whose
+ * x-google-backend authentication replaces `Authorization` with the gateway
+ * service account's Google ID token (used by Cloud Run IAM) and moves the
+ * caller's original header to `X-Forwarded-Authorization`. When that header is
+ * present it is the only user credential; the gateway's own token is never
+ * treated as a user identity.
+ *
+ * Trusting the header is safe because it only selects which token to verify:
+ * the token is still fully verified (signature, issuer, audience, expiry)
+ * against the configured user IdP. The API Cloud Run service has no allUsers
+ * invoker; only the dedicated gateway service account holds roles/run.invoker
+ * (gcp-api-gateway module), so requests cannot bypass the gateway either.
+ */
+export function userBearerAuthorization(request: Request): string | null {
+  return request.headers.get("x-forwarded-authorization") ?? request.headers.get("authorization");
+}
+
 async function directOidcIdentity(request: Request, config: ServerConfig): Promise<RequestIdentity> {
   const tenantId = request.headers.get("x-corvis-tenant")?.trim();
   const workspaceId = request.headers.get("x-corvis-workspace")?.trim();
   if (!tenantId || !workspaceId) throw new AuthenticationError("Tenant and workspace context are required");
+  // Tenant/workspace ids are Postgres uuids; reject malformed selectors before
+  // they reach `$1::uuid` casts (which would otherwise surface as a 500).
+  if (!UUID_PATTERN.test(tenantId) || !UUID_PATTERN.test(workspaceId)) {
+    throw new AuthenticationError("Tenant and workspace context must be UUIDs");
+  }
   if (!config.authIssuer || !config.authAudience) throw new AuthenticationError("OIDC authentication is not configured");
   try {
     const verified = await productionOidcVerifier().verify({
-      authorization: request.headers.get("authorization"),
+      authorization: userBearerAuthorization(request),
       issuer: config.authIssuer,
       audience: config.authAudience,
       jwksUrl: config.authJwksUrl,

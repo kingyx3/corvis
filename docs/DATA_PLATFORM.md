@@ -197,9 +197,24 @@ bounded batches outside the migration transaction.
 
 Remote and production connections require verified TLS. `sslmode=require` is
 strengthened to certificate/hostname verification; TLS downgrade and arbitrary
-connection-string options are rejected. For a provider-specific CA, mount the
-reviewed CA certificate and configure Node's `NODE_EXTRA_CA_CERTS` before process
-startup. Never disable certificate verification. Only non-production loopback
+connection-string options are rejected. For a provider whose certificates chain
+to a private root (Supabase signs with its own root CA, which is not in Node's
+trust store), set `CORVIS_POSTGRES_CA_CERT` to the reviewed PEM CA bundle. It is
+public certificate material, not a secret: store it as the `CORVIS_POSTGRES_CA_CERT`
+GitHub Environment variable, which the deploy workflow passes to Terraform
+(`postgres_ca_cert`, set as a plain env var on the API and worker Cloud Run
+services) and to the migration and security-acceptance steps. When set, it
+replaces the default trust store for Postgres connections only; certificate and
+hostname verification remain mandatory. Empty (the default) uses Node's trust
+store. `sslrootcert` in the DSN stays rejected, and `NODE_EXTRA_CA_CERTS` is not
+used because it requires a mounted file. Never disable certificate verification.
+
+Driver failures surface only a closed diagnostic code, never the driver message,
+DSN or SQL: `Postgres query failed (SQLSTATE 42P01)` for server errors and
+`Postgres connection failed (SELF_SIGNED_CERT_IN_CHAIN)` (or `ECONNREFUSED`,
+`28P01`, `CONNECT_TIMEOUT`, ...) for connection failures. Failed migration
+evidence additionally records `failedVersion`, `failedMigration`,
+`alreadyApplied`, `appliedThisRun` and `driverCode`. Only non-production loopback
 connections can use plaintext for disposable CI. Use the provider's appropriate
 pooler/direct endpoint and size Cloud Run instance limits against the database
 connection budget. Keep the DSN in Secret Manager, not repository variables or
