@@ -97,6 +97,8 @@ jobs:
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ needs.target-metadata.outputs.deploy_service_account }}
       RELEASE_SHA: ${{ inputs.release_sha }}
       GCRANE_VERSION: v0.22.1
+      SOURCE_READ_ATTEMPTS: "10"
+      SOURCE_READ_RETRY_SECONDS: "15"
     steps:
       - name: Validate promotion roots
         shell: bash
@@ -143,7 +145,21 @@ jobs:
           for image in api control-loop; do
             source_ref="${GCP_REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
             target_ref="${GCP_REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
-            source_digest="$(gcrane digest "${source_ref}")"
+            # The reader binding was just granted by reconcile-source-read-trust;
+            # IAM propagation can take minutes, so retry the source read only.
+            source_digest=""
+            for attempt in $(seq 1 "${SOURCE_READ_ATTEMPTS}"); do
+              if source_digest="$(gcrane digest "${source_ref}")"; then
+                break
+              fi
+              source_digest=""
+              if (( attempt == SOURCE_READ_ATTEMPTS )); then
+                echo "Unable to read UAT ${image} release after ${SOURCE_READ_ATTEMPTS} attempts (cross-project reader IAM may not have propagated)."
+                exit 1
+              fi
+              echo "UAT ${image} release not yet readable (attempt ${attempt}/${SOURCE_READ_ATTEMPTS}); retrying in ${SOURCE_READ_RETRY_SECONDS}s."
+              sleep "${SOURCE_READ_RETRY_SECONDS}"
+            done
             [[ "${source_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid source digest for ${image}."; exit 1; }
 
             existing_digest="$(gcrane digest "${target_ref}" 2>/dev/null || true)"

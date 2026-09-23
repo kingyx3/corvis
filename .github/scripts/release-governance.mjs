@@ -2,8 +2,20 @@ import { pathToFileURL } from 'node:url';
 
 export const REQUIRED_CHECKS = ['frontend', 'container', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts'];
 
+export const MISSING_BYPASS_VISIBILITY = 'Release governance token lacks ruleset admin visibility: GitHub omitted bypass_actors ' +
+  'from every applicable ruleset. Configure the RELEASE_GOVERNANCE_TOKEN repository secret with a fine-grained PAT or ' +
+  'GitHub App installation token that has repository Administration: read and write (plus Contents: read and Checks: read) ' +
+  'on this repository; the workflow GITHUB_TOKEN cannot read ruleset bypass actors. See docs/GITHUB_ENVIRONMENTS.md.';
+
 export function evaluateGovernance(rules, rulesets, checks) {
   const failures = [];
+  // GitHub only returns bypass_actors to callers with write access to the
+  // ruleset. If no response carries it, the token (not the ruleset) is the
+  // problem; say so instead of reporting misleading rule failures. Missing
+  // bypass data is still never treated as an empty bypass list.
+  if (rulesets.length > 0 && rulesets.every((set) => !Object.hasOwn(set ?? {}, 'bypass_actors'))) {
+    return { passed: false, failures: [MISSING_BYPASS_VISIBILITY] };
+  }
   // Only credit rules whose applicable ruleset is active and cannot be bypassed.
   // Missing bypass data is not evidence of an empty bypass list.
   const trusted = new Set(rulesets.filter((set) => set.enforcement === 'active' &&
@@ -52,7 +64,7 @@ export async function verifyReleaseGovernance(env = process.env, fetchImpl = fet
   const { GITHUB_REPOSITORY: repository, GITHUB_TOKEN: token } = env;
   const sha = env.RELEASE_SHA || env.GITHUB_SHA;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '') || !/^[a-f0-9]{40}$/.test(sha ?? '') || !token) {
-    throw new Error('Repository, exact release SHA and GitHub token are required');
+    throw new Error('Repository, exact release SHA and GitHub token are required (set the RELEASE_GOVERNANCE_TOKEN secret)');
   }
   async function get(path) {
     const response = await fetchImpl(`https://api.github.com/repos/${repository}/${path}`, {

@@ -53,29 +53,42 @@ jobs:
 
       - name: Verify effective release governance
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ruleset bypass_actors are only returned to callers with ruleset
+          # write access, which the workflow GITHUB_TOKEN can never hold.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
         run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
+        id: gcp_auth
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           version: ">= 416.0.0"
 
-      - name: Configure Artifact Registry authentication
+      - name: Verify Artifact Registry repository
         shell: bash
         run: |
           set -euo pipefail
           gcloud artifacts repositories describe "${ARTIFACT_REPOSITORY}" \
             --project="${GCP_PROJECT_ID}" \
             --location="${GCP_REGION}" >/dev/null
-          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      # Write a static `auths` entry (not a gcloud credHelper): actions/attest
+      # push-to-registry reads only `auths` from ~/.docker/config.json, and
+      # BuildKit pushes use the same short-lived WIF access token.
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.gcp_auth.outputs.access_token }}
 
       - uses: docker/setup-buildx-action@v3
 

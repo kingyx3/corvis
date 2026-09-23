@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-expect-error Workflow script runs directly in Node; no declaration file needed.
-import { evaluateGovernance, REQUIRED_CHECKS, verifyReleaseGovernance } from '../../.github/scripts/release-governance.mjs';
+import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, verifyReleaseGovernance } from '../../.github/scripts/release-governance.mjs';
 
 function fixture(approvals = 1) {
   const checks = REQUIRED_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));
@@ -41,6 +41,20 @@ test('bypassable, disabled, malformed and weak multi-operator governance fails c
   const noLastPush = structuredClone(rules);
   noLastPush[0].parameters!.require_last_push_approval = false;
   assert.equal(evaluateGovernance(noLastPush, sets, checks).passed, false);
+});
+
+test('rulesets read without admin visibility fail with an actionable token error', () => {
+  const { rules, sets, checks } = fixture();
+  const hidden = evaluateGovernance(rules, [{ id: 1, enforcement: 'active' }], checks);
+  assert.equal(hidden.passed, false);
+  assert.deepEqual(hidden.failures, [MISSING_BYPASS_VISIBILITY]);
+  assert.match(MISSING_BYPASS_VISIBILITY, /lacks ruleset admin visibility/);
+  assert.match(MISSING_BYPASS_VISIBILITY, /RELEASE_GOVERNANCE_TOKEN/);
+  // Partial visibility is still evaluated (and the hidden ruleset stays untrusted).
+  const partial = evaluateGovernance([...rules, { ruleset_id: 2, type: 'deletion' }],
+    [...sets, { id: 2, enforcement: 'active' }], checks);
+  assert.equal(partial.passed, true);
+  assert.equal(partial.failures.includes(MISSING_BYPASS_VISIBILITY), false);
 });
 
 test('missing, failed, spoofed or newer pending checks cannot borrow a successful result', () => {

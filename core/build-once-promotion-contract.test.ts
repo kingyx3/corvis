@@ -41,4 +41,10 @@ test("cross-project copy reconciles reader-only trust and verifies physical dige
   assert.match(workflow, /target_digest.*source_digest/);
   assert.match(workflow, /refusing to overwrite prod/);
   assert.match(workflow, /gcrane-copy-digest-verified/);
+  // The reader binding is granted in the same run; the source read must
+  // tolerate IAM propagation with a bounded retry rather than a single 403.
+  assert.match(workflow, /source_read_attempts:\s*"10"/);
+  assert.match(workflow, /source_read_retry_seconds:\s*"15"/);
+  assert.match(workflow, /for attempt in \$\(seq 1 "\$\{source_read_attempts\}"\)/);
+  assert.match(workflow, /if source_digest="\$\(gcrane digest "\$\{source_ref\}"\)"; then/);
 });
