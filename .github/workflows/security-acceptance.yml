@@ -55,6 +55,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
+      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      - name: Install control evidence runtime
+        run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
@@ -176,6 +180,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
+      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      - name: Install control evidence runtime
+        run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
@@ -240,6 +248,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
+      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      - name: Install control evidence runtime
+        run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:

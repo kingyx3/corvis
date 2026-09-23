@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# No job writes to the repository, checks, PRs or security events; actions/cache
+# and BuildKit type=gha caches use the runner cache token, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
 concurrency:
   group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

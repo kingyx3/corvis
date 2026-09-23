@@ -62,6 +62,18 @@ Bootstrap, Terraform deploy and decommission all pass these as `TF_VAR_billing_a
 | Secret | Scope | Purpose |
 | --- | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | `uat` / `prod` when edge deployment is enabled | Least-privilege deployment credential for Cloudflare DNS/Worker/zone/rules configuration. |
+| `RELEASE_GOVERNANCE_TOKEN` | Environment secret in `dev`, `uat` and `prod` | Read-only use by the `Verify effective release governance` step of `build-release.yml` and `terraform-deploy.yml` (apply) to prove `main` rulesets are active and non-bypassable. |
+
+### `RELEASE_GOVERNANCE_TOKEN`
+
+The release governance verifier (`.github/scripts/release-governance.mjs`) treats a ruleset as enforcing only when GitHub returns an explicit, empty `bypass_actors` list. GitHub returns `bypass_actors` from `GET /repos/{owner}/{repo}/rulesets/{id}` only to callers with write access to that ruleset (repository admin), and the workflow `GITHUB_TOKEN` can never be granted that. Without a dedicated token every UAT build and every Terraform apply fails with `Release governance token lacks ruleset admin visibility`.
+
+Create one of:
+
+- a **fine-grained personal access token** scoped to only `kingyx3/corvis`, with repository permissions **Administration: Read and write** (required for GitHub to include `bypass_actors`), **Contents: Read** (compare release SHA against `main`), **Checks: Read** (exact-commit check runs) and the implicit **Metadata: Read**; or
+- a **GitHub App** installed only on `kingyx3/corvis` with the same repository permissions, minting a short-lived installation token.
+
+If an organization-level ruleset ever applies to `main`, the token owner/App also needs organization **Administration** read and write so the parent ruleset's bypass list is visible. The workflows use the token only for the read-only GET calls in that single step; no other step receives it. Store it as an **environment secret** in each of `dev`, `uat` and `prod` (not a repository secret) so it is released only to jobs bound to a protected, main-only GitHub Environment. Set an expiry and rotate it; an expired token fails closed with `Release governance read failed (401)`.
 
 There are **no custom GCP credential secrets**. GCP CI/CD uses GitHub OIDC -> Workload Identity Federation. `GITHUB_TOKEN` is supplied automatically by GitHub Actions and must not be created manually.
 
@@ -186,6 +198,7 @@ For `prod`, require reviewed deployments once multiple operators exist, deploy o
 - [ ] `Bootstrap GCP foundation` plan succeeds, then apply succeeds from `main`.
 - [ ] obsolete derived GitHub variables and old origin/gateway secrets are absent.
 - [ ] no custom GCP credential secret exists in GitHub.
+- [ ] `RELEASE_GOVERNANCE_TOKEN` environment secret is set (Administration read/write, Contents read, Checks read, this repository only) and unexpired.
 - [ ] the separate environment Postgres provider is activated and `corvis-postgres-dsn-${environment}` has an enabled version.
 - [ ] `CORVIS_AUTH_ISSUER` / `CORVIS_AUTH_AUDIENCE` match the approved environment IdP.
 - [ ] the selected release commit has been built and attested in the target environment Artifact Registry.

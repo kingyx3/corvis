@@ -138,7 +138,9 @@ jobs:
       - name: Verify effective release governance
         if: inputs.action == 'apply'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ruleset bypass_actors are only returned to callers with ruleset
+          # write access, which the workflow GITHUB_TOKEN can never hold.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
           RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
         run: node .github/scripts/release-governance.mjs
 
@@ -271,8 +273,10 @@ jobs:
       - name: Terraform plan
         run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
 
+      # The dev root is foundation-only (no Cloud Run runtime, no Postgres DSN
+      # secret), so runtime secret checks and migrations apply to uat/prod only.
       - name: Require enabled Postgres runtime secret
-        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -289,17 +293,17 @@ jobs:
           echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
 
       - uses: actions/setup-node@v7
-        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         with:
           node-version: 24
           cache: npm
 
       - name: Install migration runtime
-        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         run: npm ci --ignore-scripts
 
       - name: Apply versioned Postgres migrations
-        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -312,7 +316,7 @@ jobs:
           unset dsn
 
       - name: Upload migration evidence
-        if: always() && inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: always() && inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         uses: actions/upload-artifact@v4
         with:
           name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}

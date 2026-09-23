@@ -17,6 +17,59 @@ test("release build is main-only, keyless, digest-addressed and attested", async
   assert.match(workflow, /actions\/attest@v4/);
   assert.match(workflow, /push-to-registry:\s*true/);
   assert.doesNotMatch(workflow, /service-account.*json|google_application_credentials/);
+  // actions/attest push-to-registry reads only static `auths` entries, not gcloud credHelpers.
+  assert.match(workflow, /token_format:\s*access_token/);
+  assert.match(workflow, /docker\/login-action@v3/);
+  assert.match(workflow, /username:\s*oauth2accesstoken/);
+  assert.match(workflow, /password:\s*\$\{\{ steps\.gcp_auth\.outputs\.access_token \}\}/);
+  assert.match(workflow, /registry:\s*\$\{\{ env\.gcp_region \}\}-docker\.pkg\.dev/);
+  assert.doesNotMatch(workflow, /gcloud auth configure-docker/);
+});
+
+test("release governance reads rulesets with a dedicated admin-visible token", async () => {
+  for (const path of [".github/workflows/build-release.yml", ".github/workflows/terraform-deploy.yml"]) {
+    const workflow = await read(path);
+    const step = workflow.slice(workflow.indexOf("verify effective release governance"),
+      workflow.indexOf("release-governance.mjs"));
+    assert.match(step, /github_token:\s*\$\{\{ secrets\.release_governance_token \}\}/, path);
+    assert.doesNotMatch(step, /secrets\.github_token/, path);
+    assert.equal(workflow.match(/secrets\.release_governance_token/g)?.length, 1, path);
+  }
+  const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
+  assert.match(environments, /`release_governance_token`/);
+  assert.match(environments, /administration: read and write/);
+});
+
+test("frontend ci runs with a read-only default token", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  assert.match(workflow, /^permissions:\n  contents: read\n/m);
+  assert.doesNotMatch(workflow, /:\s*write\b/);
+});
+
+test("dev deploys never run production-like runtime secret or migration steps", async () => {
+  const workflow = await read(".github/workflows/terraform-deploy.yml");
+  for (const name of ["require enabled postgres runtime secret", "install migration runtime",
+    "apply versioned postgres migrations", "upload migration evidence"]) {
+    const start = workflow.indexOf(`name: ${name}`);
+    assert.ok(start > 0, name);
+    const guard = workflow.slice(start).match(/\n\s*if: ([^\n]+)/)?.[1] ?? "";
+    assert.match(guard, /inputs\.environment != 'dev'/, name);
+  }
+});
+
+test("security acceptance control-evidence jobs install the pg runtime before collecting", async () => {
+  const workflow = await read(".github/workflows/security-acceptance.yml");
+  for (const job of ["edge", "postgres-rls", "control-loop"]) {
+    const start = workflow.indexOf(`\n  ${job}:\n`);
+    assert.ok(start > 0, job);
+    const rest = workflow.slice(start + 1);
+    const next = rest.slice(1).search(/\n  [a-z-]+:\n/);
+    const body = next < 0 ? rest : rest.slice(0, next + 1);
+    assert.match(body, /cache:\s*npm/, job);
+    const install = body.indexOf("npm ci --ignore-scripts");
+    const collect = body.indexOf("node scripts/collect-control-evidence.ts");
+    assert.ok(install > 0 && collect > install, job);
+  }
 });
 
 test("terraform deploy resolves release tags to immutable digests without API_IMAGE variable", async () => {
