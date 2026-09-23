@@ -4,7 +4,7 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type DeadLetterRecoveryResult =
   | { ok: true; version: number; recoveryCount: number; recoveryEventId: string }
-  | { ok: false; reason: "not_found_or_version_conflict" | "not_terminal_dead_letter" | "not_exhausted" | "missing_delivery_evidence" };
+  | { ok: false; reason: "not_found_or_version_conflict" | "not_terminal_dead_letter" | "not_exhausted" | "missing_delivery_evidence" | "idempotency_conflict" };
 
 function controlDb(): PostgresSqlApi {
   return postgres(getServerConfig().postgresDsn);
@@ -61,6 +61,9 @@ export async function recoverDeadLetterProcessingJob(input: {
     }
     if (message.includes("only terminal dead-letter jobs")) {
       return { ok:false, reason:"not_terminal_dead_letter" };
+    }
+    if (message.includes("idempotency key was reused with different command content")) {
+      return { ok:false, reason:"idempotency_conflict" };
     }
     if (message.includes("requires an exhausted job")) {
       return { ok:false, reason:"not_exhausted" };
