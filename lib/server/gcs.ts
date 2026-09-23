@@ -1,3 +1,4 @@
+import { request as httpsRequest } from "node:https";
 import { getServerConfig } from "./config.ts";
 
 type TokenResponse = { access_token?: string; expires_in?: number };
@@ -36,6 +37,34 @@ export interface UploadObjectStore {
   getObjectPrefix(key: string, bytes?: number): Promise<Buffer>;
   deleteObject(key: string): Promise<void>;
   listObjects(prefix: string, limit?: number): Promise<string[]>;
+}
+
+const CANCEL_TIMEOUT_MS = 10_000;
+
+/**
+ * GCS requires `Content-Length: 0` on the resumable-session cancel DELETE.
+ * fetch (undici) never sends a Content-Length on a bodiless DELETE, even when
+ * the header is set explicitly, so the cancel uses node:https directly. The
+ * session URI is self-authorizing; no bearer token is attached.
+ */
+export function deleteWithZeroContentLength(
+  url: string,
+  requestImpl: typeof httpsRequest = httpsRequest,
+  timeoutMs = CANCEL_TIMEOUT_MS,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = requestImpl(new URL(url), {
+      method: "DELETE",
+      headers: { "content-length": "0", "cache-control": "no-store" },
+      timeout: timeoutMs,
+    }, (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+    });
+    request.on("timeout", () => request.destroy(new Error("GCS resumable upload cancellation timed out")));
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 function encodeObjectName(value: string): string {
@@ -113,9 +142,9 @@ export class GcsControlClient implements UploadObjectStore {
   }
 
   async cancelResumableUpload(uploadUrl: string): Promise<void> {
-    const response = await fetch(uploadUrl, { method: "DELETE", cache: "no-store" });
-    if (![204, 404, 410, 499].includes(response.status)) {
-      throw new Error(`GCS resumable upload cancellation failed (${response.status})`);
+    const status = await deleteWithZeroContentLength(uploadUrl);
+    if (![204, 404, 410, 499].includes(status)) {
+      throw new Error(`GCS resumable upload cancellation failed (${status})`);
     }
   }
 

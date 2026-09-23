@@ -69,10 +69,32 @@ variable "upload_allowed_origins" {
   default     = []
 }
 
+variable "browser_allowed_origins" {
+  description = "Public customer/admin browser origins allowed to issue state-changing API requests (CSRF Origin allow-list)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for origin in var.browser_allowed_origins : can(regex("^https://[a-z0-9.-]+$", origin))])
+    error_message = "browser_allowed_origins entries must be bare https:// origins without paths or trailing slashes."
+  }
+}
+
 variable "postgres_dsn_secret_id" {
   description = "Secret Manager secret id containing the runtime Postgres DSN."
   type        = string
   default     = "corvis-postgres-dsn"
+}
+
+variable "postgres_ca_cert" {
+  description = "Optional PEM CA certificate bundle trusted for Postgres TLS (public certificate material, not a secret). Empty uses Node's default trust store."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.postgres_ca_cert) == "" || strcontains(var.postgres_ca_cert, "-----BEGIN CERTIFICATE-----")
+    error_message = "postgres_ca_cert must be empty or contain PEM-encoded certificates."
+  }
 }
 
 variable "decommission_mode" {

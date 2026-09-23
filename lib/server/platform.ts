@@ -269,7 +269,9 @@ export class PostgresProductionPlatform implements PlatformPort {
   async readiness(): Promise<Record<string, "configured" | "missing" | "demo">> {
     const config = getServerConfig();
     const result: Record<string,"configured"|"missing"|"demo"> = {
-      identity: config.authIssuer && config.trustedAuthProxySecret ? "configured" : "missing",
+      // Production verifies OIDC bearer tokens directly (issuer + audience);
+      // the signed trusted-proxy assertion remains an optional alternative.
+      identity: (config.authIssuer && config.authAudience) || config.trustedAuthProxySecret ? "configured" : "missing",
       objectStore: config.objectStoreBucket && config.uploadAllowedOrigins.length ? "configured" : "missing",
       postgres: "missing",
       orchestration: "configured",

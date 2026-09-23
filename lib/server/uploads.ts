@@ -4,6 +4,43 @@ import { getServerConfig } from "./config.ts";
 import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
+export type UploadRequestErrorCode =
+  | "unsupported_file_type"
+  | "unsupported_media_type"
+  | "invalid_file_size"
+  | "upload_origin_not_allowed"
+  | "upload_not_found"
+  | "upload_idempotency_mismatch"
+  | "upload_not_active"
+  | "upload_expired"
+  | "upload_incomplete"
+  | "invalid_file_content";
+
+const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
+  unsupported_file_type: 415,
+  unsupported_media_type: 415,
+  invalid_file_size: 400,
+  upload_origin_not_allowed: 403,
+  upload_not_found: 404,
+  upload_idempotency_mismatch: 409,
+  upload_not_active: 409,
+  upload_expired: 410,
+  upload_incomplete: 409,
+  invalid_file_content: 422,
+};
+
+/** Client-attributable upload failure with a stable code and HTTP status (see apiError). */
+export class UploadRequestError extends Error {
+  readonly code: UploadRequestErrorCode;
+  readonly status: number;
+  constructor(code: UploadRequestErrorCode, message: string) {
+    super(message);
+    this.name = "UploadRequestError";
+    this.code = code;
+    this.status = UPLOAD_ERROR_STATUS[code];
+  }
+}
+
 export type UploadSession = {
   uploadId: string;
   documentId: string;
@@ -143,15 +180,15 @@ export function assertObjectMatchesSession(session: UploadSession, object: GcsOb
 }
 
 function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number; origin?: string }): void {
-  if (!input.fileName || !allowedExtensions.test(input.fileName)) throw new Error("Unsupported file type");
-  if (!allowedMime.has(input.contentType || "application/octet-stream")) throw new Error("Unsupported media type");
-  if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > MAX_FILE_BYTES) throw new Error("Invalid file size");
+  if (!input.fileName || !allowedExtensions.test(input.fileName)) throw new UploadRequestError("unsupported_file_type", "Unsupported file type");
+  if (!allowedMime.has(input.contentType || "application/octet-stream")) throw new UploadRequestError("unsupported_media_type", "Unsupported media type");
+  if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > MAX_FILE_BYTES) throw new UploadRequestError("invalid_file_size", "Invalid file size");
 
   const config = getServerConfig();
   if (config.environment === "production") {
-    if (!input.origin || !config.uploadAllowedOrigins.includes(input.origin)) throw new Error("Upload origin is not allowed");
+    if (!input.origin || !config.uploadAllowedOrigins.includes(input.origin)) throw new UploadRequestError("upload_origin_not_allowed", "Upload origin is not allowed");
   } else if (input.origin && config.uploadAllowedOrigins.length && !config.uploadAllowedOrigins.includes(input.origin)) {
-    throw new Error("Upload origin is not allowed");
+    throw new UploadRequestError("upload_origin_not_allowed", "Upload origin is not allowed");
   }
 }
 
@@ -180,12 +217,12 @@ class DemoUploadSessions implements UploadSessionPort {
   }
   async get(identity: RequestIdentity, uploadId: string) {
     const session = this.sessions.get(uploadId);
-    if (!session || session.tenantId !== identity.tenantId) throw new Error("Upload not found");
+    if (!session || session.tenantId !== identity.tenantId) throw new UploadRequestError("upload_not_found", "Upload not found");
     return session;
   }
   async complete(identity: RequestIdentity, uploadId: string, key: string) {
     const session = await this.get(identity, uploadId);
-    if (key !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
+    if (key !== session.idempotencyKey) throw new UploadRequestError("upload_idempotency_mismatch", "Upload completion idempotency key does not match session");
     if (session.state === "complete") return session;
     session.state = "complete";
     session.releasedAt = new Date().toISOString();
@@ -224,12 +261,12 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   private async load(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
     const session = await this.store.getJson<UploadSession>(sessionKey(identity.tenantId, uploadId));
-    if (!session || session.tenantId !== identity.tenantId) throw new Error("Upload not found");
+    if (!session || session.tenantId !== identity.tenantId) throw new UploadRequestError("upload_not_found", "Upload not found");
     return session;
   }
 
   private assertUploader(identity: RequestIdentity, session: UploadSession): void {
-    if (session.actorSubject !== identity.subject && !identity.roles.includes("admin")) throw new Error("Upload not found");
+    if (session.actorSubject !== identity.subject && !identity.roles.includes("admin")) throw new UploadRequestError("upload_not_found", "Upload not found");
   }
 
   private async registerInitiated(session: UploadSession): Promise<void> {
@@ -356,17 +393,17 @@ export class ProductionUploadSessions implements UploadSessionPort {
   async complete(identity: RequestIdentity, uploadId: string, key: string): Promise<UploadSession> {
     const session = await this.load(identity, uploadId);
     this.assertUploader(identity, session);
-    if (key !== session.idempotencyKey) throw new Error("Upload completion idempotency key does not match session");
+    if (key !== session.idempotencyKey) throw new UploadRequestError("upload_idempotency_mismatch", "Upload completion idempotency key does not match session");
     if (session.state === "complete" || session.state === "quarantined") return this.refreshScan(session);
-    if (session.state === "aborted") throw new Error("Upload session is no longer active");
+    if (session.state === "aborted") throw new UploadRequestError("upload_not_active", "Upload session is no longer active");
     if (ageMs(session, Date.now()) > UPLOAD_SESSION_TTL_MS) {
       await this.expire(session);
-      throw new Error("Upload session has expired");
+      throw new UploadRequestError("upload_expired", "Upload session has expired");
     }
     if (!session.objectKey) throw new Error("Upload storage state is incomplete");
 
     const object = await this.store.getObjectMetadata(session.objectKey);
-    if (!object) throw new Error("GCS upload has not completed");
+    if (!object) throw new UploadRequestError("upload_incomplete", "GCS upload has not completed");
     assertObjectMatchesSession(session, object);
 
     session.storageVersionId = object.generation;
@@ -383,7 +420,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
     await this.db.execute(`update corvis_source.document set status=$1
       where tenant_id=$2 and document_id=$3::uuid`, [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
     await this.persist(session);
-    if (!session.contentValidated) throw new Error("File content does not match the permitted document type");
+    if (!session.contentValidated) throw new UploadRequestError("invalid_file_content", "File content does not match the permitted document type");
     return this.refreshScan(session);
   }
 

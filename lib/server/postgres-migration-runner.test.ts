@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PostgresRow } from "./postgres.ts";
+import { PostgresDriverError } from "./postgres-native.ts";
 import {
+  MigrationApplyError,
   MigrationContractError,
   applyMigrations,
   ledgerInsertSql,
@@ -158,6 +160,31 @@ test("applyMigrations refuses to replay when an already-applied migration's chec
   await assert.rejects(
     () => applyMigrations(client, { appliedBy: "ci", migrations: edited }),
     (error: unknown) => error instanceof MigrationContractError && error.code === "checksum_drift",
+  );
+});
+
+test("applyMigrations reports the failing version and applied history without SQL values", async () => {
+  const client = new FakeSqlClient();
+  await applyMigrations(client, { appliedBy: "ci", migrations: [migration(1)] });
+  const execute = client.execute.bind(client);
+  client.execute = async (sql: string) => {
+    if (sql.includes("secret_marker")) throw new PostgresDriverError("query", "42601");
+    await execute(sql);
+  };
+  const migrations = [migration(1), migration(2), migration(3, "create table secret_marker (id int);"), migration(4)];
+  await assert.rejects(
+    () => applyMigrations(client, { appliedBy: "ci", migrations }),
+    (error: unknown) => {
+      assert.ok(error instanceof MigrationApplyError);
+      assert.equal(error.code, "migration_apply_failed");
+      assert.equal(error.failedVersion, 3);
+      assert.equal(error.failedMigration, "003_migration.sql");
+      assert.deepEqual(error.alreadyApplied, [1]);
+      assert.deepEqual(error.appliedThisRun, [2]);
+      assert.equal(error.driverCode, "42601");
+      assert.equal(error.message, "migration 003_migration.sql failed: Postgres query failed (SQLSTATE 42601)");
+      return true;
+    },
   );
 });
 

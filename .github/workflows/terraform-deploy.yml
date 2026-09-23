@@ -68,6 +68,7 @@ jobs:
       TF_VAR_auth_issuer: ${{ vars.CORVIS_AUTH_ISSUER }}
       TF_VAR_auth_audience: ${{ vars.CORVIS_AUTH_AUDIENCE || 'corvis' }}
       TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
+      TF_VAR_postgres_ca_cert: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
       TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
@@ -309,7 +310,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node db/postgres/migrate.ts \
+          CORVIS_POSTGRES_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts \
             --apply \
             --applied-by="github-actions:${GITHUB_RUN_ID}" \
             --evidence=migration-evidence.json

@@ -4,6 +4,7 @@ const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const CLOCK_SKEW_SECONDS = 30;
 const DEFAULT_KEY_CACHE_SECONDS = 300;
 const JWKS_TIMEOUT_MS = 5_000;
+export const JWKS_MIN_REFRESH_INTERVAL_MS = 30_000;
 
 export type GoogleServiceAccountIdentity = {
   subject: string;
@@ -80,19 +81,45 @@ export class GoogleOidcVerifier {
   private readonly fetchImpl: typeof fetch;
   private keys = new Map<string, GoogleJwk>();
   private keysExpireAt = 0;
+  private lastRefreshAttemptAt = Number.NEGATIVE_INFINITY;
+  private refreshInFlight?: Promise<void>;
 
   constructor(fetchImpl: typeof fetch = fetch) {
     this.fetchImpl = fetchImpl;
   }
 
+  /**
+   * Single-flight, rate-limited JWKS refresh: once keys are cached, an unknown
+   * `kid` (or a failing Google endpoint) triggers at most one fetch per
+   * JWKS_MIN_REFRESH_INTERVAL_MS, and a failed refresh keeps the cached keys.
+   */
   private async key(kid: string, nowMs: number): Promise<GoogleJwk> {
-    if (nowMs >= this.keysExpireAt || !this.keys.has(kid)) await this.refreshKeys(nowMs);
+    if (nowMs >= this.keysExpireAt || !this.keys.has(kid)) {
+      const throttled = this.keys.size > 0 && nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS;
+      if (!throttled) {
+        try {
+          await this.refreshKeys(nowMs);
+        } catch (error) {
+          if (this.keys.size === 0) throw error;
+        }
+      }
+    }
     const key = this.keys.get(kid);
     if (!key) throw new Error("GCP OIDC signing key is unknown");
     return key;
   }
 
-  private async refreshKeys(nowMs: number): Promise<void> {
+  private refreshKeys(nowMs: number): Promise<void> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.lastRefreshAttemptAt = nowMs;
+    const promise = this.fetchKeys(nowMs);
+    this.refreshInFlight = promise;
+    const clear = () => { if (this.refreshInFlight === promise) this.refreshInFlight = undefined; };
+    promise.then(clear, clear);
+    return promise;
+  }
+
+  private async fetchKeys(nowMs: number): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), JWKS_TIMEOUT_MS);
     try {

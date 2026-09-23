@@ -3,6 +3,7 @@ import { createHash, createPublicKey, verify as verifySignature, type JsonWebKey
 const CLOCK_SKEW_SECONDS = 30;
 const DEFAULT_KEY_CACHE_SECONDS = 300;
 const HTTP_TIMEOUT_MS = 5_000;
+export const JWKS_MIN_REFRESH_INTERVAL_MS = 30_000;
 
 export type OidcIdentity = {
   subject: string;
@@ -97,6 +98,9 @@ export class OidcVerifier {
   private readonly fetchImpl: typeof fetch;
   private keys = new Map<string, OidcJwk>();
   private keysExpireAt = 0;
+  private keysIssuer = "";
+  private lastRefreshAttemptAt = Number.NEGATIVE_INFINITY;
+  private refreshInFlight?: { issuer: string; promise: Promise<void> };
   private resolvedIssuer = "";
   private resolvedJwksUrl = "";
 
@@ -136,19 +140,51 @@ export class OidcVerifier {
     return this.resolvedJwksUrl;
   }
 
+  /**
+   * JWKS refresh is single-flight and, once keys are cached, rate limited: an
+   * unauthenticated token with an unknown `kid` (or an IdP outage) can trigger
+   * at most one JWKS fetch per JWKS_MIN_REFRESH_INTERVAL_MS. A failed refresh
+   * keeps the previously fetched keys.
+   */
   private async key(kid: string, issuer: string, configuredJwksUrl: string | undefined, nowMs: number): Promise<OidcJwk> {
-    if (nowMs >= this.keysExpireAt || !this.keys.has(kid) || this.resolvedIssuer && this.resolvedIssuer !== issuer) {
-      const url = await this.jwksUrl(issuer, configuredJwksUrl);
-      const { value, cacheControl } = await this.getJson(url);
-      const keys = parseJwks(value);
-      if (keys.length === 0) throw new Error("OIDC JWKS response contained no usable signing keys");
-      this.keys = new Map(keys.map((key) => [key.kid, key]));
-      this.keysExpireAt = nowMs + cacheSeconds(cacheControl) * 1_000;
-      this.resolvedIssuer = issuer;
+    if (this.keysIssuer !== issuer) {
+      this.keys = new Map();
+      this.keysExpireAt = 0;
+      this.lastRefreshAttemptAt = Number.NEGATIVE_INFINITY;
+      this.keysIssuer = issuer;
+    }
+    if (nowMs >= this.keysExpireAt || !this.keys.has(kid)) {
+      const throttled = this.keys.size > 0 && nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS;
+      if (!throttled) {
+        try {
+          await this.refreshKeys(issuer, configuredJwksUrl, nowMs);
+        } catch (error) {
+          if (this.keys.size === 0) throw error;
+        }
+      }
     }
     const key = this.keys.get(kid);
     if (!key) throw new Error("OIDC signing key is unknown");
     return key;
+  }
+
+  private refreshKeys(issuer: string, configuredJwksUrl: string | undefined, nowMs: number): Promise<void> {
+    if (this.refreshInFlight?.issuer === issuer) return this.refreshInFlight.promise;
+    this.lastRefreshAttemptAt = nowMs;
+    const promise = (async () => {
+      const url = await this.jwksUrl(issuer, configuredJwksUrl);
+      const { value, cacheControl } = await this.getJson(url);
+      const keys = parseJwks(value);
+      if (keys.length === 0) throw new Error("OIDC JWKS response contained no usable signing keys");
+      if (this.keysIssuer !== issuer) return;
+      this.keys = new Map(keys.map((key) => [key.kid, key]));
+      this.keysExpireAt = nowMs + cacheSeconds(cacheControl) * 1_000;
+    })();
+    const flight = { issuer, promise };
+    this.refreshInFlight = flight;
+    const clear = () => { if (this.refreshInFlight === flight) this.refreshInFlight = undefined; };
+    promise.then(clear, clear);
+    return promise;
   }
 
   async verify(input: {

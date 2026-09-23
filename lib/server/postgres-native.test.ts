@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nativePostgresConfig, NativePostgresSqlApi } from "./postgres-native.ts";
+import { nativePostgresConfig, NativePostgresSqlApi, PostgresDriverError, postgresCaCertificates, postgresDiagnosticCode } from "./postgres-native.ts";
 import { postgres } from "./postgres.ts";
 
 test("provider URLs always verify TLS even when sslmode=require is supplied", () => {
@@ -24,6 +24,49 @@ test("plaintext is limited to non-production loopback", () => {
   assert.equal(nativePostgresConfig("postgres://localhost/db?sslmode=disable", false).ssl, false);
   assert.throws(() => nativePostgresConfig("postgres://localhost/db?sslmode=disable", true));
   assert.deepEqual(nativePostgresConfig("postgres://localhost/db", true).ssl, { rejectUnauthorized: true });
+});
+
+const PEM = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUQ29ydmlzVGVzdA==\n-----END CERTIFICATE-----";
+
+test("an optional provider CA narrows trust but never disables verification", () => {
+  const config = nativePostgresConfig("postgresql://user:dummy@db.example.supabase.co:5432/postgres?sslmode=require", true, `${PEM}\n${PEM}`);
+  assert.deepEqual(config.ssl, { rejectUnauthorized: true, ca: [`${PEM}\n`, `${PEM}\n`] });
+  // Single-line configuration stores may carry escaped newlines.
+  const escaped = nativePostgresConfig("postgresql://user:dummy@db.example.test/db", true, PEM.replace(/\n/g, "\\n"));
+  assert.deepEqual(escaped.ssl, { rejectUnauthorized: true, ca: [`${PEM}\n`] });
+  assert.deepEqual(nativePostgresConfig("postgresql://user:dummy@db.example.test/db", true, "  ").ssl, { rejectUnauthorized: true });
+  assert.throws(() => nativePostgresConfig("postgresql://user:dummy@db.example.test/db", true, "/etc/ssl/ca.pem"), /PEM/);
+  assert.equal(postgresCaCertificates(undefined), undefined);
+  // A CA never re-enables plaintext in production.
+  assert.throws(() => nativePostgresConfig("postgres://localhost/db?sslmode=disable", true, PEM));
+});
+
+test("driver errors surface only a closed diagnostic code, never the message, DSN or SQL", () => {
+  assert.equal(postgresDiagnosticCode({ code: "42P01", message: "relation \"secret\" does not exist" }), "42P01");
+  assert.equal(postgresDiagnosticCode({ code: "SELF_SIGNED_CERT_IN_CHAIN", message: "self-signed certificate in certificate chain" }), "SELF_SIGNED_CERT_IN_CHAIN");
+  assert.equal(postgresDiagnosticCode({ code: "ECONNREFUSED" }), "ECONNREFUSED");
+  assert.equal(postgresDiagnosticCode(new Error("timeout exceeded when trying to connect")), "CONNECT_TIMEOUT");
+  assert.equal(postgresDiagnosticCode({ code: "postgres://user:password@host/db" }), "UNKNOWN");
+  assert.equal(postgresDiagnosticCode(new Error("password=hunter2")), "UNKNOWN");
+  const query = new PostgresDriverError("query", "42601");
+  assert.equal(query.message, "Postgres query failed (SQLSTATE 42601)");
+  assert.equal(query.code, "42601");
+  assert.equal(new PostgresDriverError("connection", "ECONNREFUSED").message, "Postgres connection failed (ECONNREFUSED)");
+});
+
+test("connection failures report the Node error code without leaking the DSN", async () => {
+  const api = new NativePostgresSqlApi("postgres://corvis:dsn-secret-value@127.0.0.1:1/db?sslmode=disable");
+  try {
+    await assert.rejects(api.query("select 1"), (error: unknown) => {
+      assert.ok(error instanceof PostgresDriverError);
+      assert.equal(error.phase, "connection");
+      assert.equal(error.code, "ECONNREFUSED");
+      assert.equal(error.message.includes("dsn-secret-value"), false);
+      return true;
+    });
+  } finally {
+    await api.close();
+  }
 });
 
 test("native clients are shared across repository factories", () => {

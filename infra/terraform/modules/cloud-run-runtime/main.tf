@@ -187,6 +187,13 @@ resource "google_cloud_run_v2_service" "worker" {
       }
 
       env {
+        # Optional non-secret PEM CA bundle for providers whose certificates
+        # chain to a private root (e.g. Supabase). TLS verification stays on.
+        name  = "CORVIS_POSTGRES_CA_CERT"
+        value = var.postgres_ca_cert
+      }
+
+      env {
         name = "CORVIS_POSTGRES_DSN"
         value_source {
           secret_key_ref {
@@ -379,6 +386,13 @@ resource "google_cloud_run_v2_service" "api" {
         value = join(",", var.upload_allowed_origins)
       }
       env {
+        # Public customer/admin origins accepted by the proxy CSRF boundary.
+        # Browser traffic arrives via Cloudflare -> API Gateway, so the
+        # runtime request URL never matches the browser's public origin.
+        name  = "CORVIS_BROWSER_ALLOWED_ORIGINS"
+        value = join(",", var.browser_allowed_origins)
+      }
+      env {
         name  = "CORVIS_GCP_PROJECT_ID"
         value = var.project_id
       }
@@ -405,6 +419,13 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "CORVIS_PROCESSING_WORKER_SERVICE_ACCOUNT"
         value = var.worker_service_account_email
+      }
+
+      env {
+        # Optional non-secret PEM CA bundle for providers whose certificates
+        # chain to a private root (e.g. Supabase). TLS verification stays on.
+        name  = "CORVIS_POSTGRES_CA_CERT"
+        value = var.postgres_ca_cert
       }
 
       env {

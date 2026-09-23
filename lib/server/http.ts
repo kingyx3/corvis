@@ -7,6 +7,7 @@ import { RateLimitError } from "@/lib/server/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
+import { UploadRequestError } from "@/lib/server/uploads";
 import { logEvent } from "@/lib/server/telemetry";
 import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
 
@@ -77,6 +78,10 @@ export function apiError(error: unknown, correlationId: string): Response {
       : error.code === "unregistered_provider" ? 422
       : 400;
     return json({ error: error.code, correlationId }, { status });
+  }
+  if (error instanceof UploadRequestError) {
+    logEvent("warn", "upload.request_denied", { correlationId }, { code: error.code });
+    return json({ error: error.code, correlationId }, { status: error.status });
   }
   if (error instanceof ResearchTimeoutError) {
     logEvent("warn", "research.timeout", { correlationId });
