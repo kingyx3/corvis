@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "react";
 import type { DocumentRecord, UploadProgress } from "@/core/contracts";
 import { Icon } from "@/components/ui/icon";
 import { useFocusTrap } from "@/components/ui/use-focus-trap";
@@ -15,16 +15,38 @@ export function UploadModal({ onClose, onCompleted }: { onClose: () => void; onC
 
   useFocusTrap(dialogRef, onClose);
 
+  // One controller per upload; closing the modal (unmount) aborts every
+  // in-flight upload instead of leaving orphaned transfers running. The GCS
+  // adapter keeps the resumable session, so re-adding the file resumes it.
+  const controllersRef = useRef(new Set<AbortController>());
+  const closedRef = useRef(false);
+  useEffect(() => {
+    const controllers = controllersRef.current;
+    closedRef.current = false;
+    return () => {
+      closedRef.current = true;
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
+    };
+  }, []);
+
   const addFiles = async (files: File[]) => {
     const accepted = files.filter((file) => /\.(pdf|xlsx|xls|docx|pptx|csv)$/i.test(file.name));
     for (const file of accepted) {
+      if (closedRef.current) return;
       const key = `${file.name}-${file.size}-${file.lastModified}`;
+      const controller = new AbortController();
+      controllersRef.current.add(controller);
       setQueue((prev) => ({ ...prev, [key]: { fileName: file.name, uploadedBytes: 0, totalBytes: file.size, percent: 0, status: "queued" } }));
       try {
-        const result = await uploadDocument(file, { onProgress: (progress) => setQueue((prev) => ({ ...prev, [key]: progress })) });
+        const result = await uploadDocument(file, { onProgress: (progress) => setQueue((prev) => ({ ...prev, [key]: progress })) }, controller.signal);
         onCompleted({ id: result.documentId, name: file.name, fund: "Classifying…", period: "Detecting…", type: "Source document", pages: 0, size: formatBytes(file.size), status: "Queued", progress: 0, uploaded: "Just now", quality: "Pending", observations: 0 });
       } catch (error) {
+        // Aborted because the modal closed: stop, and do not start the rest of the queue.
+        if (controller.signal.aborted) return;
         setQueue((prev) => ({ ...prev, [key]: { ...prev[key], status: "error", error: error instanceof Error ? error.message : "Upload failed" } }));
+      } finally {
+        controllersRef.current.delete(controller);
       }
     }
   };

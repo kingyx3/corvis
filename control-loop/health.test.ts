@@ -63,9 +63,14 @@ test("closureDecision denies closure for anything but a complete, fully-scanned,
   const healthy = { healthy: true, reasons: [], automaticClosureEnabled: true };
   const unhealthy = { healthy: false, reasons: ["x"], automaticClosureEnabled: false };
 
-  assert.equal(closureDecision({ status: "complete", health: healthy, scanComplete: true }).allowed, true);
-  assert.equal(closureDecision({ status: "incomplete", health: healthy, scanComplete: true }).allowed, false);
-  assert.equal(closureDecision({ status: "failed", health: healthy, scanComplete: true }).allowed, false);
-  assert.equal(closureDecision({ status: "complete", health: healthy, scanComplete: false }).allowed, false);
-  assert.equal(closureDecision({ status: "complete", health: unhealthy, scanComplete: true }).allowed, false);
+  assert.equal(closureDecision({ status: "complete", health: healthy, scanComplete: true, fullScan: true }).allowed, true);
+  assert.equal(closureDecision({ status: "incomplete", health: healthy, scanComplete: true, fullScan: true }).allowed, false);
+  assert.equal(closureDecision({ status: "failed", health: healthy, scanComplete: true, fullScan: true }).allowed, false);
+  assert.equal(closureDecision({ status: "complete", health: healthy, scanComplete: false, fullScan: true }).allowed, false);
+  assert.equal(closureDecision({ status: "complete", health: unhealthy, scanComplete: true, fullScan: true }).allowed, false);
+  assert.deepEqual(
+    closureDecision({ status: "complete", health: healthy, scanComplete: true, fullScan: false }),
+    { allowed: false, reason: "incremental_scan" },
+    "an incremental daily scan only covers changed files, so absent fingerprints do not prove resolution",
+  );
 });

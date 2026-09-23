@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+
+const subscribeNever = () => () => {};
 
 type PanelState = {
   loading: boolean;
@@ -65,19 +67,26 @@ function JsonCommand({
   title,
   description,
   endpoint,
-  initialValue,
+  buildInitialValue,
   onSuccess,
 }: {
   title: string;
   description: string;
   endpoint: string;
-  initialValue: string;
+  buildInitialValue: (now: Date) => string;
   onSuccess: () => Promise<void>;
 }) {
-  const [value, setValue] = useState(initialValue);
+  // The prerendered HTML and the hydrating render show an empty editor; the
+  // example is rendered only once hydrated, stamped with the time the page was
+  // opened in the browser. `edited` is null until the operator types.
+  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
+  const [openedAt] = useState(() => new Date());
+  const [edited, setValue] = useState<string | null>(null);
+  const value = edited ?? (hydrated ? buildInitialValue(openedAt) : null);
   const [state, setState] = useState<CommandState>(EMPTY_COMMAND);
 
   const submit = async () => {
+    if (value === null) return;
     let body: unknown;
     try {
       body = JSON.parse(value);
@@ -111,7 +120,8 @@ function JsonCommand({
       <p style={{ margin: "0 0 12px", color: "#4b5563", fontSize: 13 }}>{description}</p>
       <textarea
         aria-label={`${title} JSON command`}
-        value={value}
+        value={value ?? ""}
+        placeholder="Loading example command…"
         onChange={(event) => setValue(event.target.value)}
         rows={13}
         spellCheck={false}
@@ -138,7 +148,10 @@ function JsonCommand({
   );
 }
 
-const IDENTITY_COMMAND = JSON.stringify({
+// Example commands are built in the browser after hydration, not at
+// module scope: module-scope timestamps are baked in at prerender time
+// (hydration mismatch, and a stale validity window for the support grant).
+const identityCommand = () => JSON.stringify({
   operation: "sync",
   authMethod: "oidc",
   subject: "oidc-subject",
@@ -148,7 +161,7 @@ const IDENTITY_COMMAND = JSON.stringify({
   reason: "UAT access provisioning",
 }, null, 2);
 
-const ENTITLEMENT_COMMAND = JSON.stringify({
+const entitlementCommand = (now: Date) => JSON.stringify({
   kind: "resource_entitlement",
   operation: "grant",
   subjectUserId: "00000000-0000-4000-8000-000000000001",
@@ -156,12 +169,12 @@ const ENTITLEMENT_COMMAND = JSON.stringify({
   resourceType: "fund",
   resourceId: "fund-id",
   permission: "read",
-  validFrom: new Date().toISOString(),
+  validFrom: now.toISOString(),
   validUntil: null,
   reason: "UAT fund access",
 }, null, 2);
 
-const DATA_RIGHT_COMMAND = JSON.stringify({
+const dataRightCommand = (now: Date) => JSON.stringify({
   kind: "data_right",
   operation: "set",
   resourceType: "workspace",
@@ -171,13 +184,13 @@ const DATA_RIGHT_COMMAND = JSON.stringify({
   modelTrainingAllowed: false,
   redistributionAllowed: true,
   sourceDocumentAccessAllowed: false,
-  effectiveFrom: new Date().toISOString(),
+  effectiveFrom: now.toISOString(),
   effectiveTo: null,
   contractReference: "UAT approval",
   reason: "Enable approved UAT delivery rights",
 }, null, 2);
 
-const SUPPORT_COMMAND = JSON.stringify({
+const supportCommand = (now: Date) => JSON.stringify({
   operation: "grant",
   authMethod: "oidc",
   subject: "support-oidc-subject",
@@ -186,8 +199,8 @@ const SUPPORT_COMMAND = JSON.stringify({
   roleName: "viewer",
   purpose: "Investigate UAT customer-reported issue",
   approvalReference: "UAT-support-approval-001",
-  validFrom: new Date().toISOString(),
-  validUntil: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+  validFrom: now.toISOString(),
+  validUntil: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
   reason: "Approved temporary support access",
 }, null, 2);
 
@@ -260,28 +273,28 @@ export default function AdminPage() {
           title="Identity lifecycle"
           description="Sync roles/workspaces, disable an identity, or explicitly reactivate a disabled identity. Event keys make retries replay-safe."
           endpoint="/api/v1/admin/identity-lifecycle"
-          initialValue={IDENTITY_COMMAND}
+          buildInitialValue={identityCommand}
           onSuccess={refresh}
         />
         <JsonCommand
           title="Resource entitlement"
           description="Grant or revoke a fund/document entitlement with optional effective expiry. Revocation never broadens access."
           endpoint="/api/v1/admin/access-policy"
-          initialValue={ENTITLEMENT_COMMAND}
+          buildInitialValue={entitlementCommand}
           onSuccess={refresh}
         />
         <JsonCommand
           title="Data rights"
           description="Set or revoke the contractual policy used by authorization for visibility, source access, analytics, training and redistribution."
           endpoint="/api/v1/admin/access-policy"
-          initialValue={DATA_RIGHT_COMMAND}
+          buildInitialValue={dataRightCommand}
           onSuccess={refresh}
         />
         <JsonCommand
           title="Temporary support access"
           description="Grant a time-bounded existing role to an active support identity with explicit purpose and approval reference, or revoke by supportGrantId."
           endpoint="/api/v1/admin/support-access"
-          initialValue={SUPPORT_COMMAND}
+          buildInitialValue={supportCommand}
           onSuccess={refresh}
         />
       </div>

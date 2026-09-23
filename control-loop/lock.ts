@@ -8,9 +8,29 @@ export type LockResult =
   | { acquired: true }
   | { acquired: false; heldBy: LockRecord };
 
-function activeOtherOwner(raw: string | null, owner: string, now: Date, staleAfterMs: number): LockRecord | null {
+/**
+ * Parses a persisted lease. Anything that is not a well-formed record (manual
+ * edit, truncated write, schema drift) yields null instead of throwing, so a
+ * corrupt lock object cannot wedge every future run. Callers treat an
+ * unparseable lease as expired: acquisition still goes through the
+ * generation-conditioned write, so two runs racing to replace a corrupt lease
+ * cannot both win, and release never deletes a lease it cannot prove it owns.
+ */
+export function parseLockRecord(raw: string | null): LockRecord | null {
   if (!raw) return null;
-  const existing = JSON.parse(raw) as LockRecord;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LockRecord> | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.owner !== "string" || typeof parsed.acquiredAt !== "string") return null;
+    return { owner: parsed.owner, acquiredAt: parsed.acquiredAt };
+  } catch {
+    return null;
+  }
+}
+
+function activeOtherOwner(raw: string | null, owner: string, now: Date, staleAfterMs: number): LockRecord | null {
+  const existing = parseLockRecord(raw);
+  if (!existing) return null;
   const age = now.getTime() - Date.parse(existing.acquiredAt);
   return Number.isFinite(age) && age < staleAfterMs && existing.owner !== owner ? existing : null;
 }
@@ -48,15 +68,15 @@ export async function releaseLock(store: StateStore, owner: string): Promise<voi
   if (isConditionalStateStore(store)) {
     const current = await store.readVersioned(LOCK_KEY);
     if (!current) return;
-    const existing = JSON.parse(current.value) as LockRecord;
-    if (existing.owner !== owner) return;
+    const existing = parseLockRecord(current.value);
+    if (existing?.owner !== owner) return;
     await store.writeIfVersion(LOCK_KEY, null, current.version);
     return;
   }
 
   const raw = await store.read(LOCK_KEY);
   if (!raw) return;
-  const existing = JSON.parse(raw) as LockRecord;
-  if (existing.owner !== owner) return;
+  const existing = parseLockRecord(raw);
+  if (existing?.owner !== owner) return;
   await store.write(LOCK_KEY, null);
 }

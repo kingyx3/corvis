@@ -58,6 +58,9 @@ async function run() {
     stateStore: state.store,
     changedPaths: changedPathsFromEnv(),
     issueSnapshot,
+    // Without a credential, issue hygiene is best-effort (anonymous, rate
+    // limited); a missing snapshot is then a skip, not a run failure.
+    issueSnapshotRequired: Boolean(token),
     applyMode: values.apply ? "execute" : "dry-run",
     mutationBudget: Number(values["mutation-budget"]) || 20,
   });

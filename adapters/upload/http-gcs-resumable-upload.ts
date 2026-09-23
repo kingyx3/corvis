@@ -92,7 +92,10 @@ async function uploadChunk(input: {
     onProgress: (loaded) => input.onProgress(Math.min(input.file.size, input.start + loaded)),
   });
   if (result.status === 200 || result.status === 201) return input.file.size;
-  if (result.status === 308) return Math.max(input.endExclusive, parseCommittedRange(result.range));
+  // GCS may persist fewer bytes than were sent. The Range header is the only
+  // authority on what was committed (absent means nothing persisted), and the
+  // next request must start exactly there.
+  if (result.status === 308) return parseCommittedRange(result.range);
   if (result.status === 404 || result.status === 410) throw new ExpiredUploadSessionError("The resumable upload session expired");
   throw new Error(`Google Cloud Storage rejected upload chunk (${result.status})`);
 }
@@ -169,38 +172,49 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
         documentId: session.documentId,
       });
 
+      const isFatal = (error: unknown) =>
+        (error instanceof DOMException && error.name === "AbortError") || error instanceof ExpiredUploadSessionError;
+      // Consecutive attempts without committed progress; reset whenever GCS
+      // confirms more bytes, so only a stalled upload exhausts the budget.
+      let attempt = 0;
       while (offset < file.size) {
         if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
-        const endExclusive = Math.min(file.size, offset + chunkSize);
-        let attempt = 0;
-        while (true) {
+        const start = offset;
+        const endExclusive = Math.min(file.size, start + chunkSize);
+        try {
+          const committed = await uploadChunk({
+            uploadUrl: session.uploadUrl,
+            file,
+            start,
+            endExclusive,
+            signal,
+            onProgress: (absoluteBytes) => callbacks.onProgress?.({
+              fileName: file.name,
+              uploadedBytes: absoluteBytes,
+              totalBytes: file.size,
+              percent: Math.min(99, Math.round((absoluteBytes / file.size) * 100)),
+              status: "uploading",
+              documentId: session!.documentId,
+            }),
+          });
+          if (committed <= start) throw new Error("Google Cloud Storage persisted no bytes from the upload chunk");
+          offset = committed;
+          attempt = 0;
+        } catch (error) {
+          if (isFatal(error)) throw error;
+          attempt += 1;
+          if (attempt >= maxRetries) throw error;
+          await sleep(400 * 2 ** (attempt - 1));
+          if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
           try {
-            const nextOffset = await uploadChunk({
-              uploadUrl: session.uploadUrl,
-              file,
-              start: offset,
-              endExclusive,
-              signal,
-              onProgress: (absoluteBytes) => callbacks.onProgress?.({
-                fileName: file.name,
-                uploadedBytes: absoluteBytes,
-                totalBytes: file.size,
-                percent: Math.min(99, Math.round((absoluteBytes / file.size) * 100)),
-                status: "uploading",
-                documentId: session!.documentId,
-              }),
-            });
-            offset = Math.max(offset, nextOffset);
-            break;
-          } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") throw error;
-            if (error instanceof ExpiredUploadSessionError) throw error;
-            attempt += 1;
-            if (attempt >= maxRetries) throw error;
-            await sleep(400 * 2 ** (attempt - 1));
             offset = await queryCommittedBytes(session.uploadUrl, file.size, signal);
-            if (offset >= endExclusive) break;
+          } catch (queryError) {
+            // A dropped status check is just another failed attempt: keep the
+            // last known offset and let the retry loop back off and try again.
+            if (isFatal(queryError)) throw queryError;
+            continue;
           }
+          if (offset > start) attempt = 0;
         }
       }
 
