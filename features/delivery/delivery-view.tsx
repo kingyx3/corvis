@@ -34,7 +34,23 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
     }
   }, []);
 
-  useEffect(() => { void refreshHistory(); }, [refreshHistory]);
+  useEffect(() => {
+    let active = true;
+    void deliveryPort.listExports()
+      .then((items) => {
+        if (!active) return;
+        setExports(items);
+        setError(null);
+      })
+      .catch((caught) => {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : "Export history could not be loaded");
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (!exports.some((item) => ["queued", "delivering", "retryable"].includes(item.state))) return;
     const timer = window.setInterval(() => void refreshHistory(), 5000);
