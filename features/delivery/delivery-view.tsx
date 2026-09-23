@@ -22,6 +22,7 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
   const [exports, setExports] = useState<ExportDeliveryStatus[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -71,6 +72,27 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
     }
   };
 
+  // History never carries download links: a short-lived grant is issued only
+  // when the user asks to download, so polling stays read-only and a link can
+  // never be stale by the time it is clicked.
+  const download = async (item: ExportDeliveryStatus) => {
+    setDownloading(item.exportId);
+    setError(null);
+    try {
+      const status = await deliveryPort.prepareDownload(item.exportId);
+      setExports((current) => current.map((entry) => entry.exportId === status.exportId ? { ...status, downloadUrl: undefined, downloadExpiresAt: undefined } : entry));
+      if (!status.downloadUrl) {
+        setError("This export is no longer available for download");
+        return;
+      }
+      window.location.assign(status.downloadUrl);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Download could not be prepared");
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   return <>
     <section className="page-heading"><div><p className="eyebrow">DATA DELIVERY</p><h1>Deliver structured data</h1><p className="lede">Request, track and download governed tenant-safe outputs from published fund-period snapshots.</p></div><button className="secondary-button" disabled={historyLoading} onClick={() => void refreshHistory()}>Refresh history</button></section>
     <div className="panel">
@@ -85,7 +107,7 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
       <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table"><thead><tr><th>Requested</th><th>Format</th><th>Status</th><th>Coverage</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
         {historyLoading && <tr><td colSpan={7}>Loading governed export history…</td></tr>}
         {!historyLoading && exports.length === 0 && <tr><td colSpan={7}>No export requests have been made for this signed-in user.</td></tr>}
-        {exports.map((item) => <tr key={item.exportId}><td><strong>{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "medium" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{item.manifest.rowCounts.observations ?? 0} observations · {item.manifest.snapshotIds.length} snapshots</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadUrl ? <a className="secondary-button" href={item.downloadUrl}>Download {item.format.toUpperCase()}</a> : <span>{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
+        {exports.map((item) => <tr key={item.exportId}><td><strong>{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "medium" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{item.manifest.rowCounts.observations ?? 0} observations · {item.manifest.snapshotIds.length} snapshots</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span>{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
       </tbody></table></div>
     </section>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Only governed published data is delivered.</strong><span>Exports carry snapshot/schema/taxonomy metadata, immutable checksum lineage and time-bounded download grants. API, webhooks and optional warehouse sharing reuse the same serving contract.</span></div></div>

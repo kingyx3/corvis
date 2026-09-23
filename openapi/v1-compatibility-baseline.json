@@ -4,6 +4,7 @@
   "openapiVersion": "1.0.0",
   "publishedOperations": {
     "/me": ["get"],
+    "/capabilities": ["get"],
     "/documents": ["get"],
     "/funds": ["get"],
     "/companies": ["get"],
@@ -15,7 +16,7 @@
     "/review": ["post"],
     "/snapshots/publish": ["post"],
     "/research": ["post"],
-    "/exports": ["post"],
+    "/exports": ["get", "post"],
     "/jobs": ["get"],
     "/uploads/initiate": ["post"],
     "/uploads/{uploadId}": ["get", "delete"],

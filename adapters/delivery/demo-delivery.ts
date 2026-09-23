@@ -16,12 +16,20 @@ export function createDemoDeliveryPort(): DeliveryPort {
         completedAt: manifest.generatedAt,
         checksumSha256: manifest.checksumSha256,
         manifest,
+        // The demo produces manifests only; there is no physical artifact to download.
+        downloadAvailable: false,
       });
       return manifest;
     },
     async listExports() {
       assertDemoModuleAvailable("delivery");
       return history.slice(0, 20);
+    },
+    async prepareDownload(exportId) {
+      assertDemoModuleAvailable("delivery");
+      const item = history.find((entry) => entry.exportId === exportId);
+      if (!item) throw new Error("not_found");
+      return item;
     },
   };
 }

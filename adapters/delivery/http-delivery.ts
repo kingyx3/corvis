@@ -28,5 +28,11 @@ export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
       const body = await response.json() as Envelope<ExportDeliveryStatus[]>;
       return body.data;
     },
+    async prepareDownload(exportId: string): Promise<ExportDeliveryStatus> {
+      const response = await fetch(`${base}/api/v1/exports/${encodeURIComponent(exportId)}`, { credentials: "include", cache: "no-store", headers: { accept: "application/json" } });
+      if (!response.ok) throw await errorFrom(response);
+      const body = await response.json() as Envelope<ExportDeliveryStatus>;
+      return body.data;
+    },
   };
 }
