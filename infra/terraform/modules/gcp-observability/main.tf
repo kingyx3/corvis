@@ -11,7 +11,7 @@
 
 locals {
   api_monitoring_enabled   = trimspace(var.api_service_name) != ""
-  dlq_monitoring_enabled   = trimspace(var.dead_letter_topic_name) != ""
+  dlq_monitoring_enabled   = trimspace(var.dead_letter_subscription_name) != ""
   queue_monitoring_enabled = trimspace(var.processing_queue_name) != ""
   budget_enabled           = trimspace(var.billing_account_id) != ""
 }
@@ -76,10 +76,10 @@ resource "google_monitoring_alert_policy" "dead_letter_queue_depth" {
   severity     = "ERROR"
 
   conditions {
-    display_name = "Dead-letter topic has undelivered messages for 15m"
+    display_name = "Dead-letter subscription has undelivered messages for 15m"
 
     condition_threshold {
-      filter          = "resource.type=\"pubsub_topic\" AND resource.labels.topic_id=\"${var.dead_letter_topic_name}\" AND metric.type=\"pubsub.googleapis.com/topic/num_undelivered_messages\""
+      filter          = "resource.type=\"pubsub_subscription\" AND resource.labels.subscription_id=\"${var.dead_letter_subscription_name}\" AND metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "900s"
@@ -98,7 +98,7 @@ resource "google_monitoring_alert_policy" "dead_letter_queue_depth" {
   notification_channels = var.notification_channel_ids
 
   documentation {
-    content   = "Document-processing dead-letter topic is holding undelivered messages. Investigate via ops/RUNBOOK.md before messages age out."
+    content   = "Document-processing dead-letter subscription is holding undelivered messages. Investigate via ops/RUNBOOK.md before messages age out."
     mime_type = "text/markdown"
   }
 }
@@ -178,12 +178,12 @@ resource "google_monitoring_dashboard" "slo_overview" {
           width  = 6
           height = 4
           widget = {
-            title = "Dead-letter topic undelivered messages"
+            title = "Dead-letter subscription undelivered messages"
             xyChart = {
               dataSets = [{
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "resource.type=\"pubsub_topic\" AND resource.labels.topic_id=\"${var.dead_letter_topic_name}\" AND metric.type=\"pubsub.googleapis.com/topic/num_undelivered_messages\""
+                    filter = "resource.type=\"pubsub_subscription\" AND resource.labels.subscription_id=\"${var.dead_letter_subscription_name}\" AND metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\""
                     aggregation = {
                       alignmentPeriod  = "300s"
                       perSeriesAligner = "ALIGN_MAX"

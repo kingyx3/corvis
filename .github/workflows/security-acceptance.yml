@@ -73,14 +73,23 @@ jobs:
             echo "CLOUDFLARE_ZONE_NAME is required for edge security acceptance."
             exit 1
           fi
+          # Must match the hostname locals in infra/terraform/environments/<env>/main.tf.
           case "${CORVIS_ENVIRONMENT}" in
-            prod) api_hostname="api.${CLOUDFLARE_ZONE_NAME}" ;;
-            uat) api_hostname="api.uat.${CLOUDFLARE_ZONE_NAME}" ;;
+            prod)
+              api_hostname="api.${CLOUDFLARE_ZONE_NAME}"
+              customer_hostname="app.${CLOUDFLARE_ZONE_NAME}"
+              admin_hostname="admin.${CLOUDFLARE_ZONE_NAME}"
+              ;;
+            uat)
+              api_hostname="api-uat.${CLOUDFLARE_ZONE_NAME}"
+              customer_hostname="app-uat.${CLOUDFLARE_ZONE_NAME}"
+              admin_hostname="admin-uat.${CLOUDFLARE_ZONE_NAME}"
+              ;;
             *) echo "Unsupported production-like environment: ${CORVIS_ENVIRONMENT}"; exit 1 ;;
           esac
           echo "API_HOSTNAME=${api_hostname}" >> "${GITHUB_ENV}"
-          echo "CUSTOMER_HOSTNAME=${{ vars.CUSTOMER_HOSTNAME }}" >> "${GITHUB_ENV}"
-          echo "ADMIN_HOSTNAME=${{ vars.ADMIN_HOSTNAME }}" >> "${GITHUB_ENV}"
+          echo "CUSTOMER_HOSTNAME=${customer_hostname}" >> "${GITHUB_ENV}"
+          echo "ADMIN_HOSTNAME=${admin_hostname}" >> "${GITHUB_ENV}"
       - name: Probe API and worker IAM boundaries
         shell: bash
         run: |

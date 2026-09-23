@@ -44,6 +44,8 @@ jobs:
       TF_VAR_cloudflare_zone_name: ""
       TF_VAR_enable_cloudflare_managed_waf: "false"
       TF_VAR_decommission_mode: "false"
+      TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
+      TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
 
     steps:
       - name: Validate bootstrap roots

@@ -56,6 +56,8 @@ jobs:
       TF_VAR_auth_audience: ${{ vars.CORVIS_AUTH_AUDIENCE || 'corvis' }}
       TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
       TF_VAR_decommission_mode: "true"
+      TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
+      TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:

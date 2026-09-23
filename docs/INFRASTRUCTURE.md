@@ -108,15 +108,17 @@ Only the worker service account receives `roles/run.invoker` on the worker servi
 - Cloud Tasks -> `/api/internal/processing-stage` for persisted scheduled retries;
 - Cloud Scheduler -> `/api/internal/delivery` to drain durable processing/export/webhook outboxes.
 
-Pub/Sub/Cloud Tasks/Cloud Scheduler service agents may mint short-lived tokens for the worker identity. The API may enqueue Cloud Tasks and publish processing events and has only the `actAs` permission needed for OIDC task creation. No production shared worker secret is required.
+Pub/Sub/Cloud Tasks/Cloud Scheduler service agents may mint short-lived tokens for the worker identity. The API may enqueue Cloud Tasks and publish processing events and has only the `actAs` permission needed for OIDC task creation. Because the scheduled `/api/internal/delivery` drain runs on the worker, the worker identity holds the same resource-scoped grants: `roles/pubsub.publisher` on the processing topic, `roles/cloudtasks.enqueuer` on the processing queue and `roles/iam.serviceAccountUser` on itself. No production shared worker secret is required.
+
+Messages that exhaust push delivery are dead-lettered to `processing-dead-letter-${environment}` and retained for 7 days on the non-expiring pull subscription of the same name for inspection/replay; the dead-letter alert watches that subscription's undelivered-message count.
 
 ### GCS and KMS
 
-The source bucket is regional, private, versioned, CMEK-encrypted, uniform-access and public-access-prevention protected.
+The source bucket is regional, private, versioned, CMEK-encrypted, uniform-access and public-access-prevention protected. The project's Cloud Storage service agent is granted `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the source key only.
 
 The API's actual upload/quarantine adapter performs object create/read/list/delete operations, so it receives object-level `roles/storage.objectUser`, not bucket administration. Worker access is read-only unless a later bounded stage explicitly requires more.
 
-Transient/quarantine/export/intermediate data has lifecycle cleanup; retained source evidence follows governance/legal retention rather than a cost-only timer.
+Transient/quarantine/export/intermediate data has lifecycle cleanup (noncurrent versions under those prefixes are deleted 7 days after becoming noncurrent); retained source evidence follows governance/legal retention rather than a cost-only timer.
 
 ### Secret Manager
 

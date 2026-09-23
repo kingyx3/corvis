@@ -10,6 +10,8 @@ locals {
   runtime_enabled = trimspace(var.image) != ""
   service_name    = "corvis-${var.surface}-${var.environment}"
   display_surface = var.surface == "admin" ? "admin" : "customer"
+
+  deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
 }
 
 resource "google_service_account" "customer" {
@@ -23,6 +25,13 @@ resource "google_project_iam_member" "customer_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.customer.email}"
+}
+
+# Deploying the service as this identity requires the deployer to act as it.
+resource "google_service_account_iam_member" "deployer_act_as_customer" {
+  service_account_id = google_service_account.customer.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.deployer_service_account_email}"
 }
 
 resource "google_cloud_run_v2_service" "customer" {
@@ -81,5 +90,8 @@ resource "google_cloud_run_v2_service" "customer" {
     }
   }
 
-  depends_on = [google_project_iam_member.customer_log_writer]
+  depends_on = [
+    google_project_iam_member.customer_log_writer,
+    google_service_account_iam_member.deployer_act_as_customer,
+  ]
 }
