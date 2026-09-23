@@ -15,7 +15,7 @@ test("customer can navigate trusted workspace surfaces", async ({ page }) => {
 
 test("global workspace search is actionable", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /search funds, companies, documents/i }).click();
+  await page.getByRole("button", { name: /search entitled workspace data/i }).click();
   const dialog = page.getByRole("dialog", { name: /global workspace search/i });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Search workspace").fill("Advent");
