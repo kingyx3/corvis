@@ -10,6 +10,8 @@
  * returning the wrong page or crashing.
  */
 
+import type { PostgresPrimitive } from "./postgres.ts";
+
 export type Page<T> = {
   items: T[];
   nextCursor: string | null;
@@ -100,4 +102,54 @@ export function paginate<T>(items: readonly T[], keyOf: (item: T) => string, lim
     items: page,
     nextCursor: hasMore ? encodeCursor(keyOf(page[page.length - 1]!)) : null,
   };
+}
+
+/**
+ * A page request pushed down to storage so a collection is keyset-paginated
+ * in SQL instead of in memory over a capped fetch (which made every row past
+ * the cap unreachable). `afterKey` is the decoded cursor key and `limit` the
+ * page size; the repository fetches `limit + 1` rows whose key sorts strictly
+ * after `afterKey`, and the route still runs `paginate()` over them so
+ * `nextCursor` is derived exactly as before.
+ */
+export type KeysetPage = { afterKey?: string; limit: number };
+
+/** Throws InvalidCursorError for a malformed cursor, like `paginate()`. */
+export function keysetPage(cursor: string | null | undefined, limit: number): KeysetPage {
+  return cursor ? { afterKey: decodeCursor(cursor), limit } : { limit };
+}
+
+/**
+ * Postgres text parameters cannot contain NUL. For a key K that itself holds
+ * no NUL, `K > C` is equivalent to `K > C'`, where C' is C truncated at its
+ * first NUL: K equal to C' sorts before C, and a K extending C' sorts after
+ * it because its next character is greater than NUL.
+ */
+export function sqlKeyBound(afterKey: string): string {
+  const nul = afterKey.indexOf("\u0000");
+  return nul === -1 ? afterKey : afterKey.slice(0, nul);
+}
+
+/** Rows fetched for one keyset page: the page plus one, so paginate() can tell whether another page exists. */
+export function keysetFetchLimit(page: KeysetPage): number {
+  return Math.max(1, Math.min(MAX_PAGE_LIMIT, Math.trunc(page.limit))) + 1;
+}
+
+/**
+ * SQL keyset clause over a single text key expression that yields exactly the
+ * string paginate()'s `keyOf` returns for the row. It appends its parameters
+ * to `parameters` and returns a `where` fragment (starting with `and`, empty
+ * on the first page) and the `order by ... limit` tail. Comparison and order
+ * use the "C" collation (byte order, which for UTF-8 is code-point order),
+ * matching paginate()'s JS `<`/`>` comparison for these ASCII keys; a
+ * locale-aware collation would order differently and skip or repeat rows.
+ */
+export function sqlKeyset(keyExpression: string, page: KeysetPage, parameters: PostgresPrimitive[]): { where: string; tail: string } {
+  let where = "";
+  if (page.afterKey !== undefined) {
+    parameters.push(sqlKeyBound(page.afterKey));
+    where = `\n        and ${keyExpression} collate "C" > $${parameters.length}`;
+  }
+  parameters.push(keysetFetchLimit(page));
+  return { where, tail: `order by ${keyExpression} collate "C" limit $${parameters.length}` };
 }

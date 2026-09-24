@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
 import { ConflictError, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
-import { paginate, type Page } from "./pagination.ts";
+import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
@@ -388,4 +388,188 @@ test("snapshot pagination walks every version of a snapshot even when a page bou
   assert.deepEqual(seen, [
     `${snapshotId}@1`, `${snapshotId}@2`, `${snapshotId}@10`, `${otherSnapshotId}@1`, `${otherSnapshotId}@2`,
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// SQL keyset paging for the /documents, /jobs, /observations and /snapshots
+// list routes. Paging in memory over a capped fetch (1000 or 5000 rows) made
+// every row past the cap unreachable. KeysetDb simulates the keyset predicate
+// and `limit` from the SQL text and its parameters, so a cursor walk proves
+// every row is reachable and that each fetch reads at most one page plus one.
+// ---------------------------------------------------------------------------
+
+function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function compareText(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
+const pgPad = (version: unknown) => String(version).padStart(10, "0");
+
+class KeysetDb implements PostgresSqlApi {
+  calls: Call[] = [];
+  documents: PostgresRow[] = [];
+  observations: PostgresRow[] = [];
+  snapshots: PostgresRow[] = [];
+  jobs: PostgresRow[] = [];
+
+  async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    this.calls.push({ sql, parameters });
+    for (const parameter of parameters) {
+      assert.ok(typeof parameter !== "string" || !parameter.includes("\u0000"), "Postgres text parameters cannot carry NUL");
+    }
+    assert.equal(parameters[0], identity.tenantId);
+    if (sql.includes("from corvis_serving.fund_period_snapshots s")) return this.snapshotPage(sql, parameters);
+    if (sql.includes("corvis_serving.documents")) return this.singleKeyPage(sql, parameters, this.documents, "document_id::text", "document_id", "order by created_at desc limit 1000");
+    if (sql.includes("from corvis_serving.observations o")) return this.singleKeyPage(sql, parameters, this.observations, "o.observation_id::text", "observation_id", "order by o.updated_at desc limit 5000");
+    if (sql.includes("from corvis_control.processing_job j")) return this.singleKeyPage(sql, parameters, this.jobs, "j.job_id::text", "job_id", "order by j.updated_at desc limit 1000");
+    return [];
+  }
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> { this.calls.push({ sql, parameters }); }
+  async health(): Promise<boolean> { return true; }
+
+  private singleKeyPage(sql: string, parameters: PostgresPrimitive[], rows: PostgresRow[], keyExpression: string, column: string, legacyTail: string): PostgresRow[] {
+    const limit = /limit \$(\d+)\s*$/.exec(sql);
+    if (!limit) {
+      assert.ok(sql.trimEnd().endsWith(legacyTail), "an unpaged call keeps the legacy capped query");
+      return rows.slice(0, Number(/limit (\d+)$/.exec(legacyTail)![1]));
+    }
+    const key = escapeRegExp(keyExpression);
+    assert.match(sql, new RegExp(`order by ${key} collate "C" limit \\$${limit[1]}\\s*$`));
+    const after = new RegExp(`and ${key} collate "C" > \\$(\\d+)`).exec(sql);
+    const bound = after ? String(parameters[Number(after[1]) - 1]) : null;
+    return rows
+      .filter((row) => bound === null || String(row[column]) > bound)
+      .sort((a, b) => compareText(String(a[column]), String(b[column])))
+      .slice(0, Number(parameters[Number(limit[1]) - 1]));
+  }
+
+  private snapshotPage(sql: string, parameters: PostgresPrimitive[]): PostgresRow[] {
+    const limit = /limit \$(\d+)\s*$/.exec(sql);
+    if (!limit) {
+      assert.ok(sql.trimEnd().endsWith("order by s.created_at desc limit 1000"), "an unpaged call keeps the legacy capped query");
+      return this.snapshots.slice(0, 1000);
+    }
+    const id = `s.snapshot_id::text collate "C"`;
+    const version = `lpad(s.version::text, 10, '0') collate "C"`;
+    assert.ok(sql.includes(`order by ${id}, ${version} limit $${limit[1]}`), sql);
+    const idAtLeast = new RegExp(`and ${escapeRegExp(id)} >= \\$(\\d+)`).exec(sql);
+    const tuple = new RegExp(`and \\(${escapeRegExp(id)} > \\$(\\d+) or \\(${escapeRegExp(id)} = \\$(\\d+) and ${escapeRegExp(version)} > \\$(\\d+)\\)\\)`).exec(sql);
+    const parameter = (index: string | undefined) => String(parameters[Number(index) - 1]);
+    return this.snapshots
+      .filter((row) => {
+        const rowId = String(row.snapshot_id);
+        if (idAtLeast) return rowId >= parameter(idAtLeast[1]);
+        if (tuple) {
+          assert.equal(parameter(tuple[1]), parameter(tuple[2]));
+          return rowId > parameter(tuple[1]) || (rowId === parameter(tuple[2]) && pgPad(row.version) > parameter(tuple[3]));
+        }
+        return true;
+      })
+      .sort((a, b) => compareText(String(a.snapshot_id), String(b.snapshot_id)) || compareText(pgPad(a.version), pgPad(b.version)))
+      .slice(0, Number(parameters[Number(limit[1]) - 1]));
+  }
+}
+
+function uuidFor(prefix: number, index: number): string {
+  return `00000000-0000-4000-${prefix.toString(16).padStart(4, "0")}-${index.toString(16).padStart(12, "0")}`;
+}
+
+/** Mirrors the list routes: keysetPage(cursor, limit) down to storage, then paginate() over the rows. */
+async function walkAllPages<T>(fetchPage: (page: KeysetPage) => Promise<T[]>, keyOf: (item: T) => string, limit = MAX_PAGE_LIMIT): Promise<string[]> {
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const rows = await fetchPage(keysetPage(cursor, limit));
+    assert.ok(rows.length <= limit + 1, "one page fetch never loads more than a page plus one row");
+    const page: Page<T> = paginate(rows, keyOf, limit, cursor);
+    seen.push(...page.items.map(keyOf));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return seen;
+}
+
+function assertEveryKeySeenOnce(seen: string[], expected: string[]): void {
+  assert.equal(seen.length, expected.length);
+  assert.deepEqual(seen, [...expected].sort(compareText));
+}
+
+test("/documents keyset-pages in SQL so documents past the old 1000-row cap are reachable", async () => {
+  const db = new KeysetDb();
+  const ids = Array.from({ length: 1105 }, (_, index) => uuidFor(1, index));
+  db.documents = ids.map((document_id) => ({ document_id }));
+  const entitled: RequestIdentity = { ...identity, entitlements: { ...identity.entitlements, documentIds: ids } };
+  const platform = new PostgresProductionPlatform(db);
+  assertEveryKeySeenOnce(await walkAllPages((page) => platform.listDocuments(entitled, page), (document) => document.id), ids);
+  const last = db.calls.at(-1)!;
+  assert.match(last.sql, /where tenant_id=\$1\s+and document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.deepEqual(last.parameters.slice(0, 2), [identity.tenantId, JSON.stringify(ids)]);
+  assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1, "fetches limit + 1 rows");
+});
+
+test("/jobs keyset-pages in SQL so jobs past the old 1000-row cap are reachable", async () => {
+  const db = new KeysetDb();
+  const ids = Array.from({ length: 1105 }, (_, index) => uuidFor(2, index));
+  db.jobs = ids.map((job_id) => ({ job_id, document_id: identity.entitlements.documentIds![0] }));
+  const platform = new PostgresProductionPlatform(db);
+  assertEveryKeySeenOnce(await walkAllPages((page) => platform.jobs(identity, page), (job) => job.id), ids);
+  const last = db.calls.at(-1)!;
+  assert.match(last.sql, /where j\.tenant_id=\$1\s+and j\.document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.deepEqual(last.parameters.slice(0, 2), [identity.tenantId, JSON.stringify(identity.entitlements.documentIds)]);
+  assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1);
+});
+
+test("/observations keyset-pages in SQL so observations past the old 5000-row cap are reachable", async () => {
+  const db = new KeysetDb();
+  const ids = Array.from({ length: 5105 }, (_, index) => uuidFor(3, index));
+  db.observations = ids.map((observation_id) => ({ observation_id, review_state: "approved" }));
+  const platform = new PostgresProductionPlatform(db);
+  assertEveryKeySeenOnce(await walkAllPages((page) => platform.listObservations(identity, page), (observation) => observation.id), ids);
+  const last = db.calls.at(-1)!;
+  assert.match(last.sql, /where o\.tenant_id=\$1\s+and o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)\s+and r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
+  assert.deepEqual(last.parameters.slice(0, 3), [identity.tenantId, JSON.stringify(identity.entitlements.fundIds), JSON.stringify(identity.entitlements.documentIds)]);
+  assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1);
+});
+
+test("/snapshots keyset-pages in SQL on (snapshot id, padded version) so versions past the old 1000-row cap are reachable", async () => {
+  const db = new KeysetDb();
+  // Versions 2 and 10 sort wrongly as unpadded text; an odd page size also splits versions of one id across pages.
+  db.snapshots = Array.from({ length: 553 }, (_, index) => uuidFor(4, index))
+    .flatMap((snapshot_id) => [{ snapshot_id, version: 10 }, { snapshot_id, version: 2 }]);
+  const platform = new PostgresProductionPlatform(db);
+  const seen = await walkAllPages((page) => platform.listSnapshots(identity, page), snapshotPaginationKey, 199);
+  assertEveryKeySeenOnce(seen, db.snapshots.map((row) => `${String(row.snapshot_id)}\u0000${pgPad(row.version)}`));
+  const last = db.calls.at(-1)!;
+  assert.match(last.sql, /where s\.tenant_id=\$1\s+and s\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.deepEqual(last.parameters.slice(0, 2), [identity.tenantId, JSON.stringify(identity.entitlements.fundIds)]);
+  assert.equal(last.parameters.at(-1), 200);
+});
+
+test("keyset pages match in-memory paginate() for cursor keys holding NUL, which Postgres text cannot carry", async () => {
+  const db = new KeysetDb();
+  const ids = Array.from({ length: 30 }, (_, index) => uuidFor(5, index));
+  db.documents = ids.map((document_id) => ({ document_id }));
+  db.snapshots = ids.flatMap((snapshot_id) => [1, 2, 10].map((version) => ({ snapshot_id, version })));
+  const entitled: RequestIdentity = { ...identity, entitlements: { ...identity.entitlements, documentIds: ids } };
+  const platform = new PostgresProductionPlatform(db);
+  const allDocuments = await platform.listDocuments(entitled);
+  const allSnapshots = await platform.listSnapshots(entitled);
+  const target = ids[12]!;
+  const documentKeys = [target, `${target}\u0000`, `${target}\u0000zz`, `${target.slice(0, 20)}\u0000${target}`];
+  for (const key of documentKeys) {
+    const cursor = encodeCursor(key);
+    const expected = paginate(allDocuments, (document) => document.id, 5, cursor);
+    assert.deepEqual(paginate(await platform.listDocuments(entitled, keysetPage(cursor, 5)), (document) => document.id, 5, cursor), expected, JSON.stringify(key));
+  }
+  const snapshotKeys = [
+    target, target.slice(0, 20), `${target}\u0000`, `${target}\u00000000000002`, `${target}\u00000000000002\u0000x`,
+    `${target}\u00000000000003`, `${target}\u00000000000010`, `${target}\u0000\u0000`, `${target}\u0000${"9".repeat(11)}`,
+  ];
+  for (const key of snapshotKeys) {
+    const cursor = encodeCursor(key);
+    const expected = paginate(allSnapshots, snapshotPaginationKey, 4, cursor);
+    assert.deepEqual(paginate(await platform.listSnapshots(entitled, keysetPage(cursor, 4)), snapshotPaginationKey, 4, cursor), expected, JSON.stringify(key));
+  }
+});
+
+test("a malformed cursor fails before any keyset fetch reaches Postgres", () => {
+  assert.throws(() => keysetPage("not-a-cursor", 10), InvalidCursorError);
+  assert.deepEqual(keysetPage(null, 10), { limit: 10 });
+  assert.deepEqual(keysetPage(encodeCursor("k"), 10), { afterKey: "k", limit: 10 });
 });
