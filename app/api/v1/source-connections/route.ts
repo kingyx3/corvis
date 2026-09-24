@@ -39,7 +39,12 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const connections = await listSourceConnections(identity);
-    return json({ data: connections.map(toResponse), correlationId: id });
+    // `accountadmin` is workspace-scoped. The legacy repository listing is
+    // tenant-scoped, so enforce the authoritative workspace boundary before
+    // returning any row. The individual mutation/read paths additionally put
+    // workspace_id into their SQL predicates.
+    const workspaceConnections = connections.filter((connection) => connection.workspaceId === identity.workspaceId);
+    return json({ data: workspaceConnections.map(toResponse), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
 
