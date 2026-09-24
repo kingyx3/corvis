@@ -7,9 +7,7 @@ terraform {
 }
 
 locals {
-  dynamic_host_expression     = "(http.host eq \"${var.api_hostname}\")"
-  worker_name                 = "corvis-api-${replace(var.api_hostname, ".", "-")}"
-  api_requests_per_10_seconds = max(1, ceil(var.api_requests_per_minute / 6))
+  worker_name = "corvis-api-${replace(var.api_hostname, ".", "-")}"
 }
 
 resource "cloudflare_worker" "api_proxy" {
@@ -90,134 +88,7 @@ resource "cloudflare_dns_record" "api" {
   type    = "CNAME"
   ttl     = 1
   proxied = true
-  comment = "Corvis public API edge; Worker proxies to Google API Gateway"
+  comment = "Corvis environment API edge; shared zone policy is owned by the dedicated cloudflare shared root"
 
   depends_on = [cloudflare_workers_route.api]
-}
-
-resource "cloudflare_zone_setting" "ssl" {
-  zone_id    = var.zone_id
-  setting_id = "ssl"
-  value      = "strict"
-}
-
-resource "cloudflare_zone_setting" "tls_1_3" {
-  zone_id    = var.zone_id
-  setting_id = "tls_1_3"
-  value      = "on"
-}
-
-resource "cloudflare_zone_setting" "always_use_https" {
-  zone_id    = var.zone_id
-  setting_id = "always_use_https"
-  value      = "on"
-}
-
-resource "cloudflare_zone_setting" "automatic_https_rewrites" {
-  zone_id    = var.zone_id
-  setting_id = "automatic_https_rewrites"
-  value      = "on"
-}
-
-resource "cloudflare_ruleset" "custom_waf" {
-  zone_id     = var.zone_id
-  name        = "Corvis custom edge security"
-  description = "Baseline WAF rules available independently of paid managed-WAF features."
-  kind        = "zone"
-  phase       = "http_request_firewall_custom"
-
-  rules = [
-    {
-      ref         = "block_non_standard_ports"
-      description = "Block non-standard public HTTP(S) ports"
-      expression  = "(not cf.edge.server_port in {80 443})"
-      action      = "block"
-    },
-    {
-      ref         = "block_unsafe_methods"
-      description = "Block TRACE and CONNECT at the public edge"
-      expression  = "(http.request.method in {\"TRACE\" \"CONNECT\"})"
-      action      = "block"
-    },
-    {
-      ref         = "security_acceptance_waf_probe"
-      description = "Deterministic path-based probe proving Cloudflare custom-WAF execution"
-      expression  = "(http.request.uri.path eq \"/__corvis/security/waf-block\")"
-      action      = "block"
-    },
-  ]
-}
-
-resource "cloudflare_ruleset" "managed_waf" {
-  count = var.enable_managed_waf ? 1 : 0
-
-  zone_id     = var.zone_id
-  name        = "Corvis managed WAF"
-  description = "Cloudflare and OWASP managed rulesets; enable only on Pro or a higher plan that supports them."
-  kind        = "zone"
-  phase       = "http_request_firewall_managed"
-
-  rules = [
-    {
-      ref         = "execute_cloudflare_managed_ruleset"
-      description = "Execute Cloudflare Managed Ruleset"
-      expression  = "true"
-      action      = "execute"
-      action_parameters = {
-        id = "efb7b8c949ac4650a09736fc376e9aee"
-      }
-    },
-    {
-      ref         = "execute_cloudflare_owasp_core_ruleset"
-      description = "Execute Cloudflare OWASP Core Ruleset"
-      expression  = "true"
-      action      = "execute"
-      action_parameters = {
-        id = "4814384a9e5d4991b9815dcfc25d2f1f"
-      }
-    },
-  ]
-}
-
-resource "cloudflare_ruleset" "rate_limits" {
-  zone_id     = var.zone_id
-  name        = "Corvis API rate limits"
-  description = "Single path/IP API rate limit deliberately compatible with Cloudflare Free and Pro entitlements."
-  kind        = "zone"
-  phase       = "http_ratelimit"
-
-  rules = [
-    {
-      ref         = "rate_limit_api_by_ip"
-      description = "Bound public API requests per source IP using the Free-plan 10-second window"
-      expression  = "(starts_with(http.request.uri.path, \"/api/\"))"
-      action      = "block"
-      ratelimit = {
-        characteristics     = ["cf.colo.id", "ip.src"]
-        period              = 10
-        requests_per_period = local.api_requests_per_10_seconds
-        mitigation_timeout  = 10
-      }
-    },
-  ]
-}
-
-resource "cloudflare_ruleset" "cache" {
-  zone_id     = var.zone_id
-  name        = "Corvis API cache isolation"
-  description = "Never shared-cache authenticated Corvis API traffic."
-  kind        = "zone"
-  phase       = "http_request_cache_settings"
-
-  rules = [
-    {
-      ref         = "bypass_dynamic_corvis_api"
-      description = "Bypass Cloudflare cache for all Corvis API traffic"
-      expression  = local.dynamic_host_expression
-      action      = "set_cache_settings"
-      action_parameters = {
-        cache = false
-      }
-    },
-  ]
 }

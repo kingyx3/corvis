@@ -27,7 +27,7 @@ Optional downstream only after approval:
 Postgres/GCS -> Snowflake analytics / secure sharing
 ```
 
-Large source documents do not traverse the Cloudflare Worker or API Gateway. The API authorizes/initates upload and the client writes source bytes directly to GCS using the resumable-upload contract.
+Large source documents do not traverse the Cloudflare Worker or API Gateway. The API authorizes/initiates upload and the client writes source bytes directly to GCS using the resumable-upload contract.
 
 ## Principles
 
@@ -41,37 +41,52 @@ Large source documents do not traverse the Cloudflare Worker or API Gateway. The
 8. **Scale to zero by default.** API and worker min instances are zero unless measured SLO evidence justifies a floor.
 9. **One fact, one owner.** Derived IDs/URLs/names flow from Terraform/provider outputs instead of duplicated GitHub variables.
 10. **No Corvis-managed AWS baseline.** A vendor being hosted on AWS does not require Corvis AWS infrastructure.
+11. **One Cloudflare root zone, one zone-policy owner.** UAT and prod share one configurable root domain but never independently own the same zone-level Terraform resources.
 
 ## Environment model
 
-Canonical environments are `dev`, `uat`, `prod` with separate Terraform roots and isolated provider state. Prefer separate GCP projects and require separate Supabase/Postgres projects. `uat` uses synthetic or explicitly sanitized data; production customer data never belongs in `dev`.
+Canonical environments are `dev`, `uat`, `prod` with separate Terraform roots and isolated GCP/Postgres state. Prefer separate GCP projects and require separate Supabase/Postgres projects. `uat` uses synthetic or explicitly sanitized data; production customer data never belongs in `dev` or UAT.
+
+Cloudflare is the deliberate exception to provider-zone isolation: UAT and production share one root domain/zone because the public names are first-level subdomains of the same company domain. The environments still have independent hostname resources and runtime state.
 
 ```text
 infra/terraform/environments/
   dev/
   uat/
   prod/
+
+infra/terraform/shared/
+  cloudflare/     # independent state and lifecycle for zone-wide policy
 ```
+
+Production hostnames are `api.${zone}`, `app.${zone}`, `admin.${zone}`. UAT uses `api-uat.${zone}`, `app-uat.${zone}`, `admin-uat.${zone}`. Do not introduce nested `*.uat.${zone}` hostnames into the baseline because normal full-zone Universal SSL covers the apex and first-level subdomains, not deeper names.
 
 ## Terraform ownership
 
 ```text
 infra/terraform/
   modules/
-    gcp-foundation/       # services, API/worker identities, GCS/KMS, registry,
-                          # Pub/Sub, Cloud Tasks and transport IAM
-    cloud-run-runtime/    # API + private worker, Postgres Secret Manager binding,
-                          # Pub/Sub push, Scheduler and runtime configuration
-    gcp-api-gateway/      # API Gateway, restricted edge key, gateway identity
-    cloudflare-edge/      # API Worker, DNS, TLS/WAF/rate/cache policy
-    gcp-observability/    # API/queue/DLQ alerts, dashboard, optional budget
+    gcp-foundation/            # services, identities, GCS/KMS, registry,
+                               # Pub/Sub, Cloud Tasks and transport IAM
+    cloud-run-runtime/         # API + private worker, Postgres Secret Manager binding,
+                               # Pub/Sub push, Scheduler and runtime configuration
+    gcp-api-gateway/           # API Gateway, restricted edge key, gateway identity
+    cloudflare-edge/           # environment API Worker + DNS + route only
+    cloudflare-customer-edge/  # environment customer Worker + DNS + route only
+    cloudflare-admin-edge/     # environment admin Worker + DNS + route only
+    cloudflare-zone-policy/    # single owner of zone TLS/WAF/rate/cache policy
+    gcp-observability/         # API/queue/DLQ alerts, dashboard, optional budget
   environments/
     dev/
     uat/
     prod/
+  shared/
+    cloudflare/                # dedicated root/state for shared zone policy
 
-db/postgres/migrations/   # authoritative schemas/RLS/roles/functions/data contract
+db/postgres/migrations/       # authoritative schemas/RLS/roles/functions/data contract
 ```
+
+A Cloudflare phase has at most one zone entry-point ruleset. Therefore no UAT/prod environment module may own `cloudflare_ruleset` or `cloudflare_zone_setting`; those resources belong only to `infra/terraform/shared/cloudflare`. Regression tests enforce this boundary.
 
 The prior external load-balancer/Cloud Armor/mTLS bridge is intentionally removed from the baseline. Reintroduce an always-on LB only for a documented requirement the identity-based gateway cannot satisfy.
 
@@ -141,18 +156,35 @@ The signed Corvis assertion contract remains available for a reviewed SAML/ident
 
 Browser/customer/admin SSO integration remains provider-specific and should be implemented only after the approved IdP/browser session contract is chosen; do not encode a speculative Firebase/Auth0/etc. dependency into baseline infrastructure.
 
+Browser trust is always exact-origin. UAT API CORS/upload origins are only the UAT `app-uat`/`admin-uat` hostnames; production uses only `app`/`admin`. Wildcard root-domain CORS is prohibited. If browser sessions later use cookies, host-only cookies are the baseline: omit a parent `Domain=.${zone}` attribute unless an explicit reviewed requirement needs cross-subdomain cookies.
+
 ## Cloudflare
 
-Cloudflare owns authoritative public API DNS/TLS/DDoS/WAF/rate/cache controls. The API Worker:
+Cloudflare owns authoritative public DNS/TLS/DDoS/WAF/rate/cache controls through two deliberately different lifecycles.
 
-- is exposed only on the configured custom hostname route; `workers.dev` and previews are disabled;
-- proxies only `/api/v1`;
-- strips caller-supplied `x-api-key` and injects the restricted gateway key;
-- forwards application Authorization headers unchanged;
-- adds an acceptance marker header;
-- disables shared caching for API traffic.
+### Shared zone policy
 
-Customer/admin hostnames remain unpublished until their separate web-runtime/security boundary exists.
+`infra/terraform/shared/cloudflare` is applied through `.github/workflows/cloudflare-zone-policy.yml`. It owns:
+
+- strict origin TLS, TLS 1.3, Always Use HTTPS and automatic HTTPS rewrites;
+- three custom WAF rules scoped to the six Corvis application hostnames;
+- optional Cloudflare/OWASP managed rules scoped to those same hostnames;
+- the single zone rate-limit entry ruleset;
+- authenticated-surface shared-cache bypass scoped to the six Corvis hostnames.
+
+The shared state is held in `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state` under `corvis/cloudflare-zone-policy`, not the ordinary UAT environment state bucket. This keeps zone policy alive if UAT runtime/state is idled or fully decommissioned.
+
+Shared zone mutation uses the dedicated `CLOUDFLARE_ZONE_POLICY_TOKEN`; environment edge tokens do not need zone-policy authority.
+
+On Cloudflare Free, the one available rate-limit rule is path/IP based because Host is not an available Free match field. Corvis's Postgres-backed per-identity limit remains authoritative and environment-specific. On Pro mode (`CLOUDFLARE_MANAGED_WAF_ENABLED=true`), the shared ruleset uses two independent hostname-scoped rules—one prod, one UAT—within Pro's two-rule entitlement.
+
+### Environment edge
+
+Each environment owns only its deterministic host resources: API/customer/admin Worker, deployment, route and proxied DNS record. `workers.dev` and previews remain disabled. UAT cannot destroy production zone policy and prod cannot take ownership of UAT host resources through Terraform composition.
+
+Cloudflare DNS API permission is zone-scoped rather than record-name-scoped, so token scope alone cannot provide perfect record-level separation inside one zone. Corvis compensates with separate states, deterministic hostname derivation, main-only reviewed applies, non-bypassable CI and tests that prohibit zone resources in environment modules.
+
+See [`CLOUDFLARE_SHARED_ZONE.md`](CLOUDFLARE_SHARED_ZONE.md) for the full operating and token-permission contract.
 
 ## Supabase/Postgres
 
@@ -177,20 +209,23 @@ Cost guardrails:
 - bounded Artifact Registry retention;
 - lifecycle cleanup for transient GCS data;
 - Snowflake cost = zero until activation;
-- idle UAT removes runtime/public edge while retaining durable foundation/data/state.
+- idle UAT removes runtime/public edge while retaining durable foundation/data/state;
+- one Cloudflare root zone avoids a second domain/zone solely for UAT.
 
 Supabase is outside GCP teardown; an idle paid UAT Postgres project must be deliberately paused/down-sized/decommissioned according to provider capabilities and data-retention policy rather than assumed to disappear with Terraform.
 
 ## Terraform remote state and lifecycle
 
-State is held in a private versioned GCS bucket created by the bootstrap workflow. Noncurrent versions are bounded by lifecycle policy.
+Environment state is held in a private versioned GCS bucket created by the bootstrap workflow. Noncurrent versions are bounded by lifecycle policy.
 
-`gcp-decommission.yml` owns lifecycle transitions:
+The shared Cloudflare policy has a separate private/versioned state bucket, `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state`, created/hardened by the shared-zone workflow. It is intentionally outside `gcp-decommission.yml`'s environment bucket deletion path. Moving that state to another project later is a reviewed state-migration operation, not an ordinary UAT lifecycle action.
 
-- `idle` — remove public API/worker/runtime edge while preserving durable foundation/data/state;
-- `full` — explicitly prepare protected resources for deletion, detach the retained KMS bootstrap anchor, destroy remaining Terraform-managed resources, verify empty state, hibernate KMS and delete remote state last.
+`gcp-decommission.yml` owns environment lifecycle transitions:
 
-The external project/WIF/deploy trust anchor remains so the environment can be rebuilt without introducing static credentials.
+- `idle` — remove that environment's API/worker/public DNS/Workers while preserving durable GCP foundation/data/state and the independent shared Cloudflare zone policy;
+- `full` — explicitly prepare protected environment resources for deletion, detach the retained KMS bootstrap anchor, destroy remaining environment-managed resources, verify empty environment state, hibernate KMS and delete the environment remote state bucket last.
+
+The external project/WIF/deploy trust anchor remains so the environment can be rebuilt without introducing static credentials. Shared Cloudflare state/policy remains independent unless its own reviewed workflow explicitly changes it.
 
 ## One-time bootstrap exceptions
 
@@ -198,11 +233,13 @@ These cannot safely self-create before GitHub is trusted:
 
 - GCP project/billing ownership;
 - initial `corvis-deploy` service account and repository/environment-restricted WIF pool/provider/impersonation;
-- Cloudflare account/zone ownership and scoped provider token;
+- Cloudflare account/zone ownership and scoped provider tokens once a domain is selected;
 - Supabase organization/project/billing ownership and provider-derived DSN activation;
 - approved IdP tenant/client ownership;
 - third-party account/contract setup for any enabled external provider.
 
-After those trust roots exist, routine resource/configuration changes should flow from reviewed GitHub workflows where the provider supports it.
+A Cloudflare domain is **not** required for the GCP foundation bootstrap. After the GCP trust root exists, bootstrap may proceed with Cloudflare disabled. When a domain is later selected, apply shared Cloudflare zone policy before activating environment public-edge resources.
 
-See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md), [`DEPLOYMENT.md`](DEPLOYMENT.md), [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md), and [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
+After provider trust roots exist, routine resource/configuration changes should flow from reviewed GitHub workflows where the provider supports it.
+
+See [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md), [`CLOUDFLARE_SHARED_ZONE.md`](CLOUDFLARE_SHARED_ZONE.md), [`DEPLOYMENT.md`](DEPLOYMENT.md), [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md), and [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
