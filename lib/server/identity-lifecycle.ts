@@ -1,7 +1,7 @@
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
-export type IdentityLifecycleRole = "tenant_admin" | "workspace_admin" | "reviewer" | "analyst" | "viewer";
+export type IdentityLifecycleRole = "tenant_admin" | "accountadmin" | "reviewer" | "analyst" | "viewer";
 export type HumanAuthMethod = "oidc" | "saml";
 export type IdentityLifecycleOperation = "sync" | "disable";
 

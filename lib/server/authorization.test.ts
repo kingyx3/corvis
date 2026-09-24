@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository } from "./authorization.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { PostgresOperationsRepository } from "./platform-repositories.ts";
+import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
   lastSql = "";
@@ -129,6 +130,81 @@ test("session revocation writes an immutable tenant-scoped deny record idempoten
   ]);
 });
 
+/**
+ * Real (in-memory) transaction semantics: `transaction()` snapshots the
+ * revocation table and audit log before running the callback and restores
+ * that snapshot if it throws, mirroring NativePostgresSqlApi.transaction's
+ * begin/rollback. Used to prove app/api/v1/admin/session-revocations/route.ts
+ * wraps the revocation write and its audit event in one transaction.
+ */
+class TransactionalFakeDb implements PostgresSqlApi {
+  revocations = new Set<string>();
+  auditRows: PostgresRow[] = [];
+
+  async query(): Promise<PostgresRow[]> { return []; }
+
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    if (sql.includes("insert into corvis_control.session_revocation")) {
+      this.revocations.add(parameters.slice(0, 4).join(":"));
+      return;
+    }
+    if (sql.includes("insert into corvis_control.audit_event")) {
+      this.auditRows.push({ action: parameters[5] });
+    }
+  }
+
+  async health(): Promise<boolean> { return true; }
+
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    const revocationsSnapshot = new Set(this.revocations);
+    const auditSnapshot = [...this.auditRows];
+    try {
+      return await fn(this);
+    } catch (error) {
+      this.revocations = revocationsSnapshot;
+      this.auditRows = auditSnapshot;
+      throw error;
+    }
+  }
+}
+
+test("a session revocation and its audit event commit together, and roll back together when the audit insert fails", async () => {
+  const command = {
+    tenantId: principal.tenantId, authMethod: principal.authMethod, subject: principal.subject,
+    sessionId: principal.sessionId, revokedBySubject: "idp|admin-1", reason: "access removed",
+  };
+  const event = {
+    id: "event-1", occurredAt: new Date().toISOString(), tenantId: principal.tenantId, workspaceId: principal.workspaceId,
+    actorSubject: "idp|admin-1", sessionId: "session-1", action: "identity.session.revoke", targetType: "session",
+    targetId: principal.sessionId, outcome: "success" as const, correlationId: "corr-1",
+  };
+
+  const db = new TransactionalFakeDb();
+  await withTransaction(db, async (tx) => {
+    await new PostgresSessionRevocationRepository(tx).revoke(command);
+    await new PostgresOperationsRepository(tx).audit(event);
+  });
+  assert.equal(db.revocations.size, 1);
+  assert.equal(db.auditRows.length, 1);
+
+  const failing = new TransactionalFakeDb();
+  const originalExecute = failing.execute.bind(failing);
+  failing.execute = async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    if (sql.includes("insert into corvis_control.audit_event")) throw new Error("audit insert failed");
+    return originalExecute(sql, parameters);
+  };
+  await assert.rejects(
+    withTransaction(failing, async (tx) => {
+      await new PostgresSessionRevocationRepository(tx).revoke(command);
+      await new PostgresOperationsRepository(tx).audit(event);
+    }),
+    /audit insert failed/,
+  );
+  // The revocation must not be visible: a retry of the same request must see
+  // no revocation and be free to try again, not a half-applied one.
+  assert.equal(failing.revocations.size, 0);
+});
+
 test("missing fine-grained grants resolve to explicit empty allowlists", async () => {
   const db = new FakeDb([{ workspace_id: principal.workspaceId, role_name: "analyst", resource_type: null, resource_id: null, resource_permission: null }]);
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
@@ -151,9 +227,31 @@ test("unknown database roles never widen application permissions", async () => {
 
 test("database administrative roles map deliberately to application admin", async () => {
   const db = new FakeDb([
-    { workspace_id: principal.workspaceId, role_name: "workspace_admin" },
+    { workspace_id: principal.workspaceId, role_name: "accountadmin" },
     { workspace_id: principal.workspaceId, role_name: "tenant_admin" },
   ]);
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.deepEqual(result?.roles, ["admin"]);
+});
+
+test("isTenantAdmin is true only for a raw tenant_admin row, not for accountadmin", async () => {
+  const accountAdminOnly = await new PostgresMembershipAuthorizationRepository(
+    new FakeDb([{ workspace_id: principal.workspaceId, role_name: "accountadmin" }]),
+  ).resolve(principal);
+  assert.equal(accountAdminOnly?.isTenantAdmin, false);
+
+  const tenantAdmin = await new PostgresMembershipAuthorizationRepository(
+    new FakeDb([{ workspace_id: principal.workspaceId, role_name: "tenant_admin" }]),
+  ).resolve(principal);
+  assert.equal(tenantAdmin?.isTenantAdmin, true);
+});
+
+test("isTenantAdmin reflects a tenant_admin membership in another workspace, not only the requested one", async () => {
+  const otherWorkspaceId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const result = await new PostgresMembershipAuthorizationRepository(new FakeDb([
+    { workspace_id: principal.workspaceId, role_name: "accountadmin" },
+    { workspace_id: otherWorkspaceId, role_name: "tenant_admin" },
+  ])).resolve(principal);
+  assert.equal(result?.isTenantAdmin, true);
   assert.deepEqual(result?.roles, ["admin"]);
 });

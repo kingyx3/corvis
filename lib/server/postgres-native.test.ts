@@ -69,6 +69,14 @@ test("connection failures report the Node error code without leaking the DSN", a
   }
 });
 
+// transaction()'s commit/rollback behavior needs a real Postgres connection
+// to verify, and `npm test` (the "frontend" CI job) has no Postgres service
+// available -- only the "rate-limit-postgres" job does. That coverage lives
+// in db/postgres/tests/native-adapter.mjs instead (see "transaction()
+// commits a mutation..." there), which that job already runs against a live
+// database, the same place this codebase's other live-connection checks
+// (its own commit/rollback/concurrency assertions) already live.
+
 test("native clients are shared across repository factories", () => {
   const dsn = "postgres://user:dummy@database.example.test/db";
   const first = postgres(dsn);

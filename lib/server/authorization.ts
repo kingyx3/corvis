@@ -13,6 +13,14 @@ export type MembershipAuthorization = {
   internalAnalyticsAllowed: boolean;
   modelTrainingAllowed: boolean;
   redistributionAllowed: boolean;
+  /**
+   * Whether the subject holds an active `tenant_admin` membership anywhere
+   * in the tenant (not only the requested workspace). `tenant_admin` and
+   * `accountadmin` both map to the `admin` application role above, but only
+   * a true tenant_admin may grant the tenant_admin role to anyone (see
+   * apply_identity_lifecycle / apply_support_access_admin, migration 048).
+   */
+  isTenantAdmin: boolean;
 };
 
 export type SessionRevocation = {
@@ -34,7 +42,7 @@ export interface SessionRevocationRepository {
 
 const ROLE_MAP: Record<string, Role | undefined> = {
   tenant_admin: "admin",
-  workspace_admin: "admin",
+  accountadmin: "admin",
   reviewer: "reviewer",
   analyst: "analyst",
   viewer: "read_only",
@@ -153,6 +161,11 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       .map((row) => ROLE_MAP[text(row.role_name)])
       .filter((role): role is Role => role !== undefined))];
     if (roles.length === 0) return null;
+    // Tenant-wide, not scoped to the requested workspace: `rows` already
+    // covers every workspace this subject belongs to (only the entitlement
+    // join above is workspace-scoped), so this reflects the raw tenant_admin
+    // role regardless of which workspace the current session is using.
+    const isTenantAdmin = rows.some((row) => text(row.role_name) === "tenant_admin");
 
     const readableResourceIds = (resourceType: "fund" | "document") => [...new Set(requestedWorkspaceRows
       .filter((row) => text(row.resource_type) === resourceType
@@ -178,6 +191,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       internalAnalyticsAllowed: requestedWorkspaceRows.some((row) => truthy(row.internal_analytics_allowed)),
       modelTrainingAllowed: requestedWorkspaceRows.some((row) => truthy(row.model_training_allowed)),
       redistributionAllowed: requestedWorkspaceRows.some((row) => truthy(row.redistribution_allowed)),
+      isTenantAdmin,
     };
   }
 }

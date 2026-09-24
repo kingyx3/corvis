@@ -165,6 +165,27 @@ test("unapproved Google identity and missing document authorization fail closed"
   assert.equal(claimed, false);
 });
 
+test("a fabricated event with no matching outbox record is acknowledged, not retried forever", async () => {
+  const result = await executeProcessingWorkerRequest(request(delivery), dependencies({
+    stages: {
+      ...dependencies().stages,
+      claim: async () => { throw new Error("event id has no matching outbox record"); },
+    },
+  }));
+  // Terminal/poison, unlike "busy": the transport must not redeliver this
+  // event forever, so the ingress must not surface it as a retryable error.
+  assert.deepEqual(result, { outcome: "rejected", reason: "event_not_authentic" });
+});
+
+test("a genuinely transient claim exception still propagates for a retryable response", async () => {
+  await assert.rejects(() => executeProcessingWorkerRequest(request(delivery), dependencies({
+    stages: {
+      ...dependencies().stages,
+      claim: async () => { throw new Error("processing job is not claimable"); },
+    },
+  })), /processing job is not claimable/);
+});
+
 test("a busy durable claim remains retryable to Pub/Sub or Cloud Tasks", async () => {
   const result = await executeProcessingWorkerRequest(request(delivery), dependencies({
     stages: {

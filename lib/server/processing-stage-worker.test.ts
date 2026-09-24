@@ -140,6 +140,33 @@ test("terminally-handled unclaimed deliveries are acknowledged, not reported bus
   }
 });
 
+test("a fabricated event (no matching outbox record) is acknowledged as rejected, not raised", async () => {
+  let executions = 0;
+  const stages = claimedStages();
+  stages.claim = async () => { throw new Error("event id has no matching outbox record"); };
+  const result = await runProcessingStageDelivery({
+    identity,
+    delivery,
+    stages,
+    effects: { async begin() { throw new Error("unexpected"); }, async complete() { return true; } },
+    handler: { async execute() { executions += 1; } },
+  });
+  assert.deepEqual(result, { outcome: "rejected", reason: "event_not_authentic" });
+  assert.equal(executions, 0);
+});
+
+test("a transient claim exception (e.g. a live-leased running job) still propagates", async () => {
+  const stages = claimedStages();
+  stages.claim = async () => { throw new Error("processing job is not claimable"); };
+  await assert.rejects(() => runProcessingStageDelivery({
+    identity,
+    delivery,
+    stages,
+    effects: { async begin() { throw new Error("unexpected"); }, async complete() { return true; } },
+    handler: { async execute() { throw new Error("unexpected"); } },
+  }), /processing job is not claimable/);
+});
+
 test("completed effect is not executed again after redelivery", async () => {
   let executions = 0;
   let completed = 0;

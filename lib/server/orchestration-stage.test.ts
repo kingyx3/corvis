@@ -61,6 +61,15 @@ test("processing stage repository claims with tenant, document and job binding",
   ]);
 });
 
+test("a claim for a fabricated event with no matching outbox record propagates the authenticity exception", async () => {
+  const db = new FakeDb();
+  db.query = async () => { throw new Error("event id has no matching outbox record"); };
+  await assert.rejects(
+    () => new PostgresProcessingStageRepository(db).claim(delivery),
+    /event id has no matching outbox record/,
+  );
+});
+
 test("processing stage completion delegates one atomic database transition", async () => {
   const db = new FakeDb();
   db.rows.push([{

@@ -29,6 +29,7 @@ function membershipRepository(entries: Record<string, string[]>): MembershipAuth
         internalAnalyticsAllowed: false,
         modelTrainingAllowed: false,
         redistributionAllowed: false,
+        isTenantAdmin: false,
       };
     },
   };

@@ -39,7 +39,13 @@ export async function resolveAuthorizedRequestIdentity(
   const config = getServerConfig();
   const requireAuthoritative = options.requireAuthoritative ?? config.environment === "production";
 
-  if (!requireAuthoritative || authenticated.authMethod === "demo") return authenticated;
+  // Demo mode and non-production non-authoritative requests never resolve a
+  // raw database role, so this keeps their existing trust level (any "admin"
+  // Role could already do everything tenant-wide) rather than silently
+  // introducing a new restriction outside production.
+  if (!requireAuthoritative || authenticated.authMethod === "demo") {
+    return { ...authenticated, isTenantAdmin: authenticated.roles.includes("admin") };
+  }
 
   const repository = options.repository ?? membershipAuthorizationRepository(config.postgresDsn);
   const authorized = await repository.resolve({
@@ -54,6 +60,7 @@ export async function resolveAuthorizedRequestIdentity(
   return {
     ...authenticated,
     roles: authorized.roles,
+    isTenantAdmin: authorized.isTenantAdmin,
     entitlements: {
       workspaceIds: authorized.workspaceIds,
       fundIds: authorized.fundIds,

@@ -2,8 +2,10 @@ import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
 import { setFeatureFlagKillSwitch } from "@/lib/server/feature-flags";
 import { readJsonObject } from "@/lib/server/admin-request";
+import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
+import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
+import { postgres, withTransaction } from "@/lib/server/postgres";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 /**
@@ -19,12 +21,19 @@ export async function POST(request: Request) {
     const body = await readJsonObject(request) as { key?: string; engaged?: boolean; reason?: string } | undefined;
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     if (typeof body.key !== "string" || !body.key || typeof body.engaged !== "boolean") return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-    await setFeatureFlagKillSwitch(identity, body.key, body.engaged, body.reason);
-    await platform().audit({
-      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
-      actorSubject: identity.subject, sessionId: identity.sessionId, action: "feature_flag.kill_switch",
-      targetType: "feature_flag", targetId: body.key, outcome: "success", correlationId: id,
-      metadata: { engaged: body.engaged, reason: body.reason ?? null },
+    const key = body.key;
+    const engaged = body.engaged;
+    // The kill switch write and its audit event must commit or roll back
+    // together, so a failed audit insert never leaves an unaudited kill
+    // switch change in place.
+    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+      await setFeatureFlagKillSwitch(identity, key, engaged, body.reason, tx);
+      await new PostgresOperationsRepository(tx).audit({
+        id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+        actorSubject: identity.subject, sessionId: identity.sessionId, action: "feature_flag.kill_switch",
+        targetType: "feature_flag", targetId: key, outcome: "success", correlationId: id,
+        metadata: { engaged, reason: body.reason ?? null },
+      });
     });
     return json({ data: { key: body.key, engaged: body.engaged }, correlationId: id });
   } catch (error) { return apiError(error, id); }

@@ -68,6 +68,7 @@ test("authoritative Postgres roles, resource grants and data rights override sig
         internalAnalyticsAllowed: false,
         modelTrainingAllowed: false,
         redistributionAllowed: false,
+        isTenantAdmin: false,
       };
     },
   };
@@ -105,6 +106,7 @@ test("explicit empty Postgres resource/data-right grants do not fall back to sig
         internalAnalyticsAllowed: false,
         modelTrainingAllowed: false,
         redistributionAllowed: false,
+        isTenantAdmin: false,
       };
     },
   };

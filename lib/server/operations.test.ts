@@ -9,7 +9,8 @@ import {
   evaluateQueueSaturation,
   generateControlEvidence,
 } from "./operations.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { PostgresOperationsRepository } from "./platform-repositories.ts";
+import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000c1";
 const WORKSPACE = "00000000-0000-0000-0000-0000000000c2";
@@ -143,4 +144,115 @@ test("createDeletionRequest refuses a scope that could never execute and stores 
   await createDeletionRequest(identity(), { dataClasses: ["financials", "financials"], unexpected: "x" }, "customer offboarding", db);
   assert.equal(db.executeCalls.length, 1);
   assert.deepEqual(JSON.parse(String(db.executeCalls[0].parameters[3])), { dataClasses: ["financials"], documentIds: [], fundIds: [], subjectIds: [] });
+});
+
+/**
+ * Real (in-memory) transaction semantics: `transaction()` snapshots the
+ * control-evidence rows, deletion-request rows and audit log before running
+ * the callback and restores that snapshot if it throws, mirroring
+ * NativePostgresSqlApi.transaction's begin/rollback. Used to prove
+ * app/api/v1/admin/control-evidence/route.ts and
+ * app/api/v1/admin/deletion-requests/route.ts wrap their mutation and its
+ * audit event in one transaction.
+ */
+class TransactionalFakeDb implements PostgresSqlApi {
+  countsRow: PostgresRow;
+  controlEvidenceRows: PostgresRow[] = [];
+  deletionRequestRows: PostgresRow[] = [];
+  auditRows: PostgresRow[] = [];
+
+  constructor(countsRow: PostgresRow = {}) { this.countsRow = countsRow; }
+
+  async query(): Promise<PostgresRow[]> { return [this.countsRow]; }
+
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    if (sql.includes("insert into corvis_control.audit_event")) {
+      this.auditRows.push({ action: parameters[5] });
+      return;
+    }
+    if (sql.includes("insert into corvis_control.control_evidence")) {
+      this.controlEvidenceRows.push({ evidence_id: parameters[1] });
+      return;
+    }
+    if (sql.includes("insert into corvis_control.deletion_request")) {
+      this.deletionRequestRows.push({ deletion_request_id: parameters[1] });
+    }
+  }
+
+  async health(): Promise<boolean> { return true; }
+
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    const controlEvidenceSnapshot = [...this.controlEvidenceRows];
+    const deletionRequestSnapshot = [...this.deletionRequestRows];
+    const auditSnapshot = [...this.auditRows];
+    try {
+      return await fn(this);
+    } catch (error) {
+      this.controlEvidenceRows = controlEvidenceSnapshot;
+      this.deletionRequestRows = deletionRequestSnapshot;
+      this.auditRows = auditSnapshot;
+      throw error;
+    }
+  }
+}
+
+function auditEvent(action: string, targetType: string, targetId: string) {
+  return {
+    id: "event-1", occurredAt: new Date().toISOString(), tenantId: TENANT, workspaceId: WORKSPACE,
+    actorSubject: "oidc|admin-1", sessionId: "session-1", action, targetType, targetId, outcome: "success" as const, correlationId: "corr-1",
+  };
+}
+
+test("generateControlEvidence and its audit event commit together, and roll back together when the audit insert fails", async () => {
+  const db = new TransactionalFakeDb({ audit_events: 2, dead_letter_jobs: 0, total_jobs: 0, oldest_dead_letter_age_seconds: null });
+  await withTransaction(db, async (tx) => {
+    const evidence = await generateControlEvidence(identity(), { db: tx, readiness: readyReadiness });
+    await new PostgresOperationsRepository(tx).audit(auditEvent("control_evidence.generate", "control_evidence", evidence.evidenceId));
+  });
+  assert.equal(db.controlEvidenceRows.length, 1);
+  assert.equal(db.auditRows.length, 1);
+
+  const failing = new TransactionalFakeDb({ audit_events: 2, dead_letter_jobs: 0, total_jobs: 0, oldest_dead_letter_age_seconds: null });
+  const originalExecute = failing.execute.bind(failing);
+  failing.execute = async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    if (sql.includes("insert into corvis_control.audit_event")) throw new Error("audit insert failed");
+    return originalExecute(sql, parameters);
+  };
+  await assert.rejects(
+    withTransaction(failing, async (tx) => {
+      const evidence = await generateControlEvidence(identity(), { db: tx, readiness: readyReadiness });
+      await new PostgresOperationsRepository(tx).audit(auditEvent("control_evidence.generate", "control_evidence", evidence.evidenceId));
+    }),
+    /audit insert failed/,
+  );
+  // The generated evidence row must not be visible: a client that got a 500
+  // must not see an evidence record with no audit trail for it.
+  assert.equal(failing.controlEvidenceRows.length, 0);
+});
+
+test("createDeletionRequest and its audit event commit together, and roll back together when the audit insert fails", async () => {
+  const db = new TransactionalFakeDb();
+  await withTransaction(db, async (tx) => {
+    const requestId = await createDeletionRequest(identity(), { dataClasses: ["financials"] }, "customer offboarding", tx);
+    await new PostgresOperationsRepository(tx).audit(auditEvent("deletion_request.create", "deletion_request", requestId));
+  });
+  assert.equal(db.deletionRequestRows.length, 1);
+  assert.equal(db.auditRows.length, 1);
+
+  const failing = new TransactionalFakeDb();
+  const originalExecute = failing.execute.bind(failing);
+  failing.execute = async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    if (sql.includes("insert into corvis_control.audit_event")) throw new Error("audit insert failed");
+    return originalExecute(sql, parameters);
+  };
+  await assert.rejects(
+    withTransaction(failing, async (tx) => {
+      const requestId = await createDeletionRequest(identity(), { dataClasses: ["financials"] }, "customer offboarding", tx);
+      await new PostgresOperationsRepository(tx).audit(auditEvent("deletion_request.create", "deletion_request", requestId));
+    }),
+    /audit insert failed/,
+  );
+  // The deletion request must not be visible: a retry of the same request
+  // must be free to create it again, not collide with a half-applied one.
+  assert.equal(failing.deletionRequestRows.length, 0);
 });

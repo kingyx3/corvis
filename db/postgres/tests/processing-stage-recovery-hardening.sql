@@ -40,6 +40,9 @@ declare
   claim record;
   job_row corvis_control.processing_job%rowtype;
 begin
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values (tenant,event,'DocumentRegistered','document',doc::text,payload);
+
   select * into claim from corvis_control.claim_processing_stage_delivery(
     tenant,'processing-stage-worker',event,'DocumentRegistered',doc,job,'registered',payload,md5(payload::text),5,300);
   if claim.claimed is not true then raise exception 'first delivery was not claimed: %', row_to_json(claim); end if;
@@ -81,6 +84,11 @@ declare
   claim record;
   raised boolean := false;
 begin
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values
+    (tenant,'a0450000-0000-4000-8000-0000000000e2','DocumentRegistered','document',doc::text,payload),
+    (tenant,'a0450000-0000-4000-8000-0000000000e3','ProcessingJobRetryRequested','document',doc::text,payload);
+
   select * into claim from corvis_control.claim_processing_stage_delivery(
     tenant,'processing-stage-worker','a0450000-0000-4000-8000-0000000000e2','DocumentRegistered',doc,job,'registered',payload,md5(payload::text),5,300);
   if claim.claimed is not true then raise exception 'owner delivery was not claimed'; end if;
@@ -114,6 +122,9 @@ declare
   claim record;
   job_row corvis_control.processing_job%rowtype;
 begin
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values (tenant,event,'DocumentRegistered','document',doc::text,payload);
+
   select * into claim from corvis_control.claim_processing_stage_delivery(
     tenant,'processing-stage-worker',event,'DocumentRegistered',doc,job,'registered',payload,md5(payload::text),5,300);
   if claim.claimed is not true then raise exception 'last attempt was not claimed'; end if;

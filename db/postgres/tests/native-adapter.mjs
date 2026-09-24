@@ -16,5 +16,28 @@ try {
   assert.equal(await db.health(), true, 'failed transactions must not poison reused connections');
   const calls = await Promise.all(Array.from({ length: 12 }, (_, value) => db.query('select $1::int as value', [value])));
   assert.equal(calls.length, 12);
-  console.log('Native Postgres parameterization, timestamp, transaction, rollback and concurrent-query checks passed');
+
+  // transaction() commits a mutation and its "audit" write together, and
+  // rolls the mutation back too when the callback throws after it (standing
+  // in for a failing audit insert) -- nothing from that attempt is visible.
+  await db.execute('create table native_adapter_txn (id text primary key, kind text not null)');
+  await db.transaction(async (tx) => {
+    await tx.execute("insert into native_adapter_txn (id, kind) values ('row-1', 'mutation')");
+    await tx.execute("insert into native_adapter_txn (id, kind) values ('row-1-audit', 'audit')");
+  });
+  assert.deepEqual(
+    (await db.query('select kind from native_adapter_txn order by kind')).map((row) => row.kind),
+    ['audit', 'mutation'],
+  );
+  await assert.rejects(
+    db.transaction(async (tx) => {
+      await tx.execute("insert into native_adapter_txn (id, kind) values ('row-2', 'mutation')");
+      throw new Error('audit insert failed');
+    }),
+    /audit insert failed/,
+  );
+  assert.deepEqual(await db.query("select id from native_adapter_txn where id='row-2'"), []);
+  assert.equal(await db.health(), true, 'a rolled-back transaction must not poison reused connections');
+
+  console.log('Native Postgres parameterization, timestamp, transaction, rollback, concurrent-query and transaction() commit/rollback checks passed');
 } finally { await db.close(); }

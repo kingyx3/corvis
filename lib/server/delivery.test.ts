@@ -4,7 +4,9 @@ import {
   computeWebhookRetryDelayMs,
   processQueuedExports,
   processWebhookDeliveries,
+  sweepUnsubscribedWebhookFanoutEvents,
   WEBHOOK_DELIVERY_TIMEOUT_MS,
+  WEBHOOK_FANOUT_SWEEP_LIMIT,
   WEBHOOK_RETRY_BASE_DELAY_MS,
   WEBHOOK_RETRY_MAX_DELAY_MS,
   WEBHOOK_RETRY_JITTER_RATIO,
@@ -202,6 +204,40 @@ test("webhook and export deliveries stuck in 'delivering' after a crash are recl
   const exportReclaim = exportStore.statements[0]!;
   assert.match(exportReclaim.sql, /update corvis_serving\.export_job[\s\S]*where state='delivering'[\s\S]*delivery_started_at/);
   assert.deepEqual(exportReclaim.parameters, [5, 10]);
+});
+
+test("sweepUnsubscribedWebhookFanoutEvents marks fan-out complete only when no active-or-paused subscription can ever match, bounded by limit", async () => {
+  const store = new FakeDeliveryStore();
+  const swept = [{ event_id: "e1" }, { event_id: "e2" }];
+  store.query = (async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    store.statements.push({ sql, parameters });
+    if (sql.startsWith("update corvis_control.outbox_event e")) return swept;
+    return [];
+  }) as typeof store.query;
+
+  const count = await sweepUnsubscribedWebhookFanoutEvents(store, 250);
+  assert.equal(count, 2);
+
+  const [statement] = store.statements;
+  assert.ok(statement);
+  assert.match(statement.sql, /update corvis_control\.outbox_event e\s+set webhook_fanout_completed_at=now\(\)/);
+  assert.match(statement.sql, /e\.event_id in \(/);
+  assert.match(statement.sql, /e2\.webhook_fanout_completed_at is null/);
+  assert.match(statement.sql, /not exists \(\s*select 1 from corvis_control\.webhook_subscription s/);
+  assert.match(statement.sql, /s\.status in \('active','paused'\)/, "a currently-paused subscription can still be resumed, so it still counts as a possible future subscriber");
+  assert.match(statement.sql, /e2\.event_type=any\(s\.event_types\)/);
+  assert.match(statement.sql, /s\.created_at<=e2\.created_at/, "must mirror the live fan-out query's created_at<=event.created_at semantics");
+  for (const transportType of ["DocumentRegistered", "ProcessingStageReady", "ProcessingStageRetryScheduled", "ProcessingJobRetryRequested"]) {
+    assert.match(statement.sql, new RegExp(`not in \\([^)]*'${transportType}'`), `${transportType} must be excluded from the sweep`);
+  }
+  assert.match(statement.sql, /limit \$1/);
+  assert.deepEqual(statement.parameters, [250]);
+});
+
+test("sweepUnsubscribedWebhookFanoutEvents defaults to a bounded limit", async () => {
+  const store = new FakeDeliveryStore();
+  await sweepUnsubscribedWebhookFanoutEvents(store);
+  assert.deepEqual(store.statements[0]?.parameters, [WEBHOOK_FANOUT_SWEEP_LIMIT]);
 });
 
 function jitterBounds(base: number) {
