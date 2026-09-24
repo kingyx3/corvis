@@ -40,6 +40,9 @@ export interface UploadObjectStore {
 }
 
 const CANCEL_TIMEOUT_MS = 10_000;
+/** Upper bound for any control-plane GCS call so a stalled provider cannot pin a request. */
+export const GCS_REQUEST_TIMEOUT_MS = 30_000;
+const METADATA_TOKEN_TIMEOUT_MS = 5_000;
 
 /**
  * GCS requires `Content-Length: 0` on the resumable-session cancel DELETE.
@@ -89,7 +92,7 @@ export class GcsControlClient implements UploadObjectStore {
 
     const response = await fetch(
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-      { headers: { "Metadata-Flavor": "Google" }, cache: "no-store" },
+      { headers: { "Metadata-Flavor": "Google" }, cache: "no-store", signal: AbortSignal.timeout(METADATA_TOKEN_TIMEOUT_MS) },
     );
     if (!response.ok) throw new Error(`GCP workload identity token request failed (${response.status})`);
     const body = await response.json() as TokenResponse;
@@ -105,7 +108,7 @@ export class GcsControlClient implements UploadObjectStore {
     const token = await this.accessToken();
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${token}`);
-    return fetch(url, { ...init, headers, cache: "no-store" });
+    return fetch(url, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(GCS_REQUEST_TIMEOUT_MS) });
   }
 
   private metadataUrl(key: string): string {

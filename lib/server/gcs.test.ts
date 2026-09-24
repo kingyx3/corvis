@@ -3,7 +3,7 @@ import { createServer, request as httpRequest, type IncomingHttpHeaders } from "
 import type { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { deleteWithZeroContentLength } from "./gcs.ts";
+import { deleteWithZeroContentLength, GCS_REQUEST_TIMEOUT_MS, GcsControlClient } from "./gcs.ts";
 
 test("resumable-session cancellation sends DELETE with Content-Length: 0 and no bearer token", async () => {
   const seen: { method?: string; headers?: IncomingHttpHeaders }[] = [];
@@ -27,6 +27,26 @@ test("resumable-session cancellation sends DELETE with Content-Length: 0 and no 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("every authorized GCS control-plane call carries a bounded timeout signal", async () => {
+  const seen: (AbortSignal | null | undefined)[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    seen.push(init?.signal);
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  try {
+    const client = new GcsControlClient({ bucket: "corvis-source-test", accessToken: "static-token" });
+    assert.equal(await client.getObjectMetadata("tenant=a/object.pdf"), null);
+    assert.equal(await client.getJson("tenant=a/session.json"), null);
+    await client.deleteObject("tenant=a/object.pdf");
+    assert.equal(seen.length, 3);
+    for (const signal of seen) assert.ok(signal instanceof AbortSignal, "GCS fetch must not be able to hang indefinitely");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.ok(GCS_REQUEST_TIMEOUT_MS > 0 && GCS_REQUEST_TIMEOUT_MS <= 60_000);
 });
 
 test("resumable-session cancellation surfaces transport failures", async () => {
