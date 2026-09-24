@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { DataCorrectionRequestError, PostgresDataCorrectionRepository } from "./data-correction.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { PostgresOperationsRepository } from "./platform-repositories.ts";
+import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 const identity: RequestIdentity = {
   subject: "ops|reviewer", tenantId: "00000000-0000-4000-8000-000000000001", workspaceId: "00000000-0000-4000-8000-000000000002",
@@ -82,4 +83,89 @@ test("data-correction route maps typed errors and audits every mutation", async 
   for (const action of ["data_correction.open", "data_correction.replay", "data_correction.resolve"]) {
     assert.ok(route.includes(`"${action}"`), `route must audit ${action}`);
   }
+  // Every mutation must be wrapped with its audit event in one transaction so
+  // a failed audit insert can never leave an unaudited incident write in place.
+  assert.match(route, /withTransaction/);
+  assert.ok((route.match(/withTransaction/g) ?? []).length >= 3, "open, replay and resolve must each run inside withTransaction");
+});
+
+/**
+ * Real (in-memory) transaction semantics: `transaction()` snapshots the
+ * incident table and audit log before running the callback and restores that
+ * snapshot if it throws, mirroring NativePostgresSqlApi.transaction's
+ * begin/rollback. Used to prove app/api/v1/admin/data-corrections/route.ts
+ * wraps each mutation and its audit event in one transaction.
+ */
+class TransactionalFakeDb implements PostgresSqlApi {
+  incidents = new Map<string, PostgresRow>();
+  auditRows: PostgresRow[] = [];
+
+  async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    if (sql.includes("open_data_correction_incident")) {
+      const incidentId = String(parameters[1]);
+      this.incidents.set(incidentId, { incident_id: incidentId, state: "open" });
+      return [{ incident_id: incidentId, state: "open" }];
+    }
+    return [];
+  }
+
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    if (sql.includes("insert into corvis_control.audit_event")) {
+      this.auditRows.push({ action: parameters[5] });
+    }
+  }
+
+  async health(): Promise<boolean> { return true; }
+
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    const incidentsSnapshot = new Map(this.incidents);
+    const auditSnapshot = [...this.auditRows];
+    try {
+      return await fn(this);
+    } catch (error) {
+      this.incidents = incidentsSnapshot;
+      this.auditRows = auditSnapshot;
+      throw error;
+    }
+  }
+}
+
+function auditEvent(action: string, targetId: string) {
+  return {
+    id: "event-1", occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+    actorSubject: identity.subject, sessionId: identity.sessionId, action, targetType: "data_correction_incident",
+    targetId, outcome: "success" as const, correlationId: "corr-1",
+  };
+}
+
+test("opening a correction incident and its audit event commit together, and roll back together when the audit insert fails", async () => {
+  const command = {
+    idempotencyKey: "dq-2026-q3-1", fundId: "fund-1", reportPeriod: "2026-Q3",
+    documentId: "00000000-0000-4000-8000-000000000101", rootCause: "source mapping defect", correctionIntent: "replay retained source with corrected mapping",
+  };
+
+  const db = new TransactionalFakeDb();
+  await withTransaction(db, async (tx) => {
+    const opened = await new PostgresDataCorrectionRepository(tx).open(identity, command);
+    await new PostgresOperationsRepository(tx).audit(auditEvent("data_correction.open", opened.incidentId));
+  });
+  assert.equal(db.incidents.size, 1);
+  assert.equal(db.auditRows.length, 1);
+
+  const failing = new TransactionalFakeDb();
+  const originalExecute = failing.execute.bind(failing);
+  failing.execute = async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    if (sql.includes("insert into corvis_control.audit_event")) throw new Error("audit insert failed");
+    return originalExecute(sql, parameters);
+  };
+  await assert.rejects(
+    withTransaction(failing, async (tx) => {
+      const opened = await new PostgresDataCorrectionRepository(tx).open(identity, command);
+      await new PostgresOperationsRepository(tx).audit(auditEvent("data_correction.open", opened.incidentId));
+    }),
+    /audit insert failed/,
+  );
+  // The incident must not be visible: a retry of the same idempotency key
+  // must be free to try opening it again, not collide with a half-applied one.
+  assert.equal(failing.incidents.size, 0);
 });

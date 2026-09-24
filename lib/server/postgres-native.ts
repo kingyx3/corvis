@@ -124,5 +124,39 @@ export class NativePostgresSqlApi implements PostgresSqlApi {
   async health(): Promise<boolean> {
     try { await this.query("select 1 as ok"); return true; } catch { return false; }
   }
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect().catch((error: unknown) => {
+      throw new PostgresDriverError("connection", postgresDiagnosticCode(error));
+    });
+    const tx: PostgresSqlApi = {
+      query: async (sql: string, parameters: PostgresPrimitive[] = []) => {
+        try {
+          const result = await client.query(sql, parameters);
+          const results = Array.isArray(result) ? result : [result];
+          return results.at(-1)?.rows ?? [];
+        } catch (error) {
+          throw new PostgresDriverError("query", postgresDiagnosticCode(error));
+        }
+      },
+      execute: async (sql: string, parameters: PostgresPrimitive[] = []) => { await tx.query(sql, parameters); },
+      health: async () => true,
+    };
+    try {
+      await client.query("begin");
+      const result = await fn(tx);
+      await client.query("commit");
+      client.release();
+      return result;
+    } catch (error) {
+      // Roll back whatever the callback already did before releasing the
+      // connection. A rollback attempt on an already-broken connection is
+      // discarded (not surfaced): the original error is what callers need,
+      // and the connection is destroyed either way so it never returns to
+      // the pool half-transacted.
+      try { await client.query("rollback"); } catch { /* connection is already unusable */ }
+      client.release(true);
+      throw error;
+    }
+  }
   async close(): Promise<void> { await this.pool.end(); }
 }

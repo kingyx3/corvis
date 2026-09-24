@@ -7,6 +7,32 @@ export interface PostgresSqlApi {
   query(sql: string, parameters?: PostgresPrimitive[]): Promise<PostgresRow[]>;
   execute(sql: string, parameters?: PostgresPrimitive[]): Promise<void>;
   health(): Promise<boolean>;
+  /**
+   * Runs `fn` against a single connection wrapped in `begin`/`commit`: every
+   * query or execute the callback issues through the `tx` handle it receives
+   * runs on that one connection, so they all commit together, and any error
+   * the callback throws (or that one of those queries throws) rolls the
+   * whole transaction back before the error propagates. The connection is
+   * always released back to the pool afterwards, success or failure.
+   *
+   * Optional: the stateless HTTP transport (`PostgresHttpSqlApi`) has no
+   * single connection to hold a transaction open on, so it does not implement
+   * this. Route code should go through `withTransaction` below rather than
+   * calling `db.transaction` directly, so it degrades safely on a transport
+   * that lacks it instead of throwing.
+   */
+  transaction?<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T>;
+}
+
+/**
+ * Runs `fn` inside `db.transaction` when the underlying transport supports
+ * one (the native Postgres client does), so a mutation and its audit-event
+ * insert commit or roll back together. Falls back to calling `fn(db)`
+ * directly when the transport has no `transaction` method, so callers never
+ * have to special-case the transport themselves.
+ */
+export function withTransaction<T>(db: PostgresSqlApi, fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+  return db.transaction ? db.transaction(fn) : fn(db);
 }
 
 type QueryResult = { rows?: PostgresRow[] };
