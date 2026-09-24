@@ -63,6 +63,15 @@ test("completed duplicate delivery returns an idempotent no-work claim", async (
   assert.equal(claim.state, "complete");
 });
 
+test("a claim for an event with no matching outbox record propagates the authenticity exception", async () => {
+  const db = new FakeDb();
+  db.query = async () => { throw new Error("event id has no matching outbox record"); };
+  await assert.rejects(
+    () => new PostgresEventInboxRepository(db).claim(envelope),
+    /event id has no matching outbox record/,
+  );
+});
+
 test("completion and failure require the exact tenant consumer event and lease token", async () => {
   const db = new FakeDb();
   const repository = new PostgresEventInboxRepository(db);
