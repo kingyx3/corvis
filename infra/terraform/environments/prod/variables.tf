@@ -38,15 +38,9 @@ variable "postgres_ca_cert" {
 }
 
 variable "cloudflare_zone_name" {
-  description = "Cloudflare zone name. The provider resolves the zone ID at plan/apply time."
+  description = "Single shared Cloudflare root zone. Production owns only api/app/admin DNS, Worker and route resources inside that zone."
   type        = string
   default     = ""
-}
-
-variable "enable_cloudflare_managed_waf" {
-  description = "Explicit rollout control for plan-dependent Cloudflare managed/OWASP rulesets."
-  type        = bool
-  default     = false
 }
 
 variable "monitoring_notification_channel_ids" {
