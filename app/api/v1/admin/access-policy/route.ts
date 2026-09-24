@@ -1,6 +1,7 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { getServerConfig } from "@/lib/server/config";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
 
@@ -32,7 +33,8 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as Record<string, unknown>;
+    const body = await readJsonObject(request) as Record<string, unknown> | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const kind = body.kind;
     const reason = requiredString(body.reason, 1000);
     if (!reason) return json({ error: "invalid_request", correlationId: id }, { status: 400 });

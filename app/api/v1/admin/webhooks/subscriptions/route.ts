@@ -20,7 +20,10 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as { endpointUrl?: string; eventTypes?: string[] };
+    const parsed: unknown = await request.json();
+    // A JSON `null`, array or scalar body is valid JSON but not a request object; reject it instead of throwing a TypeError (500).
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const body = parsed as { endpointUrl?: string; eventTypes?: string[] };
     const created = await createWebhookSubscription(identity, { endpointUrl: body.endpointUrl ?? "", eventTypes: body.eventTypes ?? [] });
     await platform().audit({
       id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,

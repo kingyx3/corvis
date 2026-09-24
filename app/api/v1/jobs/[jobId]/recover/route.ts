@@ -30,10 +30,11 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     }
 
     const { jobId } = await context.params;
-    const command = await request.json() as RecoveryCommand;
-    if (!jobId || !Number.isInteger(command.expectedVersion) || Number(command.expectedVersion) <= 0
-      || !command.reasonCode?.trim() || command.reasonCode.trim().length > 100
-      || (command.note !== undefined && command.note.length > 1000)) {
+    const command = await request.json() as RecoveryCommand | null;
+    if (!jobId || !command || typeof command !== "object"
+      || !Number.isInteger(command.expectedVersion) || Number(command.expectedVersion) <= 0
+      || typeof command.reasonCode !== "string" || !command.reasonCode.trim() || command.reasonCode.trim().length > 100
+      || (command.note !== undefined && (typeof command.note !== "string" || command.note.length > 1000))) {
       return json({ error: "invalid_processing_recovery_command", correlationId: id }, { status: 400 });
     }
 
@@ -58,6 +59,9 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       }
       if (result.reason === "not_exhausted") {
         return json({ error: "normal_retry_still_available", correlationId: id }, { status: 409 });
+      }
+      if (result.reason === "idempotency_conflict") {
+        return json({ error: "idempotency_key_reused", correlationId: id }, { status: 409 });
       }
       if (result.reason === "missing_delivery_evidence") {
         return json({ error: "recovery_evidence_missing", correlationId: id }, { status: 409 });

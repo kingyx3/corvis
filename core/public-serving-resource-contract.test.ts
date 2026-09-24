@@ -76,7 +76,14 @@ test("consolidated facts require entitlement and membership in a published snaps
   assert.match(sql, /f\.tenant_id=\$1::uuid/);
   assert.match(sql, /join allowed_fund/);
   assert.match(sql, /s\.status='published'/);
-  assert.match(sql, /f\.consolidated_fact_id=any\(s\.fact_ids\)/);
+  assert.match(sql, /s\.tenant_id=f\.tenant_id/);
+  assert.match(sql, /s\.fund_id=f\.fund_id/);
+  // Membership is an unnested semi-join: "f.consolidated_fact_id = any(s.fact_ids)"
+  // re-scanned every published snapshot's array per fact, quadratic in a
+  // fund's history (17s vs 0.7s on 40k facts x 40 periods locally).
+  assert.match(sql, /cross join lateral unnest\(s\.fact_ids\) as published\(fact_id\)/);
+  assert.match(sql, /published\.fact_id=f\.consolidated_fact_id/);
+  assert.doesNotMatch(normalized(db.calls[0]!.sql.replace(/--[^\n]*/g, "")), /=\s*any\(\s*s\.fact_ids\s*\)/);
 });
 
 test("lifecycle API uses holding-derived visibility and refuses hidden participants", async () => {

@@ -10,6 +10,7 @@ import {
   WEBHOOK_RETRY_JITTER_RATIO,
 } from "./delivery.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { policyCheckedLookup, policyPinnedWebhookFetch } from "./webhook-endpoint-policy.ts";
 
 type RecordedStatement = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -89,6 +90,18 @@ test("webhook delivery never reads or writes the processing transport's outbox b
   assert.ok(store.statements.some((statement) => /set webhook_fanout_completed_at=now\(\)/.test(statement.sql)), "a completed fan-out is marked on its own column");
 });
 
+test("a subscription only receives events raised after it was created, and fan-out completion agrees", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent()];
+  const { fetchImpl } = recordingFetch(() => new Response(null, { status: 204 }));
+  await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  const select = store.statements.find((statement) => statement.sql.includes("from corvis_control.outbox_event e"))!.sql;
+  assert.match(select, /join corvis_control\.webhook_subscription s[\s\S]*and s\.created_at<=e\.created_at[\s\S]*join corvis_control\.webhook_signing_key/,
+    "a new subscription must not replay events that predate it");
+  const completion = store.statements.find((statement) => /set webhook_fanout_completed_at=now\(\)/.test(statement.sql))!.sql;
+  assert.match(completion, /s\.created_at<=e\.created_at/, "a subscription created after the event must not hold its fan-out open forever");
+});
+
 test("webhook POST refuses redirects and is bounded by a timeout", async () => {
   const store = new FakeDeliveryStore();
   store.events = [pendingEvent()];
@@ -129,6 +142,38 @@ test("send-time policy refuses endpoints that are, or resolve to, internal addre
     assert.equal(calls.length, 0, `${endpointUrl} must never be fetched`);
     assert.match(String(failureUpdate(store)?.parameters[2]), /webhook endpoint refused/);
   }
+});
+
+test("the default webhook transport re-checks addresses at connect time, so a DNS rebind to an internal address is refused", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent({ endpoint_url: "https://rebind.example.com/corvis" })];
+  const answers = [[{ address: "93.184.216.34" }], [{ address: "169.254.169.254" }]];
+  const lookups: string[] = [];
+  const rebindingLookup = async (hostname: string) => { lookups.push(hostname); return answers[Math.min(lookups.length - 1, 1)]!; };
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, lookup: rebindingLookup });
+  assert.deepEqual(result, { processed: 0, failed: 1 });
+  assert.equal(lookups.length, 2, "the connect-time lookup must go through the policy, not a second unchecked resolution");
+  assert.match(String(failureUpdate(store)?.parameters[2]), /resolves_to_private_address/);
+});
+
+test("policyCheckedLookup answers net's single and all-address forms and refuses private answers", async () => {
+  const lookup = policyCheckedLookup(async () => [{ address: "93.184.216.34" }, { address: "2606:4700:4700::1111" }]);
+  const single = await new Promise<unknown[]>((resolve) => lookup("hooks.example.com", {}, (...args) => resolve(args)));
+  assert.deepEqual(single, [null, "93.184.216.34", 4]);
+  const all = await new Promise<unknown[]>((resolve) => lookup("hooks.example.com", { all: true }, (...args) => resolve(args)));
+  assert.deepEqual(all, [null, [{ address: "93.184.216.34", family: 4 }, { address: "2606:4700:4700::1111", family: 6 }]]);
+  const refused = policyCheckedLookup(async () => [{ address: "10.0.0.7" }]);
+  const [error] = await new Promise<unknown[]>((resolve) => refused("hooks.example.com", {}, (...args) => resolve(args)));
+  assert.match(String(error), /resolves_to_private_address/);
+});
+
+test("the default webhook transport surfaces a timeout as TimeoutError", async () => {
+  const fetchImpl = policyPinnedWebhookFetch(publicLookup);
+  const signal = AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+  await assert.rejects(() => fetchImpl("https://hooks.example.com/corvis", { method: "POST", body: "{}", signal }), (error: unknown) => {
+    assert.equal((error as Error).name, "TimeoutError");
+    return true;
+  });
 });
 
 test("the final failed webhook attempt is terminal and closes the fan-out", async () => {

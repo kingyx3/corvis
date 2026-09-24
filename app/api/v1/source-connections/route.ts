@@ -50,7 +50,9 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as {
+    const parsed = await request.json() as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const body = parsed as {
       providerKey?: unknown; connectionLabel?: unknown; credentialType?: unknown;
       sourceScope?: unknown; secret?: unknown; connectorVersion?: unknown;
     };

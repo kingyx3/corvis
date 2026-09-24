@@ -33,8 +33,18 @@ function text(value: ExportCell | undefined): string {
   return String(value);
 }
 
+/**
+ * A text cell that starts with `=`, `+`, `-`, `@`, tab or CR is evaluated as a
+ * formula by spreadsheet apps opening the CSV. Text values come from extracted
+ * document content, so they are neutralized with a leading apostrophe. Numbers
+ * (e.g. a negative `value_number`) are typed values and are left untouched.
+ */
+function neutralizeFormula(value: ExportCell | undefined, raw: string): string {
+  return typeof value === "string" && /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+}
+
 function csvCell(value: ExportCell | undefined): string {
-  const raw = text(value);
+  const raw = neutralizeFormula(value, text(value));
   if (/[",\r\n]/.test(raw)) return `"${raw.replaceAll('"', '""')}"`;
   return raw;
 }
@@ -49,6 +59,10 @@ export function renderCsv(rows: readonly ExportRow[]): Buffer {
 
 function xmlEscape(value: string): string {
   return value
+    // Control characters (other than tab/LF/CR) and lone surrogates are not
+    // legal in XML 1.0 even when escaped; one in extracted text would make the
+    // whole workbook unreadable.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

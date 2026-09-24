@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
-import { assertPermission, type RequestIdentity } from "@/core/enterprise";
+import { assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import {
-  ConnectorGovernanceError,
-  listSourceConnections,
+  assertSourceConnectionId,
+  getSourceConnection,
   reauthorizeSourceConnection,
   type SourceConnection,
 } from "@/lib/server/source-connectors";
@@ -15,13 +15,6 @@ function toResponse(connection: SourceConnection): Omit<SourceConnection, "secre
   const { secretReference, ...rest } = connection;
   void secretReference;
   return rest;
-}
-
-async function findConnection(identity: RequestIdentity, sourceConnectionId: string): Promise<SourceConnection> {
-  const connections = await listSourceConnections(identity);
-  const connection = connections.find((candidate) => candidate.sourceConnectionId === sourceConnectionId);
-  if (!connection) throw new ConnectorGovernanceError("connection_not_found");
-  return connection;
 }
 
 /**
@@ -36,13 +29,14 @@ export async function POST(request: Request, context: { params: Promise<{ source
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
-    const body = await request.json() as { secret?: unknown };
+    const body = (await request.json() ?? {}) as { secret?: unknown };
     if (!body.secret || typeof body.secret !== "object" || Array.isArray(body.secret)) {
       return json({ error: "secret_required", correlationId: id }, { status: 400 });
     }
+    assertSourceConnectionId(sourceConnectionId);
 
     await reauthorizeSourceConnection(identity, sourceConnectionId, body.secret as Record<string, unknown>, { secrets: sourceConnectorSecretStore() });
-    const data = await findConnection(identity, sourceConnectionId);
+    const data = await getSourceConnection(identity, sourceConnectionId);
     await platform().audit({
       id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
       actorSubject: identity.subject, sessionId: identity.sessionId, action: "source_connection.reauthorize",

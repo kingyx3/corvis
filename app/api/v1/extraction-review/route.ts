@@ -1,23 +1,24 @@
 import { createHash, randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
+import { assertDocumentAccess, assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 import { postgres } from "@/lib/server/postgres";
 import {
+  CandidateReviewRequestError,
   recordCandidateReviewDecision,
   type CandidateReviewDecision,
 } from "@/lib/server/processing-reviewed-stage";
 
 type CandidateReviewRequest = {
-  documentId?: string;
-  extractionRunId?: string;
-  candidateId?: string;
-  decision?: CandidateReviewDecision["decision"];
-  reasonCode?: string;
-  correctionPayload?: Record<string, unknown>;
-  resolvedExceptionCodes?: string[];
+  documentId?: unknown;
+  extractionRunId?: unknown;
+  candidateId?: unknown;
+  decision?: unknown;
+  reasonCode?: unknown;
+  correctionPayload?: unknown;
+  resolvedExceptionCodes?: unknown;
 };
 
 const DECISIONS = new Set<CandidateReviewDecision["decision"]>([
@@ -26,6 +27,16 @@ const DECISIONS = new Set<CandidateReviewDecision["decision"]>([
   "correct",
   "resolve_exception",
 ]);
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 function deterministicUuid(seed: string): string {
   const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);
@@ -45,26 +56,48 @@ export async function POST(request: Request) {
       return json({ error: "idempotency_key_required", correlationId: id }, { status: 400 });
     }
 
-    const command = await request.json() as CandidateReviewRequest;
-    if (!command.documentId || !command.extractionRunId || !command.candidateId
-      || !command.decision || !DECISIONS.has(command.decision)
-      || !command.reasonCode?.trim()) {
+    const body = await request.json() as unknown;
+    if (!isPlainObject(body)) {
       return json({ error: "invalid_candidate_review_command", correlationId: id }, { status: 400 });
     }
-    if (command.decision === "correct"
-      && (!command.correctionPayload || Array.isArray(command.correctionPayload))) {
+    const command = body as CandidateReviewRequest;
+    // Every id reaches a ::uuid cast; a malformed one is a bad request, not a 500.
+    if (!isUuid(command.documentId) || !isUuid(command.extractionRunId) || !isUuid(command.candidateId)
+      || typeof command.decision !== "string" || !DECISIONS.has(command.decision as CandidateReviewDecision["decision"])
+      || typeof command.reasonCode !== "string" || !command.reasonCode.trim()) {
+      return json({ error: "invalid_candidate_review_command", correlationId: id }, { status: 400 });
+    }
+    const decision = command.decision as CandidateReviewDecision["decision"];
+    if (decision === "correct" && !isPlainObject(command.correctionPayload)) {
       return json({ error: "correction_payload_required", correlationId: id }, { status: 400 });
     }
-    if (command.decision === "resolve_exception"
-      && (!Array.isArray(command.resolvedExceptionCodes) || command.resolvedExceptionCodes.length === 0)) {
+    if (decision !== "correct" && command.correctionPayload !== undefined && command.correctionPayload !== null) {
+      return json({ error: "invalid_candidate_review_command", correlationId: id }, { status: 400 });
+    }
+    const resolvedExceptionCodes = command.resolvedExceptionCodes;
+    if (decision === "resolve_exception"
+      && (!Array.isArray(resolvedExceptionCodes) || resolvedExceptionCodes.length === 0
+        || resolvedExceptionCodes.some((code) => typeof code !== "string" || !code.trim()))) {
       return json({ error: "resolved_exception_codes_required", correlationId: id }, { status: 400 });
     }
+    if (decision !== "resolve_exception" && resolvedExceptionCodes !== undefined
+      && !(Array.isArray(resolvedExceptionCodes) && resolvedExceptionCodes.length === 0)) {
+      return json({ error: "resolved_exception_codes_not_allowed", correlationId: id }, { status: 400 });
+    }
 
+    // Candidate review is document-scoped work: the reviewer must be entitled
+    // to the document, as observation review and the processing worker require.
+    assertDocumentAccess(identity, command.documentId);
+
+    // The actor is part of the idempotency scope: a second reviewer who
+    // happens to send the same key must record their own (four-eyes) decision
+    // rather than collide with the first reviewer's event.
     const reviewEventId = deterministicUuid([
       "corvis-candidate-review-event",
       identity.tenantId,
       command.extractionRunId,
       command.candidateId,
+      identity.subject,
       idempotencyKey,
     ].join(":"));
     const gate = await recordCandidateReviewDecision({
@@ -76,10 +109,10 @@ export async function POST(request: Request) {
         reviewEventId,
         candidateId: command.candidateId,
         actorSubject: identity.subject,
-        decision: command.decision,
+        decision,
         reasonCode: command.reasonCode.trim(),
-        correctionPayload: command.correctionPayload,
-        resolvedExceptionCodes: command.resolvedExceptionCodes,
+        correctionPayload: decision === "correct" ? command.correctionPayload as Record<string, unknown> : undefined,
+        resolvedExceptionCodes: decision === "resolve_exception" ? (resolvedExceptionCodes as string[]).map((code) => code.trim()) : undefined,
       },
     });
 
@@ -90,7 +123,7 @@ export async function POST(request: Request) {
       workspaceId: identity.workspaceId,
       actorSubject: identity.subject,
       sessionId: identity.sessionId,
-      action: `extraction_candidate.${command.decision}`,
+      action: `extraction_candidate.${decision}`,
       targetType: "extraction_candidate",
       targetId: command.candidateId,
       outcome: "success",
@@ -106,6 +139,9 @@ export async function POST(request: Request) {
 
     return json({ data: gate, correlationId: id }, { status: 202 });
   } catch (error) {
+    if (error instanceof CandidateReviewRequestError) {
+      return json({ error: error.code, correlationId: id }, { status: error.status });
+    }
     return apiError(error, id);
   }
 }

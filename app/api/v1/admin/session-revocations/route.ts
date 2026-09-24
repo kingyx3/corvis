@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { assertPermission, type RequestIdentity } from "@/core/enterprise";
 import { sessionRevocationRepository } from "@/lib/server/authorization";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 
@@ -15,12 +16,14 @@ export async function POST(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
 
-    const body = await request.json() as {
+    const body = await readJsonObject(request) as {
       subject?: unknown;
       sessionId?: unknown;
       authMethod?: unknown;
       reason?: unknown;
-    };
+    } | undefined;
+
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
     const authMethod = revocableAuthMethod(body.authMethod);

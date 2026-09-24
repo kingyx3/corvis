@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PostgresProcessingStageRepository } from "./orchestration-stage.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -118,4 +119,27 @@ test("processing stage failure truncates error detail before the database bounda
     error: longError,
   });
   assert.equal(String(db.calls[0]?.parameters[5] ?? "").length, 2000);
+});
+
+test("claim reclaims a job orphaned in running once no other delivery holds a live lease (migration 046)", async () => {
+  const sql = (await readFile("db/postgres/migrations/046_processing_stage_recovery_hardening.sql", "utf8")).toLowerCase();
+  const start = sql.indexOf("create or replace function corvis_control.claim_processing_stage_delivery(");
+  assert.ok(start >= 0, "046 must redefine claim_processing_stage_delivery");
+  const claim = sql.slice(start, sql.indexOf("\n$$;", start));
+  // A running job only stays transient while another delivery's inbox lease is live.
+  assert.match(claim, /if current_job\.state='running' then\s+[\s\S]*?if exists \([\s\S]*?i\.event_id<>p_event_id[\s\S]*?i\.state='processing'[\s\S]*?i\.lease_expires_at > now\(\)[\s\S]*?raise exception 'processing job is not claimable'/);
+  assert.doesNotMatch(claim, /if current_job\.state='running' then raise exception/);
+  // The orphaned attempt still counts against the budget and dead-letters when spent.
+  assert.match(claim, /if terminal_error is null and current_job\.attempt >= current_job\.max_attempts then[\s\S]*dead_letter_exhausted_processing_job/);
+  assert.match(claim, /set search_path = pg_catalog, corvis_control/);
+});
+
+test("operator retry re-emits the retained stage payload instead of a bare job id (migration 046)", async () => {
+  const sql = (await readFile("db/postgres/migrations/046_processing_stage_recovery_hardening.sql", "utf8")).toLowerCase();
+  const start = sql.indexOf("create or replace function corvis_control.retry_processing_job(");
+  assert.ok(start >= 0, "046 must redefine retry_processing_job");
+  const retry = sql.slice(start, sql.indexOf("\n$$;", start));
+  assert.match(retry, /state in \('retryable','failed','dead_letter'\) and attempt < max_attempts/);
+  assert.match(retry, /from corvis_control\.event_inbox i[\s\S]*i\.payload \? 'predecessorresult'/);
+  assert.match(retry, /'processingjobretryrequested'[\s\S]*coalesce\(source_payload,'\{\}'::jsonb\) - 'nextattemptat'/);
 });

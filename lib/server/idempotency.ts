@@ -28,11 +28,11 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
  *    backward compatible -- every caller that predates idempotency support
  *    keeps working exactly as before.
  *  - When a key is supplied it is namespaced as
- *    `${identity.subject}:${clientKey}` before being stored, matching
- *    lib/server/uploads.ts, and every query also filters on
- *    `identity.tenantId`. Neither a different subject nor a different tenant
- *    can collide with, or read, another caller's record even if they reuse
- *    the same key text.
+ *    `JSON.stringify([subject, workspaceId, clientKey])` before being stored,
+ *    and every query also filters on `identity.tenantId`. Neither a different
+ *    subject, workspace nor tenant can collide with, or read, another
+ *    caller's record even if they reuse the same key text. Keys must be
+ *    strings of at most MAX_IDEMPOTENCY_KEY_LENGTH characters.
  *  - If a record already exists for `(tenant, scope, key)` it is returned
  *    verbatim and `fn` is never invoked (`replayed: true`).
  *  - Otherwise `fn` runs and only a *successful* result is persisted. If
@@ -70,6 +70,16 @@ export interface IdempotentOutcome<T> {
   body: T;
   /** True when this response came from a previously stored attempt rather than a fresh call to `fn`. */
   replayed: boolean;
+}
+
+export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
+
+export class InvalidIdempotencyKeyError extends Error {
+  readonly code = "invalid_idempotency_key";
+  constructor() {
+    super("invalid_idempotency_key");
+    this.name = "InvalidIdempotencyKeyError";
+  }
 }
 
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
@@ -153,8 +163,14 @@ export async function withIdempotency<T>(
     const fresh = await fn();
     return { ...fresh, replayed: false };
   }
+  // Route bodies are untyped JSON: reject non-string keys and keys long
+  // enough to exceed the primary-key btree row limit (a Postgres 500).
+  if (typeof clientKey !== "string" || clientKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) throw new InvalidIdempotencyKeyError();
 
-  const key = `${identity.subject}:${clientKey}`;
+  // JSON-encoded so neither a subject containing ':' can collide with another
+  // subject's keys nor one workspace's stored response replay into another
+  // workspace for the same subject.
+  const key = JSON.stringify([identity.subject, identity.workspaceId, clientKey]);
   const existing = await findRecord(db, identity.tenantId, scope, key);
   if (existing) return toOutcome<T>(existing, true);
 

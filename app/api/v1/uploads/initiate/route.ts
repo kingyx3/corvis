@@ -12,8 +12,9 @@ export async function POST(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "documents:write");
     const body = await request.json() as { fileName?: string; contentType?: string; sizeBytes?: number; lastModified?: number; checksumSha256?: string; idempotencyKey?: string };
-    if (!body.fileName || !body.contentType || !body.sizeBytes) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });
+    if (!body || typeof body !== "object" || !body.fileName || !body.contentType || !body.sizeBytes) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });
     const clientKey = body.idempotencyKey || request.headers.get("idempotency-key") || randomUUID();
+    if (typeof clientKey !== "string" || clientKey.length > 256) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });
     const session = await uploads().initiate(identity, {
       fileName: body.fileName,
       contentType: body.contentType,

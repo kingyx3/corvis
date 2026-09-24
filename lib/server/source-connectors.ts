@@ -75,6 +75,18 @@ export class ConnectorGovernanceError extends Error {
 }
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Mirrors the connection_label check constraint in migration 018 so an over-long label is a 400, not a 500. */
+const MAX_CONNECTION_LABEL_LENGTH = 200;
+
+/**
+ * A customer-supplied connection id that is not a UUID can never name a
+ * connection; refusing it as not-found keeps it from reaching a `::uuid`
+ * cast (a Postgres error, surfaced as a 500).
+ */
+export function assertSourceConnectionId(sourceConnectionId: string): void {
+  if (!UUID_PATTERN.test(sourceConnectionId)) throw new ConnectorGovernanceError("connection_not_found");
+}
 const RETRYABLE_ERROR_CLASSES: readonly ConnectorErrorClass[] = ["network", "download", "rate_limit"];
 const FAIL_CLOSED_ERROR_CLASSES: readonly ConnectorErrorClass[] = ["auth", "reauthorization", "permission", "provider_change", "validation"];
 
@@ -234,18 +246,27 @@ export async function createSourceConnection(
 ): Promise<SourceConnection> {
   if (!PROVIDER_KEY_PATTERN.test(input.providerKey)) throw new ConnectorGovernanceError("invalid_provider_key");
   if (!input.connectionLabel.trim()) throw new ConnectorGovernanceError("connection_label_required");
+  if (input.connectionLabel.length > MAX_CONNECTION_LABEL_LENGTH) throw new ConnectorGovernanceError("connection_label_too_long");
   if (input.sourceScope.length === 0) throw new ConnectorGovernanceError("source_scope_confirmation_required");
 
   const db = dependencies.db ?? controlDb();
   const secretReference = await dependencies.secrets.write(identity.tenantId, input.providerKey, input.secret);
 
-  const rows = await db.query(`insert into corvis_source.source_connection
+  let rows: PostgresRow[];
+  try {
+    rows = await db.query(`insert into corvis_source.source_connection
       (tenant_id, workspace_id, provider_key, connection_label, credential_type, source_scope,
        scope_confirmed_by, scope_confirmed_at, secret_reference, connector_version, created_by)
     values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,now(),$8,$9,$7)
     returning *`,
-  [identity.tenantId, input.workspaceId, input.providerKey, input.connectionLabel, input.credentialType,
-    JSON.stringify(input.sourceScope), identity.subject, secretReference, input.connectorVersion]);
+    [identity.tenantId, input.workspaceId, input.providerKey, input.connectionLabel, input.credentialType,
+      JSON.stringify(input.sourceScope), identity.subject, secretReference, input.connectorVersion]);
+  } catch (error) {
+    // No connection row references the credential just written, so it must
+    // not outlive this failed request as an orphaned live secret.
+    await dependencies.secrets.revoke(secretReference).catch(() => undefined);
+    throw error;
+  }
   return rowToConnection(rows[0]!);
 }
 
@@ -257,6 +278,25 @@ export async function listSourceConnections(identity: RequestIdentity, db: Postg
       'redacted' as secret_reference
     from corvis_source.source_connection where tenant_id=$1 order by created_at desc`, [identity.tenantId]);
   return rows.map(rowToConnection);
+}
+
+/**
+ * Customer-facing single-connection read: one tenant-scoped row (instead of
+ * loading the tenant's whole listing to find one id), with the secret
+ * reference redacted exactly as in the listing.
+ */
+export async function getSourceConnection(identity: RequestIdentity, sourceConnectionId: string, db: PostgresSqlApi = controlDb()): Promise<SourceConnection> {
+  assertSourceConnectionId(sourceConnectionId);
+  const rows = await db.query(`select source_connection_id, tenant_id, workspace_id, provider_key, connection_label,
+      credential_type, source_scope, scope_confirmed_by, scope_confirmed_at, connector_version, status,
+      consecutive_failures, last_error_class, last_success_at, last_attempt_at, revoked_at,
+      -- never select secret_reference for a customer-facing read
+      'redacted' as secret_reference
+    from corvis_source.source_connection where tenant_id=$1 and source_connection_id=$2::uuid limit 1`,
+  [identity.tenantId, sourceConnectionId]);
+  const row = rows[0];
+  if (!row) throw new ConnectorGovernanceError("connection_not_found");
+  return rowToConnection(row);
 }
 
 async function loadConnection(db: PostgresSqlApi, tenantId: string, sourceConnectionId: string): Promise<PostgresRow> {
@@ -278,8 +318,13 @@ async function transitionStatus(
   const row = await loadConnection(db, identity.tenantId, sourceConnectionId);
   const current = requiredText(row, "status") as ConnectionStatus;
   if (!allowedFrom.includes(current)) throw new ConnectorGovernanceError(`invalid_transition_from_${current}`);
-  await db.execute(`update corvis_source.source_connection set status=$3, updated_at=now()${extra.revokedAt ? ", revoked_at=now()" : ""}
-    where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId, to]);
+  // Compare-and-set on the status just read, so a concurrent transition (for
+  // example a sync suspending the connection while it is being resumed) is
+  // never silently overwritten by this stale decision.
+  const updated = await db.query(`update corvis_source.source_connection set status=$3, updated_at=now()${extra.revokedAt ? ", revoked_at=now()" : ""}
+    where tenant_id=$1 and source_connection_id=$2::uuid and status=$4 returning status`,
+  [identity.tenantId, sourceConnectionId, to, current]);
+  if (updated.length === 0) throw new ConnectorGovernanceError("invalid_transition_from_concurrent_change");
 }
 
 export async function pauseSourceConnection(identity: RequestIdentity, sourceConnectionId: string, db: PostgresSqlApi = controlDb()): Promise<void> {
@@ -323,10 +368,26 @@ export async function reauthorizeSourceConnection(
   const providerKey = requiredText(row, "provider_key");
   const previousReference = requiredText(row, "secret_reference");
   const secretReference = await dependencies.secrets.write(identity.tenantId, providerKey, secret);
-  await db.execute(`update corvis_source.source_connection set
-      secret_reference=$3, status='active', consecutive_failures=0, last_error_class=null,
-      last_authorized_at=now(), updated_at=now()
-    where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId, secretReference]);
+  // Rotating a credential is not a resume: a paused connection stays paused.
+  // The status/secret predicates make this a compare-and-set, so a revoke (or
+  // a second rotation) landing between the read above and this write is not
+  // overwritten, and the credential just written is destroyed, not orphaned.
+  let updated: PostgresRow[];
+  try {
+    updated = await db.query(`update corvis_source.source_connection set
+        secret_reference=$3, status=case when status='paused' then 'paused' else 'active' end,
+        consecutive_failures=0, last_error_class=null, last_authorized_at=now(), updated_at=now()
+      where tenant_id=$1 and source_connection_id=$2::uuid and status<>'revoked' and secret_reference=$4
+      returning status`, [identity.tenantId, sourceConnectionId, secretReference, previousReference]);
+  } catch (error) {
+    await dependencies.secrets.revoke(secretReference).catch(() => undefined);
+    throw error;
+  }
+  if (updated.length === 0) {
+    await dependencies.secrets.revoke(secretReference).catch(() => undefined);
+    const latest = await loadConnection(db, identity.tenantId, sourceConnectionId);
+    throw new ConnectorGovernanceError(requiredText(latest, "status") === "revoked" ? "connection_revoked" : "invalid_transition_from_concurrent_change");
+  }
   await dependencies.secrets.revoke(previousReference).catch(() => undefined);
 }
 
@@ -343,13 +404,17 @@ export async function testSourceConnection(
   if (!driver) throw new ConnectorGovernanceError("unregistered_provider");
   const credential = await dependencies.secrets.read(connection.secretReference);
   const result = await driver.testConnection(credential, connection.sourceScope);
+  // Both writes are conditioned on the status observed before the (possibly
+  // slow) driver call, so a revoke or pause issued meanwhile is never
+  // overwritten by this now-stale test outcome.
   if (result.ok && connection.status === "pending_authorization") {
     await db.execute(`update corvis_source.source_connection set status='active', last_authorized_at=now(), updated_at=now()
-      where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId]);
+      where tenant_id=$1 and source_connection_id=$2::uuid and status='pending_authorization'`, [identity.tenantId, sourceConnectionId]);
   } else if (!result.ok && result.errorClass) {
     const nextStatus = statusAfterError(connection.status, result.errorClass, connection.consecutiveFailures);
     await db.execute(`update corvis_source.source_connection set status=$3, last_error_class=$4, updated_at=now()
-      where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId, nextStatus, result.errorClass]);
+      where tenant_id=$1 and source_connection_id=$2::uuid and status=$5`,
+    [identity.tenantId, sourceConnectionId, nextStatus, result.errorClass, connection.status]);
   }
   return result;
 }

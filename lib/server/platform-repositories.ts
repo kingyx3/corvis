@@ -8,46 +8,92 @@ import {
   type ReviewDecision,
   type SnapshotPublication,
 } from "../../core/enterprise.ts";
-import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "./pagination.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Customer-supplied ids reach `::uuid` casts below. A malformed id can never
+ * name a row, so it is treated as not-found instead of letting Postgres raise
+ * an invalid-input error (surfaced as a 500).
+ */
+function isUuid(value: unknown): value is string { return typeof value === "string" && UUID_PATTERN.test(value); }
+
+/** Zero-pad width of the version half of the `/snapshots` cursor key (see snapshotPaginationKey). */
+export const SNAPSHOT_VERSION_KEY_WIDTH = 10;
 
 export class PostgresWorkspaceRepository {
   private readonly db: PostgresSqlApi;
   constructor(db: PostgresSqlApi) { this.db = db; }
 
-  listDocuments(identity: RequestIdentity): Promise<PostgresRow[]> {
+  /** Without `page`, the legacy capped list (most recent first); with it, one keyset page by document id. */
+  listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<PostgresRow[]> {
     const documentIds = identity.entitlements.documentIds ?? [];
     if (documentIds.length === 0) return Promise.resolve([]);
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonIds(documentIds)];
+    const keyset = page ? sqlKeyset("document_id::text", page, parameters) : { where: "", tail: "order by created_at desc limit 1000" };
     return this.db.query(`select * from corvis_serving.documents
       where tenant_id=$1
-        and document_id::text in (select jsonb_array_elements_text($2::jsonb))
-      order by created_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
+        and document_id::text in (select jsonb_array_elements_text($2::jsonb))${keyset.where}
+      ${keyset.tail}`, parameters);
   }
 
-  listObservations(identity: RequestIdentity): Promise<PostgresRow[]> {
+  /** Without `page`, the legacy capped list (most recently updated first); with it, one keyset page by observation id. */
+  listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<PostgresRow[]> {
     const fundIds = identity.entitlements.fundIds ?? [];
     const documentIds = identity.entitlements.documentIds ?? [];
     if (fundIds.length === 0 || documentIds.length === 0) return Promise.resolve([]);
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)];
+    const keyset = page ? sqlKeyset("o.observation_id::text", page, parameters) : { where: "", tail: "order by o.updated_at desc limit 5000" };
     return this.db.query(`select o.*
       from corvis_serving.observations o
       join corvis_source.source_reference r
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
       where o.tenant_id=$1
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
-      order by o.updated_at desc limit 5000`, [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
+        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))${keyset.where}
+      ${keyset.tail}`, parameters);
   }
 
-  listSnapshots(identity: RequestIdentity): Promise<PostgresRow[]> {
+  /**
+   * Without `page`, the legacy capped list (newest first); with it, one keyset
+   * page in snapshotPaginationKey order: (snapshot id, zero-padded version).
+   */
+  listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<PostgresRow[]> {
     const fundIds = identity.entitlements.fundIds ?? [];
     if (fundIds.length === 0) return Promise.resolve([]);
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonIds(fundIds)];
+    let where = "";
+    let tail = "order by s.created_at desc limit 1000";
+    if (page) {
+      const id = `s.snapshot_id::text collate "C"`;
+      const version = `lpad(s.version::text, ${SNAPSHOT_VERSION_KEY_WIDTH}, '0') collate "C"`;
+      if (page.afterKey !== undefined) {
+        // The key is `${id}\u0000${version}` (neither half holds NUL). Against a cursor key with
+        // no NUL, `key > cursor` holds exactly when id >= cursor; otherwise compare the
+        // (id, version) tuple, the version half truncated at any further NUL (see sqlKeyBound).
+        const nul = page.afterKey.indexOf("\u0000");
+        if (nul === -1) {
+          parameters.push(page.afterKey);
+          where = `\n        and ${id} >= $${parameters.length}`;
+        } else {
+          parameters.push(page.afterKey.slice(0, nul), sqlKeyBound(page.afterKey.slice(nul + 1)));
+          const idParameter = `$${parameters.length - 1}`;
+          const versionParameter = `$${parameters.length}`;
+          where = `\n        and (${id} > ${idParameter} or (${id} = ${idParameter} and ${version} > ${versionParameter}))`;
+        }
+      }
+      parameters.push(keysetFetchLimit(page));
+      tail = `order by ${id}, ${version} limit $${parameters.length}`;
+    }
     return this.db.query(`select s.*,
         (select count(*) from corvis_facts.holding h where h.tenant_id=s.tenant_id and h.fund_id=s.fund_id) as holding_count
       from corvis_serving.fund_period_snapshots s
       where s.tenant_id=$1
-        and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
-      order by s.created_at desc limit 1000`, [identity.tenantId, jsonIds(fundIds)]);
+        and s.fund_id in (select jsonb_array_elements_text($2::jsonb))${where}
+      ${tail}`, parameters);
   }
 }
 
@@ -58,7 +104,7 @@ export class PostgresReviewPublicationRepository {
   async observation(identity: RequestIdentity, observationId: string): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
     const documentIds = identity.entitlements.documentIds ?? [];
-    if (fundIds.length === 0 || documentIds.length === 0) return undefined;
+    if (fundIds.length === 0 || documentIds.length === 0 || !isUuid(observationId)) return undefined;
     const rows = await this.db.query(`select o.observation_id,o.version,o.review_state,o.value_number,o.value_string,o.risk_tier
       from corvis_facts.observation o
       join corvis_source.source_reference r
@@ -79,7 +125,7 @@ export class PostgresReviewPublicationRepository {
 
   async reconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<PostgresRow[]> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return [];
+    if (fundIds.length === 0 || !isUuid(snapshotId)) return [];
     const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
       ? identity.entitlements.sourceDocumentIds ?? []
       : [];
@@ -110,12 +156,12 @@ export class PostgresReviewPublicationRepository {
     command: ReconciliationResolutionCommand,
   ): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return undefined;
+    if (fundIds.length === 0 || !isUuid(command.exceptionId)) return undefined;
     const selectingSource = command.action === "select_source";
     const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
       ? identity.entitlements.sourceDocumentIds ?? []
       : [];
-    if (selectingSource && (!command.selectedSourceReferenceId || sourceDocumentIds.length === 0)) return undefined;
+    if (selectingSource && (!isUuid(command.selectedSourceReferenceId) || sourceDocumentIds.length === 0)) return undefined;
     const rows = await this.db.query(`select e.*
       from corvis_consolidated.reconciliation_exception e
       where e.tenant_id=$1 and e.exception_id=$2::uuid and e.version=$3 and e.status='open'
@@ -149,10 +195,18 @@ export class PostgresReviewPublicationRepository {
 
   async snapshot(identity: RequestIdentity, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return undefined;
-    const rows = await this.db.query(`select * from corvis_serving.fund_period_snapshots
-      where tenant_id=$1 and snapshot_id=$2::uuid and version=$3
-        and fund_id in (select jsonb_array_elements_text($4::jsonb))
+    if (fundIds.length === 0 || !isUuid(snapshotId)) return undefined;
+    // Only the current (highest) version of a snapshot may transition. A stale
+    // expectedVersion would otherwise pass this preflight and then collide on
+    // the (tenant_id, snapshot_id, version) primary key inside
+    // append_snapshot_transition, surfacing a lost update as a 500.
+    const rows = await this.db.query(`select * from corvis_serving.fund_period_snapshots s
+      where s.tenant_id=$1 and s.snapshot_id=$2::uuid and s.version=$3
+        and s.fund_id in (select jsonb_array_elements_text($4::jsonb))
+        and not exists (
+          select 1 from corvis_serving.fund_period_snapshots n
+          where n.tenant_id=s.tenant_id and n.snapshot_id=s.snapshot_id and n.version>s.version
+        )
       limit 1`, [identity.tenantId,snapshotId,version,jsonIds(fundIds)]);
     return rows[0];
   }
@@ -185,9 +239,18 @@ export class PostgresReviewPublicationRepository {
   }
 
   async appendSnapshotTransition(identity: RequestIdentity, command: SnapshotPublication, eventId: string): Promise<boolean> {
-    const rows = await this.db.query(`select corvis_consolidated.append_snapshot_transition(
-      $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7) as new_version`,
-    [identity.tenantId,command.snapshotId,command.expectedVersion,eventId,command.action,identity.subject,command.reason ?? null]);
+    let rows: PostgresRow[];
+    try {
+      rows = await this.db.query(`select corvis_consolidated.append_snapshot_transition(
+        $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7) as new_version`,
+      [identity.tenantId,command.snapshotId,command.expectedVersion,eventId,command.action,identity.subject,command.reason ?? null]);
+    } catch (error) {
+      // Two concurrent transitions of the same version both pass the row lock
+      // in turn; the loser's insert of expectedVersion+1 hits the primary key.
+      // That is an optimistic-concurrency conflict, not a server fault.
+      if ((error as { code?: unknown } | null)?.code === "23505") return false;
+      throw error;
+    }
     return Number(rows[0]?.new_version ?? 0) === command.expectedVersion + 1;
   }
 }
@@ -203,9 +266,12 @@ export class PostgresOperationsRepository {
     [event.tenantId,event.id,event.occurredAt,event.workspaceId,event.actorSubject,event.action,event.targetType,event.targetId ?? null,event.outcome,event.correlationId,JSON.stringify({ sessionId: event.sessionId, ...(event.metadata ?? {}) })]);
   }
 
-  async jobs(identity: RequestIdentity): Promise<ProcessingJob[]> {
+  /** Without `page`, the legacy capped list (most recently updated first); with it, one keyset page by job id. */
+  async jobs(identity: RequestIdentity, page?: KeysetPage): Promise<ProcessingJob[]> {
     const documentIds = identity.entitlements.documentIds ?? [];
     if (documentIds.length === 0) return [];
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonIds(documentIds)];
+    const keyset = page ? sqlKeyset("j.job_id::text", page, parameters) : { where: "", tail: "order by j.updated_at desc limit 1000" };
     const rows = await this.db.query(`select j.*,
         retry.next_attempt_at,
         recovery.created_at as last_recovery_at,
@@ -229,8 +295,8 @@ export class PostgresOperationsRepository {
         limit 1
       ) recovery on true
       where j.tenant_id=$1
-        and j.document_id::text in (select jsonb_array_elements_text($2::jsonb))
-      order by j.updated_at desc limit 1000`, [identity.tenantId, jsonIds(documentIds)]);
+        and j.document_id::text in (select jsonb_array_elements_text($2::jsonb))${keyset.where}
+      ${keyset.tail}`, parameters);
     const admin = hasPermission(identity,"admin:manage");
     return rows.map((row) => ({
       id: String(row.job_id ?? ""), documentId: String(row.document_id ?? ""), tenantId: identity.tenantId,

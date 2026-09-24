@@ -3,6 +3,7 @@ import test from "node:test";
 import type { RequestIdentity, ResearchProgressPhase } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import {
+  parseResearchQuestion,
   PermissionedResearchService,
   ResearchCancelledError,
   ResearchProviderError,
@@ -150,5 +151,53 @@ test("AI provider failures surface as structured provider errors", { concurrency
     globalThis.fetch = originalFetch;
     restoreEnv("CORVIS_AI_ENDPOINT", originalAi);
     restoreEnv("CORVIS_RESEARCH_TIMEOUT_MS", originalTimeout);
+  }
+});
+
+test("an unreachable AI provider surfaces as a structured provider error, not an internal failure", { concurrency: false }, async () => {
+  const originalAi = process.env.CORVIS_AI_ENDPOINT;
+  const originalTimeout = process.env.CORVIS_RESEARCH_TIMEOUT_MS;
+  const originalFetch = globalThis.fetch;
+  process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
+  process.env.CORVIS_RESEARCH_TIMEOUT_MS = "30000";
+  globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new PermissionedResearchService(new FakeDb()).answer(identity, "What was revenue?"),
+      (error: unknown) => error instanceof ResearchProviderError && error.provider === "ai",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv("CORVIS_AI_ENDPOINT", originalAi);
+    restoreEnv("CORVIS_RESEARCH_TIMEOUT_MS", originalTimeout);
+  }
+});
+
+test("a non-JSON AI provider body surfaces as a structured provider error, not an internal failure", { concurrency: false }, async () => {
+  const originalAi = process.env.CORVIS_AI_ENDPOINT;
+  const originalTimeout = process.env.CORVIS_RESEARCH_TIMEOUT_MS;
+  const originalFetch = globalThis.fetch;
+  process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
+  process.env.CORVIS_RESEARCH_TIMEOUT_MS = "30000";
+  globalThis.fetch = (async () => new Response("<html>gateway</html>", { status: 200 })) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      new PermissionedResearchService(new FakeDb()).answer(identity, "What was revenue?"),
+      (error: unknown) => error instanceof ResearchProviderError && error.provider === "ai" && error.status === 200,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv("CORVIS_AI_ENDPOINT", originalAi);
+    restoreEnv("CORVIS_RESEARCH_TIMEOUT_MS", originalTimeout);
+  }
+});
+
+test("parseResearchQuestion accepts only a non-empty string question within the length limit", () => {
+  assert.equal(parseResearchQuestion({ question: "  What was revenue?  " }), "What was revenue?");
+  assert.equal(parseResearchQuestion({ question: "x".repeat(4000) }), "x".repeat(4000));
+  for (const body of [null, undefined, "What?", [], {}, { question: 42 }, { question: ["a"] }, { question: { text: "a" } }, { question: "   " }, { question: "x".repeat(4001) }]) {
+    assert.equal(parseResearchQuestion(body), null, `rejects ${JSON.stringify(body)}`);
   }
 });

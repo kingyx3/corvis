@@ -16,6 +16,11 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export const EXECUTABLE_DELETION_STATES: readonly string[] = ["requested", "approved", "retryable", "blocked"];
 
+/** Upper bound on a single lifecycle-adapter call so a hung adapter cannot pin the request open. */
+export const DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS = 30_000;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class DeletionExecutionError extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -177,8 +182,10 @@ export async function executeDeletionRequest(
 ): Promise<DeletionExecutionResult> {
   const db = dependencies.db ?? controlDb();
   const fetchImpl = dependencies.fetchImpl ?? fetch;
+  // A malformed id can never name a request; reject it before the ::uuid cast turns it into a 500.
+  if (!UUID.test(requestId)) throw new DeletionExecutionError("deletion_request_not_found");
 
-  const rows = await db.query(`select scope, state, execution_attempts, completion_evidence, evidence_hash
+  const rows = await db.query(`select scope, state, execution_attempts, completion_evidence, evidence_hash, requested_by
     from corvis_control.deletion_request
     where tenant_id=$1 and deletion_request_id=$2::uuid limit 1`, [identity.tenantId, requestId]);
   const request = rows[0];
@@ -201,19 +208,27 @@ export async function executeDeletionRequest(
     };
   }
   if (!EXECUTABLE_DELETION_STATES.includes(state)) throw new DeletionExecutionError("deletion_request_not_executable");
+  // Separation of duties: executing records the executor as approver, so the
+  // requester can never approve and run their own irreversible deletion.
+  if (text(request, "requested_by") === identity.subject) throw new DeletionExecutionError("deletion_requires_independent_approver");
 
   const scope = parseDeletionScope(jsonValue(request.scope));
-  const attempt = num(request, "execution_attempts") + 1;
+  const previousAttempts = num(request, "execution_attempts");
+  const attempt = previousAttempts + 1;
 
-  await db.execute(`update corvis_control.deletion_request set
+  // Compare-and-swap claim: only one concurrent caller can move the request
+  // out of the state it was read in, so the destructive adapter call runs once.
+  const claimed = await db.query(`update corvis_control.deletion_request set
       state='executing',
       approved_by=coalesce(approved_by,$1),
       approved_at=coalesce(approved_at,now()),
       execution_attempts=$4,
       blocked_reason=null,
       last_error=null
-    where tenant_id=$2 and deletion_request_id=$3::uuid`,
-  [identity.subject, identity.tenantId, requestId, attempt]);
+    where tenant_id=$2 and deletion_request_id=$3::uuid and state=$5 and execution_attempts=$6
+    returning deletion_request_id`,
+  [identity.subject, identity.tenantId, requestId, attempt, state, previousAttempts]);
+  if (claimed.length === 0) throw new DeletionExecutionError("deletion_request_not_executable");
 
   const coveredDataClasses = new Set(await retentionCoverage(db, identity.tenantId, scope.dataClasses));
   const uncovered = scope.dataClasses.filter((dataClass) => !coveredDataClasses.has(dataClass));
@@ -240,6 +255,7 @@ export async function executeDeletionRequest(
       headers: { "content-type": "application/json", "idempotency-key": `${identity.tenantId}:${requestId}`, ...bearer(config.dataLifecycleToken) },
       body: JSON.stringify({ tenantId: identity.tenantId, requestId, attempt, scope, idempotencyKey: `${identity.tenantId}:${requestId}` }),
       cache: "no-store",
+      signal: AbortSignal.timeout(DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`Lifecycle adapter rejected deletion (${response.status})`);
     const payload = await response.json() as { evidence?: unknown };

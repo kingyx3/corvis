@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
+import { decodeCursor, InvalidCursorError, paginate, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import {
   createWebhookSubscription, listWebhookDeliveries, listWebhookSubscriptions, pauseWebhookSubscription,
   resumeWebhookSubscription, revokeWebhookSubscription, rotateWebhookSigningKey, sweepExpiredWebhookSigningKeys,
   webhookSubscriptionTransition,
   WebhookSubscriptionError,
+  type WebhookDeliveryDiagnostic,
 } from "./webhook-subscriptions.ts";
 
 const TENANT_A = "00000000-0000-0000-0000-0000000000a1";
@@ -30,6 +32,7 @@ class FakeWebhookDb implements PostgresSqlApi {
   subscriptions: SubscriptionRow[] = [];
   signingKeys: SigningKeyRow[] = [];
   deliveries: DeliveryRow[] = [];
+  deliveryQueries = 0;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     if (sql.includes("select corvis_control.create_webhook_subscription(")) {
@@ -67,10 +70,13 @@ class FakeWebhookDb implements PostgresSqlApi {
       return [{ ...row }];
     }
     if (sql.includes("from corvis_control.webhook_delivery") && sql.includes("order by delivery_id")) {
-      const [tenantId, webhookId] = parameters as string[];
+      const [tenantId, webhookId, limit, afterDeliveryId] = parameters as [string, string, number, string | null];
+      this.deliveryQueries += 1;
       return this.deliveries
         .filter((row) => row.tenant_id === tenantId && row.webhook_id === webhookId)
+        .filter((row) => afterDeliveryId == null || row.delivery_id > afterDeliveryId)
         .sort((a, b) => (a.delivery_id < b.delivery_id ? -1 : 1))
+        .slice(0, limit)
         .map((row) => ({ ...row }));
     }
     if (sql.includes("update corvis_control.webhook_signing_key") && sql.includes("status='revoked'")) {
@@ -185,6 +191,35 @@ test("listWebhookDeliveries returns diagnostics scoped to the tenant and subscri
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0]?.deliveryId, "d1");
   assert.equal(diagnostics[0]?.lastError, "boom");
+});
+
+test("listWebhookDeliveries pages in SQL so every delivery is reachable, even past the per-fetch cap", async () => {
+  const db = new FakeWebhookDb();
+  const webhookId = "00000000-0000-4000-8000-0000000000c1";
+  const total = 2105;
+  for (let index = 0; index < total; index++) {
+    const deliveryId = `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+    db.deliveries.push({ tenant_id: TENANT_A, webhook_id: webhookId, delivery_id: deliveryId, event_id: "e1", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: "2026-01-01T00:00:00Z", completed_at: null });
+  }
+  // Mirrors the deliveries route: fetch limit+1 after the cursor key, then paginate().
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const rows = await listWebhookDeliveries(identity(TENANT_A), webhookId, db, { afterDeliveryId: cursor ? decodeCursor(cursor) : null, limit: 201 });
+    assert.ok(rows.length <= 201, "one page fetch never loads more than a page plus one row");
+    const page: Page<WebhookDeliveryDiagnostic> = paginate(rows, (delivery) => delivery.deliveryId, 200, cursor);
+    seen.push(...page.items.map((delivery) => delivery.deliveryId));
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(seen.length, total);
+  assert.equal(new Set(seen).size, total);
+
+  const queriesBefore = db.deliveryQueries;
+  await assert.rejects(
+    () => listWebhookDeliveries(identity(TENANT_A), webhookId, db, { afterDeliveryId: "not-a-uuid'); drop table x;--" }),
+    InvalidCursorError,
+  );
+  assert.equal(db.deliveryQueries, queriesBefore, "a tampered cursor key never reaches the ::uuid cast");
 });
 
 async function rejectsWithCode(promise: () => Promise<unknown>, code: string): Promise<void> {

@@ -19,15 +19,29 @@ import {
   type SnapshotPublication,
 } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { PostgresOperationsRepository, PostgresReviewPublicationRepository, PostgresWorkspaceRepository } from "./platform-repositories.ts";
+import type { KeysetPage } from "./pagination.ts";
+import {
+  PostgresOperationsRepository,
+  PostgresReviewPublicationRepository,
+  PostgresWorkspaceRepository,
+  SNAPSHOT_VERSION_KEY_WIDTH,
+} from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { evaluatePublicationGate } from "./publication-policy.ts";
 import { researchService, type ResearchExecutionOptions } from "./research.ts";
 
+/**
+ * The list methods take an optional keyset `page`. Without it they return the
+ * legacy (capped) list. With it, an implementation may return only the rows
+ * whose pagination key sorts strictly after `page.afterKey`, at least
+ * `page.limit + 1` of them when that many exist; it may also ignore `page`
+ * and return everything (the demo platform does). Callers always run
+ * `paginate()` over the result, so either way the page is correct.
+ */
 export interface PlatformPort {
-  listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]>;
-  listObservations(identity: RequestIdentity): Promise<ObservationRecord[]>;
-  listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]>;
+  listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<DocumentRecord[]>;
+  listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]>;
+  listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]>;
   listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
@@ -36,7 +50,7 @@ export interface PlatformPort {
   audit(event: AuditEvent): Promise<void>;
   readiness(): Promise<Record<string, "configured" | "missing" | "demo">>;
   export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest>;
-  jobs(identity: RequestIdentity): Promise<ProcessingJob[]>;
+  jobs(identity: RequestIdentity, page?: KeysetPage): Promise<ProcessingJob[]>;
 }
 
 function text(row: PostgresRow, key: string, fallback = ""): string { const value = row[key]; return value == null ? fallback : String(value); }
@@ -82,10 +96,36 @@ function objectArray(value: unknown): Array<Record<string, unknown>> {
   }
   return [];
 }
+/**
+ * Snapshot states a transition may not start from. Publication requires a
+ * draft (mirroring assert_snapshot_publishable, so the refusal is a 409 instead
+ * of a raised database exception); withdraw and supersede only apply to a
+ * published snapshot, so a draft cannot be "withdrawn" and a withdrawn or
+ * superseded version cannot be transitioned again.
+ */
+const DISALLOWED_SNAPSHOT_SOURCE_STATUSES: Record<SnapshotPublication["action"], readonly string[]> = {
+  publish: ["blocked", "published", "withdrawn", "superseded"],
+  withdraw: ["draft", "blocked", "withdrawn", "superseded"],
+  supersede: ["draft", "blocked", "withdrawn", "superseded"],
+};
+
 function allowedActions(type: ReconciliationExceptionType): ReconciliationResolutionAction[] {
   if (type === "source_authority") return ["select_source"];
   if (type === "materiality") return ["mark_immaterial"];
   return ["accept_reconciliation"];
+}
+
+/**
+ * Cursor key for `/snapshots` pagination. Every publish/withdraw/supersede transition appends a
+ * new row under the same snapshot id (the primary key is tenant + snapshot id + version), so the
+ * id alone is not unique: a page boundary between two versions of one snapshot would skip the
+ * remaining versions. The zero-padded version keeps the string order numeric. A snapshot without
+ * an id (demo composition) falls back to fund/period/version, which is stable within one listing.
+ * PostgresWorkspaceRepository.listSnapshots keyset-pages in SQL in exactly this order.
+ */
+export function snapshotPaginationKey(snapshot: FundSnapshot): string {
+  const version = String(snapshot.version ?? 0).padStart(SNAPSHOT_VERSION_KEY_WIDTH, "0");
+  return snapshot.id ? `${snapshot.id}\u0000${version}` : `${snapshot.fund}\u0000${snapshot.period}\u0000${version}`;
 }
 
 class DemoPlatform implements PlatformPort {
@@ -140,8 +180,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     this.operations = new PostgresOperationsRepository(this.db);
   }
 
-  async listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]> {
-    const rows = await this.workspace.listDocuments(identity);
+  async listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<DocumentRecord[]> {
+    const rows = await this.workspace.listDocuments(identity, page);
     return rows.map((row) => ({
       id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
       type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
@@ -149,8 +189,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     }));
   }
 
-  async listObservations(identity: RequestIdentity): Promise<ObservationRecord[]> {
-    const rows = await this.workspace.listObservations(identity);
+  async listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]> {
+    const rows = await this.workspace.listObservations(identity, page);
     return rows.map((row) => {
       const rawConfidence = num(row,"confidence_score");
       const confidence = rawConfidence > 0 && rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
@@ -165,8 +205,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     });
   }
 
-  async listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]> {
-    const rows = await this.workspace.listSnapshots(identity);
+  async listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]> {
+    const rows = await this.workspace.listSnapshots(identity, page);
     return rows.map((row) => ({
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
@@ -211,7 +251,9 @@ export class PostgresProductionPlatform implements PlatformPort {
 
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     const current = await this.reviewPublication.observation(identity, decision.observationId);
-    if (!current) throw new Error("Observation not found");
+    // Unknown, out-of-entitlement and malformed ids all answer the same way,
+    // like the reconciliation and snapshot paths, instead of a generic 500.
+    if (!current) throw new ConflictError("observation_not_found_or_version_conflict");
     if (num(current,"version") !== decision.expectedVersion) throw new ConflictError("observation_version_conflict");
     if (decision.decision === "correct" && !decision.correctedValue) throw new Error("Corrected value is required");
     const reviewEventId = randomUUID();
@@ -242,6 +284,10 @@ export class PostgresProductionPlatform implements PlatformPort {
   async publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }> {
     const snapshot = await this.reviewPublication.snapshot(identity, command.snapshotId, command.expectedVersion);
     if (!snapshot) throw new ConflictError("snapshot_not_found_or_version_conflict");
+    const currentStatus = text(snapshot,"status").toLowerCase();
+    if (currentStatus && DISALLOWED_SNAPSHOT_SOURCE_STATUSES[command.action]?.includes(currentStatus)) {
+      throw new ConflictError("snapshot_transition_not_allowed");
+    }
     if (command.action === "publish") {
       const fundId = text(snapshot,"fund_id");
       const counts = await this.reviewPublication.publicationCounts(identity.tenantId, fundId);
@@ -256,7 +302,20 @@ export class PostgresProductionPlatform implements PlatformPort {
       if (!gate.allowed) throw new PublicationGateError(gate.reasons);
     }
     const publicationEventId = randomUUID();
-    if (!await this.reviewPublication.appendSnapshotTransition(identity, command, publicationEventId)) throw new ConflictError("snapshot_not_found_or_version_conflict");
+    let appended: boolean;
+    try {
+      appended = await this.reviewPublication.appendSnapshotTransition(identity, command, publicationEventId);
+    } catch (error) {
+      // assert_snapshot_publishable re-checks the publication invariants at the
+      // persistence boundary and raises (SQLSTATE P0001) when one fails that the
+      // application preflight did not see, e.g. an active data-correction
+      // incident. That is a blocked publication, not a server fault.
+      if (command.action === "publish" && (error as { code?: unknown } | null)?.code === "P0001") {
+        throw new PublicationGateError(["publication_invariant_failed"]);
+      }
+      throw error;
+    }
+    if (!appended) throw new ConflictError("snapshot_not_found_or_version_conflict");
     return { accepted: true, publicationEventId };
   }
 
@@ -300,7 +359,7 @@ export class PostgresProductionPlatform implements PlatformPort {
     return manifest;
   }
 
-  jobs(identity: RequestIdentity): Promise<ProcessingJob[]> { return this.operations.jobs(identity); }
+  jobs(identity: RequestIdentity, page?: KeysetPage): Promise<ProcessingJob[]> { return this.operations.jobs(identity, page); }
 }
 
 export class ConflictError extends Error {

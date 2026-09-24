@@ -1,9 +1,25 @@
-import { assertPermission } from "@/core/enterprise";
+import { randomUUID } from "crypto";
+import { assertPermission, type RequestIdentity } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { dataCorrectionRepository } from "@/lib/server/data-correction";
+import { DataCorrectionRequestError, dataCorrectionRepository } from "@/lib/server/data-correction";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { platform } from "@/lib/server/platform";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function correctionError(error: unknown, id: string): Response {
+  if (error instanceof DataCorrectionRequestError) return json({ error: error.code, correlationId: id }, { status: error.status });
+  return apiError(error, id);
+}
+
+function audit(identity: RequestIdentity, id: string, action: string, incidentId: string, metadata: Record<string, string | number | boolean | null> = {}) {
+  return platform().audit({
+    id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+    actorSubject: identity.subject, sessionId: identity.sessionId, action, targetType: "data_correction_incident",
+    targetId: incidentId, outcome: "success", correlationId: id, metadata,
+  });
+}
 
 export async function GET(request: Request) {
   const id = correlationId(request);
@@ -11,7 +27,7 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     return json({ data: await dataCorrectionRepository().list(identity), correlationId: id });
-  } catch (error) { return apiError(error, id); }
+  } catch (error) { return correctionError(error, id); }
 }
 
 export async function POST(request: Request) {
@@ -19,7 +35,8 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as Record<string, unknown>;
+    const body = await readJsonObject(request) as Record<string, unknown> | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const action = String(body.action ?? "open");
     const repository = dataCorrectionRepository();
 
@@ -32,12 +49,17 @@ export async function POST(request: Request) {
         documentId: typeof body.documentId === "string" ? body.documentId : undefined,
         rootCause: String(body.rootCause ?? ""), correctionIntent: String(body.correctionIntent ?? ""),
       });
+      await audit(identity, id, "data_correction.open", data.incidentId, { state: data.state });
       return json({ data, correlationId: id }, { status: 201 });
     }
 
     const incidentId = String(body.incidentId ?? "");
     if (!UUID.test(incidentId)) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-    if (action === "replay") return json({ data: await repository.replay(identity, incidentId), correlationId: id }, { status: 202 });
+    if (action === "replay") {
+      const data = await repository.replay(identity, incidentId);
+      await audit(identity, id, "data_correction.replay", incidentId, { jobId: data.jobId });
+      return json({ data, correlationId: id }, { status: 202 });
+    }
     if (action === "resolve") {
       const replacementSnapshotId = String(body.replacementSnapshotId ?? "");
       const replacementSnapshotVersion = Number(body.replacementSnapshotVersion ?? 0);
@@ -46,8 +68,9 @@ export async function POST(request: Request) {
       }
       const evidence = body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence) ? body.evidence as Record<string, unknown> : {};
       await repository.resolve(identity, { incidentId, replacementSnapshotId, replacementSnapshotVersion, evidence });
+      await audit(identity, id, "data_correction.resolve", incidentId, { replacementSnapshotId, replacementSnapshotVersion });
       return json({ data: { incidentId, state: "resolved" }, correlationId: id });
     }
     return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-  } catch (error) { return apiError(error, id); }
+  } catch (error) { return correctionError(error, id); }
 }

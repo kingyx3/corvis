@@ -493,3 +493,71 @@ test("apiError maps UploadRequestError to its typed status and stable code", asy
   const source = await readFile("lib/server/http.ts", "utf8");
   assert.match(source, /error instanceof UploadRequestError[\s\S]*error: error\.code[\s\S]*status: error\.status/);
 });
+
+test("malformed initiate fields are typed 400s and never authorize a GCS session", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  await rejectsWith(uploads.initiate(actor, initiateInput({ fileName: ["report.pdf"] as unknown as string })), "invalid_upload_request", 400);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ fileName: `${"a".repeat(300)}.pdf` })), "invalid_upload_request", 400);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ checksumSha256: "not-a-digest" })), "invalid_upload_request", 400);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ checksumSha256: 42 as unknown as string })), "invalid_upload_request", 400);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ contentType: ["application/pdf"] as unknown as string })), "unsupported_media_type", 415);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ sizeBytes: 1024.5 })), "invalid_file_size", 400);
+  assert.equal(store.resumable.size, 0);
+});
+
+test("an initiate replay with the same key but a different file is an idempotency conflict", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const first = await uploads.initiate(actor, initiateInput());
+  await rejectsWith(uploads.initiate(actor, initiateInput({ sizeBytes: 8192 })), "upload_idempotency_mismatch", 409);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ fileName: "other.pdf" })), "upload_idempotency_mismatch", 409);
+  await rejectsWith(uploads.initiate(actor, initiateInput({ checksumSha256: "d".repeat(64) })), "upload_idempotency_mismatch", 409);
+  assert.equal((await uploads.initiate(actor, initiateInput())).uploadId, first.uploadId);
+  assert.equal(store.resumable.size, 1);
+});
+
+test("a failed initiate never leaves a replayable session behind its idempotency key", async () => {
+  const store = new FakeObjectStore();
+  let failRegistration = true;
+  const db = new (class extends FakeDb {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (failRegistration && sql.includes("insert into corvis_source.document")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+
+  await rejects(uploads.initiate(actor, initiateInput()), /postgres unavailable/);
+  assert.equal(store.cancelled.length, 1);
+  const orphanKey = [...store.json.keys()].find((key) => key.startsWith("_corvis/upload-sessions/"));
+  assert.ok(orphanKey);
+  assert.equal((JSON.parse(store.json.get(orphanKey) ?? "null") as UploadSession).state, "aborted");
+
+  failRegistration = false;
+  const retried = await uploads.initiate(actor, initiateInput());
+  assert.notEqual(retried.resumableUploadUrl, store.cancelled[0], "retry must not replay a cancelled resumable session");
+  assert.equal(retried.state, "initiated");
+});
+
+test("aborting a completed upload is refused and never relabels the released document", async () => {
+  const { uploads, db, store, actor, session } = await acceptedUpload();
+  const statusesBefore = db.documentStatuses().length;
+  await rejectsWith(uploads.abort(actor, session.uploadId), "upload_not_active", 409);
+  assert.equal(storedSession(store, session).state, "complete");
+  assert.equal(db.documentStatuses().length, statusesBefore);
+  assert.equal(db.documentStatuses().includes("aborted"), false);
+  assert.equal(store.deleted.includes(session.objectKey ?? ""), false);
+});
+
+test("aborting an already-aborted upload is an idempotent no-op", async () => {
+  const { uploads, db, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  await uploads.abort(actor, session.uploadId);
+  const callsAfterFirst = db.calls.length;
+  await uploads.abort(actor, session.uploadId);
+  assert.equal(db.calls.length, callsAfterFirst);
+  assert.equal(store.cancelled.length, 1);
+});

@@ -6,6 +6,7 @@ import { countMetric, durationValueMetric } from "./telemetry.ts";
 import {
   assertWebhookEndpointAllowed,
   defaultWebhookHostLookup,
+  policyPinnedWebhookFetch,
   processingTransportEventTypesSqlList,
   webhookEventTypesSqlList,
   type WebhookHostLookup,
@@ -125,7 +126,9 @@ export type WebhookDeliveryDependencies = {
  * success hide a document from the pipeline or a transport dispatch hide a
  * webhook retry. Transport event types are also excluded outright, and only
  * allow-listed customer-facing types are delivered even if a legacy
- * subscription row names another type.
+ * subscription row names another type. A subscription only receives events
+ * raised after it was created: events with no subscriber stay pending, and a
+ * new subscription must not replay the tenant's whole event history.
  */
 async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: string, eventId: string): Promise<void> {
   await store.execute(`update corvis_control.outbox_event e
@@ -134,6 +137,7 @@ async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: 
       and not exists (
         select 1 from corvis_control.webhook_subscription s
         where s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
+          and s.created_at<=e.created_at
           and not exists (
             select 1 from corvis_control.webhook_delivery d
             where d.tenant_id=s.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e.event_id
@@ -183,8 +187,9 @@ export async function processWebhookDeliveries(
   dependencies: WebhookDeliveryDependencies = {},
 ): Promise<{processed:number;failed:number}> {
   const store=dependencies.store ?? db();
-  const fetchImpl=dependencies.fetchImpl ?? fetch;
   const lookup=dependencies.lookup ?? defaultWebhookHostLookup;
+  // The default transport re-applies the address policy at connect time, closing the DNS-rebinding window.
+  const fetchImpl=dependencies.fetchImpl ?? policyPinnedWebhookFetch(lookup);
   await reclaimStaleWebhookDeliveries(store);
   const events=await store.query(`select e.tenant_id,e.event_id,e.event_type,e.aggregate_id,e.payload,e.created_at,
       s.webhook_id,s.endpoint_url,
@@ -194,6 +199,7 @@ export async function processWebhookDeliveries(
     from corvis_control.outbox_event e
     join corvis_control.webhook_subscription s
       on s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
+      and s.created_at<=e.created_at
     join corvis_control.webhook_signing_key k
       on k.tenant_id=s.tenant_id and k.webhook_id=s.webhook_id and k.status='active'
     where e.webhook_fanout_completed_at is null

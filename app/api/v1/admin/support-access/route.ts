@@ -1,6 +1,7 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { getServerConfig } from "@/lib/server/config";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
 
@@ -25,7 +26,8 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as Record<string, unknown>;
+    const body = await readJsonObject(request) as Record<string, unknown> | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const operation = body.operation === "grant" || body.operation === "revoke" ? body.operation : undefined;
     const reason = text(body.reason, 1000);
     if (!operation || !reason) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
@@ -55,6 +57,11 @@ export async function POST(request: Request) {
       || !roleName || !ROLES.has(roleName) || !purpose || !approvalReference || !validFrom || !validUntil
       || Date.parse(validUntil) <= Date.parse(validFrom)) {
       return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    }
+    // Separation of duties (also enforced in apply_support_access_admin, which
+    // additionally refuses another subject mapped to the approver's user).
+    if (subject === identity.subject) {
+      return json({ error: "support_access_self_approval_denied", correlationId: id }, { status: 403 });
     }
 
     const requestedId = supportGrantId && UUID.test(supportGrantId) ? supportGrantId : null;

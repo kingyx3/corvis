@@ -71,6 +71,7 @@ test("operator recovery maps governed database refusal states without a weaker a
     ["only terminal dead-letter jobs can be operator-recovered", "not_terminal_dead_letter"],
     ["dead-letter recovery requires an exhausted job; use normal retry before exhaustion", "not_exhausted"],
     ["dead-letter recovery requires retained predecessor lineage evidence", "missing_delivery_evidence"],
+    ["processing recovery idempotency key was reused with different command content", "idempotency_conflict"],
   ] as const) {
     const db = new FakePostgres();
     db.nextError = new Error(message);

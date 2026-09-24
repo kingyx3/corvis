@@ -1,6 +1,7 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { sqlKeyset, type KeysetPage } from "./pagination.ts";
+import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type PublicFund = {
   id: string;
@@ -76,7 +77,10 @@ export class PostgresPublicServingResourceRepository {
     this.db = db;
   }
 
-  async funds(identity: RequestIdentity): Promise<PublicFund[]> {
+  /** `page` pushes one keyset page (by fund id) down to SQL; see sqlKeyset. */
+  async funds(identity: RequestIdentity, page?: KeysetPage): Promise<PublicFund[]> {
+    const parameters: PostgresPrimitive[] = [jsonParameter(identity.entitlements.fundIds)];
+    const keyset = page ? sqlKeyset("d.entity_id::text", page, parameters) : { where: "", tail: "order by d.entity_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($1::jsonb)
@@ -84,8 +88,8 @@ export class PostgresPublicServingResourceRepository {
       select d.entity_id,d.canonical_name,d.manager_name,d.names,d.external_identifiers
       from corvis_serving.entity_directory d
       join allowed_fund a on a.fund_id=d.entity_id
-      where d.entity_type='fund'
-      order by d.entity_id`, [jsonParameter(identity.entitlements.fundIds)]);
+      where d.entity_type='fund'${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row, "entity_id"),
       canonicalName: text(row, "canonical_name"),
@@ -95,7 +99,10 @@ export class PostgresPublicServingResourceRepository {
     }));
   }
 
-  async companies(identity: RequestIdentity): Promise<PublicCompany[]> {
+  /** `page` pushes one keyset page (by company id) down to SQL; see sqlKeyset. */
+  async companies(identity: RequestIdentity, page?: KeysetPage): Promise<PublicCompany[]> {
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonParameter(identity.entitlements.fundIds)];
+    const keyset = page ? sqlKeyset("d.entity_id::text", page, parameters) : { where: "", tail: "order by d.entity_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($2::jsonb)
@@ -117,8 +124,8 @@ export class PostgresPublicServingResourceRepository {
       select d.entity_id,d.canonical_name,d.names,d.external_identifiers
       from corvis_serving.entity_directory d
       join visible_company v on v.company_id=d.entity_id
-      where d.entity_type='company'
-      order by d.entity_id`, [identity.tenantId, jsonParameter(identity.entitlements.fundIds)]);
+      where d.entity_type='company'${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row, "entity_id"),
       canonicalName: text(row, "canonical_name"),
@@ -127,13 +134,20 @@ export class PostgresPublicServingResourceRepository {
     }));
   }
 
-  async metricDefinitions(): Promise<PublicMetricDefinition[]> {
+  /**
+   * `page` pushes one keyset page down to SQL. The key is the route's
+   * `${metricCode}:${definitionVersion}` string itself, not the column tuple:
+   * a code containing a character below ":" would otherwise order differently.
+   */
+  async metricDefinitions(page?: KeysetPage): Promise<PublicMetricDefinition[]> {
+    const parameters: PostgresPrimitive[] = [];
+    const keyset = page ? sqlKeyset("(metric_code || ':' || definition_version)", page, parameters) : { where: "", tail: "order by metric_code,definition_version" };
     const rows = await this.db.query(`
       select metric_code,definition_version,display_name,data_type,aggregation_behavior,
              unit_type,fx_behavior,compatibility_rule
       from corvis_semantic.metric_definition
-      where active=true
-      order by metric_code,definition_version`);
+      where active=true${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       metricCode: text(row, "metric_code"),
       definitionVersion: text(row, "definition_version"),
@@ -146,7 +160,10 @@ export class PostgresPublicServingResourceRepository {
     }));
   }
 
-  async consolidatedFacts(identity: RequestIdentity): Promise<PublicConsolidatedFact[]> {
+  /** `page` pushes one keyset page (by consolidated fact id) down to SQL; see sqlKeyset. */
+  async consolidatedFacts(identity: RequestIdentity, page?: KeysetPage): Promise<PublicConsolidatedFact[]> {
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonParameter(identity.entitlements.fundIds)];
+    const keyset = page ? sqlKeyset("f.consolidated_fact_id::text", page, parameters) : { where: "", tail: "order by f.consolidated_fact_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($2::jsonb)
@@ -157,14 +174,18 @@ export class PostgresPublicServingResourceRepository {
       join allowed_fund a on a.fund_id=f.fund_id
       where f.tenant_id=$1::uuid
         and exists (
+          -- Unnested (not "= any(s.fact_ids)") so the planner can hash the
+          -- published fact ids once instead of rescanning every snapshot's
+          -- array per fact, which is quadratic in a fund's history.
           select 1
           from corvis_consolidated.fund_period_snapshot s
+          cross join lateral unnest(s.fact_ids) as published(fact_id)
           where s.tenant_id=f.tenant_id
             and s.fund_id=f.fund_id
             and s.status='published'
-            and f.consolidated_fact_id=any(s.fact_ids)
-        )
-      order by f.consolidated_fact_id`, [identity.tenantId, jsonParameter(identity.entitlements.fundIds)]);
+            and published.fact_id=f.consolidated_fact_id
+        )${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row, "consolidated_fact_id"),
       fundId: text(row, "fund_id"),
@@ -179,7 +200,16 @@ export class PostgresPublicServingResourceRepository {
     }));
   }
 
-  async companyLifecycleEvents(identity: RequestIdentity): Promise<PublicLifecycleEvent[]> {
+  /**
+   * `page` pushes one keyset page (by lifecycle event id) down to SQL. The
+   * predicate is on the group-by key, so it only drops whole events and never
+   * changes an event's aggregated participants.
+   */
+  async companyLifecycleEvents(identity: RequestIdentity, page?: KeysetPage): Promise<PublicLifecycleEvent[]> {
+    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonParameter(identity.entitlements.fundIds)];
+    const keyset = page
+      ? sqlKeyset("e.lifecycle_event_id::text", page, parameters)
+      : { where: "", tail: "order by coalesce(e.effective_date,e.announced_date) desc nulls last,e.lifecycle_event_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($2::jsonb)
@@ -232,11 +262,10 @@ export class PostgresPublicServingResourceRepository {
             or
             (hidden.fund_id is not null and not exists (select 1 from allowed_fund a where a.fund_id=hidden.fund_id))
           )
-      )
+      )${keyset.where}
       group by e.lifecycle_event_id,e.event_type,e.event_status,e.announced_date,e.effective_date,
                e.closed_date,e.event_subtype_raw,e.description
-      order by coalesce(e.effective_date,e.announced_date) desc nulls last,e.lifecycle_event_id`,
-    [identity.tenantId, jsonParameter(identity.entitlements.fundIds)]);
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row, "lifecycle_event_id"),
       eventType: text(row, "event_type"),

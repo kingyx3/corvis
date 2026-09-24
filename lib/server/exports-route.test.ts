@@ -131,6 +131,27 @@ test("POST /exports with no idempotency key at all still creates a fresh export 
   assert.notEqual(secondPayload.data.exportId, firstPayload.data.exportId, "omitting the key must behave exactly as it did before idempotency existed");
 });
 
+test("POST /exports rejects a JSON null, array or scalar body with 400 instead of a 500", async () => {
+  for (const body of ["null", "[]", "[{\"format\":\"csv\"}]", "\"csv\"", "42"]) {
+    const valid = request("csv");
+    const response = await exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body }));
+    assert.equal(response.status, 400, body);
+    const payload = await response.json() as { error: string };
+    assert.equal(payload.error, "invalid_request", body);
+  }
+});
+
+test("POST /admin/webhooks/subscriptions rejects a JSON null or array body with 400 instead of a 500", async () => {
+  const { POST: webhookSubscriptionsPost } = await import("@/app/api/v1/admin/webhooks/subscriptions/route");
+  for (const body of ["null", "[]"]) {
+    const valid = request("csv");
+    const response = await webhookSubscriptionsPost(new Request("https://corvis.test/api/v1/admin/webhooks/subscriptions", { method: "POST", headers: valid.headers, body }));
+    assert.equal(response.status, 400, body);
+    const payload = await response.json() as { error: string };
+    assert.equal(payload.error, "invalid_request", body);
+  }
+});
+
 test("POST /exports never lets one tenant's Idempotency-Key replay satisfy another tenant's request", async () => {
   const key = "shared-key-across-tenants";
   const tenantA = await exportsPost(request("csv", { idempotencyKey: key, tenant: "tenant-idem-x" }));

@@ -5,13 +5,17 @@ import { getSourceReference } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
+// Source reference ids are uuids; anything else can never match and must not reach the
+// `::uuid` cast, which would fail the query and surface as a 500.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request, context: { params: Promise<{ sourceReferenceId: string }> }) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "sources:read");
     const { sourceReferenceId } = await context.params;
-    const row = await getSourceReference(identity, sourceReferenceId);
+    const row = UUID_PATTERN.test(sourceReferenceId) ? await getSourceReference(identity, sourceReferenceId) : undefined;
     if (!row) return json({ error: "source_reference_not_found", correlationId: id }, { status: 404 });
     const documentId = String(row.document_id || "");
     assertDocumentAccess(identity, documentId, true);

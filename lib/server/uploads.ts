@@ -5,6 +5,7 @@ import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
 export type UploadRequestErrorCode =
+  | "invalid_upload_request"
   | "unsupported_file_type"
   | "unsupported_media_type"
   | "invalid_file_size"
@@ -17,6 +18,7 @@ export type UploadRequestErrorCode =
   | "invalid_file_content";
 
 const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
+  invalid_upload_request: 400,
   unsupported_file_type: 415,
   unsupported_media_type: 415,
   invalid_file_size: 400,
@@ -104,6 +106,8 @@ export const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 /** Quarantined bytes without a clean disposition are purged after this age. */
 export const QUARANTINE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SWEEP_SESSIONS = 500;
+const MAX_FILE_NAME_LENGTH = 255;
+const SHA256_HEX = /^[a-f0-9]{64}$/i;
 const allowedExtensions = /\.(pdf|xlsx|xls|docx|pptx|csv)$/i;
 const allowedMime = new Set([
   "application/pdf",
@@ -129,6 +133,14 @@ export function validateSourceMagic(fileName: string, bytes: Buffer): boolean {
   if (lower.endsWith(".xls")) return bytes.subarray(0, 8).equals(Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]));
   if (lower.endsWith(".csv")) return !bytes.includes(0x00);
   return false;
+}
+
+/** An idempotent initiate replay must describe the same file as the original request. */
+function assertSameInitiate(session: UploadSession, input: { fileName: string; contentType: string; sizeBytes: number; checksumSha256?: string }): void {
+  if (session.fileName !== input.fileName || session.contentType !== input.contentType || session.sizeBytes !== input.sizeBytes
+    || (session.checksumSha256 ?? undefined) !== (input.checksumSha256 ?? undefined)) {
+    throw new UploadRequestError("upload_idempotency_mismatch", "Upload idempotency key was reused for a different file");
+  }
 }
 
 function emptySweep(): UploadLifecycleSweep {
@@ -179,10 +191,16 @@ export function assertObjectMatchesSession(session: UploadSession, object: GcsOb
   }
 }
 
-function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number; origin?: string }): void {
+function validateInitiate(input: { fileName: string; contentType: string; sizeBytes: number; checksumSha256?: string; origin?: string }): void {
+  // Request bodies are untyped JSON: a non-string name or checksum must be a
+  // client error, never a TypeError or an unbounded value sent to GCS/Postgres.
+  if (typeof input.fileName !== "string" || input.fileName.length > MAX_FILE_NAME_LENGTH) throw new UploadRequestError("invalid_upload_request", "Invalid file name");
+  if (input.checksumSha256 !== undefined && (typeof input.checksumSha256 !== "string" || !SHA256_HEX.test(input.checksumSha256))) {
+    throw new UploadRequestError("invalid_upload_request", "checksumSha256 must be a hex-encoded SHA-256 digest");
+  }
   if (!input.fileName || !allowedExtensions.test(input.fileName)) throw new UploadRequestError("unsupported_file_type", "Unsupported file type");
-  if (!allowedMime.has(input.contentType || "application/octet-stream")) throw new UploadRequestError("unsupported_media_type", "Unsupported media type");
-  if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > MAX_FILE_BYTES) throw new UploadRequestError("invalid_file_size", "Invalid file size");
+  if (typeof input.contentType !== "string" || !allowedMime.has(input.contentType || "application/octet-stream")) throw new UploadRequestError("unsupported_media_type", "Unsupported media type");
+  if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > MAX_FILE_BYTES) throw new UploadRequestError("invalid_file_size", "Invalid file size");
 
   const config = getServerConfig();
   if (config.environment === "production") {
@@ -201,7 +219,7 @@ class DemoUploadSessions implements UploadSessionPort {
     const existingId = this.idempotency.get(`${identity.tenantId}:${input.idempotencyKey}`);
     if (existingId) {
       const existing = await this.get(identity, existingId);
-      if (existing.state !== "aborted") return existing;
+      if (existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
     }
     const config = getServerConfig();
     const session: UploadSession = {
@@ -228,7 +246,11 @@ class DemoUploadSessions implements UploadSessionPort {
     session.releasedAt = new Date().toISOString();
     return session;
   }
-  async abort(identity: RequestIdentity, uploadId: string) { const s = await this.get(identity, uploadId); s.state = "aborted"; }
+  async abort(identity: RequestIdentity, uploadId: string) {
+    const s = await this.get(identity, uploadId);
+    if (s.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
+    s.state = "aborted";
+  }
   async sweep(tenantId: string, options: UploadLifecycleOptions = {}): Promise<UploadLifecycleSweep> {
     const now = (options.now ?? new Date()).getTime();
     const abandonedAfterMs = options.abandonedAfterMs ?? UPLOAD_SESSION_TTL_MS;
@@ -352,7 +374,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
     const prior = await this.store.getJson<{ uploadId: string }>(idempotencyKey(identity.tenantId, input.idempotencyKey));
     if (prior?.uploadId) {
       const existing = await this.get(identity, prior.uploadId).catch(() => null);
-      if (existing && existing.state !== "aborted") return existing;
+      if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
     }
 
     const config = getServerConfig();
@@ -382,6 +404,12 @@ export class ProductionUploadSessions implements UploadSessionPort {
       return session;
     } catch (error) {
       await this.store.cancelResumableUpload(resumableUploadUrl).catch(() => undefined);
+      // The idempotency record may already point at this session: mark it dead so
+      // a retry with the same key authorizes a fresh session instead of replaying
+      // one whose resumable URL was cancelled and whose registry rows are missing.
+      session.state = "aborted";
+      session.purgedAt = new Date().toISOString();
+      await this.persist(session).catch(() => undefined);
       throw error;
     }
   }
@@ -427,7 +455,11 @@ export class ProductionUploadSessions implements UploadSessionPort {
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {
     const session = await this.load(identity, uploadId);
     this.assertUploader(identity, session);
-    if (!["complete","aborted"].includes(session.state)) await this.purgeObject(session, Date.now());
+    if (session.state === "aborted") return;
+    // Released source evidence is already queued for processing; aborting must
+    // not relabel the registered document as aborted.
+    if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
+    await this.purgeObject(session, Date.now());
     session.state = "aborted";
     await this.db.execute(`update corvis_source.document set status='aborted'
       where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { RATE_LIMIT_WINDOW_MS, RateLimitError, RateLimiter, enforceRateLimit } from "./rate-limit.ts";
+import { RATE_LIMIT_WINDOW_MS, RateLimitError, RateLimiter, SWEEP_THRESHOLD, enforceRateLimit } from "./rate-limit.ts";
 
 // lib/server/http.ts intentionally imports through the "@/..." path alias
 // that only Next.js's bundler resolves (see e.g. security-contract.test.ts,
@@ -78,4 +78,18 @@ test("enforceRateLimit throws a RateLimitError carrying Retry-After seconds once
     () => enforceRateLimit("tenant-a:service-x", { limiter, now: now + 1_000 }),
     (error: unknown) => error instanceof RateLimitError && error.retryAfterSeconds === 59,
   );
+});
+
+test("expired identities are evicted instead of accumulating without bound", () => {
+  const limiter = new RateLimiter(5, RATE_LIMIT_WINDOW_MS);
+  const start = 1_000_000;
+  for (let index = 0; index < SWEEP_THRESHOLD; index += 1) limiter.consume(`old-${index}`, start);
+  assert.equal(limiter.size, SWEEP_THRESHOLD);
+
+  // A live identity inside its window survives the sweep with its count intact.
+  const live = start + RATE_LIMIT_WINDOW_MS - 1;
+  for (let index = 0; index < 5; index += 1) limiter.consume("live", live);
+  limiter.consume("new-key", start + RATE_LIMIT_WINDOW_MS + 1);
+  assert.equal(limiter.size, 2);
+  assert.equal(limiter.consume("live", start + RATE_LIMIT_WINDOW_MS + 2).allowed, false);
 });

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
 import { retireFeatureFlag } from "@/lib/server/feature-flags";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
@@ -11,8 +12,9 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const body = await request.json() as { key?: string };
-    if (!body.key) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const body = await readJsonObject(request) as { key?: string } | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    if (typeof body.key !== "string" || !body.key || body.key.length > 128) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     await retireFeatureFlag(identity, body.key);
     await platform().audit({
       id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,

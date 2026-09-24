@@ -158,3 +158,65 @@ test("webhook signing keys are tenant/subscription-scoped, never shared, and rot
   // A subscription can never be created without its first signing key.
   assert.match(sql, /insert into corvis_control\.webhook_subscription[\s\S]*insert into corvis_control\.webhook_signing_key/);
 });
+
+const pollingMigration = "db/postgres/migrations/047_polling_indexes_and_integrity_guards.sql";
+
+test("processing transport claim has a partial index limited to the event types it can claim", async () => {
+  const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
+  const claim = (await readFile("db/postgres/migrations/021_processing_transport_runtime.sql", "utf8")).toLowerCase();
+  // Customer-facing events keep published_at null forever (only the transport
+  // sets it since 043), so an index keyed on published_at alone makes every
+  // claim walk all of them. The index must carry the claim's own type filter
+  // and ORDER BY so the planner can prove it and read only claimable rows.
+  const index = /create index if not exists outbox_processing_transport_claim_idx\s+on corvis_control\.outbox_event \(coalesce\(next_attempt_at, created_at\), created_at, event_id\)\s+where published_at is null\s+and transport_dead_lettered_at is null\s+and event_type in \(([^)]*)\)/.exec(sql);
+  assert.ok(index, "transport claim index must exist with the claim's ordering and predicates");
+  const claimTypes = /o\.event_type in \(([^)]*)\)/.exec(claim)?.[1];
+  assert.equal(index[1]!.replace(/\s/g, ""), claimTypes?.replace(/\s/g, ""), "index predicate must name exactly the claimable transport types");
+  assert.match(claim, /order by coalesce\(o\.next_attempt_at,o\.created_at\),o\.created_at,o\.event_id/);
+});
+
+test("export delivery queue scan and reconciliation listing have supporting indexes", async () => {
+  const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
+  const delivery = (await readFile("lib/server/delivery.ts", "utf8")).toLowerCase();
+  assert.match(delivery, /where state in \('queued','retryable'\)[\s\S]*order by created_at limit \$1/);
+  assert.match(sql, /create index if not exists export_job_delivery_queue_idx\s+on corvis_serving\.export_job \(created_at\)\s+where state in \('queued','retryable'\);/);
+  assert.match(sql, /create index if not exists reconciliation_run_fund_created_idx\s+on corvis_consolidated\.reconciliation_run \(tenant_id, fund_id, created_at desc\);/);
+  // The runner wraps each migration in one transaction.
+  assert.equal(/concurrently/.test(sql.replace(/--[^\n]*/g, "")), false);
+});
+
+test("export job state is constrained to the delivery lifecycle without a blocking validation scan", async () => {
+  const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
+  assert.match(sql, /add constraint export_job_state_check\s+check \(state in \('queued','delivering','retryable','complete','failed'\)\) not valid;/);
+  assert.match(sql, /if not exists \([\s\S]*conname = 'export_job_state_check'/);
+  // Every state the application writes must be inside the domain.
+  const writers = [
+    await readFile("lib/server/delivery.ts", "utf8"),
+    await readFile("lib/server/physical-exports.ts", "utf8"),
+    await readFile("lib/server/platform-repositories.ts", "utf8"),
+  ].join("\n");
+  for (const state of writers.matchAll(/export_job[\s\S]{0,200}?set state='([a-z_]+)'/g)) {
+    assert.ok(["queued", "delivering", "retryable", "complete", "failed"].includes(state[1]!), `unexpected export state ${state[1]}`);
+  }
+});
+
+test("signing-key rotation locks the subscription row before retiring the active key", async () => {
+  const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
+  const body = /create or replace function corvis_control\.rotate_webhook_signing_key[\s\S]*?\$\$;/.exec(sql)?.[0] ?? "";
+  assert.match(body, /perform 1 from corvis_control\.webhook_subscription\s+where tenant_id = p_tenant_id and webhook_id = p_webhook_id and status <> 'revoked'\s+for update;/);
+  assert.match(body, /if not found then raise exception 'webhook subscription not found'/);
+  assert.ok(body.indexOf("for update") < body.indexOf("update corvis_control.webhook_signing_key"));
+  assert.ok(body.indexOf("update corvis_control.webhook_signing_key") < body.indexOf("insert into corvis_control.webhook_signing_key"));
+});
+
+test("audit events are append-only, matching control evidence records", async () => {
+  const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
+  assert.match(sql, /create trigger audit_event_append_only\s+before update or delete on corvis_control\.audit_event\s+for each row execute function corvis_control\.reject_audit_event_mutation\(\);/);
+  assert.match(sql, /create trigger audit_event_no_truncate\s+before truncate on corvis_control\.audit_event/);
+  // Nothing in the application may rely on rewriting or deleting audit rows.
+  const files = (await readdir("lib/server")).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
+  for (const name of files) {
+    const source = (await readFile(`lib/server/${name}`, "utf8")).toLowerCase();
+    assert.equal(/(update|delete from)\s+corvis_control\.audit_event/.test(source), false, `${name} mutates audit_event`);
+  }
+});

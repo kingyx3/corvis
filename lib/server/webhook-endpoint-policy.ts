@@ -1,4 +1,6 @@
+import type { LookupAddress } from "node:dns";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 
 /**
@@ -60,6 +62,8 @@ for (const [network, prefix] of [
   // IPv4-mapped (::ffff:a.b.c.d) needs no rule: BlockList matches it against
   // the IPv4 subnets above (and a ::ffff:0:0/96 rule would block all IPv4).
   ["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48],
+  // IPv4-translated (SIIT), 6to4 and Teredo embed an arbitrary IPv4 address too.
+  ["::ffff:0:0:0", 96], ["2002::", 16], ["2001::", 32],
   ["100::", 64], ["2001:db8::", 32], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8],
 ] as const) BLOCKED_ADDRESSES.addSubnet(network, prefix, "ipv6");
 
@@ -97,6 +101,58 @@ export function webhookEndpointBlockReason(endpointUrl: string): string | undefi
 export type WebhookHostLookup = (hostname: string) => Promise<ReadonlyArray<{ address: string }>>;
 
 export const defaultWebhookHostLookup: WebhookHostLookup = (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
+
+type NetLookupCallback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void;
+
+/**
+ * A `net`/`tls` connect-time `lookup` that applies the private-address policy
+ * to the exact addresses the socket is about to connect to. Checking DNS once
+ * up front and letting `fetch` resolve again leaves a rebinding window (a
+ * zero-TTL record that answers public first and internal second).
+ */
+export function policyCheckedLookup(lookup: WebhookHostLookup = defaultWebhookHostLookup) {
+  return (hostname: string, options: { all?: boolean } | number | undefined, callback: NetLookupCallback): void => {
+    lookup(hostname).then((addresses) => {
+      if (addresses.length === 0) throw new Error("webhook endpoint refused: endpoint_url_unresolvable");
+      if (addresses.some((entry) => isBlockedWebhookAddress(entry.address))) {
+        throw new Error("webhook endpoint refused: endpoint_url_resolves_to_private_address");
+      }
+      const resolved = addresses.map((entry) => ({ address: entry.address, family: isIP(entry.address) }));
+      if (typeof options === "object" && options?.all) callback(null, resolved);
+      else callback(null, resolved[0]!.address, resolved[0]!.family);
+    }).catch((error: unknown) => callback(error instanceof Error ? error : new Error(String(error)), ""));
+  };
+}
+
+/**
+ * Outbound webhook POST over `node:https` whose socket connects only to
+ * policy-checked addresses (see `policyCheckedLookup`). Never follows
+ * redirects, never reads the response body, and honors `init.signal`.
+ * Shaped like `fetch` so tests can substitute a fake.
+ */
+export function policyPinnedWebhookFetch(lookup: WebhookHostLookup = defaultWebhookHostLookup): typeof fetch {
+  const checkedLookup = policyCheckedLookup(lookup);
+  return ((input: string | URL | Request, init: RequestInit = {}) => new Promise<Response>((resolve, reject) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.protocol !== "https:") { reject(new Error("webhook endpoint refused: endpoint_url_must_be_https")); return; }
+    const body = typeof init.body === "string" ? init.body : undefined;
+    const request = httpsRequest(url, {
+      method: init.method ?? "POST",
+      headers: { ...(init.headers as Record<string, string> | undefined), ...(body === undefined ? {} : { "content-length": String(Buffer.byteLength(body)) }) },
+      signal: init.signal ?? undefined,
+      lookup: checkedLookup as never,
+    }, (response) => {
+      response.resume();
+      response.destroy();
+      const status = response.statusCode ?? 0;
+      if (status < 200 || status > 599) { reject(new Error(`Webhook endpoint returned ${status}`)); return; }
+      resolve(new Response(null, { status }));
+    });
+    // Surface an aborted signal's own reason (e.g. the TimeoutError from AbortSignal.timeout), like fetch does.
+    request.on("error", (error) => reject(init.signal?.aborted ? init.signal.reason : error));
+    request.end(body);
+  })) as typeof fetch;
+}
 
 /**
  * Send-time policy: the static checks plus a DNS resolution check that every

@@ -32,6 +32,7 @@ type JwtClaims = {
   jti?: unknown;
   iat?: unknown;
   exp?: unknown;
+  nbf?: unknown;
 };
 
 type DiscoveryDocument = {
@@ -210,6 +211,10 @@ export class OidcVerifier {
     if (!Number.isInteger(exp) || !Number.isInteger(iat)) throw new Error("invalid OIDC token timestamps");
     if (exp < nowSeconds - CLOCK_SKEW_SECONDS) throw new Error("expired OIDC token");
     if (iat > nowSeconds + CLOCK_SKEW_SECONDS || exp <= iat) throw new Error("invalid OIDC token lifetime");
+    // RFC 7519 4.1.5: a token must not be accepted before its `nbf`.
+    if (claims.nbf !== undefined && (typeof claims.nbf !== "number" || !Number.isInteger(claims.nbf) || claims.nbf > nowSeconds + CLOCK_SKEW_SECONDS)) {
+      throw new Error("OIDC token is not yet valid");
+    }
     if (claims.iss !== issuer && (typeof claims.iss !== "string" || normalizeIssuer(claims.iss) !== issuer)) throw new Error("invalid OIDC token issuer");
     if (!audienceMatches(claims.aud, input.audience)) throw new Error("invalid OIDC token audience");
     if (typeof claims.sub !== "string" || !claims.sub) throw new Error("OIDC token has no immutable subject");

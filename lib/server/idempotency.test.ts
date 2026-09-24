@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { withIdempotency } from "./idempotency.ts";
+import { InvalidIdempotencyKeyError, MAX_IDEMPOTENCY_KEY_LENGTH, withIdempotency } from "./idempotency.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
@@ -172,4 +172,38 @@ test("no client key skips the dedup path entirely: fn always runs and Postgres i
   assert.equal(first.replayed, false);
   assert.equal(second.replayed, false);
   assert.equal(db.calls.length, 0);
+});
+
+test("different workspaces of the same subject are independent even for the same client key", async () => {
+  const db = new FakeIdempotencyDb();
+  let calls = 0;
+  const fn = async () => { calls += 1; return { status: 202, body: { exportId: `export-${calls}` } }; };
+
+  const a = await withIdempotency(identity({ workspaceId: "workspace-1" }), "exports.create", "same-key", fn, db);
+  const b = await withIdempotency(identity({ workspaceId: "workspace-2" }), "exports.create", "same-key", fn, db);
+  assert.equal(calls, 2, "a workspace-1 export must never be replayed as a workspace-2 export");
+  assert.equal(b.replayed, false);
+  assert.notDeepEqual(a.body, b.body);
+});
+
+test("a subject containing a colon cannot collide with another subject's key namespace", async () => {
+  const db = new FakeIdempotencyDb();
+  let calls = 0;
+  const fn = async () => { calls += 1; return { status: 202, body: { exportId: `export-${calls}` } }; };
+
+  await withIdempotency(identity({ subject: "user" }), "exports.create", "a:b", fn, db);
+  const other = await withIdempotency(identity({ subject: "user:a" }), "exports.create", "b", fn, db);
+  assert.equal(calls, 2);
+  assert.equal(other.replayed, false);
+});
+
+test("non-string and oversized client keys are rejected before reaching Postgres", async () => {
+  const db = new FakeIdempotencyDb();
+  const fn = async () => ({ status: 202, body: {} });
+  for (const key of [42 as unknown as string, { a: 1 } as unknown as string, "k".repeat(MAX_IDEMPOTENCY_KEY_LENGTH + 1)]) {
+    await assert.rejects(withIdempotency(identity(), "exports.create", key, fn, db), InvalidIdempotencyKeyError);
+  }
+  assert.equal(db.calls.length, 0);
+  const ok = await withIdempotency(identity(), "exports.create", "k".repeat(MAX_IDEMPOTENCY_KEY_LENGTH), fn, db);
+  assert.equal(ok.replayed, false);
 });
