@@ -100,6 +100,12 @@ export function apiError(error: unknown, correlationId: string): Response {
     logEvent("error", "research.provider_error", { correlationId }, { provider: error.provider, status: error.status ?? null });
     return json({ error: error.code, correlationId }, { status: 502 });
   }
+  // `await request.json()` on a malformed body rejects with a SyntaxError;
+  // that is a client error, not a server fault.
+  if (error instanceof SyntaxError) {
+    logEvent("warn", "api.invalid_json", { correlationId });
+    return json({ error: "invalid_json", correlationId }, { status: 400 });
+  }
   logEvent("error", "api.unhandled_error", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown", message: error instanceof Error ? error.message : "Unknown error" });
   return json({ error: "internal_error", correlationId }, { status: 500 });
 }

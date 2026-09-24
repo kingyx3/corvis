@@ -24,6 +24,18 @@ test("correlationId replaces oversized or unsafe client ids instead of reflectin
   assert.match(correlationId(new Request("https://corvis.test/")), uuid);
 });
 
+test("a malformed JSON request body is a 400 invalid_json, not a 500", async () => {
+  const request = new Request("https://corvis.test/api/v1/exports", { method: "POST", body: "{not json" });
+  const error = await request.json().then(() => undefined, (reason: unknown) => reason);
+  const response = apiError(error, "corr-json");
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_json", correlationId: "corr-json" });
+  // Unrelated failures still fall through to the opaque 500.
+  const internal = apiError(new Error("boom select * from secret"), "corr-2");
+  assert.equal(internal.status, 500);
+  assert.deepEqual(await internal.json(), { error: "internal_error", correlationId: "corr-2" });
+});
+
 test("an invalid idempotency key is a 400 with a stable code, not a 500", async () => {
   const response = apiError(new InvalidIdempotencyKeyError(), "corr-1");
   assert.equal(response.status, 400);
