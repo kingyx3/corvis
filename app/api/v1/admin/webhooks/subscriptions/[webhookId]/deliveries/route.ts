@@ -1,7 +1,7 @@
 import { assertPermission } from "@/core/enterprise";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { paginate, parseLimit } from "@/lib/server/pagination";
+import { decodeCursor, paginate, parseLimit } from "@/lib/server/pagination";
 import { listWebhookDeliveries } from "@/lib/server/webhook-subscriptions";
 
 /** Customer-visible delivery diagnostics for one subscription. Always paginated; there is no pre-existing unpaginated caller to preserve. */
@@ -13,8 +13,13 @@ export async function GET(request: Request, context: { params: Promise<{ webhook
     const { webhookId } = await context.params;
     const url = new URL(request.url);
     const limit = parseLimit(url.searchParams.get("limit"));
-    const all = await listWebhookDeliveries(identity, webhookId);
-    const page = paginate(all, (delivery) => delivery.deliveryId, limit, url.searchParams.get("cursor"));
+    const cursor = url.searchParams.get("cursor");
+    // Keyset page in SQL: fetch one row beyond the page so paginate() knows whether another page exists.
+    const rows = await listWebhookDeliveries(identity, webhookId, undefined, {
+      afterDeliveryId: cursor ? decodeCursor(cursor) : null,
+      limit: limit + 1,
+    });
+    const page = paginate(rows, (delivery) => delivery.deliveryId, limit, cursor);
     return json({ data: page.items, nextCursor: page.nextCursor, correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

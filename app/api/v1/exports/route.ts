@@ -23,7 +23,10 @@ export async function POST(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "exports:create");
-    const body = await request.json() as { format?: "parquet" | "csv" | "xlsx"; idempotencyKey?: string };
+    const parsed: unknown = await request.json();
+    // A JSON `null`, array or scalar body is valid JSON but not a request object; reject it instead of throwing a TypeError (500).
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const body = parsed as { format?: "parquet" | "csv" | "xlsx"; idempotencyKey?: string };
     const format = body.format;
     if (!format || !["parquet","csv","xlsx"].includes(format)) return json({ error: "invalid_export_format", correlationId: id }, { status: 400 });
     if (format === "parquet") await assertFeatureEnabled(identity, "exports.parquet_delivery", "export");

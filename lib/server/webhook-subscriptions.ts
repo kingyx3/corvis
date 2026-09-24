@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { InvalidCursorError } from "./pagination.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { isWebhookEventType, webhookEndpointBlockReason } from "./webhook-endpoint-policy.ts";
 
@@ -211,20 +212,31 @@ export async function rotateWebhookSigningKey(
   return { webhookId, signingKeyId: keyId, signingSecret: secret };
 }
 
-/** New endpoint with no unpaginated caller: the route always applies cursor pagination, up to this bound per underlying fetch. */
+/** Upper bound on one fetch; the route asks for at most one page plus one row. */
 const DELIVERY_DIAGNOSTIC_FETCH_CAP = 2000;
 
+/**
+ * Keyset-paginated in SQL: `afterDeliveryId` is the previous page's last
+ * delivery id and `limit` the number of rows to fetch. Paging in memory over a
+ * capped fetch made every delivery past the cap unreachable and read the
+ * whole capped set on every page request.
+ */
 export async function listWebhookDeliveries(
   identity: RequestIdentity,
   webhookId: string,
   db: PostgresSqlApi = controlDb(),
+  page: { afterDeliveryId?: string | null; limit?: number } = {},
 ): Promise<WebhookDeliveryDiagnostic[]> {
   assertWebhookId(webhookId);
+  const afterDeliveryId = page.afterDeliveryId ?? null;
+  // A cursor key that is not a UUID was tampered with; never let it reach the `::uuid` cast.
+  if (afterDeliveryId !== null && !UUID_PATTERN.test(afterDeliveryId)) throw new InvalidCursorError();
+  const limit = Math.max(1, Math.min(DELIVERY_DIAGNOSTIC_FETCH_CAP, Math.trunc(page.limit ?? DELIVERY_DIAGNOSTIC_FETCH_CAP)));
   const rows = await db.query(`select delivery_id, event_id, attempt, state, status_code, last_error, created_at, completed_at
     from corvis_control.webhook_delivery
-    where tenant_id=$1 and webhook_id=$2::uuid
+    where tenant_id=$1 and webhook_id=$2::uuid and ($4::uuid is null or delivery_id > $4::uuid)
     order by delivery_id
-    limit $3`, [identity.tenantId, webhookId, DELIVERY_DIAGNOSTIC_FETCH_CAP]);
+    limit $3`, [identity.tenantId, webhookId, limit, afterDeliveryId]);
   return rows.map((row) => ({
     deliveryId: String(row.delivery_id),
     eventId: String(row.event_id),
