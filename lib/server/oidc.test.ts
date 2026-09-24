@@ -161,3 +161,25 @@ test("OIDC fails closed when no JWKS has ever been fetched", async () => {
     authorization: `Bearer ${tokenWithKid(kid, 1_800_000_100)}`, issuer, audience, now: new Date(1_800_000_100_000),
   }), /status 503/);
 });
+
+test("OIDC verifier rejects a token presented before its nbf and a malformed nbf", async () => {
+  const verifier = new OidcVerifier(fetchFixture());
+  const now = new Date(1_800_000_100_000);
+  await assert.rejects(verifier.verify({
+    authorization: `Bearer ${token({ nbf: 1_800_000_200 })}`,
+    issuer,
+    audience,
+    now,
+  }), /not yet valid/);
+  await assert.rejects(verifier.verify({
+    authorization: `Bearer ${token({ nbf: "1800000000" })}`,
+    issuer,
+    audience,
+    now,
+  }), /not yet valid/);
+  // Within the clock-skew allowance and in the past are both accepted.
+  for (const nbf of [1_800_000_120, 1_800_000_000]) {
+    const identity = await verifier.verify({ authorization: `Bearer ${token({ nbf })}`, issuer, audience, now });
+    assert.equal(identity.subject, "user-1");
+  }
+});
