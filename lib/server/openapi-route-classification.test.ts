@@ -5,12 +5,14 @@ import { readFile } from "node:fs/promises";
 type Classification = { pattern: string; visibility: string; reason: string };
 
 function patternMatches(pattern: string, path: string): boolean {
+  if (pattern.endsWith("/**")) {
+    const base = pattern.slice(0, -3);
+    return path === base || path.startsWith(`${base}/`);
+  }
   const escaped = pattern
     .replace(/[.+^$()|[\]\\]/g, "\\$&")
     .replaceAll("{jobId}", "[^/]+")
-    .replaceAll("**", "__CORVIS_RECURSIVE__")
-    .replaceAll("*", "[^/]*")
-    .replaceAll("__CORVIS_RECURSIVE__", ".*");
+    .replaceAll("*", "[^/]*");
   return new RegExp(`^${escaped}$`).test(path);
 }
 
