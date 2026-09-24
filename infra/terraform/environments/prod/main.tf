@@ -72,13 +72,13 @@ resource "terraform_data" "edge_zone_guard" {
 }
 
 module "foundation" {
-  source                                        = "../../modules/gcp-foundation"
-  project_id                                    = var.project_id
-  environment                                   = "prod"
-  source_bucket_name                            = var.source_bucket_name
+  source                                         = "../../modules/gcp-foundation"
+  project_id                                     = var.project_id
+  environment                                    = "prod"
+  source_bucket_name                             = var.source_bucket_name
   enforce_service_account_key_creation_disabled = true
   enforce_service_account_key_upload_disabled   = true
-  decommission_mode                             = var.decommission_mode
+  decommission_mode                              = var.decommission_mode
 }
 
 module "api_runtime" {
@@ -177,13 +177,12 @@ module "admin_gateway" {
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 
-  source             = "../../modules/cloudflare-edge"
-  account_id         = local.cloudflare_account_id
-  zone_id            = local.cloudflare_zone_id
-  gateway_hostname   = module.api_gateway[0].gateway_hostname
-  gateway_api_key    = module.api_gateway[0].edge_api_key
-  api_hostname       = local.api_hostname
-  enable_managed_waf = var.enable_cloudflare_managed_waf
+  source           = "../../modules/cloudflare-edge"
+  account_id       = local.cloudflare_account_id
+  zone_id          = local.cloudflare_zone_id
+  gateway_hostname = module.api_gateway[0].gateway_hostname
+  gateway_api_key  = module.api_gateway[0].edge_api_key
+  api_hostname     = local.api_hostname
 
   depends_on = [
     terraform_data.edge_configuration_guard,
