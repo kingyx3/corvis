@@ -21,7 +21,6 @@ export async function GET(request: Request) {
     return json({
       data: {
         permissions: PERMISSIONS.filter((permission) => hasPermission(identity, permission)),
-        tenantControlAllowed: identity.isTenantAdmin === true,
         sourceDocumentAccessAllowed: identity.entitlements.sourceDocumentAccessAllowed === true,
         redistributionAllowed: identity.entitlements.redistributionAllowed === true,
       },
