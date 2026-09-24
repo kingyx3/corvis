@@ -23,8 +23,8 @@ locals {
     local.uat_admin_hostname,
   ]
 
-  quoted_corvis_hostnames      = join(" ", [for hostname in local.corvis_hostnames : "\"${hostname}\""])
-  corvis_host_expression       = "(http.host in {${local.quoted_corvis_hostnames}})"
+  quoted_corvis_hostnames     = join(" ", [for hostname in local.corvis_hostnames : "\"${hostname}\""])
+  corvis_host_expression      = "(http.host in {${local.quoted_corvis_hostnames}})"
   api_requests_per_10_seconds = max(1, ceil(var.api_requests_per_minute / 6))
 }
 
