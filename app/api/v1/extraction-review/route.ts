@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "crypto";
 import { assertDocumentAccess, assertPermission } from "@/core/enterprise";
+import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { postgres } from "@/lib/server/postgres";
 import {
   CandidateReviewRequestError,
@@ -61,7 +61,6 @@ export async function POST(request: Request) {
       return json({ error: "invalid_candidate_review_command", correlationId: id }, { status: 400 });
     }
     const command = body as CandidateReviewRequest;
-    // Every id reaches a ::uuid cast; a malformed one is a bad request, not a 500.
     if (!isUuid(command.documentId) || !isUuid(command.extractionRunId) || !isUuid(command.candidateId)
       || typeof command.decision !== "string" || !DECISIONS.has(command.decision as CandidateReviewDecision["decision"])
       || typeof command.reasonCode !== "string" || !command.reasonCode.trim()) {
@@ -85,13 +84,8 @@ export async function POST(request: Request) {
       return json({ error: "resolved_exception_codes_not_allowed", correlationId: id }, { status: 400 });
     }
 
-    // Candidate review is document-scoped work: the reviewer must be entitled
-    // to the document, as observation review and the processing worker require.
     assertDocumentAccess(identity, command.documentId);
 
-    // The actor is part of the idempotency scope: a second reviewer who
-    // happens to send the same key must record their own (four-eyes) decision
-    // rather than collide with the first reviewer's event.
     const reviewEventId = deterministicUuid([
       "corvis-candidate-review-event",
       identity.tenantId,
@@ -100,41 +94,42 @@ export async function POST(request: Request) {
       identity.subject,
       idempotencyKey,
     ].join(":"));
-    const gate = await recordCandidateReviewDecision({
-      db: postgres(getServerConfig().postgresDsn),
-      tenantId: identity.tenantId,
-      documentId: command.documentId,
-      extractionRunId: command.extractionRunId,
-      decision: {
-        reviewEventId,
-        candidateId: command.candidateId,
+    const gate = await runAuditedMutation({
+      mutate: (db) => recordCandidateReviewDecision({
+        db: db ?? postgres(getServerConfig().postgresDsn),
+        tenantId: identity.tenantId,
+        documentId: command.documentId as string,
+        extractionRunId: command.extractionRunId as string,
+        decision: {
+          reviewEventId,
+          candidateId: command.candidateId as string,
+          actorSubject: identity.subject,
+          decision,
+          reasonCode: command.reasonCode!.trim(),
+          correctionPayload: decision === "correct" ? command.correctionPayload as Record<string, unknown> : undefined,
+          resolvedExceptionCodes: decision === "resolve_exception" ? (resolvedExceptionCodes as string[]).map((code) => code.trim()) : undefined,
+        },
+      }),
+      audit: (result) => ({
+        id: randomUUID(),
+        occurredAt: new Date().toISOString(),
+        tenantId: identity.tenantId,
+        workspaceId: identity.workspaceId,
         actorSubject: identity.subject,
-        decision,
-        reasonCode: command.reasonCode.trim(),
-        correctionPayload: decision === "correct" ? command.correctionPayload as Record<string, unknown> : undefined,
-        resolvedExceptionCodes: decision === "resolve_exception" ? (resolvedExceptionCodes as string[]).map((code) => code.trim()) : undefined,
-      },
-    });
-
-    await platform().audit({
-      id: randomUUID(),
-      occurredAt: new Date().toISOString(),
-      tenantId: identity.tenantId,
-      workspaceId: identity.workspaceId,
-      actorSubject: identity.subject,
-      sessionId: identity.sessionId,
-      action: `extraction_candidate.${decision}`,
-      targetType: "extraction_candidate",
-      targetId: command.candidateId,
-      outcome: "success",
-      correlationId: id,
-      metadata: {
-        extractionRunId: command.extractionRunId,
-        reviewEventId,
-        reviewPolicyVersion: "candidate_review_v1",
-        gateStatus: gate.status,
-        blockingCandidateCount: gate.blockingCandidateCount,
-      },
+        sessionId: identity.sessionId,
+        action: `extraction_candidate.${decision}`,
+        targetType: "extraction_candidate",
+        targetId: command.candidateId as string,
+        outcome: "success",
+        correlationId: id,
+        metadata: {
+          extractionRunId: command.extractionRunId as string,
+          reviewEventId,
+          reviewPolicyVersion: "candidate_review_v1",
+          gateStatus: result.status,
+          blockingCandidateCount: result.blockingCandidateCount,
+        },
+      }),
     });
 
     return json({ data: gate, correlationId: id }, { status: 202 });
