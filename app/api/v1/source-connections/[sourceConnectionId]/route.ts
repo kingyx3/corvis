@@ -5,6 +5,7 @@ import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import {
   assertSourceConnectionId,
+  ConnectorGovernanceError,
   getSourceConnection,
   type SourceConnection,
 } from "@/lib/server/source-connectors";
@@ -23,6 +24,7 @@ export async function GET(request: Request, context: { params: Promise<{ sourceC
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
     const connection = await getSourceConnection(identity, sourceConnectionId);
+    if (connection.workspaceId !== identity.workspaceId) throw new ConnectorGovernanceError("connection_not_found");
     return json({ data: toResponse(connection), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
