@@ -9,7 +9,7 @@ async function read(path: string): Promise<string> {
 test("runtime secret lifecycle is keyless and audits only the provider-owned Postgres secret", async () => {
   const workflow = await read(".github/workflows/runtime-secrets.yml");
 
-  assert.match(workflow, /google-github-actions\/auth@v3/);
+  assert.match(workflow, /google-github-actions\/auth@[0-9a-f]{40}\s+# v3/);
   assert.match(workflow, /workload_identity_provider/);
   assert.match(workflow, /corvis-postgres-dsn-\{0\}/);
   assert.match(workflow, /gcloud secrets describe/);

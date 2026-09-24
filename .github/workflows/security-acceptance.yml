@@ -52,8 +52,8 @@ jobs:
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -61,13 +61,13 @@ jobs:
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
       - name: Derive API hostname
@@ -148,7 +148,7 @@ jobs:
         run: node .github/scripts/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: edge-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: security-acceptance-evidence.json
@@ -178,8 +178,8 @@ jobs:
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -187,13 +187,13 @@ jobs:
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
       - name: Install PostgreSQL client
@@ -216,7 +216,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized Postgres RLS evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: postgres-rls-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: postgres-rls-security-acceptance-evidence.json
@@ -247,8 +247,8 @@ jobs:
       POSTGRES_DSN_SECRET_NAME: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -256,13 +256,13 @@ jobs:
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
       - name: Verify scheduled control-loop runtime
@@ -322,7 +322,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized control-loop evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: control-loop-runtime-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: control-loop-runtime-acceptance-evidence.json
@@ -353,13 +353,13 @@ jobs:
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
     steps:
       - name: Authenticate to GCP with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
       - name: Record accepted release set as known-good rollback target

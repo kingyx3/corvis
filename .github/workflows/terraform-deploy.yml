@@ -134,7 +134,7 @@ jobs:
           echo "Terraform apply is allowed only from main."
           exit 1
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify effective release governance
         if: inputs.action == 'apply'
@@ -146,14 +146,14 @@ jobs:
         run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
 
@@ -293,7 +293,7 @@ jobs:
           fi
           echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         with:
           node-version: 24
@@ -318,7 +318,7 @@ jobs:
 
       - name: Upload migration evidence
         if: always() && inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}
           path: migration-evidence.json

@@ -10,16 +10,16 @@ test("release build is main-only, keyless, digest-addressed and attested", async
   const workflow = await read(".github/workflows/build-release.yml");
 
   assert.match(workflow, /refs\/heads\/main/);
-  assert.match(workflow, /google-github-actions\/auth@v3/);
+  assert.match(workflow, /google-github-actions\/auth@[0-9a-f]{40}\s+# v3/);
   assert.match(workflow, /workload_identity_provider/);
   assert.match(workflow, /git-\$\{github_sha\}/);
   assert.match(workflow, /image_summary\.digest/);
-  assert.match(workflow, /actions\/attest@v4/);
+  assert.match(workflow, /actions\/attest@[0-9a-f]{40}\s+# v4/);
   assert.match(workflow, /push-to-registry:\s*true/);
   assert.doesNotMatch(workflow, /service-account.*json|google_application_credentials/);
   // actions/attest push-to-registry reads only static `auths` entries, not gcloud credHelpers.
   assert.match(workflow, /token_format:\s*access_token/);
-  assert.match(workflow, /docker\/login-action@v3/);
+  assert.match(workflow, /docker\/login-action@[0-9a-f]{40}\s+# v3/);
   assert.match(workflow, /username:\s*oauth2accesstoken/);
   assert.match(workflow, /password:\s*\$\{\{ steps\.gcp_auth\.outputs\.access_token \}\}/);
   assert.match(workflow, /registry:\s*\$\{\{ env\.gcp_region \}\}-docker\.pkg\.dev/);

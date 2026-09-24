@@ -20,6 +20,10 @@ Corvis will triage reports based on exploitability, confidentiality/integrity/av
 
 Do not include real customer documents, credentials, tokens or confidential customer data in vulnerability reports.
 
+## CI/CD supply-chain controls
+
+Executable third-party GitHub Actions used by Corvis workflows and composite actions are pinned to full immutable commit SHAs. Human-readable major versions remain beside the pinned references for review context, and GitHub Actions dependencies remain under weekly Dependabot review. Repository tests fail if a mutable external action tag, branch or other non-immutable `uses:` reference is introduced.
+
 ## Scope priorities
 
 The highest-priority surfaces include authentication and tenant isolation, document upload/processing, source-evidence access, APIs/exports, Snowflake serving controls, AI retrieval, secrets and privileged administration.
