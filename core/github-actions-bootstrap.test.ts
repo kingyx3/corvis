@@ -10,7 +10,7 @@ const docs = readFileSync("docs/GCP_BOOTSTRAP.md", "utf8");
 test("GCP bootstrap remains keyless and environment scoped", () => {
   assert.match(workflow, /environment: \$\{\{ inputs\.environment \}\}/);
   assert.match(workflow, /id-token: write/);
-  assert.match(workflow, /google-github-actions\/auth@v3/);
+  assert.match(workflow, /google-github-actions\/auth@[0-9a-f]{40}\s+# v3/);
   assert.match(workflow, /workload_identity_provider: \$\{\{ env\.GCP_WIF_PROVIDER \}\}/);
   assert.match(workflow, /service_account: \$\{\{ env\.GCP_DEPLOY_SERVICE_ACCOUNT \}\}/);
   assert.doesNotMatch(workflow, /credentials_json/);
