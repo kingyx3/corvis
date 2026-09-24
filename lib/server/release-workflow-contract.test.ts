@@ -46,6 +46,32 @@ test("frontend ci runs with a read-only default token", async () => {
   assert.doesNotMatch(workflow, /:\s*write\b/);
 });
 
+test("frontend ci parallelizes independent gates behind the stable aggregate check", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  for (const job of ["quality", "terraform", "build", "e2e", "frontend"]) {
+    assert.match(workflow, new RegExp(`\\n  ${job}:\\n`), job);
+  }
+
+  const start = workflow.indexOf("\n  frontend:\n");
+  const end = workflow.indexOf("\n  container:\n", start);
+  assert.ok(start > 0 && end > start);
+  const frontend = workflow.slice(start, end);
+  assert.match(frontend, /needs:\s*\[quality, terraform, build, e2e\]/);
+  assert.match(frontend, /if:\s*always\(\)/);
+  for (const job of ["quality", "terraform", "build", "e2e"]) {
+    assert.match(frontend, new RegExp(`needs\\.${job}\\.result`), job);
+  }
+
+  // The fan-out is a runtime optimization only: every original blocking family remains present.
+  assert.match(workflow, /npm run lint/);
+  assert.match(workflow, /npm run typecheck/);
+  assert.match(workflow, /npm test/);
+  assert.match(workflow, /terraform fmt -check -recursive infra\/terraform/);
+  assert.match(workflow, /npm run build/);
+  assert.match(workflow, /npm run test:e2e/);
+  assert.match(workflow, /npm audit --audit-level=high/);
+});
+
 test("dev deploys never run production-like runtime secret or migration steps", async () => {
   const workflow = await read(".github/workflows/terraform-deploy.yml");
   for (const name of ["require enabled postgres runtime secret", "install migration runtime",

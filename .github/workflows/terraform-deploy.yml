@@ -157,9 +157,9 @@ jobs:
         with:
           version: ">= 416.0.0"
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/setup-terraform-cached
         with:
-          terraform_version: "1.13.3"
+          terraform-version: "1.13.3"
 
       - name: Require bootstrap-owned remote state
         run: bash .github/scripts/terraform-state.sh require
@@ -301,7 +301,7 @@ jobs:
 
       - name: Install migration runtime
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefer-offline --no-audit
 
       - name: Apply versioned Postgres migrations
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
