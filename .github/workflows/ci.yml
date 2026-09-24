@@ -224,6 +224,11 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-retry-exhaustion.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-stage-recovery-hardening.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/outbox-event-authenticity-guard.sql
+      - name: Exercise RLS tenant-isolation negatives as a non-owner role
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-isolation-negative.sql
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql

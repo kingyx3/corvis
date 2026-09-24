@@ -172,6 +172,55 @@ paths:
                 question: { type: string, minLength: 1, maxLength: 4000 }
       responses:
         '200': { description: Semantic and source-grounded answer }
+  /research/stream:
+    post:
+      operationId: researchStream
+      description: Streaming variant of /research. Emits newline-delimited JSON progress/result/error events as the answer is produced, then closes; the client aborting the request cancels the in-flight query. Requires research:query.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '200':
+          description: Newline-delimited JSON stream of progress/result/error events
+          content:
+            application/x-ndjson: { schema: { type: string } }
+  /source-references/{sourceReferenceId}:
+    get:
+      operationId: getSourceReference
+      description: Returns the permissioned source-document evidence (page/sheet/cell location and excerpt) backing a citation. Requires sources:read plus entitled access to the underlying document; each read is audited.
+      parameters:
+        - name: sourceReferenceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Source evidence for the citation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data:
+                    type: object
+                    required: [sourceReferenceId, documentId]
+                    properties:
+                      sourceReferenceId: { type: string }
+                      documentId: { type: string }
+                      page: { type: integer }
+                      sheetName: { type: string }
+                      cellRange: { type: string }
+                      excerpt: { type: string }
+                  correlationId: { type: string }
+        '403': { description: Missing sources:read permission or document access }
+        '404': { description: Source reference not found or not entitled }
   /exports:
     get:
       operationId: listExports
@@ -208,6 +257,50 @@ paths:
                 format: { type: string, enum: [parquet, csv, xlsx] }
       responses:
         '202': { description: Export job accepted }
+  /exports/{exportId}:
+    get:
+      operationId: getExport
+      description: Returns the current status of a single export owned by the caller, including a fresh short-lived download grant when complete and unexpired. Requires exports:create and current redistribution rights.
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Export status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data: { $ref: '#/components/schemas/ExportStatus' }
+                  correlationId: { type: string }
+        '400': { description: Malformed exportId }
+        '403': { description: Missing exports:create permission or redistribution rights }
+        '404': { description: Export not found or not owned by the caller }
+  /exports/{exportId}/download:
+    get:
+      operationId: downloadExport
+      description: Redeems a single-use download grant (the `grant` query parameter from an ExportStatus.downloadUrl) and streams the export artifact. Requires exports:create and current redistribution rights; the grant itself is short-lived and tenant/subject-scoped.
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: grant
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Export file bytes
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        '400': { description: Malformed exportId }
+        '403': { description: Missing exports:create permission or redistribution rights }
+        '404': { description: Export not found, grant invalid/expired, or artifact unavailable }
   /jobs:
     get:
       operationId: listProcessingJobs

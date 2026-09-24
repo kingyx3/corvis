@@ -4,7 +4,7 @@
 
 Please do not disclose security vulnerabilities in public GitHub issues.
 
-Until a dedicated security contact/channel is configured, repository administrators should use GitHub's private vulnerability reporting/security-advisory workflow when available. If private reporting is not enabled, contact the Corvis security owner through the organization's established private channel.
+Use [GitHub's private vulnerability reporting](https://github.com/kingyx3/corvis/security/advisories/new) ("Security" tab → "Report a vulnerability"). This is the sole reporting channel: it works without any prior relationship with Corvis, notifies the repository's administrators directly, and keeps the report private until a fix ships. If that link is unavailable, open a draft security advisory from the repository's Security tab instead.
 
 A useful report includes:
 

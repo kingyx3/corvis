@@ -54,7 +54,7 @@ export function ReviewView({
     return override && (override.version ?? 0) > (row.version ?? 0) ? override : row;
   });
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
   const [exceptionState, setExceptionState] = useState<{ key: string; items: ReconciliationException[] }>({ key: "", items: [] });
   const [selectedSources, setSelectedSources] = useState<Record<string, string>>({});
@@ -89,7 +89,7 @@ export function ReviewView({
       .catch((error) => {
         if (!active) return;
         setExceptionState({ key: exceptionKey, items: [] });
-        setMessage(error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded");
+        setMessage({ text: error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded", tone: "error" });
       });
     return () => { active = false; };
   }, [canReview, snapshotId, snapshotVersion, exceptionKey]);
@@ -154,9 +154,9 @@ export function ReviewView({
       const updated: ObservationRecord = { ...row, value: decision === "correct" && correctedValue ? correctedValue : row.value, state: outcome.nextState === "approved" ? "Approved" : outcome.nextState === "rejected" ? "Rejected" : "Needs review", version: outcome.newVersion };
       setOverrides((current) => ({ ...current, [row.id]: updated }));
       onObservationUpdated?.(updated);
-      if (decision === "approve" && outcome.nextState === "review_required") setMessage("First critical approval recorded; an independent second reviewer is still required.");
-      else setMessage(decision === "approve" ? "Observation approval recorded." : decision === "reject" ? "Observation rejected and retained in review history." : "Correction recorded; the corrected observation remains review-required until approved.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Review failed"); }
+      if (decision === "approve" && outcome.nextState === "review_required") setMessage({ text: "First critical approval recorded; an independent second reviewer is still required.", tone: "success" });
+      else setMessage({ text: decision === "approve" ? "Observation approval recorded." : decision === "reject" ? "Observation rejected and retained in review history." : "Correction recorded; the corrected observation remains review-required until approved.", tone: "success" });
+    } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Review failed", tone: "error" }); }
     finally { setBusy(null); }
   };
 
@@ -185,20 +185,20 @@ export function ReviewView({
       const opened = await workspacePort.sourceEvidence(sourceReferenceId);
       if (requestId === evidenceRequestRef.current) setEvidence(opened);
     } catch (error) {
-      if (requestId === evidenceRequestRef.current) setMessage(error instanceof Error ? error.message : "Source evidence could not be opened");
+      if (requestId === evidenceRequestRef.current) setMessage({ text: error instanceof Error ? error.message : "Source evidence could not be opened", tone: "error" });
     } finally { setBusy((current) => current === busyKey ? null : current); }
   };
 
   const resolveException = async (item: ReconciliationException, action: ReconciliationResolutionAction, note: string) => {
     if (!canReview) return;
     const selectedSourceReferenceId = action === "select_source" ? selectedSources[item.exceptionId] || item.sourceReferences[0]?.sourceReferenceId : undefined;
-    if (action === "select_source" && !selectedSourceReferenceId) { setMessage("No entitled competing source is available for this source-authority decision."); return; }
+    if (action === "select_source" && !selectedSourceReferenceId) { setMessage({ text: "No entitled competing source is available for this source-authority decision.", tone: "error" }); return; }
     setBusy(`exception:${item.exceptionId}`); setMessage(null);
     try {
       const outcome = await workspacePort.resolveReconciliation({ exceptionId: item.exceptionId, expectedVersion: item.version, action, reasonCode: `reviewer_${action}`, selectedSourceReferenceId, note: note.trim() || undefined });
       setExceptionState((current) => current.key !== exceptionKey ? current : { key: current.key, items: current.items.map((exception) => exception.exceptionId === item.exceptionId ? { ...exception, status: "resolved", version: outcome.newVersion, resolvedAt: new Date().toISOString() } : exception) });
-      setMessage(`Reconciliation exception resolved: ${actionLabel(action)}.`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Reconciliation resolution failed"); }
+      setMessage({ text: `Reconciliation exception resolved: ${actionLabel(action)}.`, tone: "success" });
+    } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Reconciliation resolution failed", tone: "error" }); }
     finally { setBusy(null); }
   };
 
@@ -212,8 +212,8 @@ export function ReviewView({
       await workspacePort.publish({ snapshotId: snapshot.id, action: "publish", expectedVersion: snapshot.version });
       const published: FundSnapshot = { ...snapshot, status: "Published", version: snapshot.version + 1, changed: "Just now", blockingExceptions: 0 };
       onPublished?.(published);
-      setMessage("Snapshot publication accepted and recorded in the serving audit trail.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Publication failed"); }
+      setMessage({ text: "Snapshot publication accepted and recorded in the serving audit trail.", tone: "success" });
+    } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Publication failed", tone: "error" }); }
     finally { setBusy(null); }
   };
 
@@ -221,7 +221,7 @@ export function ReviewView({
     <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && <button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
     {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note tone-warning" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} {needsReview === 1 ? "observation needs" : "observations need"} review and {blockingExceptions} reconciliation {blockingExceptions === 1 ? "exception remains" : "exceptions remain"} open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
-    {message && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Workflow status</strong><span>{message}</span></div></div>}
+    {message && <div className={`lineage-note ${message.tone === "error" ? "tone-danger" : "tone-success"}`} role={message.tone === "error" ? "alert" : "status"}><Icon name={message.tone === "error" ? "alert" : "shield"}/><div><strong>{message.tone === "error" ? "Workflow action failed" : "Workflow status"}</strong><span>{message.text}</span></div></div>}
     {evidence && <div className="lineage-note" role="region" aria-label="Source evidence"><Icon name="source"/><div><strong>Exact source evidence</strong><span>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}</span>{evidence.excerpt && <span>{evidence.excerpt}</span>}</div><button className="text-button" onClick={() => { evidenceRequestRef.current += 1; setEvidence(null); }}>Close</button></div>}
     <div className="review-summary" role="group" aria-label="Snapshot review summary"><div><span>Observations</span><strong>{scopedRows.length}</strong></div><div><span>Approved</span><strong>{approved}</strong></div><div><span>Needs review</span><strong className="amber">{needsReview}</strong></div><div><span>Holdings</span><strong>{snapshot?.holdings ?? "—"}</strong></div><div><span>Blocking exceptions</span><strong>{blockingExceptions}</strong></div></div>
 

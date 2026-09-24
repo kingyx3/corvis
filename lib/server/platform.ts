@@ -290,13 +290,16 @@ export class PostgresProductionPlatform implements PlatformPort {
     }
     if (command.action === "publish") {
       const fundId = text(snapshot,"fund_id");
-      const counts = await this.reviewPublication.publicationCounts(identity.tenantId, fundId);
+      const [counts, independentlyReviewedCriticalCount] = await Promise.all([
+        this.reviewPublication.publicationCounts(identity.tenantId, fundId),
+        this.reviewPublication.independentlyReviewedCriticalCount(identity.tenantId, fundId),
+      ]);
       const total = num(counts,"total_count");
       const gate = evaluatePublicationGate({
         blockingExceptions: num(snapshot,"blocking_exception_count"),
         needsReviewCount: num(counts,"needs_review_count"),
         criticalObservationCount: num(counts,"critical_count"),
-        independentlyReviewedCriticalCount: await this.reviewPublication.independentlyReviewedCriticalCount(identity.tenantId, fundId),
+        independentlyReviewedCriticalCount,
         lineageCoverage: total === 0 ? 0 : num(counts,"lineage_count") / total,
       });
       if (!gate.allowed) throw new PublicationGateError(gate.reasons);

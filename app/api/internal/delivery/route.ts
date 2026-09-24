@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "crypto";
 import { processQueuedExports, processWebhookDeliveries, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
 import { getServerConfig } from "@/lib/server/config";
-import { correlationId, json } from "@/lib/server/http";
+import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
@@ -33,5 +33,5 @@ export async function POST(request:Request){
       sweepUnsubscribedWebhookFanoutEvents(),sweepExpiredIdempotencyKeys(),
     ]);
     return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult,webhookFanoutSweep,idempotencyKeySweep},correlationId:id});
-  }catch(error){return json({error:"delivery_worker_failed",message:error instanceof Error?error.message:"unknown",correlationId:id},{status:500});}
+  }catch(error){return apiError(error,id);}
 }
