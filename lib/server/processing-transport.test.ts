@@ -79,11 +79,13 @@ const gcpConfig: ProcessingTransportConfig = {
   workerServiceAccountEmail: "worker@example.iam.gserviceaccount.com",
 };
 
+const isMetadataServer = (url: string) => new URL(url).hostname === "metadata.google.internal";
+
 function hangingUntilAborted(urls: string[]): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     urls.push(url);
-    if (url.startsWith("http://metadata.google.internal")) {
+    if (isMetadataServer(url)) {
       return new Response(JSON.stringify({ access_token: "token", expires_in: 3600 }), { status: 200 });
     }
     return new Promise<Response>((_, reject) => {
@@ -106,6 +108,6 @@ test("GCP transport bounds every outbound call so a hung endpoint cannot outlive
     clearInterval(keepAlive);
   }
   // The metadata access token is reused across events instead of refetched per call.
-  assert.equal(urls.filter((url) => url.startsWith("http://metadata.google.internal")).length, 1);
+  assert.equal(urls.filter(isMetadataServer).length, 1);
   assert.equal(urls.length, 3);
 });
