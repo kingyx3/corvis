@@ -104,6 +104,16 @@ test("shared zone workflow uses independent state and a dedicated least-privileg
   assert.match(workflow, /release-governance\.mjs/);
 });
 
+test("environment lifecycle cannot delete or address the independent shared Cloudflare state", async () => {
+  const lifecycle = await read(".github/workflows/gcp-decommission.yml");
+  const shared = await read(".github/workflows/cloudflare-zone-policy.yml");
+
+  assert.match(lifecycle, /TF_STATE_BUCKET:\s*\$\{\{ format\('\{0\}-corvis-tf-state'/);
+  assert.doesNotMatch(lifecycle, /corvis-shared-tf-state|cloudflare-zone-policy/);
+  assert.match(shared, /corvis-shared-tf-state/);
+  assert.match(shared, /prefix=corvis\/cloudflare-zone-policy/);
+});
+
 test("security acceptance exercises the real Free-compatible rules without header probes", async () => {
   const acceptance = await read(".github/scripts/security-acceptance.mjs");
 
