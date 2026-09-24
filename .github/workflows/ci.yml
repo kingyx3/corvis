@@ -15,9 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  frontend:
+  quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     env:
       CORVIS_DEMO_MODE: "true"
       NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
@@ -27,10 +27,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - uses: ./.github/actions/setup-terraform-cached
-        with:
-          terraform-version: "1.13.3"
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit
       - run: npm run lint
       - run: npm run typecheck
       - name: Unit tests
@@ -46,6 +43,17 @@ jobs:
           path: unit-test-output.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-terraform-cached
+        with:
+          terraform-version: "1.13.3"
       - name: Terraform format and provider validation
         shell: bash
         run: |
@@ -58,6 +66,20 @@ jobs:
             terraform -chdir="${root}" init -backend=false
             terraform -chdir="${root}" validate
           done
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CORVIS_DEMO_MODE: "true"
+      NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit
       - name: Cache Next.js compiler output
         uses: actions/cache@v4
         with:
@@ -66,6 +88,20 @@ jobs:
           restore-keys: |
             nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CORVIS_DEMO_MODE: "true"
+      NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
@@ -80,8 +116,27 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E
         run: npm run test:e2e
-      - name: Dependency audit
-        run: npm audit --audit-level=high
+
+  # Keep the historic required-check context stable while the expensive gates run
+  # independently. Every prior frontend check remains blocking through this fan-in.
+  frontend:
+    needs: [quality, terraform, build, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify all frontend gates passed
+        shell: bash
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          set -euo pipefail
+          for result in "$QUALITY_RESULT" "$TERRAFORM_RESULT" "$BUILD_RESULT" "$E2E_RESULT"; do
+            test "$result" = "success"
+          done
 
   container:
     runs-on: ubuntu-latest
@@ -176,7 +231,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate_limit.sql
       - name: Verify concurrent independent database connections
         run: node db/postgres/tests/rate-limit-concurrency.mjs
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit
       - name: Verify native application Postgres adapter
         env:
           CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
