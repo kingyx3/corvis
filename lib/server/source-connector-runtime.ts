@@ -1,6 +1,20 @@
 import type { ConnectorDriver, SecretPayload, SecretStore } from "./source-connectors.ts";
 
 /**
+ * Builds a secret resource name that satisfies the
+ * `source_connection_secret_reference_tenant_scoped` check in migration 018:
+ * after the tenant id the suffix may only use `[a-z0-9-]` and at most 64
+ * characters. Provider keys legitimately contain `_` and may be 64 characters
+ * long, so they are slugged and truncated here; otherwise a valid provider key
+ * such as `google_drive` fails the insert with a check violation (a 500).
+ */
+export function sourceConnectorSecretReference(tenantId: string, providerKey: string, sequence: number): string {
+  const suffix = `-${sequence}`;
+  const slug = providerKey.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 64 - suffix.length);
+  return `projects/corvis-uat/secrets/corvis-src-${tenantId}-${slug}${suffix}`;
+}
+
+/**
  * Placeholder `SecretStore`.
  *
  * Corvis has not yet wired a managed secret store (GCP Secret Manager, per
@@ -18,7 +32,7 @@ class InMemorySourceConnectorSecretStore implements SecretStore {
   private counter = 0;
 
   async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
-    const reference = `projects/corvis-uat/secrets/corvis-src-${tenantId}-${providerKey}-${++this.counter}`;
+    const reference = sourceConnectorSecretReference(tenantId, providerKey, ++this.counter);
     this.secrets.set(reference, secret);
     return reference;
   }

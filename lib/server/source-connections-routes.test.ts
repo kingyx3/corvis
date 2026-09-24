@@ -38,7 +38,8 @@ function handleSql(sql: string, parameters: unknown[]): Row[] {
   }
   if (text.includes("from corvis_source.source_connection") && text.includes("source_connection_id=$2")) {
     const row = rows.get(rowKey(String(parameters[0]), String(parameters[1])));
-    return row ? [row] : [];
+    if (!row) return [];
+    return text.includes("'redacted' as secret_reference") ? [{ ...row, secret_reference: "redacted" }] : [row];
   }
   if (text.includes("from corvis_source.source_connection") && text.includes("order by")) {
     return [...rows.values()].filter((row) => row.tenant_id === parameters[0]).map((row) => ({ ...row, secret_reference: "redacted" }));
@@ -47,15 +48,20 @@ function handleSql(sql: string, parameters: unknown[]): Row[] {
     const tenantId = String(parameters[0]);
     const id = String(parameters[1]);
     const row = rows.get(rowKey(tenantId, id));
-    if (row) {
-      if (text.includes("set status=$3, updated_at=now(), revoked_at=now()")) { row.status = parameters[2]; row.revoked_at = new Date().toISOString(); }
-      else if (text.includes("set status=$3, updated_at=now()")) { row.status = parameters[2]; }
-      else if (text.includes("status='revoked', revoked_at=now()")) { row.status = "revoked"; row.revoked_at = new Date().toISOString(); }
-      else if (text.includes("secret_reference=$3, status='active', consecutive_failures=0")) { row.secret_reference = parameters[2]; row.status = "active"; row.consecutive_failures = 0; row.last_error_class = null; }
-      else if (text.includes("status='active', last_authorized_at=now()")) { row.status = "active"; }
-      else if (text.includes("set status=$3, last_error_class=$4, updated_at=now()")) { row.status = parameters[2]; row.last_error_class = parameters[3]; }
-    }
-    return [];
+    if (!row) return [];
+    // Honor the compare-and-set predicates the module issues.
+    if (text.includes("and status=$4") && row.status !== parameters[3]) return [];
+    if (text.includes("and status=$5") && row.status !== parameters[4]) return [];
+    if (text.includes("and status='pending_authorization'") && row.status !== "pending_authorization") return [];
+    if (text.includes("status<>'revoked'") && row.status === "revoked") return [];
+    if (text.includes("secret_reference=$4") && row.secret_reference !== parameters[3]) return [];
+    if (text.includes("set status=$3, updated_at=now(), revoked_at=now()")) { row.status = parameters[2]; row.revoked_at = new Date().toISOString(); }
+    else if (text.includes("set status=$3, updated_at=now()")) { row.status = parameters[2]; }
+    else if (text.includes("status='revoked', revoked_at=now()")) { row.status = "revoked"; row.revoked_at = new Date().toISOString(); }
+    else if (text.includes("secret_reference=$3, status=case when status='paused' then 'paused' else 'active' end")) { row.secret_reference = parameters[2]; row.status = row.status === "paused" ? "paused" : "active"; row.consecutive_failures = 0; row.last_error_class = null; }
+    else if (text.includes("status='active', last_authorized_at=now()")) { row.status = "active"; }
+    else if (text.includes("set status=$3, last_error_class=$4, updated_at=now()")) { row.status = parameters[2]; row.last_error_class = parameters[3]; }
+    return [{ status: row.status }];
   }
   return [];
 }
@@ -256,4 +262,44 @@ test("POST test activates a pending connection once a driver is registered and r
   const statusResponse = await itemGet(request("GET", `/api/v1/source-connections/${sourceConnectionId}`, { tenant: TENANT_A }), params(sourceConnectionId));
   const statusPayload = await statusResponse.json() as { data: { status: string } };
   assert.equal(statusPayload.data.status, "active");
+});
+
+test("a malformed connection id is a 404 on every item route, never a 500 from the uuid cast", async () => {
+  const bad = "not-a-uuid";
+  const responses = [
+    await itemGet(request("GET", `/api/v1/source-connections/${bad}`), params(bad)),
+    await itemPatch(request("PATCH", `/api/v1/source-connections/${bad}`, { body: { action: "pause" } }), params(bad)),
+    await reauthorizePost(request("POST", `/api/v1/source-connections/${bad}/reauthorize`, { body: { secret: { token: "t" } } }), params(bad)),
+    await testPost(request("POST", `/api/v1/source-connections/${bad}/test`), params(bad)),
+  ];
+  for (const response of responses) {
+    assert.equal(response.status, 404);
+    assert.equal((await response.json() as { error: string }).error, "connection_not_found");
+  }
+});
+
+test("PATCH with an inherited Object.prototype name as the action is a 400, not a no-op success", async () => {
+  const { sourceConnectionId } = await createConnection(TENANT_A);
+  for (const action of ["constructor", "toString", "__proto__"]) {
+    const response = await itemPatch(request("PATCH", `/api/v1/source-connections/${sourceConnectionId}`, { tenant: TENANT_A, body: { action } }), params(sourceConnectionId));
+    assert.equal(response.status, 400, action);
+  }
+});
+
+test("a literal null or array JSON body is a 400 on every write route, never a 500", async () => {
+  const { sourceConnectionId } = await createConnection(TENANT_A);
+  for (const body of [null, []]) {
+    const responses = [
+      await createPost(request("POST", "/api/v1/source-connections", { body })),
+      await itemPatch(request("PATCH", `/api/v1/source-connections/${sourceConnectionId}`, { body }), params(sourceConnectionId)),
+      await reauthorizePost(request("POST", `/api/v1/source-connections/${sourceConnectionId}/reauthorize`, { body }), params(sourceConnectionId)),
+    ];
+    for (const response of responses) assert.equal(response.status, 400, JSON.stringify(body));
+  }
+});
+
+test("POST /source-connections rejects a label over 200 characters with 400", async () => {
+  const response = await createPost(request("POST", "/api/v1/source-connections", { body: validCreateBody({ connectionLabel: "x".repeat(201) }) }));
+  assert.equal(response.status, 400);
+  assert.equal((await response.json() as { error: string }).error, "connection_label_too_long");
 });

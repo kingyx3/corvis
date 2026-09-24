@@ -116,3 +116,29 @@ test("POST /reconciliation-exceptions/resolve still rejects an invalid command w
   const payload = await response.json() as { error: string };
   assert.equal(payload.error, "invalid_reconciliation_resolution");
 });
+
+test("POST /reconciliation-exceptions/resolve answers 400 (not 500) for a null/array body, non-string fields or an out-of-range version", async () => {
+  const bodies: unknown[] = [
+    null,
+    [],
+    { exceptionId: "exception-1", expectedVersion: 1, action: "mark_immaterial", reasonCode: { code: "x" } },
+    { exceptionId: 42, expectedVersion: 1, action: "mark_immaterial", reasonCode: "x" },
+    { exceptionId: "exception-1", expectedVersion: 2 ** 31, action: "mark_immaterial", reasonCode: "x" },
+    { exceptionId: "exception-1", expectedVersion: 1, action: "mark_immaterial", reasonCode: "x", note: { text: "n" } },
+  ];
+  for (const body of bodies) {
+    const response = await resolvePost(new Request("https://corvis.test/api/v1/reconciliation-exceptions/resolve", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-corvis-demo-tenant": "tenant-recon-invalid",
+        "x-corvis-demo-workspace": "workspace-1",
+        "x-corvis-demo-subject": "demo-user",
+        "x-corvis-demo-roles": "admin",
+      },
+      body: JSON.stringify(body),
+    }));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json() as { error: string }).error, "invalid_reconciliation_resolution");
+  }
+});

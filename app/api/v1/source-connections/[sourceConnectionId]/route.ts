@@ -5,8 +5,8 @@ import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import {
-  ConnectorGovernanceError,
-  listSourceConnections,
+  assertSourceConnectionId,
+  getSourceConnection,
   pauseSourceConnection,
   resumeSourceConnection,
   revokeSourceConnection,
@@ -18,14 +18,6 @@ function toResponse(connection: SourceConnection): Omit<SourceConnection, "secre
   const { secretReference, ...rest } = connection;
   void secretReference;
   return rest;
-}
-
-/** There is no single-row lookup in the library; the customer-facing listing already excludes the real secret reference, so this never leaks it either. */
-async function findConnection(identity: RequestIdentity, sourceConnectionId: string): Promise<SourceConnection> {
-  const connections = await listSourceConnections(identity);
-  const connection = connections.find((candidate) => candidate.sourceConnectionId === sourceConnectionId);
-  if (!connection) throw new ConnectorGovernanceError("connection_not_found");
-  return connection;
 }
 
 const ACTIONS: Record<string, (identity: RequestIdentity, sourceConnectionId: string) => Promise<void>> = {
@@ -40,7 +32,7 @@ export async function GET(request: Request, context: { params: Promise<{ sourceC
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
-    const connection = await findConnection(identity, sourceConnectionId);
+    const connection = await getSourceConnection(identity, sourceConnectionId);
     return json({ data: toResponse(connection), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
@@ -51,12 +43,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ sourc
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
-    const body = await request.json() as { action?: string };
-    const transition = typeof body.action === "string" ? ACTIONS[body.action] : undefined;
+    const body = (await request.json() ?? {}) as { action?: string };
+    // Own keys only: an inherited name such as "constructor" must not resolve to an Object.prototype function.
+    const transition = typeof body.action === "string" && Object.hasOwn(ACTIONS, body.action) ? ACTIONS[body.action] : undefined;
     if (!transition) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    assertSourceConnectionId(sourceConnectionId);
 
     await transition(identity, sourceConnectionId);
-    const data = await findConnection(identity, sourceConnectionId);
+    const data = await getSourceConnection(identity, sourceConnectionId);
     await platform().audit({
       id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
       actorSubject: identity.subject, sessionId: identity.sessionId, action: `source_connection.${body.action}`,

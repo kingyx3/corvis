@@ -34,6 +34,7 @@ const CRITICAL_METRIC_CODES = new Set([
 ]);
 
 const SYNTHETIC_EXCEPTION_CODE = "__candidate_exception__";
+const REVIEW_EVENT_REUSED = "review event id was reused with different decision content";
 const SHA256 = /^[0-9a-f]{64}$/i;
 
 export type ExtractionReviewRun = {
@@ -449,7 +450,7 @@ export class PostgresCandidateReviewRepository {
       correctionPayload: decision.correctionPayload,
       resolvedExceptionCodes: decision.resolvedExceptionCodes ?? [],
     };
-    if (stable(actual) !== stable(expected)) throw new Error("review event id was reused with different decision content");
+    if (stable(actual) !== stable(expected)) throw new Error(REVIEW_EVENT_REUSED);
   }
 
   async saveGate(input: { tenantId: string; gate: ExtractionReviewGate }): Promise<void> {
@@ -501,8 +502,12 @@ async function loadGateState(input: {
   documentId: string;
   extractionRunId: string;
   predecessor?: ExtractionPredecessorResult;
+  /** An already-loaded run for this same tenant/document/run id. */
+  run?: ExtractionReviewRun;
+  /** Candidates already loaded, validated and whose requirements were already ensured in this request. */
+  candidates?: ReviewCandidate[];
 }): Promise<{ run: ExtractionReviewRun; candidates: ReviewCandidate[]; gate: ExtractionReviewGate }> {
-  const run = await input.repository.findReadyRun({
+  const run = input.run ?? await input.repository.findReadyRun({
     tenantId: input.tenantId,
     documentId: input.documentId,
     extractionRunId: input.extractionRunId,
@@ -511,11 +516,13 @@ async function loadGateState(input: {
   if (input.predecessor && !runMatches(run, input.predecessor)) {
     throw new Error("reviewed stage extraction lineage no longer matches the extracted stage result");
   }
-  const candidates = await input.repository.listCandidates({ tenantId: input.tenantId, extractionRunId: run.extractionRunId });
+  const candidates = input.candidates ?? await input.repository.listCandidates({ tenantId: input.tenantId, extractionRunId: run.extractionRunId });
   if (candidates.length !== run.candidateCount) throw new Error("reviewed stage candidate count no longer matches finalized extraction run");
   const requirements = candidates.map(reviewRequirementFor);
-  for (const requirement of requirements) {
-    await input.repository.ensureRequirement({ tenantId: input.tenantId, extractionRunId: run.extractionRunId, requirement });
+  if (!input.candidates) {
+    for (const requirement of requirements) {
+      await input.repository.ensureRequirement({ tenantId: input.tenantId, extractionRunId: run.extractionRunId, requirement });
+    }
   }
   const events = await input.repository.listEvents({ tenantId: input.tenantId, extractionRunId: run.extractionRunId });
   const gate = evaluateExtractionReviewGate({ run, candidates, requirements, events });
@@ -558,6 +565,27 @@ export function createReviewedStageHandler(repository: PostgresCandidateReviewRe
   };
 }
 
+/**
+ * A customer review command that cannot be applied because of what it names
+ * or the state it targets (as opposed to an internal/persistence failure).
+ * `status` is the HTTP status the review route answers with.
+ */
+export class CandidateReviewRequestError extends Error {
+  readonly code: string;
+  readonly status: 400 | 404 | 409;
+  constructor(code: string, status: 400 | 404 | 409) {
+    super(code);
+    this.name = "CandidateReviewRequestError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 export async function recordCandidateReviewDecision(input: {
   db: PostgresSqlApi;
   tenantId: string;
@@ -576,30 +604,51 @@ export async function recordCandidateReviewDecision(input: {
     throw new Error("candidate correction requires correctionPayload object");
   }
 
+  const run = await repository.findReadyRun({
+    tenantId: input.tenantId,
+    documentId: input.documentId,
+    extractionRunId: input.extractionRunId,
+  });
+  if (!run) throw new CandidateReviewRequestError("extraction_run_not_found", 404);
+  if (run.status !== "ready") throw new CandidateReviewRequestError("extraction_run_not_ready", 409);
+
   const initial = await loadGateState({
     repository,
     tenantId: input.tenantId,
     documentId: input.documentId,
     extractionRunId: input.extractionRunId,
+    run,
   });
   const candidate = initial.candidates.find((entry) => entry.candidateId === decision.candidateId);
-  if (!candidate) throw new Error("candidate review decision targets candidate outside extraction run");
+  if (!candidate) throw new CandidateReviewRequestError("candidate_not_found", 404);
   const allowedExceptions = new Set(exceptionUniverse(candidate));
   if (decision.decision === "resolve_exception") {
     const codes = decision.resolvedExceptionCodes ?? [];
     if (codes.length === 0 || codes.some((code) => !allowedExceptions.has(code))) {
-      throw new Error("candidate review exception resolution must name unresolved candidate exception codes");
+      throw new CandidateReviewRequestError("unknown_candidate_exception_codes", 400);
     }
   } else if ((decision.resolvedExceptionCodes ?? []).length > 0) {
-    throw new Error("resolvedExceptionCodes are allowed only for resolve_exception decisions");
+    throw new CandidateReviewRequestError("resolved_exception_codes_not_allowed", 400);
   }
 
-  await repository.appendDecision({ tenantId: input.tenantId, extractionRunId: input.extractionRunId, decision });
+  try {
+    await repository.appendDecision({ tenantId: input.tenantId, extractionRunId: input.extractionRunId, decision });
+  } catch (error) {
+    // guard_review_event_lifecycle (migration 025) raises while the reviewed
+    // stage is running and after it has succeeded: the review is closed.
+    if (postgresErrorCode(error) === "P0001") throw new CandidateReviewRequestError("candidate_review_closed", 409);
+    if (error instanceof Error && error.message === REVIEW_EVENT_REUSED) throw new CandidateReviewRequestError("idempotency_key_reused", 409);
+    throw error;
+  }
+  // Requirements were ensured (and verified immutable) by the load above; the
+  // re-evaluation only needs the new event, not another 2N requirement round trips.
   const evaluated = await loadGateState({
     repository,
     tenantId: input.tenantId,
     documentId: input.documentId,
     extractionRunId: input.extractionRunId,
+    run,
+    candidates: initial.candidates,
   });
   if (evaluated.gate.status === "ready") {
     await repository.resumeReviewedStage({

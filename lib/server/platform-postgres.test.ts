@@ -17,6 +17,9 @@ class FakeDb implements PostgresSqlApi {
   exceptionRows: PostgresRow[] = [];
   resolutionPreflight: PostgresRow | undefined;
   snapshotBlockers = 0;
+  snapshotStatus: string | undefined;
+  observationMissing = false;
+  appendError: unknown;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
@@ -25,16 +28,21 @@ class FakeDb implements PostgresSqlApi {
     if (sql.includes("resolve_reconciliation_exception")) return [{ new_version: 2, next_status: "resolved" }];
     if (sql.includes("apply_review_decision")) return [this.reviewResult];
     if (sql.includes("from corvis_facts.observation o")) {
+      if (this.observationMissing) return [];
       return [{ observation_id: parameters[1], version: 2, review_state: "review_required", value_number: 100, risk_tier: "normal" }];
     }
     if (sql.includes("select * from corvis_serving.fund_period_snapshots")) {
-      return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: this.snapshotBlockers }];
+      return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: this.snapshotBlockers,
+        ...(this.snapshotStatus ? { status: this.snapshotStatus } : {}) }];
     }
     if (sql.includes("count(*) filter (where review_state<>'approved')")) {
       return [{ needs_review_count: 0, critical_count: 0, lineage_count: 1, total_count: 1 }];
     }
     if (sql.includes("independently_reviewed")) return [{ independently_reviewed: 0 }];
-    if (sql.includes("append_snapshot_transition")) return [{ new_version: 2 }];
+    if (sql.includes("append_snapshot_transition")) {
+      if (this.appendError) throw this.appendError;
+      return [{ new_version: 2 }];
+    }
     if (sql.includes("corvis_serving.documents")) return [{
       document_id: "00000000-0000-0000-0000-000000000101",
       display_name: "Q2 report.pdf", fund_name: "Fund A", report_period: "2026 Q2",
@@ -277,6 +285,80 @@ test("withdraw and supersede transitions remain reversible-history commands with
     assert.equal(db.calls[1]?.parameters[4], action);
     assert.equal(db.calls[1]?.parameters[6], `${action}_test`);
   }
+});
+
+test("review of an unknown or malformed observation id is a conflict, and a malformed id never reaches a uuid cast", async () => {
+  const db = new FakeDb();
+  db.observationMissing = true;
+  await assert.rejects(
+    new PostgresProductionPlatform(db).review(identity, { observationId: "00000000-0000-0000-0000-000000000301", decision: "approve", reasonCode: "ok", expectedVersion: 2 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "observation_not_found_or_version_conflict",
+  );
+  const clean = new FakeDb();
+  await assert.rejects(
+    new PostgresProductionPlatform(clean).review(identity, { observationId: "not-a-uuid", decision: "approve", reasonCode: "ok", expectedVersion: 2 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "observation_not_found_or_version_conflict",
+  );
+  assert.equal(clean.calls.length, 0);
+});
+
+test("malformed snapshot / exception ids fail closed without issuing a query", async () => {
+  const db = new FakeDb();
+  const platform = new PostgresProductionPlatform(db);
+  await assert.rejects(
+    platform.publish(identity, { snapshotId: "snap-1", action: "publish", expectedVersion: 1 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "snapshot_not_found_or_version_conflict",
+  );
+  await assert.rejects(
+    platform.resolveReconciliation(identity, { exceptionId: "exc-1", expectedVersion: 1, action: "mark_immaterial", reasonCode: "x" }),
+    (error: unknown) => error instanceof ConflictError,
+  );
+  await assert.rejects(
+    platform.resolveReconciliation(identity, { exceptionId, expectedVersion: 1, action: "select_source", reasonCode: "x", selectedSourceReferenceId: "src-1" }),
+    (error: unknown) => error instanceof ConflictError,
+  );
+  assert.deepEqual(await platform.listReconciliationExceptions(identity, "snap-1", 1), []);
+  assert.equal(db.calls.length, 0);
+});
+
+test("snapshot transitions only target the current version of the snapshot", async () => {
+  const db = new FakeDb();
+  await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "withdraw", expectedVersion: 1 });
+  assert.match(db.calls[0]?.sql ?? "", /not exists \(\s*select 1 from corvis_serving\.fund_period_snapshots n[\s\S]+n\.version>s\.version/);
+});
+
+test("snapshot transitions refuse a source state they cannot start from with a 409, before the persistence call", async () => {
+  const cases: Array<[string, "publish" | "withdraw" | "supersede"]> = [
+    ["published", "publish"], ["withdrawn", "publish"], ["draft", "withdraw"], ["withdrawn", "withdraw"], ["superseded", "supersede"], ["draft", "supersede"],
+  ];
+  for (const [status, action] of cases) {
+    const db = new FakeDb();
+    db.snapshotStatus = status;
+    await assert.rejects(
+      new PostgresProductionPlatform(db).publish(identity, { snapshotId, action, expectedVersion: 1 }),
+      (error: unknown) => error instanceof ConflictError && error.code === "snapshot_transition_not_allowed",
+      `${action} from ${status}`,
+    );
+    assert.equal(db.calls.some((call) => call.sql.includes("append_snapshot_transition")), false);
+  }
+  const allowed = new FakeDb();
+  allowed.snapshotStatus = "published";
+  assert.equal((await new PostgresProductionPlatform(allowed).publish(identity, { snapshotId, action: "withdraw", expectedVersion: 1 })).accepted, true);
+});
+
+test("a concurrent transition losing the version race is a version conflict, and a persistence-gate refusal is a blocked publication", async () => {
+  const racing = new FakeDb();
+  racing.appendError = Object.assign(new Error("Postgres query failed (SQLSTATE 23505)"), { code: "23505" });
+  await assert.rejects(
+    new PostgresProductionPlatform(racing).publish(identity, { snapshotId, action: "withdraw", expectedVersion: 1 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "snapshot_not_found_or_version_conflict",
+  );
+  const gated = new FakeDb();
+  gated.appendError = Object.assign(new Error("Postgres query failed (SQLSTATE P0001)"), { code: "P0001" });
+  await assert.rejects(
+    new PostgresProductionPlatform(gated).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 }),
+    (error: unknown) => error instanceof PublicationGateError && error.reasons.includes("publication_invariant_failed"),
+  );
 });
 
 test("exports require the independent authoritative redistribution right", async () => {
