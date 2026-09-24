@@ -25,7 +25,7 @@ codes, and `internal_error` (500) as the fallback. Adding a new typed error clas
 means adding one `instanceof` branch to `apiError()`, not reinventing the
 envelope in the route.
 
-## Pagination
+## Pagination and collection queries
 
 `lib/server/pagination.ts` implements opaque cursor pagination:
 `GET` collection endpoints accept `?limit=` (1–200, default 50) and
@@ -45,30 +45,34 @@ unpaginated caller make pagination the only mode instead of adding this
 compatibility branch.
 
 A cursor encodes the sort key of the last item on the page that issued it
-(by convention, the resource's own id; `snapshots` falls back to a
-composite `fund/period/version` key since a `FundSnapshot`'s `id` is
-optional in some compositions). Pagination is keyset-based: walking pages
-with the returned cursor visits every item created before or during the
-walk exactly once, in stable order, even if items are inserted or deleted
-between requests — it is not resilient to the underlying sort key itself
-changing. Malformed or tampered cursors, and non-positive/non-integer
-`limit` values, are rejected with `invalid_cursor` (400) rather than
-silently ignored, clamped without complaint, or crashing.
+(by convention, the resource's own id; `snapshots` uses an id/version key so
+multiple versions cannot be skipped at a page boundary). Pagination is
+keyset-based and ordered with the same `C` collation used by the cursor key.
+Malformed or tampered cursors, and non-positive/non-integer `limit` values,
+are rejected with `invalid_cursor` (400) rather than silently ignored,
+clamped without complaint, or crashing.
 
 **Landed on:** `GET /documents`, `GET /observations`, `GET /snapshots` and
 `GET /jobs` preserve the unpaginated-by-default compatibility rule above.
-`GET /funds`, `GET /companies`, `GET /company-lifecycle-events`,
-`GET /metric-definitions`, `GET /consolidated-facts` and
+`GET /funds`, `GET /companies`, `GET /holdings`, `GET /instruments`,
+`GET /company-lifecycle-events`, `GET /metric-definitions`,
+`GET /consolidated-facts`, `GET /reconciliations` and
 `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` are newer
-endpoints and therefore use pagination as their only collection mode.
-`GET /exports` and any future resource listing should adopt the same opaque
-cursor contract; genuinely new endpoints should default to pagination-only.
+collections and use pagination as their collection contract. `GET /exports`
+uses its separately bounded requester-history contract.
 
-**Known limitation:** pagination is currently applied over the full list
-each repository/adapter already returns, not pushed down as a `LIMIT`/
-keyset `WHERE` clause in the underlying Postgres query. It is correct and
-convenient for a client, but does not reduce the amount of work the server
-does to serve one page. Push-down to the repository layer is future work.
+Production Postgres repositories now push the requested page into SQL with
+a keyset predicate and `limit + 1` fetch for the document/job/observation/
+snapshot lists and the governed serving-resource collections above. This
+prevents the old silent-cap problem where rows beyond an in-memory fetch
+ceiling could never be reached, and avoids loading an entire entitled
+collection for each page. Demo/test adapters may still paginate already
+materialized arrays, but that is not the production Postgres path.
+
+The initial-UAT collection contract deliberately does **not** add a generic
+filter/sort language. Add a filter or ordering only when UAT or a concrete
+customer workflow identifies the exact field, semantics and compatibility
+requirement; opaque cursor pagination remains the stable baseline.
 
 ## Serving-resource authorization
 
@@ -83,10 +87,12 @@ current tenant and entitled funds that are actually included in a published
 fund-period snapshot. `/metric-definitions` exposes the active governed
 semantic dictionary, never extraction-provider payloads.
 
-Holdings and instruments are intentionally not synthesized from optional
-observation identifier columns. Those resources are added only after their
-full polymorphic holding-target and instrument semantics are represented in
-the governed persisted model.
+`/holdings` and `/instruments` are backed by the governed persisted economic
+model rather than synthesized from optional observation identifier columns.
+A holding targets exactly one company or underlying fund; fund targets are
+returned only when that target fund is itself entitled. Instruments are
+returned beneath approved company-targeted holdings and preserve the source
+security description plus normalized instrument attributes and lineage.
 
 ## Idempotency
 
@@ -120,6 +126,16 @@ delivery never reads or writes `published_at`/`attempt_count`/`last_error`,
 which belong to the processing transport. A delivery left in `delivering` for
 more than 10 minutes (worker crash) is reclaimed as retryable; export jobs are
 reclaimed the same way via `export_job.delivery_started_at`.
+
+The launch customer-facing event allowlist is intentionally narrower than the
+internal processing event stream. `WEBHOOK_EVENT_TYPES` currently exposes:
+`SnapshotPublicationChanged`, `DataCorrectionOpened`, `DataCorrectionResolved`,
+`CorrectionReplacementDeliveryRequested` and `ExportRequested`. Internal
+processing/job signals — including `DocumentRegistered`, stage-ready/retry
+transport events, and stage blocked/dead-letter operator state — are not
+subscribable and are excluded from delivery even for legacy subscription rows.
+Expand the customer event vocabulary only through a reviewed external-contract
+change; do not expose internal outbox events merely because they exist.
 
 Subscription administration and per-subscription signing-key rotation
 (migration `019_webhook_subscription_management.sql`,
@@ -174,6 +190,13 @@ and `assertPermission()`/`assertRole()` before doing anything else; this
 repository-wide contract is enforced by `lib/server/security-contract.test.ts`,
 not by convention alone.
 
+Database lifecycle roles and application permissions are separate layers.
+`tenant_admin` and `workspace_admin` must not be treated as interchangeable
+scopes merely because both are administrative labels; workspace-scoped
+administration must never acquire tenant-wide authority without an explicit,
+reviewed permission boundary. The implementation/evidence work for this
+partitioning is tracked by the enterprise-admin readiness issue.
+
 ## Versioning and deprecation
 
 `/api/v1` is the published version today. `openapi/v1-compatibility-baseline.json`
@@ -185,3 +208,10 @@ Breaking changes use a new version prefix rather than changing v1 in place.
 The governed migration/notice/sunset process, including the rule that security
 and tenant-isolation fixes override compatibility concerns, is defined in
 `docs/API_DEPRECATION.md`.
+
+The OpenAPI document is the customer-facing contract, not a substitute for
+operator/admin runbooks. Any customer-reachable or integration-relevant route
+that is intentionally part of v1 must be added to the spec and compatibility
+baseline before it is treated as a stable external contract. Internal/operator
+routes should be explicitly classified rather than silently omitted or
+accidentally presented as customer APIs.
