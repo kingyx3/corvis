@@ -177,13 +177,12 @@ module "admin_gateway" {
 module "cloudflare_edge" {
   count = local.edge_enabled ? 1 : 0
 
-  source             = "../../modules/cloudflare-edge"
-  account_id         = local.cloudflare_account_id
-  zone_id            = local.cloudflare_zone_id
-  gateway_hostname   = module.api_gateway[0].gateway_hostname
-  gateway_api_key    = module.api_gateway[0].edge_api_key
-  api_hostname       = local.api_hostname
-  enable_managed_waf = var.enable_cloudflare_managed_waf
+  source           = "../../modules/cloudflare-edge"
+  account_id       = local.cloudflare_account_id
+  zone_id          = local.cloudflare_zone_id
+  gateway_hostname = module.api_gateway[0].gateway_hostname
+  gateway_api_key  = module.api_gateway[0].edge_api_key
+  api_hostname     = local.api_hostname
 
   depends_on = [
     terraform_data.edge_configuration_guard,

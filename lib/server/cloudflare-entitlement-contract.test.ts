@@ -16,40 +16,111 @@ function ruleset(source: string, name: string, nextName?: string): string {
   return source.slice(start, end);
 }
 
-test("Cloudflare baseline remains deployable on Free while Pro managed WAF stays optional", async () => {
-  const edge = await read("infra/terraform/modules/cloudflare-edge/main.tf");
-  const variables = await read("infra/terraform/modules/cloudflare-edge/variables.tf");
+test("shared Cloudflare zone policy has one Terraform owner and environment roots own only host resources", async () => {
+  const environmentEdge = await read("infra/terraform/modules/cloudflare-edge/main.tf");
+  const sharedPolicy = await read("infra/terraform/modules/cloudflare-zone-policy/main.tf");
+  const sharedRoot = await read("infra/terraform/shared/cloudflare/main.tf");
+  const uat = await read("infra/terraform/environments/uat/main.tf");
+  const prod = await read("infra/terraform/environments/prod/main.tf");
 
-  const customWaf = ruleset(edge, "custom_waf", "managed_waf");
-  const rateLimits = ruleset(edge, "rate_limits", "cache");
-  const cache = ruleset(edge, "cache");
+  assert.doesNotMatch(environmentEdge, /cloudflare_zone_setting|cloudflare_ruleset/);
+  assert.match(environmentEdge, /cloudflare_worker/);
+  assert.match(environmentEdge, /cloudflare_workers_route/);
+  assert.match(environmentEdge, /cloudflare_dns_record/);
 
-  // Free currently allows five custom WAF rules, one rate-limit rule and ten
-  // cache rules. Keep the baseline comfortably inside those counts.
+  assert.match(sharedRoot, /module "zone_policy"/);
+  assert.match(sharedRoot, /source\s*=\s*"\.\.\/\.\.\/modules\/cloudflare-zone-policy"/);
+  assert.equal((sharedPolicy.match(/resource "cloudflare_ruleset"/g) ?? []).length, 4);
+  assert.equal((sharedPolicy.match(/resource "cloudflare_zone_setting"/g) ?? []).length, 4);
+
+  assert.doesNotMatch(uat, /enable_managed_waf\s*=/);
+  assert.doesNotMatch(prod, /enable_managed_waf\s*=/);
+});
+
+test("one root domain derives only first-level prod and UAT hostnames and exact browser origins", async () => {
+  const sharedPolicy = await read("infra/terraform/modules/cloudflare-zone-policy/main.tf");
+  const uat = await read("infra/terraform/environments/uat/main.tf");
+  const prod = await read("infra/terraform/environments/prod/main.tf");
+
+  for (const label of ["api", "app", "admin", "api-uat", "app-uat", "admin-uat"]) {
+    assert.match(sharedPolicy, new RegExp(`"${label}\\.\\$\\{var\\.zone_name\\}"`));
+  }
+  assert.doesNotMatch(sharedPolicy, /\.uat\.\$\{var\.zone_name\}/);
+
+  assert.match(uat, /api_hostname\s*=.*"api-uat\.\$\{trimspace\(var\.cloudflare_zone_name\)\}"/);
+  assert.match(uat, /customer_hostname\s*=.*"app-uat\.\$\{trimspace\(var\.cloudflare_zone_name\)\}"/);
+  assert.match(uat, /admin_hostname\s*=.*"admin-uat\.\$\{trimspace\(var\.cloudflare_zone_name\)\}"/);
+  assert.match(prod, /api_hostname\s*=.*"api\.\$\{trimspace\(var\.cloudflare_zone_name\)\}"/);
+
+  assert.match(uat, /upload_allowed_origins\s*=.*\["https:\/\/\$\{local\.customer_hostname\}"\]/);
+  assert.match(uat, /browser_allowed_origins\s*=.*\["https:\/\/\$\{local\.customer_hostname\}", "https:\/\/\$\{local\.admin_hostname\}"\]/);
+  assert.match(prod, /upload_allowed_origins\s*=.*\["https:\/\/\$\{local\.customer_hostname\}"\]/);
+  assert.doesNotMatch(`${uat}\n${prod}`, /allowed_origins[\s\S]*\*/i);
+});
+
+test("Cloudflare shared policy scopes application behavior and preserves Free or Pro entitlement paths", async () => {
+  const policy = await read("infra/terraform/modules/cloudflare-zone-policy/main.tf");
+  const variables = await read("infra/terraform/modules/cloudflare-zone-policy/variables.tf");
+
+  const customWaf = ruleset(policy, "custom_waf", "managed_waf");
+  const managedWaf = ruleset(policy, "managed_waf", "rate_limits");
+  const rateLimits = ruleset(policy, "rate_limits", "cache");
+  const cache = ruleset(policy, "cache");
+
   assert.equal((customWaf.match(/\bref\s*=/g) ?? []).length, 3);
-  assert.equal((rateLimits.match(/\bref\s*=/g) ?? []).length, 1);
-  assert.equal((cache.match(/\bref\s*=/g) ?? []).length, 1);
+  assert.match(customWaf, /local\.corvis_host_expression/);
+  assert.match(managedWaf, /expression\s*=\s*local\.corvis_host_expression/);
+  assert.match(cache, /expression\s*=\s*local\.corvis_host_expression/);
 
-  // The Free rate-limit expression supports Path plus IP counting only, with a
-  // 10-second counting/mitigation period. Host/header/method matching would move
-  // this baseline onto a higher entitlement.
+  // Free: one path-only rule, 10-second period, IP counting. Host is not an
+  // available Free rate-limit match field, so environment isolation remains
+  // authoritative in the application's Postgres-backed rate limiter.
+  assert.match(rateLimits, /rate_limit_corvis_api_by_ip_free/);
   assert.ok(rateLimits.includes('expression  = "(starts_with(http.request.uri.path, \\"/api/\\"))"'));
-  assert.doesNotMatch(rateLimits, /http\.host|http\.request\.headers|http\.request\.method/);
-  assert.ok(rateLimits.includes('characteristics     = ["cf.colo.id", "ip.src"]'));
+  assert.match(rateLimits, /characteristics\s*=\s*\["cf\.colo\.id", "ip\.src"\]/);
   assert.match(rateLimits, /period\s*=\s*10/);
   assert.match(rateLimits, /mitigation_timeout\s*=\s*10/);
-  assert.match(rateLimits, /requests_per_period\s*=\s*local\.api_requests_per_10_seconds/);
-  assert.match(edge, /api_requests_per_10_seconds\s*=\s*max\(1,\s*ceil\(var\.api_requests_per_minute \/ 6\)\)/);
 
-  // The deterministic WAF probe is path-based and does not consume a
-  // request-header entitlement.
-  assert.ok(customWaf.includes('expression  = "(http.request.uri.path eq \\"/__corvis/security/waf-block\\")"'));
-  assert.doesNotMatch(customWaf, /http\.request\.headers/);
+  // Pro+: two independent rules use Host matching so prod and UAT do not share
+  // the same Cloudflare edge counter.
+  assert.match(rateLimits, /rate_limit_prod_api_by_ip/);
+  assert.match(rateLimits, /http\.host eq \\"\$\{local\.prod_api_hostname\}\\"/);
+  assert.match(rateLimits, /rate_limit_uat_api_by_ip/);
+  assert.match(rateLimits, /http\.host eq \\"\$\{local\.uat_api_hostname\}\\"/);
 
-  // Paid managed rules are an explicit Pro+ opt-in, never part of the Free
-  // baseline. Free still receives Cloudflare's provider-managed Free ruleset.
   assert.match(variables, /variable "enable_managed_waf"[\s\S]*?default\s*=\s*false/);
-  assert.match(variables, /keep false on free/i);
+  assert.match(variables, /Free-compatible one-rule baseline/i);
+});
+
+test("shared zone workflow uses independent state and a dedicated least-privilege policy token", async () => {
+  const workflow = await read(".github/workflows/cloudflare-zone-policy.yml");
+
+  assert.match(workflow, /environment:\s*uat/);
+  assert.match(workflow, /corvis-shared-tf-state/);
+  assert.match(workflow, /prefix=corvis\/cloudflare-zone-policy/);
+  assert.match(workflow, /secrets\.CLOUDFLARE_ZONE_POLICY_TOKEN/);
+  assert.doesNotMatch(workflow, /secrets\.CLOUDFLARE_API_TOKEN/);
+  assert.match(workflow, /github\.ref != 'refs\/heads\/main'/);
+  assert.match(workflow, /release-governance\.mjs/);
+});
+
+test("required Terraform CI validates the independent shared Cloudflare root", async () => {
+  const workflow = await read(".github/workflows/terraform.yml");
+
+  assert.match(workflow, /infra\/terraform\/shared/);
+  assert.match(workflow, /cloudflare-zone-policy\.yml/);
+  assert.match(workflow, /find infra\/terraform\/shared/);
+  assert.match(workflow, /terraform -chdir="\$\{root\}" validate/);
+});
+
+test("environment lifecycle cannot delete or address the independent shared Cloudflare state", async () => {
+  const lifecycle = await read(".github/workflows/gcp-decommission.yml");
+  const shared = await read(".github/workflows/cloudflare-zone-policy.yml");
+
+  assert.match(lifecycle, /TF_STATE_BUCKET:\s*\$\{\{ format\('\{0\}-corvis-tf-state'/);
+  assert.doesNotMatch(lifecycle, /corvis-shared-tf-state|cloudflare-zone-policy/);
+  assert.match(shared, /corvis-shared-tf-state/);
+  assert.match(shared, /prefix=corvis\/cloudflare-zone-policy/);
 });
 
 test("security acceptance exercises the real Free-compatible rules without header probes", async () => {

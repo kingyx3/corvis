@@ -18,6 +18,7 @@ When the same subject appears in both systems:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — high-level map of how the repository layers, runtime dependencies, Terraform modules and GitHub Actions control plane fit together.
 - [`MODULARITY.md`](MODULARITY.md) — module boundaries, dependency direction, failure isolation and the canonical customer-journey E2E contract.
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) — Cloudflare + GCP + Supabase topology, IaC ownership, lifecycle and cost controls.
+- [`CLOUDFLARE_SHARED_ZONE.md`](CLOUDFLARE_SHARED_ZONE.md) — one-domain UAT/prod hostname contract, shared-zone Terraform ownership, token separation, TLS/WAF/cache/rate-limit isolation and lifecycle controls.
 - [`DATA_PLATFORM.md`](DATA_PLATFORM.md) — GCS/Postgres/Snowflake boundaries, RLS, migrations and optional downstream CDC.
 - [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
 - [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — continuous business-build/documentation control loop: scanners, fingerprinting, health/watermark rules and what remains manual.

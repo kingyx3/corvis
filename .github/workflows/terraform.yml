@@ -7,6 +7,7 @@ on:
       - ".github/actions/setup-terraform-cached/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/terraform-deploy.yml"
+      - ".github/workflows/cloudflare-zone-policy.yml"
   push:
     branches: [main]
     paths:
@@ -14,6 +15,7 @@ on:
       - ".github/actions/setup-terraform-cached/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/terraform-deploy.yml"
+      - ".github/workflows/cloudflare-zone-policy.yml"
 
 permissions:
   contents: read
@@ -32,15 +34,22 @@ jobs:
         with:
           terraform-version: "1.13.3"
       - name: Format
-        run: terraform fmt -check -recursive infra/terraform
-      - name: Validate Terraform environment roots
+        run: terraform fmt -diff -check -recursive infra/terraform
+      - name: Validate Terraform roots
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t roots < <(find infra/terraform/environments -mindepth 1 -maxdepth 1 -type d | sort)
+          mapfile -t roots < <(
+            {
+              find infra/terraform/environments -mindepth 1 -maxdepth 1 -type d
+              if [[ -d infra/terraform/shared ]]; then
+                find infra/terraform/shared -mindepth 1 -maxdepth 1 -type d
+              fi
+            } | sort
+          )
           if [ ${#roots[@]} -eq 0 ]; then
-            echo "No Terraform environment roots are implemented yet; issue #13 remains open."
-            exit 0
+            echo "No Terraform roots are implemented."
+            exit 1
           fi
           for root in "${roots[@]}"; do
             echo "Validating ${root}"
