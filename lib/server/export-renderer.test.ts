@@ -49,3 +49,21 @@ test("all renderers support an empty authorized export", () => {
   const parquet = renderParquet([]);
   assert.equal(parquet.subarray(0, 4).toString("ascii"), "PAR1");
 });
+
+test("CSV renderer neutralizes spreadsheet formulas in text cells but leaves numbers typed", () => {
+  const csv = renderCsv([
+    { ...row, value_string: "=HYPERLINK(\"http://evil\",\"x\")", metric_code: "+cmd", currency: "@SUM(A1)", company_id: "-2+3", value_number: -12.5 },
+  ]).toString("utf8");
+  const dataLine = csv.split("\r\n")[1]!;
+  assert.match(dataLine, /,'\+cmd,/);
+  assert.match(dataLine, /"'=HYPERLINK\(""http:\/\/evil"",""x""\)"/);
+  assert.match(dataLine, /,'@SUM\(A1\),/);
+  assert.match(dataLine, /,'-2\+3,/);
+  assert.match(dataLine, /,-12\.5,/, "a negative number is a typed value, not a formula");
+});
+
+test("XLSX renderer drops characters that are illegal in XML so the workbook stays readable", () => {
+  const xlsx = renderXlsx([{ ...row, value_string: "bad\u0000\u0001\u000Bvalue\uD800 ok😀" }]).toString("utf8");
+  assert.match(xlsx, /badvalue ok😀/);
+  assert.doesNotMatch(xlsx, /bad\u0000/);
+});

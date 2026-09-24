@@ -42,6 +42,14 @@ test("blocked address ranges cover loopback, private, link-local, CGNAT, metadat
   }
 });
 
+test("IPv6 transition forms that embed an IPv4 address (SIIT, 6to4, Teredo) are blocked", () => {
+  for (const address of ["::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "2002:7f00:1::", "2002:a9fe:a9fe::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2"]) {
+    assert.equal(isBlockedWebhookAddress(address), true, address);
+  }
+  assert.equal(webhookEndpointBlockReason("https://[2002:a9fe:a9fe::1]/"), "endpoint_url_host_not_allowed");
+  for (const address of ["2001:4860:4860::8888", "::ffff:8.8.8.8"]) assert.equal(isBlockedWebhookAddress(address), false, address);
+});
+
 test("static endpoint policy rejects non-https, credentials, internal names and IP literals", () => {
   assert.equal(webhookEndpointBlockReason("http://hooks.example.com/"), "endpoint_url_must_be_https");
   assert.equal(webhookEndpointBlockReason("https://user:pass@hooks.example.com/"), "endpoint_url_credentials_not_allowed");
