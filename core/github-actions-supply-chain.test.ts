@@ -29,7 +29,7 @@ test("external GitHub Actions are pinned to immutable commits", () => {
           }
           continue;
         }
-        if (!/^[^\s@]+\/[^^\s@]+@[0-9a-f]{40}$/.test(target)) {
+        if (!/^[^\s@]+\/[^\s@]+@[0-9a-f]{40}$/.test(target)) {
           violations.push(`${path}: ${target}`);
         }
       }
