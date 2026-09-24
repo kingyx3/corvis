@@ -23,6 +23,8 @@ export type SourceEvidence = {
 
 export type WorkspaceCapabilities = {
   permissions: Permission[];
+  /** Presentation-safe signal for tenant-wide control-plane UI; raw role names are never exposed. */
+  tenantControlAllowed: boolean;
   sourceDocumentAccessAllowed: boolean;
   redistributionAllowed: boolean;
 };
