@@ -66,6 +66,10 @@ export async function POST(request: Request) {
       || typeof command.reasonCode !== "string" || !command.reasonCode.trim()) {
       return json({ error: "invalid_candidate_review_command", correlationId: id }, { status: 400 });
     }
+    const documentId = command.documentId;
+    const extractionRunId = command.extractionRunId;
+    const candidateId = command.candidateId;
+    const reasonCode = command.reasonCode.trim();
     const decision = command.decision as CandidateReviewDecision["decision"];
     if (decision === "correct" && !isPlainObject(command.correctionPayload)) {
       return json({ error: "correction_payload_required", correlationId: id }, { status: 400 });
@@ -84,13 +88,13 @@ export async function POST(request: Request) {
       return json({ error: "resolved_exception_codes_not_allowed", correlationId: id }, { status: 400 });
     }
 
-    assertDocumentAccess(identity, command.documentId);
+    assertDocumentAccess(identity, documentId);
 
     const reviewEventId = deterministicUuid([
       "corvis-candidate-review-event",
       identity.tenantId,
-      command.extractionRunId,
-      command.candidateId,
+      extractionRunId,
+      candidateId,
       identity.subject,
       idempotencyKey,
     ].join(":"));
@@ -98,14 +102,14 @@ export async function POST(request: Request) {
       mutate: (db) => recordCandidateReviewDecision({
         db: db ?? postgres(getServerConfig().postgresDsn),
         tenantId: identity.tenantId,
-        documentId: command.documentId as string,
-        extractionRunId: command.extractionRunId as string,
+        documentId,
+        extractionRunId,
         decision: {
           reviewEventId,
-          candidateId: command.candidateId as string,
+          candidateId,
           actorSubject: identity.subject,
           decision,
-          reasonCode: command.reasonCode!.trim(),
+          reasonCode,
           correctionPayload: decision === "correct" ? command.correctionPayload as Record<string, unknown> : undefined,
           resolvedExceptionCodes: decision === "resolve_exception" ? (resolvedExceptionCodes as string[]).map((code) => code.trim()) : undefined,
         },
@@ -119,11 +123,11 @@ export async function POST(request: Request) {
         sessionId: identity.sessionId,
         action: `extraction_candidate.${decision}`,
         targetType: "extraction_candidate",
-        targetId: command.candidateId as string,
+        targetId: candidateId,
         outcome: "success",
         correlationId: id,
         metadata: {
-          extractionRunId: command.extractionRunId as string,
+          extractionRunId,
           reviewEventId,
           reviewPolicyVersion: "candidate_review_v1",
           gateStatus: result.status,
