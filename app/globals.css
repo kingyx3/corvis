@@ -810,6 +810,14 @@ button.snapshot-row:focus-visible {
 .status-extracting .status-dot {
   background: #4f88a6;
 }
+.status-queued {
+  background: #f5f8f5;
+  border-color: #dde4df;
+  color: var(--text-muted);
+}
+.status-queued .status-dot {
+  background: var(--sidebar-muted);
+}
 .status-rejected,
 .status-failed {
   background: var(--danger-bg);
