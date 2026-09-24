@@ -102,10 +102,6 @@ export type WebhookHostLookup = (hostname: string) => Promise<ReadonlyArray<{ ad
 
 export const defaultWebhookHostLookup: WebhookHostLookup = (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
 
-/**
- * Send-time policy: the static checks plus a DNS resolution check that every
- * address the hostname currently resolves to is public. Throws on violation.
- */
 type NetLookupCallback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void;
 
 /**
@@ -158,6 +154,10 @@ export function policyPinnedWebhookFetch(lookup: WebhookHostLookup = defaultWebh
   })) as typeof fetch;
 }
 
+/**
+ * Send-time policy: the static checks plus a DNS resolution check that every
+ * address the hostname currently resolves to is public. Throws on violation.
+ */
 export async function assertWebhookEndpointAllowed(endpointUrl: string, lookup: WebhookHostLookup = defaultWebhookHostLookup): Promise<void> {
   const reason = webhookEndpointBlockReason(endpointUrl);
   if (reason) throw new Error(`webhook endpoint refused: ${reason}`);
