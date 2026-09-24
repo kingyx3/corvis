@@ -11,7 +11,7 @@ process.env.CORVIS_DEMO_MODE = "true";
 
 const { GET: capabilitiesGet } = await import("@/app/api/v1/capabilities/route");
 
-type Capabilities = { permissions: string[]; tenantControlAllowed: boolean; sourceDocumentAccessAllowed: boolean; redistributionAllowed: boolean };
+type Capabilities = { permissions: string[]; sourceDocumentAccessAllowed: boolean; redistributionAllowed: boolean };
 
 function request(roles: string, options: { redistribution?: boolean } = {}): Request {
   return new Request("https://corvis.test/api/v1/capabilities", {
@@ -36,17 +36,14 @@ async function capabilities(response: Response): Promise<Capabilities> {
 test("GET /capabilities reports exactly the permissions the resolved roles grant", async () => {
   const readOnly = await capabilities(await capabilitiesGet(request("read_only")));
   assert.deepEqual(readOnly.permissions, ["documents:read", "observations:read"]);
-  assert.equal(readOnly.tenantControlAllowed, false);
 
   const reviewer = await capabilities(await capabilitiesGet(request("reviewer")));
   assert.deepEqual(reviewer.permissions, ["documents:read", "sources:read", "observations:read", "observations:review", "research:query", "exports:create"]);
   assert.equal(reviewer.permissions.includes("admin:manage"), false);
   assert.equal(reviewer.permissions.includes("snapshots:publish"), false);
-  assert.equal(reviewer.tenantControlAllowed, false);
 
   const admin = await capabilities(await capabilitiesGet(request("admin")));
   assert.ok(admin.permissions.includes("admin:manage"));
-  assert.equal(admin.tenantControlAllowed, true);
 });
 
 test("GET /capabilities reflects data rights, not just roles", async () => {
@@ -59,10 +56,8 @@ test("GET /capabilities reflects data rights, not just roles", async () => {
   assert.equal(typeof withRedistribution.sourceDocumentAccessAllowed, "boolean");
 });
 
-test("GET /capabilities returns presentation capabilities, never raw identity internals", async () => {
+test("GET /capabilities returns only presentation fields, never identity internals", async () => {
   const response = await capabilitiesGet(request("admin"));
   const body = await response.json() as { data: Record<string, unknown> };
-  assert.deepEqual(Object.keys(body.data).sort(), ["permissions", "redistributionAllowed", "sourceDocumentAccessAllowed", "tenantControlAllowed"]);
-  assert.equal("isTenantAdmin" in body.data, false);
-  assert.equal("roles" in body.data, false);
+  assert.deepEqual(Object.keys(body.data).sort(), ["permissions", "redistributionAllowed", "sourceDocumentAccessAllowed"]);
 });
