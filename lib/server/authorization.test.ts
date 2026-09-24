@@ -151,9 +151,31 @@ test("unknown database roles never widen application permissions", async () => {
 
 test("database administrative roles map deliberately to application admin", async () => {
   const db = new FakeDb([
-    { workspace_id: principal.workspaceId, role_name: "workspace_admin" },
+    { workspace_id: principal.workspaceId, role_name: "accountadmin" },
     { workspace_id: principal.workspaceId, role_name: "tenant_admin" },
   ]);
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.deepEqual(result?.roles, ["admin"]);
+});
+
+test("isTenantAdmin is true only for a raw tenant_admin row, not for accountadmin", async () => {
+  const accountAdminOnly = await new PostgresMembershipAuthorizationRepository(
+    new FakeDb([{ workspace_id: principal.workspaceId, role_name: "accountadmin" }]),
+  ).resolve(principal);
+  assert.equal(accountAdminOnly?.isTenantAdmin, false);
+
+  const tenantAdmin = await new PostgresMembershipAuthorizationRepository(
+    new FakeDb([{ workspace_id: principal.workspaceId, role_name: "tenant_admin" }]),
+  ).resolve(principal);
+  assert.equal(tenantAdmin?.isTenantAdmin, true);
+});
+
+test("isTenantAdmin reflects a tenant_admin membership in another workspace, not only the requested one", async () => {
+  const otherWorkspaceId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const result = await new PostgresMembershipAuthorizationRepository(new FakeDb([
+    { workspace_id: principal.workspaceId, role_name: "accountadmin" },
+    { workspace_id: otherWorkspaceId, role_name: "tenant_admin" },
+  ])).resolve(principal);
+  assert.equal(result?.isTenantAdmin, true);
   assert.deepEqual(result?.roles, ["admin"]);
 });

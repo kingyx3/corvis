@@ -31,6 +31,15 @@ export type RequestIdentity = {
   entitlements: Entitlements;
   authMethod: "oidc" | "saml" | "service_account" | "demo";
   sessionId: string;
+  /**
+   * Whether the subject holds the raw `tenant_admin` database role (as
+   * opposed to `accountadmin`, a workspace-scoped administrator): both map to
+   * the `admin` application Role above, but only a tenant_admin may grant
+   * the tenant_admin role to anyone. Optional so existing fixtures that
+   * never touch tenant-admin-only checks are unaffected; undefined is
+   * treated as false (fail closed) by every caller that checks it.
+   */
+  isTenantAdmin?: boolean;
 };
 
 export function hasPermission(identity: RequestIdentity, permission: Permission): boolean {

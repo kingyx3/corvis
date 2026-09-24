@@ -17,7 +17,7 @@ export type AdminFeatureFlag = {
   retired: boolean;
   description?: string;
 };
-const lifecycleRoles = ["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"] as const;
+const lifecycleRoles = ["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"] as const;
 
 function hoursFromNow(hours: number) { return new Date(Date.now() + Math.max(1, hours) * 3_600_000).toISOString(); }
 function list(value: string) { return value.split(",").map((item) => item.trim()).filter(Boolean); }

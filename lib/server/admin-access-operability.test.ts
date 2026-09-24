@@ -89,3 +89,44 @@ test("support access can never be self-approved by the granting administrator", 
   assert.match(route, /subject === identity\.subject/);
   assert.match(route, /support_access_self_approval_denied/);
 });
+
+test("only a tenant_admin may grant anyone the tenant_admin role, at the app layer and in SQL", async () => {
+  const sql = (await read("db/postgres/migrations/048_account_admin_role_separation.sql")).toLowerCase();
+  assert.match(sql, /create or replace function corvis_control\.apply_identity_lifecycle/);
+  assert.match(sql, /create or replace function corvis_control\.apply_support_access_admin/);
+  assert.match(sql, /tenant_admin_role_requires_tenant_admin_actor/);
+  // Both guards require the actor to hold their own active tenant_admin
+  // membership, not merely to be granting it to themselves.
+  assert.match(sql, /and m\.role_name='tenant_admin' and m\.status='active'/);
+  // workspace_admin no longer exists as a role check constraint anywhere;
+  // accountadmin replaces it (the migration's own header/data-migration
+  // comments still name the retired role for context, so this only checks
+  // the role-name check-constraint lists, not the whole file).
+  assert.doesNotMatch(sql, /not in \('tenant_admin','workspace_admin'/);
+  assert.match(sql, /not in \('tenant_admin','accountadmin'/);
+  // The redefinitions must still carry the rest of the 043/045 contract.
+  assert.match(sql, /support access cannot be self-approved/);
+  assert.match(sql, /identity lifecycle event replay conflict/);
+
+  const identityLifecycleRoute = await read("app/api/v1/admin/identity-lifecycle/route.ts");
+  assert.match(identityLifecycleRoute, /entry\.roleName === "tenant_admin"/);
+  assert.match(identityLifecycleRoute, /identity\.isTenantAdmin !== true/);
+  assert.match(identityLifecycleRoute, /tenant_admin_role_requires_tenant_admin_actor/);
+
+  const supportAccessRoute = await read("app/api/v1/admin/support-access/route.ts");
+  assert.match(supportAccessRoute, /roleName === "tenant_admin"/);
+  assert.match(supportAccessRoute, /identity\.isTenantAdmin !== true/);
+  assert.match(supportAccessRoute, /tenant_admin_role_requires_tenant_admin_actor/);
+
+  // The rename must be consistent everywhere a role allowlist is declared.
+  for (const path of [
+    "app/api/v1/admin/identity-lifecycle/route.ts",
+    "app/api/v1/admin/support-access/route.ts",
+    "lib/server/identity-lifecycle.ts",
+    "features/admin/governance-forms.tsx",
+    "lib/server/authorization.ts",
+  ]) {
+    const source = await read(path);
+    assert.doesNotMatch(source, /workspace_admin/, `${path} must not reference the retired workspace_admin role name`);
+  }
+});

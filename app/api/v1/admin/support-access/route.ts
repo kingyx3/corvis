@@ -6,7 +6,7 @@ import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ROLES = new Set(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
+const ROLES = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
 
 function text(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -62,6 +62,12 @@ export async function POST(request: Request) {
     // additionally refuses another subject mapped to the approver's user).
     if (subject === identity.subject) {
       return json({ error: "support_access_self_approval_denied", correlationId: id }, { status: 403 });
+    }
+    // Separation of duties: granting tenant_admin-tier support access
+    // requires the actor to already hold an active tenant_admin membership
+    // (also enforced in apply_support_access_admin, migration 048).
+    if (roleName === "tenant_admin" && identity.isTenantAdmin !== true) {
+      return json({ error: "tenant_admin_role_requires_tenant_admin_actor", correlationId: id }, { status: 403 });
     }
 
     const requestedId = supportGrantId && UUID.test(supportGrantId) ? supportGrantId : null;

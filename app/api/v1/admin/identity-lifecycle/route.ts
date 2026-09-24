@@ -12,7 +12,7 @@ import {
 import { postgres } from "@/lib/server/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ROLES = new Set<IdentityLifecycleRole>(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
+const ROLES = new Set<IdentityLifecycleRole>(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
 type LifecycleOperation = "sync" | "disable" | "reactivate";
 
 function operation(value: unknown): LifecycleOperation | undefined {
@@ -68,6 +68,15 @@ export async function POST(request: Request) {
       (lifecycleOperation === "disable" && desiredMemberships.length !== 0)
     ) {
       return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    }
+
+    // Separation of duties: granting the tenant_admin role (to the actor or
+    // to anyone else) requires the actor to already hold an active
+    // tenant_admin membership. Re-enforced authoritatively in SQL (migration
+    // 048); checked here first so a non-tenant-admin gets a clean 403
+    // instead of a raised database exception.
+    if (desiredMemberships.some((entry) => entry.roleName === "tenant_admin") && identity.isTenantAdmin !== true) {
+      return json({ error: "tenant_admin_role_requires_tenant_admin_actor", correlationId: id }, { status: 403 });
     }
 
     if (lifecycleOperation === "reactivate") {
