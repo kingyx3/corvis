@@ -104,6 +104,11 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       left join corvis_control.resource_entitlement e
         on e.tenant_id=s.tenant_id
        and e.workspace_id=m.workspace_id
+       -- Only the requested workspace's grants are consumed below; joining
+       -- every workspace's entitlements multiplied rows (and the per-row
+       -- data-rights subqueries) on each request. Text comparison avoids a
+       -- uuid cast failure on a malformed selector.
+       and m.workspace_id::text=$5
        and e.subject_user_id=s.user_id
        and e.valid_from <= now()
        and (e.valid_until is null or e.valid_until > now())
@@ -138,7 +143,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
         and m.valid_from <= now()
         and (m.valid_until is null or m.valid_until > now())
       order by m.workspace_id, m.role_name, e.resource_type, e.resource_id`,
-    [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId]);
+    [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
 
     const workspaceIds = [...new Set(rows.map((row) => text(row.workspace_id)).filter(Boolean))];
     if (!workspaceIds.includes(principal.workspaceId)) return null;

@@ -54,7 +54,9 @@ test("authoritative membership and data rights map roles, resources, source acce
   assert.equal(result?.internalAnalyticsAllowed, true);
   assert.equal(result?.modelTrainingAllowed, false);
   assert.equal(result?.redistributionAllowed, true);
-  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId]);
+  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
+  // Entitlement rows are joined only for the requested workspace.
+  assert.match(db.lastSql, /left join corvis_control\.resource_entitlement e[\s\S]*and m\.workspace_id::text=\$5[\s\S]*where s\.tenant_id/);
   assert.match(db.lastSql, /s\.tenant_id=\$1::uuid/);
   assert.match(db.lastSql, /s\.subject=\$2/);
   assert.match(db.lastSql, /s\.auth_method=\$3/);

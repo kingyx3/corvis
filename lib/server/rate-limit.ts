@@ -13,6 +13,12 @@ import { getServerConfig } from "./config.ts";
 
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
+/**
+ * Every distinct (tenant, subject) key used to stay in memory forever. Once
+ * this many keys are tracked, a new key first evicts all expired windows.
+ */
+export const SWEEP_THRESHOLD = 10_000;
+
 export class RateLimitError extends Error {
   readonly retryAfterSeconds: number;
 
@@ -43,6 +49,7 @@ export class RateLimiter {
   consume(key: string, now: number = Date.now()): RateLimitDecision {
     const bucket = this.buckets.get(key);
     if (!bucket || now - bucket.windowStart >= this.windowMs) {
+      if (!bucket && this.buckets.size >= SWEEP_THRESHOLD) this.sweep(now);
       this.buckets.set(key, { windowStart: now, count: 1 });
       return { allowed: true };
     }
@@ -52,6 +59,18 @@ export class RateLimiter {
     }
     const retryAfterSeconds = Math.max(1, Math.ceil((bucket.windowStart + this.windowMs - now) / 1000));
     return { allowed: false, retryAfterSeconds };
+  }
+
+  /** Number of identities currently tracked. */
+  get size(): number {
+    return this.buckets.size;
+  }
+
+  /** Drops buckets whose window has elapsed; they would be reset on next use anyway. */
+  private sweep(now: number): void {
+    for (const [key, bucket] of this.buckets) {
+      if (now - bucket.windowStart >= this.windowMs) this.buckets.delete(key);
+    }
   }
 
   /** Test-only escape hatch to drop accumulated state between cases. */

@@ -1,6 +1,7 @@
 import { AuthorizationError } from "@/core/enterprise";
 import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecycle";
 import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
+import { InvalidIdempotencyKeyError } from "@/lib/server/idempotency";
 import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { RateLimitError } from "@/lib/server/rate-limit";
@@ -50,6 +51,10 @@ export function apiError(error: unknown, correlationId: string): Response {
     logEvent("warn", "api.invalid_pagination", { correlationId });
     return json({ error: "invalid_cursor", correlationId }, { status: 400 });
   }
+  if (error instanceof InvalidIdempotencyKeyError) {
+    logEvent("warn", "api.invalid_idempotency_key", { correlationId });
+    return json({ error: error.code, correlationId }, { status: 400 });
+  }
   if (error instanceof LegalHoldError) {
     logEvent("warn", "deletion.blocked_by_legal_hold", { correlationId }, { holds: error.holds });
     return json({ error: error.code, holds: error.holds, correlationId }, { status: 409 });
@@ -95,10 +100,22 @@ export function apiError(error: unknown, correlationId: string): Response {
     logEvent("error", "research.provider_error", { correlationId }, { provider: error.provider, status: error.status ?? null });
     return json({ error: error.code, correlationId }, { status: 502 });
   }
+  // `await request.json()` on a malformed body rejects with a SyntaxError;
+  // that is a client error, not a server fault.
+  if (error instanceof SyntaxError) {
+    logEvent("warn", "api.invalid_json", { correlationId });
+    return json({ error: "invalid_json", correlationId }, { status: 400 });
+  }
   logEvent("error", "api.unhandled_error", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown", message: error instanceof Error ? error.message : "Unknown error" });
   return json({ error: "internal_error", correlationId }, { status: 500 });
 }
 
+// A client-supplied correlation id is echoed in every response body and log
+// record, so only a bounded, log-safe token is accepted; anything else is
+// replaced rather than propagated.
+const CORRELATION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
 export function correlationId(request: Request): string {
-  return request.headers.get("x-correlation-id") || crypto.randomUUID();
+  const supplied = request.headers.get("x-correlation-id");
+  return supplied && CORRELATION_ID_PATTERN.test(supplied) ? supplied : crypto.randomUUID();
 }

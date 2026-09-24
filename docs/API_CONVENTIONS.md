@@ -19,7 +19,8 @@ The stable error codes today include `authentication_required` (401),
 `forbidden` (403), a per-domain conflict/governance code (409 or 422 —
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
 `FeatureFlagGovernanceError`/`DeletionExecutionError`/`WebhookSubscriptionError`
-code, etc.), `invalid_cursor` (400), the research-specific timeout/cancel/provider
+code, etc.), `invalid_cursor` (400), `invalid_json` (400, malformed request
+body), `invalid_idempotency_key` (400), the research-specific timeout/cancel/provider
 codes, and `internal_error` (500) as the fallback. Adding a new typed error class
 means adding one `instanceof` branch to `apiError()`, not reinventing the
 envelope in the route.
