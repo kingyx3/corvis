@@ -15,6 +15,20 @@ export type OpenDataCorrectionCommand = {
   correctionIntent: string;
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A correction command the caller can fix (400) or that names no incident in this tenant (404). */
+export class DataCorrectionRequestError extends Error {
+  readonly code: string;
+  readonly status: 400 | 404;
+  constructor(code: string, status: 400 | 404, message = code) {
+    super(message);
+    this.name = "DataCorrectionRequestError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
   if (value && typeof value === "object") {
@@ -25,8 +39,18 @@ function stable(value: unknown): string {
 function requestHash(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
 function required(value: string, name: string, max = 2000): string {
   const clean = value.trim();
-  if (!clean || clean.length > max) throw new Error(`${name} is required and must be at most ${max} characters`);
+  if (!clean || clean.length > max) throw new DataCorrectionRequestError("invalid_request", 400, `${name} is required and must be at most ${max} characters`);
   return clean;
+}
+function optionalUuid(value: string | undefined, name: string): string | null {
+  const clean = value?.trim() || null;
+  if (clean !== null && !UUID.test(clean)) throw new DataCorrectionRequestError("invalid_request", 400, `${name} must be a UUID`);
+  return clean;
+}
+function optionalVersion(value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value <= 0) throw new DataCorrectionRequestError("invalid_request", 400, "snapshotVersion must be a positive integer");
+  return value;
 }
 
 export class PostgresDataCorrectionRepository {
@@ -47,9 +71,9 @@ export class PostgresDataCorrectionRepository {
       fundId: required(command.fundId, "fundId", 512),
       reportPeriod: required(command.reportPeriod, "reportPeriod", 128),
       metricCode: command.metricCode?.trim() || null,
-      snapshotId: command.snapshotId?.trim() || null,
-      snapshotVersion: command.snapshotVersion ?? null,
-      documentId: command.documentId?.trim() || null,
+      snapshotId: optionalUuid(command.snapshotId, "snapshotId"),
+      snapshotVersion: optionalVersion(command.snapshotVersion),
+      documentId: optionalUuid(command.documentId, "documentId"),
       rootCause: required(command.rootCause, "rootCause"),
       correctionIntent: required(command.correctionIntent, "correctionIntent"),
     };
@@ -69,7 +93,7 @@ export class PostgresDataCorrectionRepository {
     const rows = await this.db.query(`select corvis_control.request_data_correction_replay($1::uuid,$2::uuid,$3) as job_id`,
       [identity.tenantId,incidentId,identity.subject]);
     const jobId = String(rows[0]?.job_id ?? "");
-    if (!jobId) throw new Error("correction incident not found");
+    if (!jobId) throw new DataCorrectionRequestError("correction_incident_not_found", 404);
     return { jobId };
   }
 
@@ -77,7 +101,7 @@ export class PostgresDataCorrectionRepository {
     const rows = await this.db.query(`select corvis_control.resolve_data_correction_incident(
       $1::uuid,$2::uuid,$3::uuid,$4,$5,$6::jsonb) as resolved`, [identity.tenantId,input.incidentId,
       input.replacementSnapshotId,input.replacementSnapshotVersion,identity.subject,JSON.stringify(input.evidence ?? {})]);
-    if (rows[0]?.resolved !== true && rows[0]?.resolved !== "true") throw new Error("correction incident not found");
+    if (rows[0]?.resolved !== true && rows[0]?.resolved !== "true") throw new DataCorrectionRequestError("correction_incident_not_found", 404);
   }
 }
 

@@ -39,6 +39,12 @@ class FakeDb implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
+    if (sql.startsWith("update corvis_control.deletion_request set\n      state='executing'")) {
+      // Mirrors the compare-and-swap predicate: state and attempt count must still match what was read.
+      if (this.request.state !== parameters[4] || Number(this.request.execution_attempts) !== parameters[5]) return [];
+      this.request = { ...this.request, state: "executing", execution_attempts: parameters[3] };
+      return [{ deletion_request_id: parameters[2] }];
+    }
     // Order matters: the legal-hold query also references retention_policy in
     // its first branch, so that more specific match must be checked first.
     if (sql.includes("union all")) return this.legalHolds;
@@ -58,9 +64,6 @@ class FakeDb implements PostgresSqlApi {
         evidence_hash: parameters[5],
         recorded_by: parameters[6],
       });
-    }
-    if (sql.startsWith("update corvis_control.deletion_request set\n      state='executing'")) {
-      this.request = { ...this.request, state: "executing" };
     }
     if (sql.includes("state='completed'")) {
       this.request = { ...this.request, state: "completed" };
@@ -197,6 +200,69 @@ test("an adapter failure records failed evidence and leaves the request retryabl
       /Lifecycle adapter rejected deletion/,
     );
     assert.equal(db.evidenceRows.at(-1)?.outcome, "failed");
+  } finally {
+    if (previous === undefined) delete process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+    else process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = previous;
+  }
+});
+
+test("a malformed request id is rejected as not found before reaching the uuid cast", async () => {
+  const db = new FakeDb(baseRequest());
+  await assert.rejects(
+    () => executeDeletionRequest(identity(), "not-a-uuid", { db }),
+    (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_request_not_found",
+  );
+  assert.equal(db.calls.length, 0);
+});
+
+test("the requester cannot approve and execute their own deletion request", async () => {
+  const db = new FakeDb(baseRequest({ requested_by: "oidc|admin-1" }));
+  await assert.rejects(
+    () => executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: async () => { throw new Error("must not call the adapter"); } }),
+    (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_requires_independent_approver",
+  );
+  assert.equal(db.request.state, "requested", "a refused self-approval must not move the request");
+  assert.equal(db.evidenceRows.length, 0);
+});
+
+test("concurrent executions claim the request once and only one reaches the adapter", async () => {
+  const previous = process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+  process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = "https://lifecycle.example.test";
+  try {
+    const db = new FakeDb(baseRequest());
+    // Both callers read the request in its original executable state before either claims it.
+    const original = db.query.bind(db);
+    const snapshot = { ...db.request };
+    db.query = async (sql: string, parameters: PostgresPrimitive[] = []) =>
+      sql.startsWith("select scope, state") ? [snapshot] : original(sql, parameters);
+    let adapterCalls = 0;
+    const fetchImpl = (async () => { adapterCalls += 1; return new Response(JSON.stringify({ evidence: {} }), { status: 200 }); }) as typeof fetch;
+    const results = await Promise.allSettled([
+      executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl }),
+      executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl }),
+    ]);
+    assert.equal(adapterCalls, 1);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    assert.ok(rejected.reason instanceof DeletionExecutionError && rejected.reason.code === "deletion_request_not_executable");
+  } finally {
+    if (previous === undefined) delete process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+    else process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = previous;
+  }
+});
+
+test("the lifecycle adapter call is bounded by a timeout signal", async () => {
+  const previous = process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+  process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = "https://lifecycle.example.test";
+  try {
+    const db = new FakeDb(baseRequest());
+    let signal: AbortSignal | null | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      signal = init?.signal;
+      return new Response(JSON.stringify({ evidence: {} }), { status: 200 });
+    }) as typeof fetch;
+    await executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl });
+    assert.ok(signal instanceof AbortSignal, "adapter fetch must carry an abort signal");
   } finally {
     if (previous === undefined) delete process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
     else process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = previous;

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
+import { DeletionExecutionError } from "./data-lifecycle.ts";
 import {
+  createDeletionRequest,
   DEAD_LETTER_BACKLOG_AGE_SECONDS_MAX,
   DEAD_LETTER_RATE_MAX,
   evaluateQueueSaturation,
@@ -127,4 +129,18 @@ test("generateControlEvidence degrades safely when the counts row omits the new 
   assert.equal(evidence.payload.queueSaturation.severity, "none");
   assert.equal(evidence.payload.queueSaturation.oldestDeadLetterAgeSeconds, null);
   assert.equal(evidence.result, "pass");
+});
+
+test("createDeletionRequest refuses a scope that could never execute and stores the normalized scope", async () => {
+  const db = new FakeDb({});
+  await assert.rejects(
+    () => createDeletionRequest(identity(), { documentIds: ["doc-1"] }, "customer offboarding", db),
+    (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_scope_missing_data_classes",
+  );
+  await assert.rejects(() => createDeletionRequest(identity(), "everything", "customer offboarding", db), DeletionExecutionError);
+  assert.equal(db.executeCalls.length, 0, "an invalid scope must never be persisted");
+
+  await createDeletionRequest(identity(), { dataClasses: ["financials", "financials"], unexpected: "x" }, "customer offboarding", db);
+  assert.equal(db.executeCalls.length, 1);
+  assert.deepEqual(JSON.parse(String(db.executeCalls[0].parameters[3])), { dataClasses: ["financials"], documentIds: [], fundIds: [], subjectIds: [] });
 });

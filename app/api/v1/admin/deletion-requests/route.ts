@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
+import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { createDeletionRequest, listDeletionRequests } from "@/lib/server/operations";
 import { platform } from "@/lib/server/platform";
@@ -19,9 +20,11 @@ export async function POST(request: Request) {
   const id=correlationId(request);
   try {
     const identity=await resolveAuthorizedRequestIdentity(request); assertPermission(identity,"admin:manage");
-    const body=await request.json() as {scope?:unknown;reason?:string};
-    if(body.scope==null || !body.reason?.trim()) return json({error:"invalid_request",correlationId:id},{status:400});
-    const requestId=await createDeletionRequest(identity,body.scope,body.reason.trim());
+    const body = await readJsonObject(request) as {scope?:unknown;reason?:unknown} | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const reason=typeof body.reason==="string"?body.reason.trim():"";
+    if(body.scope==null || !reason || reason.length>1000) return json({error:"invalid_request",correlationId:id},{status:400});
+    const requestId=await createDeletionRequest(identity,body.scope,reason);
     await platform().audit({id:randomUUID(),occurredAt:new Date().toISOString(),tenantId:identity.tenantId,workspaceId:identity.workspaceId,actorSubject:identity.subject,sessionId:identity.sessionId,action:"deletion_request.create",targetType:"deletion_request",targetId:requestId,outcome:"success",correlationId:id});
     return json({data:{requestId,state:"requested"},correlationId:id},{status:201});
   } catch(error){ return apiError(error,id); }

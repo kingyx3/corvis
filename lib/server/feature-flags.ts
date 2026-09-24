@@ -326,6 +326,17 @@ export type FeatureFlagWrite = {
   retireBy?: string;
 };
 
+/**
+ * Route bodies are only cast, never validated, so a JSON number/object can
+ * arrive where a string is typed. Reject it as a governance error (422)
+ * instead of letting `.trim()` throw a TypeError (500).
+ */
+function optionalText(value: unknown, code: string): string {
+  if (value == null) return "";
+  if (typeof value !== "string") throw new FeatureFlagGovernanceError(code);
+  return value.trim();
+}
+
 function isoOrThrow(value: string, code: string): string {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) throw new FeatureFlagGovernanceError(code);
@@ -348,13 +359,13 @@ export async function setFeatureFlag(
   const current = existing[0];
   if (current && text(current, "retired_at")) throw new FeatureFlagGovernanceError("flag_retired");
 
-  const owner = write.owner?.trim() || (current ? text(current, "owner") : undefined);
-  const retireByRaw = write.retireBy?.trim() || (current ? text(current, "retire_by") : undefined);
+  const owner = optionalText(write.owner, "invalid_owner") || (current ? text(current, "owner") : undefined);
+  const retireByRaw = optionalText(write.retireBy, "invalid_retire_by") || (current ? text(current, "retire_by") : undefined);
   if (!owner) throw new FeatureFlagGovernanceError("flag_owner_required");
   if (!retireByRaw) throw new FeatureFlagGovernanceError("flag_retire_by_required");
   const retireBy = isoOrThrow(retireByRaw, "invalid_retire_by");
 
-  await db.execute(`insert into corvis_control.feature_flag
+  const written = await db.query(`insert into corvis_control.feature_flag
       (tenant_id, flag_key, enabled, configuration, owner, retire_by, updated_at, updated_by)
     values ($1,$2,$3,$4::jsonb,$5,$6::timestamptz,now(),$7)
     on conflict (tenant_id, flag_key) do update set
@@ -364,8 +375,12 @@ export async function setFeatureFlag(
       retire_by=excluded.retire_by,
       updated_at=excluded.updated_at,
       updated_by=excluded.updated_by
-    where corvis_control.feature_flag.retired_at is null`,
+    where corvis_control.feature_flag.retired_at is null
+    returning flag_key`,
   [identity.tenantId, write.key, write.enabled, JSON.stringify(write.config ?? {}), owner, retireBy, identity.subject]);
+  // The conflict guard skips a row retired between the read above and this
+  // write; report that instead of claiming the update was applied.
+  if (written.length === 0) throw new FeatureFlagGovernanceError("flag_retired");
 }
 
 export async function setFeatureFlagKillSwitch(
@@ -376,7 +391,7 @@ export async function setFeatureFlagKillSwitch(
   db: PostgresSqlApi = controlDb(),
 ): Promise<void> {
   if (!REGISTRY_BY_KEY.has(key)) throw new FeatureFlagGovernanceError("unregistered_flag");
-  const trimmed = reason?.trim() ?? "";
+  const trimmed = optionalText(reason, "invalid_reason");
   if (engaged && !trimmed) throw new FeatureFlagGovernanceError("kill_switch_reason_required");
   const updated = await db.query(`update corvis_control.feature_flag set
       kill_switch=$3,
@@ -408,7 +423,7 @@ export async function setFeatureFlagEmergencyStop(
   reason: string | undefined,
   db: PostgresSqlApi = controlDb(),
 ): Promise<void> {
-  const trimmed = reason?.trim() ?? "";
+  const trimmed = optionalText(reason, "invalid_reason");
   if (engaged && !trimmed) throw new FeatureFlagGovernanceError("emergency_stop_reason_required");
   await db.execute(`insert into corvis_control.feature_flag_emergency_stop
       (tenant_id, engaged, reason, engaged_by, engaged_at, released_by, released_at, updated_at)

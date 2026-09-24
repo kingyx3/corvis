@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { parseDeletionScope } from "./data-lifecycle.ts";
 import { platform } from "./platform.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
@@ -107,12 +108,15 @@ export async function listDeletionRequests(identity: RequestIdentity) {
     where tenant_id=$1 order by requested_at desc limit 500`, [identity.tenantId]);
 }
 
-export async function createDeletionRequest(identity: RequestIdentity, scope: unknown, reason: string) {
+export async function createDeletionRequest(identity: RequestIdentity, scope: unknown, reason: string, db: PostgresSqlApi = controlDb()) {
+  // Validate at intake with the same strict parser execution uses, so a request
+  // that could never execute is refused (422) instead of persisted.
+  const normalizedScope = parseDeletionScope(scope);
   const id = randomUUID();
-  await controlDb().execute(`insert into corvis_control.deletion_request
+  await db.execute(`insert into corvis_control.deletion_request
       (tenant_id,deletion_request_id,requested_by,scope,reason,state,requested_at)
     values ($1,$2::uuid,$3,$4::jsonb,$5,'requested',now())`,
-  [identity.tenantId,id,identity.subject,JSON.stringify(scope),reason]);
+  [identity.tenantId,id,identity.subject,JSON.stringify(normalizedScope),reason]);
   return id;
 }
 

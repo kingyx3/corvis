@@ -266,3 +266,37 @@ test("engaging the tenant emergency stop requires a reason", async () => {
   await setFeatureFlagEmergencyStop(identity(), true, "incident-123", db);
   assert.equal(db.calls.length, 1);
 });
+
+test("non-string governance fields are rejected as 422 governance errors, not TypeErrors", async () => {
+  const key = "ui.delivery_workspace";
+  await assert.rejects(
+    () => setFeatureFlag(identity(), { key, enabled: true, owner: 42 as unknown as string, retireBy: "2027-01-01T00:00:00.000Z" }, new FakeDb([])),
+    (error: unknown) => error instanceof FeatureFlagGovernanceError && error.code === "invalid_owner",
+  );
+  await assert.rejects(
+    () => setFeatureFlag(identity(), { key, enabled: true, owner: "team", retireBy: { at: "tomorrow" } as unknown as string }, new FakeDb([])),
+    (error: unknown) => error instanceof FeatureFlagGovernanceError && error.code === "invalid_retire_by",
+  );
+  await assert.rejects(
+    () => setFeatureFlagKillSwitch(identity(), key, true, ["bug"] as unknown as string, new FakeDb([])),
+    (error: unknown) => error instanceof FeatureFlagGovernanceError && error.code === "invalid_reason",
+  );
+  await assert.rejects(
+    () => setFeatureFlagEmergencyStop(identity(), true, 7 as unknown as string, new FakeDb()),
+    (error: unknown) => error instanceof FeatureFlagGovernanceError && error.code === "invalid_reason",
+  );
+});
+
+test("setFeatureFlag reports a flag retired concurrently instead of claiming the write applied", async () => {
+  // The pre-read sees a live flag; the guarded upsert then affects no row because it was retired in between.
+  const db = new FakeDb([]);
+  db.query = async (sql: string, parameters: PostgresPrimitive[] = []) => {
+    db.calls.push({ sql, parameters });
+    return sql.startsWith("select owner") ? [{ owner: "team", retire_by: "2027-01-01T00:00:00.000Z", retired_at: null }] : [];
+  };
+  await assert.rejects(
+    () => setFeatureFlag(identity(), { key: "ui.delivery_workspace", enabled: true }, db),
+    (error: unknown) => error instanceof FeatureFlagGovernanceError && error.code === "flag_retired",
+  );
+  assert.match(db.calls.at(-1)?.sql ?? "", /returning flag_key/);
+});

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { PostgresDataCorrectionRepository } from "./data-correction.ts";
+import { DataCorrectionRequestError, PostgresDataCorrectionRepository } from "./data-correction.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const identity: RequestIdentity = {
@@ -48,4 +48,38 @@ test("migration preserves immutable history, deterministic replay and persistenc
   assert.match(sql, /active data correction incident blocks publication/);
   assert.match(sql, /'correctionreplacementdeliveryrequested'/);
   assert.equal(/update corvis_facts\.observation/.test(sql), false);
+});
+
+test("malformed correction fields are typed 400s and never reach the uuid/integer casts", async () => {
+  const db = new FakeDb([]);
+  const repository = new PostgresDataCorrectionRepository(db);
+  const base = { idempotencyKey: "dq-1", fundId: "fund-1", reportPeriod: "2026-Q3", rootCause: "mapping", correctionIntent: "replay" };
+  for (const command of [
+    { ...base, rootCause: "" },
+    { ...base, snapshotId: "snapshot-1" },
+    { ...base, documentId: "not-a-uuid" },
+    { ...base, snapshotId: "00000000-0000-4000-8000-000000000201", snapshotVersion: 0 },
+    { ...base, snapshotId: "00000000-0000-4000-8000-000000000201", snapshotVersion: 1.5 },
+  ]) {
+    await assert.rejects(() => repository.open(identity, command),
+      (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 400);
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("replay and resolve of an incident outside this tenant are typed 404s, not 500s", async () => {
+  const repository = new PostgresDataCorrectionRepository(new FakeDb([[{ job_id: null }], [{ resolved: false }]]));
+  const incidentId = "00000000-0000-4000-8000-000000000301";
+  await assert.rejects(() => repository.replay(identity, incidentId),
+    (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 404 && error.code === "correction_incident_not_found");
+  await assert.rejects(() => repository.resolve(identity, { incidentId, replacementSnapshotId: incidentId, replacementSnapshotVersion: 1 }),
+    (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 404);
+});
+
+test("data-correction route maps typed errors and audits every mutation", async () => {
+  const route = await readFile("app/api/v1/admin/data-corrections/route.ts", "utf8");
+  assert.match(route, /error instanceof DataCorrectionRequestError/);
+  for (const action of ["data_correction.open", "data_correction.replay", "data_correction.resolve"]) {
+    assert.ok(route.includes(`"${action}"`), `route must audit ${action}`);
+  }
 });
