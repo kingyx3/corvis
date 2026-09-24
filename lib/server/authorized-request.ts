@@ -1,4 +1,5 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
+import { AuthorizationError } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "./authorization.ts";
 import type { RateLimiter } from "./rate-limit.ts";
@@ -11,6 +12,27 @@ type ResolveAuthorizedOptions = {
   rateLimiter?: RateLimiter;
   now?: number;
 };
+
+/**
+ * Tenant-wide control-plane paths. `accountadmin` remains a workspace/product
+ * administrator, but it must never inherit tenant-wide authority merely
+ * because both raw database roles map to the application `admin` role.
+ *
+ * Keep this boundary here, immediately after authoritative membership
+ * resolution, so every current and future `/api/v1/admin/**` route is covered
+ * automatically. Processing retry/recovery also acts on tenant-scoped jobs
+ * rather than a workspace-entitled resource, so those operator commands use
+ * the same tenant-admin boundary even though their public path is `/jobs`.
+ */
+export function isTenantAdminOnlyPath(pathname: string): boolean {
+  if (pathname === "/api/v1/admin" || pathname.startsWith("/api/v1/admin/")) return true;
+  return /^\/api\/v1\/jobs\/[^/]+\/(retry|recover)\/?$/.test(pathname);
+}
+
+export function assertTenantAdminRequestScope(request: Request, identity: RequestIdentity): void {
+  if (!isTenantAdminOnlyPath(new URL(request.url).pathname)) return;
+  if (identity.isTenantAdmin !== true) throw new AuthorizationError("admin:tenant_manage");
+}
 
 /**
  * Authentication and authorization deliberately cross separate boundaries.
@@ -40,11 +62,13 @@ export async function resolveAuthorizedRequestIdentity(
   const requireAuthoritative = options.requireAuthoritative ?? config.environment === "production";
 
   // Demo mode and non-production non-authoritative requests never resolve a
-  // raw database role, so this keeps their existing trust level (any "admin"
-  // Role could already do everything tenant-wide) rather than silently
-  // introducing a new restriction outside production.
+  // raw database role. Preserve their historical behavior by treating a demo
+  // application admin as tenant admin; production-like requests always use the
+  // authoritative raw-role signal below.
   if (!requireAuthoritative || authenticated.authMethod === "demo") {
-    return { ...authenticated, isTenantAdmin: authenticated.roles.includes("admin") };
+    const identity: RequestIdentity = { ...authenticated, isTenantAdmin: authenticated.roles.includes("admin") };
+    assertTenantAdminRequestScope(request, identity);
+    return identity;
   }
 
   const repository = options.repository ?? membershipAuthorizationRepository(config.postgresDsn);
@@ -57,7 +81,7 @@ export async function resolveAuthorizedRequestIdentity(
   });
   if (!authorized) throw new AuthenticationError("No active authoritative authorization context");
 
-  return {
+  const identity: RequestIdentity = {
     ...authenticated,
     roles: authorized.roles,
     isTenantAdmin: authorized.isTenantAdmin,
@@ -72,4 +96,6 @@ export async function resolveAuthorizedRequestIdentity(
       redistributionAllowed: authorized.redistributionAllowed,
     },
   };
+  assertTenantAdminRequestScope(request, identity);
+  return identity;
 }
