@@ -34,7 +34,7 @@ jobs:
         with:
           terraform-version: "1.13.3"
       - name: Format
-        run: terraform fmt -check -recursive infra/terraform
+        run: terraform fmt -diff -check -recursive infra/terraform
       - name: Validate Terraform roots
         shell: bash
         run: |
