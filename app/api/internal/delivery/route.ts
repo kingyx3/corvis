@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "crypto";
-import { processQueuedExports, processWebhookDeliveries } from "@/lib/server/delivery";
+import { processQueuedExports, processWebhookDeliveries, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
 import { getServerConfig } from "@/lib/server/config";
 import { correlationId, json } from "@/lib/server/http";
+import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 
@@ -27,9 +28,10 @@ export async function POST(request:Request){
     // URL from the authenticated request instead of hard-coding a run.app host
     // or introducing a self-referential Terraform environment variable.
     const processingWorkerUrl = new URL("/api/internal/processing-stage", request.url).toString();
-    const [exportsResult,webhooksResult,processingResult]=await Promise.all([
+    const [exportsResult,webhooksResult,processingResult,webhookFanoutSweep,idempotencyKeySweep]=await Promise.all([
       processQueuedExports(),processWebhookDeliveries(),dispatchConfiguredProcessingTransport(processingWorkerUrl),
+      sweepUnsubscribedWebhookFanoutEvents(),sweepExpiredIdempotencyKeys(),
     ]);
-    return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult},correlationId:id});
+    return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult,webhookFanoutSweep,idempotencyKeySweep},correlationId:id});
   }catch(error){return json({error:"delivery_worker_failed",message:error instanceof Error?error.message:"unknown",correlationId:id},{status:500});}
 }

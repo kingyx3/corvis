@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { InvalidIdempotencyKeyError, MAX_IDEMPOTENCY_KEY_LENGTH, withIdempotency } from "./idempotency.ts";
+import { IDEMPOTENCY_KEY_SWEEP_LIMIT, InvalidIdempotencyKeyError, MAX_IDEMPOTENCY_KEY_LENGTH, sweepExpiredIdempotencyKeys, withIdempotency } from "./idempotency.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
@@ -206,4 +206,36 @@ test("non-string and oversized client keys are rejected before reaching Postgres
   assert.equal(db.calls.length, 0);
   const ok = await withIdempotency(identity(), "exports.create", "k".repeat(MAX_IDEMPOTENCY_KEY_LENGTH), fn, db);
   assert.equal(ok.replayed, false);
+});
+
+test("sweepExpiredIdempotencyKeys issues one bounded, tenant-agnostic delete on expires_at", async () => {
+  const calls: { sql: string; parameters: PostgresPrimitive[] }[] = [];
+  const rows = [{ tenant_id: "tenant-a" }, { tenant_id: "tenant-b" }];
+  const db: PostgresSqlApi = {
+    query: async (sql: string, parameters: PostgresPrimitive[] = []) => { calls.push({ sql, parameters }); return rows as unknown as PostgresRow[]; },
+    execute: async () => { throw new Error("sweepExpiredIdempotencyKeys must delete via query(), not execute()"); },
+    health: async () => true,
+  };
+
+  const count = await sweepExpiredIdempotencyKeys(db, 500);
+  assert.equal(count, 2);
+
+  const [call] = calls;
+  assert.ok(call);
+  assert.match(call.sql, /delete from corvis_control\.idempotency_key/);
+  assert.match(call.sql, /where expires_at <= now\(\)/);
+  assert.match(call.sql, /limit \$1/);
+  assert.doesNotMatch(call.sql, /tenant_id\s*=/, "the sweep must be tenant-agnostic, matching the export/webhook reclaim sweeps");
+  assert.deepEqual(call.parameters, [500]);
+});
+
+test("sweepExpiredIdempotencyKeys defaults to a bounded limit", async () => {
+  const calls: PostgresPrimitive[][] = [];
+  const db: PostgresSqlApi = {
+    query: async (_sql: string, parameters: PostgresPrimitive[] = []) => { calls.push(parameters); return []; },
+    execute: async () => {},
+    health: async () => true,
+  };
+  await sweepExpiredIdempotencyKeys(db);
+  assert.deepEqual(calls[0], [IDEMPOTENCY_KEY_SWEEP_LIMIT]);
 });
