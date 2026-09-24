@@ -191,11 +191,18 @@ repository-wide contract is enforced by `lib/server/security-contract.test.ts`,
 not by convention alone.
 
 Database lifecycle roles and application permissions are separate layers.
-`tenant_admin` and `workspace_admin` must not be treated as interchangeable
-scopes merely because both are administrative labels; workspace-scoped
-administration must never acquire tenant-wide authority without an explicit,
-reviewed permission boundary. The implementation/evidence work for this
-partitioning is tracked by the enterprise-admin readiness issue.
+`tenant_admin` and `accountadmin` (a workspace/product administrator; renamed
+from the earlier `workspace_admin`) both map to the application `admin` Role
+for ordinary permission checks, but they are not interchangeable scopes:
+`assertTenantAdminRequestScope()` (`lib/server/authorized-request.ts`) requires
+the authoritative, tenant-wide `isTenantAdmin` signal — never just the `admin`
+Role — for every `/api/v1/admin/**` route and the tenant-scoped processing
+recovery commands (`/jobs/{jobId}/retry`, `/jobs/{jobId}/recover`); granting
+the `tenant_admin` role itself carries the same requirement, enforced both in
+the route and authoritatively in SQL (migration 048). Workspace/product
+routes such as `/api/v1/source-connections/**` remain available to
+`accountadmin`, but are scoped to the caller's own workspace
+(`lib/server/source-connector-governance.ts`), never tenant-wide.
 
 ## Versioning and deprecation
 
