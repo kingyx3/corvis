@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "description": "Companion classification for /api/v1 routes intentionally excluded from the stable customer integration OpenAPI contract. External routes belong in openapi/corvis-v1.yaml; entries here are product/control-plane endpoints whose compatibility is governed by the Corvis application rather than the external API contract.",
+  "routes": [
+    { "pattern": "/admin/**", "visibility": "tenant_control", "reason": "Tenant-wide privileged control plane; requires authoritative tenant_admin scope." },
+    { "pattern": "/source-connections/**", "visibility": "workspace_control", "reason": "Workspace source-connector configuration surface; not a stable customer data-integration API." },
+    { "pattern": "/extraction-review/**", "visibility": "workspace_control", "reason": "Reviewer workflow command surface used by the Corvis product." },
+    { "pattern": "/reconciliation-exceptions/**", "visibility": "workspace_control", "reason": "Reviewer/reconciliation workflow surface used by the Corvis product." },
+    { "pattern": "/jobs/{jobId}/retry", "visibility": "operator", "reason": "Tenant operator recovery command; requires tenant_admin scope." },
+    { "pattern": "/jobs/{jobId}/recover", "visibility": "operator", "reason": "Tenant operator dead-letter recovery command; requires tenant_admin scope." },
+    { "pattern": "/health", "visibility": "operator", "reason": "Runtime health endpoint, not a customer data contract." }
+  ]
+}
