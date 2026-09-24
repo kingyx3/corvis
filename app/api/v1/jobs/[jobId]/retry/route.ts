@@ -13,12 +13,12 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     const { jobId } = await context.params;
     const result = await runAuditedMutation({
       mutate: (db) => retryProcessingJobCommand(identity, jobId, db),
-      audit: (outcome) => ({
+      audit: (outcome) => outcome.ok ? ({
         id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
         actorSubject: identity.subject, sessionId: identity.sessionId, action: "processing_job.retry",
         targetType: "processing_job", targetId: jobId, outcome: "success", correlationId: id,
-        metadata: outcome.ok ? { version: outcome.version } : { accepted: false },
-      }),
+        metadata: { version: outcome.version },
+      }) : undefined,
     });
     if (!result.ok) {
       if (result.reason === "not_found") return json({ error: "job_not_found", correlationId: id }, { status: 404 });
