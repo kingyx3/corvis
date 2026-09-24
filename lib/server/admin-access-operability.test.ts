@@ -130,3 +130,20 @@ test("only a tenant_admin may grant anyone the tenant_admin role, at the app lay
     assert.doesNotMatch(source, /workspace_admin/, `${path} must not reference the retired workspace_admin role name`);
   }
 });
+
+test("a successful, irreversible deletion execution is never reported as a failure just because its audit write failed", async () => {
+  const route = await read("app/api/v1/admin/deletion-requests/[requestId]/execute/route.ts");
+  // executeDeletionRequest() (the irreversible mutation, already committed by
+  // the time the audit call runs) must not share a try/catch with the audit
+  // insert: if it did, apiError() would turn a failed *audit write alone*
+  // into a 500 for a deletion that genuinely already succeeded.
+  const mutationCall = route.indexOf("executeDeletionRequest(identity,requestId)");
+  const auditTry = route.indexOf("try {", mutationCall);
+  const auditCall = route.indexOf(".audit(", auditTry);
+  const auditCatch = route.indexOf("catch (auditError)", auditCall);
+  const responseReturn = route.indexOf("return json({data:result", auditCatch);
+  assert.ok(mutationCall >= 0 && auditTry > mutationCall && auditCall > auditTry
+    && auditCatch > auditCall && responseReturn > auditCatch,
+    "the audit write must be wrapped in its own try/catch, logged on failure, and never block the success response");
+  assert.match(route, /logEvent\("error", "deletion_request\.audit_write_failed"/);
+});
