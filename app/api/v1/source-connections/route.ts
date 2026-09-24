@@ -1,12 +1,10 @@
-import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { createAuditedSourceConnection } from "@/lib/server/source-connector-governance";
+import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import {
   ConnectorGovernanceError,
-  createSourceConnection,
   listSourceConnections,
   type CredentialType,
   type SourceConnection,
@@ -64,8 +62,7 @@ export async function POST(request: Request) {
     if (typeof body.connectorVersion !== "string" || !body.connectorVersion.trim()) return json({ error: "connector_version_required", correlationId: id }, { status: 400 });
 
     const sourceScope = parseSourceScope(body.sourceScope);
-
-    const created = await createSourceConnection(identity, {
+    const created = await createAuditedSourceConnection(identity, {
       workspaceId: identity.workspaceId,
       providerKey: body.providerKey,
       connectionLabel: body.connectionLabel,
@@ -73,14 +70,8 @@ export async function POST(request: Request) {
       sourceScope,
       secret: body.secret as Record<string, unknown>,
       connectorVersion: body.connectorVersion,
-    }, { secrets: sourceConnectorSecretStore() });
+    }, id, { secrets: sourceConnectorSecretStore() });
 
-    await platform().audit({
-      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
-      actorSubject: identity.subject, sessionId: identity.sessionId, action: "source_connection.create",
-      targetType: "source_connection", targetId: created.sourceConnectionId, outcome: "success", correlationId: id,
-      metadata: { providerKey: created.providerKey },
-    });
     return json({ data: toResponse(created), correlationId: id }, { status: 201 });
   } catch (error) { return apiError(error, id); }
 }
