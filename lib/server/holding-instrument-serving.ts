@@ -1,6 +1,7 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { sqlKeyset, type KeysetPage } from "./pagination.ts";
+import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 function text(row: PostgresRow, key: string): string { return row[key] == null ? "" : String(row[key]); }
 function nullableText(row: PostgresRow, key: string): string | null { return row[key] == null ? null : String(row[key]); }
@@ -34,7 +35,10 @@ export class PostgresHoldingInstrumentServingRepository {
   private readonly db: PostgresSqlApi;
   constructor(db: PostgresSqlApi) { this.db = db; }
 
-  async holdings(identity: RequestIdentity): Promise<PublicHolding[]> {
+  /** `page` pushes one keyset page (by holding id) down to SQL; see sqlKeyset. */
+  async holdings(identity: RequestIdentity, page?: KeysetPage): Promise<PublicHolding[]> {
+    const parameters: PostgresPrimitive[] = [identity.tenantId, allowedFundJson(identity)];
+    const keyset = page ? sqlKeyset("h.holding_id::text", page, parameters) : { where: "", tail: "order by h.holding_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($2::jsonb)
@@ -47,8 +51,8 @@ export class PostgresHoldingInstrumentServingRepository {
         and (
           h.target_type='company'
           or exists (select 1 from allowed_fund target where target.fund_id=h.target_fund_id)
-        )
-      order by h.holding_id`, [identity.tenantId, allowedFundJson(identity)]);
+        )${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row,"holding_id"), fundId: text(row,"fund_id"), targetType: text(row,"target_type") as "company"|"fund",
       targetCompanyId: nullableText(row,"target_company_id"), targetFundId: nullableText(row,"target_fund_id"),
@@ -57,7 +61,10 @@ export class PostgresHoldingInstrumentServingRepository {
     }));
   }
 
-  async instruments(identity: RequestIdentity): Promise<PublicInstrument[]> {
+  /** `page` pushes one keyset page (by instrument id) down to SQL; see sqlKeyset. */
+  async instruments(identity: RequestIdentity, page?: KeysetPage): Promise<PublicInstrument[]> {
+    const parameters: PostgresPrimitive[] = [identity.tenantId, allowedFundJson(identity)];
+    const keyset = page ? sqlKeyset("i.instrument_id::text", page, parameters) : { where: "", tail: "order by i.instrument_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($2::jsonb)
@@ -66,8 +73,8 @@ export class PostgresHoldingInstrumentServingRepository {
              i.instrument_type,i.currency,i.source_reference_id,i.updated_at
       from corvis_serving.instruments i
       join allowed_fund a on a.fund_id=i.fund_id
-      where i.tenant_id=$1::uuid
-      order by i.instrument_id`, [identity.tenantId, allowedFundJson(identity)]);
+      where i.tenant_id=$1::uuid${keyset.where}
+      ${keyset.tail}`, parameters);
     return rows.map((row) => ({
       id: text(row,"instrument_id"), holdingId: text(row,"holding_id"), fundId: text(row,"fund_id"),
       companyId: text(row,"company_id"), securityDescription: text(row,"security_description"),
