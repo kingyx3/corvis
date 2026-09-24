@@ -19,15 +19,29 @@ import {
   type SnapshotPublication,
 } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { PostgresOperationsRepository, PostgresReviewPublicationRepository, PostgresWorkspaceRepository } from "./platform-repositories.ts";
+import type { KeysetPage } from "./pagination.ts";
+import {
+  PostgresOperationsRepository,
+  PostgresReviewPublicationRepository,
+  PostgresWorkspaceRepository,
+  SNAPSHOT_VERSION_KEY_WIDTH,
+} from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { evaluatePublicationGate } from "./publication-policy.ts";
 import { researchService, type ResearchExecutionOptions } from "./research.ts";
 
+/**
+ * The list methods take an optional keyset `page`. Without it they return the
+ * legacy (capped) list. With it, an implementation may return only the rows
+ * whose pagination key sorts strictly after `page.afterKey`, at least
+ * `page.limit + 1` of them when that many exist; it may also ignore `page`
+ * and return everything (the demo platform does). Callers always run
+ * `paginate()` over the result, so either way the page is correct.
+ */
 export interface PlatformPort {
-  listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]>;
-  listObservations(identity: RequestIdentity): Promise<ObservationRecord[]>;
-  listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]>;
+  listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<DocumentRecord[]>;
+  listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]>;
+  listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]>;
   listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
@@ -36,7 +50,7 @@ export interface PlatformPort {
   audit(event: AuditEvent): Promise<void>;
   readiness(): Promise<Record<string, "configured" | "missing" | "demo">>;
   export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest>;
-  jobs(identity: RequestIdentity): Promise<ProcessingJob[]>;
+  jobs(identity: RequestIdentity, page?: KeysetPage): Promise<ProcessingJob[]>;
 }
 
 function text(row: PostgresRow, key: string, fallback = ""): string { const value = row[key]; return value == null ? fallback : String(value); }
@@ -107,9 +121,10 @@ function allowedActions(type: ReconciliationExceptionType): ReconciliationResolu
  * id alone is not unique: a page boundary between two versions of one snapshot would skip the
  * remaining versions. The zero-padded version keeps the string order numeric. A snapshot without
  * an id (demo composition) falls back to fund/period/version, which is stable within one listing.
+ * PostgresWorkspaceRepository.listSnapshots keyset-pages in SQL in exactly this order.
  */
 export function snapshotPaginationKey(snapshot: FundSnapshot): string {
-  const version = String(snapshot.version ?? 0).padStart(10, "0");
+  const version = String(snapshot.version ?? 0).padStart(SNAPSHOT_VERSION_KEY_WIDTH, "0");
   return snapshot.id ? `${snapshot.id}\u0000${version}` : `${snapshot.fund}\u0000${snapshot.period}\u0000${version}`;
 }
 
@@ -165,8 +180,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     this.operations = new PostgresOperationsRepository(this.db);
   }
 
-  async listDocuments(identity: RequestIdentity): Promise<DocumentRecord[]> {
-    const rows = await this.workspace.listDocuments(identity);
+  async listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<DocumentRecord[]> {
+    const rows = await this.workspace.listDocuments(identity, page);
     return rows.map((row) => ({
       id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
       type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
@@ -174,8 +189,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     }));
   }
 
-  async listObservations(identity: RequestIdentity): Promise<ObservationRecord[]> {
-    const rows = await this.workspace.listObservations(identity);
+  async listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]> {
+    const rows = await this.workspace.listObservations(identity, page);
     return rows.map((row) => {
       const rawConfidence = num(row,"confidence_score");
       const confidence = rawConfidence > 0 && rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
@@ -190,8 +205,8 @@ export class PostgresProductionPlatform implements PlatformPort {
     });
   }
 
-  async listSnapshots(identity: RequestIdentity): Promise<FundSnapshot[]> {
-    const rows = await this.workspace.listSnapshots(identity);
+  async listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]> {
+    const rows = await this.workspace.listSnapshots(identity, page);
     return rows.map((row) => ({
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
@@ -344,7 +359,7 @@ export class PostgresProductionPlatform implements PlatformPort {
     return manifest;
   }
 
-  jobs(identity: RequestIdentity): Promise<ProcessingJob[]> { return this.operations.jobs(identity); }
+  jobs(identity: RequestIdentity, page?: KeysetPage): Promise<ProcessingJob[]> { return this.operations.jobs(identity, page); }
 }
 
 export class ConflictError extends Error {
