@@ -8,8 +8,9 @@ function patternMatches(pattern: string, path: string): boolean {
   const escaped = pattern
     .replace(/[.+^$()|[\]\\]/g, "\\$&")
     .replaceAll("{jobId}", "[^/]+")
-    .replaceAll("**", ".*")
-    .replaceAll("*", "[^/]*");
+    .replaceAll("**", "__CORVIS_RECURSIVE__")
+    .replaceAll("*", "[^/]*")
+    .replaceAll("__CORVIS_RECURSIVE__", ".*");
   return new RegExp(`^${escaped}$`).test(path);
 }
 
@@ -31,6 +32,7 @@ test("PR #149 OpenAPI omissions are explicit non-external classifications, not a
     "/jobs/job-1/retry",
     "/jobs/job-1/recover",
     "/admin/feature-flags",
+    "/admin/webhooks/subscriptions/00000000-0000-4000-8000-000000000001",
   ];
 
   for (const path of intentionallyNonExternal) {
