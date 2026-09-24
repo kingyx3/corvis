@@ -1,10 +1,9 @@
-import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { testAuditedSourceConnection } from "@/lib/server/source-connector-governance";
+import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
-import { assertSourceConnectionId, testSourceConnection } from "@/lib/server/source-connectors";
+import { assertSourceConnectionId } from "@/lib/server/source-connectors";
 
 /**
  * A scoped connectivity check: reads the credential and calls the driver's
@@ -20,15 +19,9 @@ export async function POST(request: Request, context: { params: Promise<{ source
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
     assertSourceConnectionId(sourceConnectionId);
-    const result = await testSourceConnection(identity, sourceConnectionId, {
+    const result = await testAuditedSourceConnection(identity, sourceConnectionId, id, {
       secrets: sourceConnectorSecretStore(),
       drivers: sourceConnectorDrivers(),
-    });
-    await platform().audit({
-      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
-      actorSubject: identity.subject, sessionId: identity.sessionId, action: "source_connection.test",
-      targetType: "source_connection", targetId: sourceConnectionId, outcome: result.ok ? "success" : "failure", correlationId: id,
-      metadata: { errorClass: result.errorClass ?? null },
     });
     return json({ data: result, correlationId: id });
   } catch (error) { return apiError(error, id); }
