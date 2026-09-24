@@ -5,12 +5,14 @@ import {
   CANDIDATE_REVIEW_POLICY_VERSION,
   evaluateCandidateReview,
   evaluateExtractionReviewGate,
+  PostgresCandidateReviewRepository,
   reviewRequirementFor,
   type CandidateReviewRequirement,
   type ExtractionReviewRun,
   type ReviewCandidate,
   type StoredCandidateReviewEvent,
 } from "./processing-reviewed-stage.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const run: ExtractionReviewRun = {
   extractionRunId: "11111111-1111-4111-8111-111111111111",
@@ -204,4 +206,70 @@ test("review migration is forced-RLS, append-only, resumable, and persistence-bl
   assert.match(sql, /old\.stage='reviewed'[\s\S]+new\.state='succeeded'/);
   assert.match(sql, new RegExp(CANDIDATE_REVIEW_POLICY_VERSION));
   assert.equal(/update\s+corvis_source\.extraction_candidate\s+set/i.test(sql), false);
+});
+
+test("review resume targets the blocked reviewed job of the extraction run's own correlation, not the primary job id", async () => {
+  const calls: { sql: string; parameters: PostgresPrimitive[] }[] = [];
+  const responses: PostgresRow[][] = [
+    [{ job_id: `correction:incident-1:reviewed:${run.documentId}` }],
+    [{ resumed: true, resume_event_id: "77777777-7777-4777-8777-777777777777", job_version: 4 }],
+  ];
+  const db: PostgresSqlApi = {
+    async query(sql: string, parameters: PostgresPrimitive[] = []) { calls.push({ sql, parameters }); return responses.shift() ?? []; },
+    async execute() {},
+    async health() { return true; },
+  };
+  const resumed = await new PostgresCandidateReviewRepository(db).resumeReviewedStage({
+    tenantId: "88888888-8888-4888-8888-888888888888",
+    documentId: run.documentId,
+    extractionRunId: run.extractionRunId,
+  });
+  assert.equal(resumed, true);
+  assert.match(calls[0]!.sql, /j\.stage='reviewed' and j\.state='blocked'/);
+  assert.match(calls[0]!.sql, /e\.result ->> 'extractionRunId'=\$3[\s\S]*extracted\.correlation_id=j\.correlation_id/);
+  assert.deepEqual(calls[0]!.parameters, ["88888888-8888-4888-8888-888888888888", run.documentId, run.extractionRunId]);
+  assert.match(calls[1]!.sql, /resume_blocked_reviewed_stage/);
+  assert.equal(calls[1]!.parameters[1], `correction:incident-1:reviewed:${run.documentId}`);
+});
+
+test("review requirements persist and verify in two round trips regardless of candidate count", async () => {
+  const candidates = Array.from({ length: 50 }, (_, index) => candidate({
+    candidateId: `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`,
+    candidateKey: `metric:revenue:${index}`,
+  }));
+  const requirements = candidates.map(reviewRequirementFor);
+  const persisted = requirements.map((requirement) => ({
+    candidate_id: requirement.candidateId,
+    candidate_fingerprint_sha256: requirement.candidateFingerprintSha256,
+    risk_tier: requirement.riskTier,
+    required_approvals: requirement.requiredApprovals,
+    requires_exception_resolution: requirement.requiresExceptionResolution,
+    blocking_reasons: JSON.stringify(requirement.blockingReasons),
+  }));
+  const calls: { sql: string; parameters: PostgresPrimitive[] }[] = [];
+  let responses: PostgresRow[][] = [[], persisted];
+  const db: PostgresSqlApi = {
+    async query(sql: string, parameters: PostgresPrimitive[] = []) { calls.push({ sql, parameters }); return responses.shift() ?? []; },
+    async execute() {},
+    async health() { return true; },
+  };
+  const repository = new PostgresCandidateReviewRepository(db);
+  const tenantId = "88888888-8888-4888-8888-888888888888";
+  await repository.ensureRequirements({ tenantId, extractionRunId: run.extractionRunId, requirements });
+  assert.equal(calls.length, 2);
+  assert.match(calls[0]!.sql, /jsonb_to_recordset\(\$4::jsonb\)[\s\S]*on conflict \(tenant_id,extraction_run_id,candidate_id,review_policy_version\) do nothing/);
+  assert.equal((JSON.parse(String(calls[0]!.parameters[3])) as unknown[]).length, 50);
+
+  // A persisted requirement that drifted from the immutable policy still fails closed.
+  responses = [[], persisted.map((row, index) => index === 7 ? { ...row, required_approvals: 9 } : row)];
+  await assert.rejects(
+    repository.ensureRequirements({ tenantId, extractionRunId: run.extractionRunId, requirements }),
+    /conflicts with immutable review policy/,
+  );
+  // A requirement that was not persisted at all fails closed.
+  responses = [[], persisted.slice(1)];
+  await assert.rejects(
+    repository.ensureRequirements({ tenantId, extractionRunId: run.extractionRunId, requirements }),
+    /could not persist candidate review requirement/,
+  );
 });

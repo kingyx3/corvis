@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
-import { dispatchProcessingTransportBatch, processingTransportConfig, type ProcessingTransportAdapter } from "./processing-transport.ts";
+import {
+  dispatchProcessingTransportBatch,
+  GcpProcessingTransportAdapter,
+  processingTransportConfig,
+  type ProcessingTransportAdapter,
+  type ProcessingTransportConfig,
+} from "./processing-transport.ts";
 
 const delivery: ProcessingStageDelivery = {
   tenantId: "00000000-0000-4000-8000-000000000001", consumerName: "processing-stage-worker",
@@ -65,4 +71,41 @@ test("transport migration uses leases, SKIP LOCKED, bounded backoff and terminal
   assert.match(sql, /attempt_count=o\.attempt_count\+1/);
   assert.match(sql, /transport_dead_lettered_at=now\(\)/);
   assert.match(sql, /least\(300,5 \* power/);
+});
+
+const gcpConfig: ProcessingTransportConfig = {
+  projectId: "project", region: "asia-southeast1", topicName: "topic", queueName: "queue",
+  workerUrl: "https://worker.example/run", workerAudience: "https://worker.example",
+  workerServiceAccountEmail: "worker@example.iam.gserviceaccount.com",
+};
+
+function hangingUntilAborted(urls: string[]): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.startsWith("http://metadata.google.internal")) {
+      return new Response(JSON.stringify({ access_token: "token", expires_in: 3600 }), { status: 200 });
+    }
+    return new Promise<Response>((_, reject) => {
+      const signal = init?.signal;
+      if (!signal) return; // an unbounded call hangs forever and the test times out
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }) as typeof fetch;
+}
+
+test("GCP transport bounds every outbound call so a hung endpoint cannot outlive the dispatch lease", { timeout: 5_000 }, async () => {
+  const urls: string[] = [];
+  const adapter = new GcpProcessingTransportAdapter(gcpConfig, hangingUntilAborted(urls), { timeoutMs: 20 });
+  // AbortSignal.timeout timers are unref'd; keep the loop alive the way a server would.
+  const keepAlive = setInterval(() => undefined, 1_000);
+  try {
+    await assert.rejects(adapter.publish(delivery));
+    await assert.rejects(adapter.schedule(delivery, "2026-09-20T02:00:00.000Z"));
+  } finally {
+    clearInterval(keepAlive);
+  }
+  // The metadata access token is reused across events instead of refetched per call.
+  assert.equal(urls.filter((url) => url.startsWith("http://metadata.google.internal")).length, 1);
+  assert.equal(urls.length, 3);
 });
