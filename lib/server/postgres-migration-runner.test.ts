@@ -3,6 +3,7 @@ import test from "node:test";
 import type { PostgresRow } from "./postgres.ts";
 import { PostgresDriverError } from "./postgres-native.ts";
 import {
+  MIGRATION_CONNECTION_LIMITS,
   MigrationApplyError,
   MigrationContractError,
   applyMigrations,
@@ -122,6 +123,35 @@ test("transactionalMigrationSql splices the ledger insert inside the same transa
   const ledgerIndex = spliced.indexOf("insert into corvis_migration.schema_migration");
   const commitIndex = spliced.toLowerCase().lastIndexOf("commit;");
   assert.ok(beginIndex >= 0 && beginIndex < ledgerIndex && ledgerIndex < commitIndex);
+});
+
+test("transactionalMigrationSql claims the ledger row before the migration body so concurrent runners cannot both apply it", () => {
+  const spliced = transactionalMigrationSql(migration(7, "create table if not exists body_marker (id int);"), "ci");
+  const beginIndex = spliced.toLowerCase().indexOf("begin;");
+  const ledgerIndex = spliced.indexOf("insert into corvis_migration.schema_migration");
+  const bodyIndex = spliced.indexOf("body_marker");
+  const commitIndex = spliced.toLowerCase().lastIndexOf("commit;");
+  assert.ok(beginIndex === 0 && beginIndex < ledgerIndex && ledgerIndex < bodyIndex && bodyIndex < commitIndex);
+  // A conflict clause would let a second runner that planned the same version
+  // skip the ledger insert and re-run the body; the primary-key violation is
+  // what serializes and rejects it.
+  assert.equal(/on conflict/i.test(spliced), false);
+  assert.equal(spliced.match(/\bbegin;/gi)?.length, 1);
+  assert.equal(spliced.match(/\bcommit;/gi)?.length, 1);
+});
+
+test("transactionalMigrationSql keeps a leading header comment ahead of begin;", () => {
+  const withHeader = migrationFromSource("001_migration.sql", "-- header\n-- Depends on nothing.\n\nbegin;\n\ncreate table t (id int);\n\ncommit;\n");
+  const spliced = transactionalMigrationSql(withHeader, "ci");
+  assert.ok(spliced.startsWith("-- header\n-- Depends on nothing.\n\nbegin;"));
+  assert.ok(spliced.indexOf("insert into corvis_migration.schema_migration") < spliced.indexOf("create table t"));
+});
+
+test("migration connections lift the API pool's 30s statement and 35s client read caps but keep lock waits bounded", () => {
+  assert.equal(MIGRATION_CONNECTION_LIMITS.query_timeout, 0);
+  assert.ok(MIGRATION_CONNECTION_LIMITS.statement_timeout >= 10 * 60_000);
+  assert.ok(MIGRATION_CONNECTION_LIMITS.lock_timeout > 0 && MIGRATION_CONNECTION_LIMITS.lock_timeout <= 60_000);
+  assert.equal(MIGRATION_CONNECTION_LIMITS.max, 1);
 });
 
 test("ledgerInsertSql rejects an applied-by identifier outside the allowed character set", () => {

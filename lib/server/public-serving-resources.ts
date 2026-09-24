@@ -157,12 +157,16 @@ export class PostgresPublicServingResourceRepository {
       join allowed_fund a on a.fund_id=f.fund_id
       where f.tenant_id=$1::uuid
         and exists (
+          -- Unnested (not "= any(s.fact_ids)") so the planner can hash the
+          -- published fact ids once instead of rescanning every snapshot's
+          -- array per fact, which is quadratic in a fund's history.
           select 1
           from corvis_consolidated.fund_period_snapshot s
+          cross join lateral unnest(s.fact_ids) as published(fact_id)
           where s.tenant_id=f.tenant_id
             and s.fund_id=f.fund_id
             and s.status='published'
-            and f.consolidated_fact_id=any(s.fact_ids)
+            and published.fact_id=f.consolidated_fact_id
         )
       order by f.consolidated_fact_id`, [identity.tenantId, jsonParameter(identity.entitlements.fundIds)]);
     return rows.map((row) => ({
