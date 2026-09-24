@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { createAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import type { SecretPayload, SecretStore } from "./source-connectors.ts";
 
@@ -41,7 +41,7 @@ class GovernanceDb implements PostgresSqlApi {
   mutations = 0;
   audits = 0;
 
-  async query(sql: string, _parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+  async query(sql: string): Promise<PostgresRow[]> {
     if (sql.includes("insert into corvis_source.source_connection")) {
       assert.equal(this.inTransaction, true, "metadata insert must run inside transaction");
       this.mutations += 1;
@@ -75,7 +75,7 @@ class GovernanceSecrets implements SecretStore {
   constructor(private readonly db: GovernanceDb) {}
   writes = 0;
   revokes = 0;
-  async write(_tenantId: string, _providerKey: string, _secret: SecretPayload): Promise<string> {
+  async write(): Promise<string> {
     assert.equal(this.db.inTransaction, false, "Secret Manager write must happen before the DB transaction");
     this.writes += 1;
     return "projects/p/secrets/corvis-src-test";
