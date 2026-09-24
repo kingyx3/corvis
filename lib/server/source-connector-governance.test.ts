@@ -72,9 +72,14 @@ class GovernanceDb implements PostgresSqlApi {
 }
 
 class GovernanceSecrets implements SecretStore {
-  constructor(private readonly db: GovernanceDb) {}
+  private readonly db: GovernanceDb;
   writes = 0;
   revokes = 0;
+
+  constructor(db: GovernanceDb) {
+    this.db = db;
+  }
+
   async write(): Promise<string> {
     assert.equal(this.db.inTransaction, false, "Secret Manager write must happen before the DB transaction");
     this.writes += 1;
