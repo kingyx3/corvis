@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import { ProcessingStageBlockedError, type ProcessingStageEffectInput } from "./processing-stage-worker.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 export const CANDIDATE_REVIEW_POLICY_VERSION = "candidate_review_v1";
 
@@ -349,44 +349,64 @@ export class PostgresCandidateReviewRepository {
     }));
   }
 
-  async ensureRequirement(input: {
+  /**
+   * Persist (idempotently) and verify every candidate's immutable review
+   * requirement in two round trips, independent of candidate count. This runs on
+   * every reviewed-stage execution and twice per review decision.
+   */
+  async ensureRequirements(input: {
     tenantId: string;
     extractionRunId: string;
-    requirement: CandidateReviewRequirement;
+    requirements: CandidateReviewRequirement[];
   }): Promise<void> {
-    const requirement = input.requirement;
-    const params: PostgresPrimitive[] = [
-      input.tenantId,input.extractionRunId,requirement.candidateId,CANDIDATE_REVIEW_POLICY_VERSION,
-      requirement.candidateFingerprintSha256,requirement.riskTier,requirement.requiredApprovals,
-      requirement.requiresExceptionResolution,JSON.stringify(requirement.blockingReasons),
-    ];
+    if (input.requirements.length === 0) return;
+    const records = input.requirements.map((requirement) => ({
+      candidate_id: requirement.candidateId,
+      candidate_fingerprint_sha256: requirement.candidateFingerprintSha256,
+      risk_tier: requirement.riskTier,
+      required_approvals: requirement.requiredApprovals,
+      requires_exception_resolution: requirement.requiresExceptionResolution,
+      blocking_reasons: requirement.blockingReasons,
+    }));
     await this.db.query(`insert into corvis_review.candidate_review_requirement (
         tenant_id,extraction_run_id,candidate_id,review_policy_version,candidate_fingerprint_sha256,
         risk_tier,required_approvals,requires_exception_resolution,blocking_reasons
-      ) values ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb)
-      on conflict (tenant_id,extraction_run_id,candidate_id,review_policy_version) do nothing`, params);
-    const rows = await this.db.query(`select candidate_fingerprint_sha256,risk_tier,required_approvals,
+      )
+      select $1::uuid,$2::uuid,r.candidate_id,$3,r.candidate_fingerprint_sha256,
+        r.risk_tier,r.required_approvals,r.requires_exception_resolution,r.blocking_reasons
+      from jsonb_to_recordset($4::jsonb) as r(
+        candidate_id uuid,candidate_fingerprint_sha256 text,risk_tier text,required_approvals integer,
+        requires_exception_resolution boolean,blocking_reasons jsonb
+      )
+      on conflict (tenant_id,extraction_run_id,candidate_id,review_policy_version) do nothing`, [
+      input.tenantId,input.extractionRunId,CANDIDATE_REVIEW_POLICY_VERSION,JSON.stringify(records),
+    ]);
+    const rows = await this.db.query(`select candidate_id,candidate_fingerprint_sha256,risk_tier,required_approvals,
         requires_exception_resolution,blocking_reasons
       from corvis_review.candidate_review_requirement
-      where tenant_id=$1::uuid and extraction_run_id=$2::uuid and candidate_id=$3::uuid and review_policy_version=$4
-      limit 1`, [input.tenantId,input.extractionRunId,requirement.candidateId,CANDIDATE_REVIEW_POLICY_VERSION]);
-    const row = rows[0];
-    if (!row) throw new Error("reviewed stage could not persist candidate review requirement");
-    const actual = {
-      candidateFingerprintSha256: text(row, "candidate_fingerprint_sha256"),
-      riskTier: text(row, "risk_tier"),
-      requiredApprovals: Number(row.required_approvals ?? -1),
-      requiresExceptionResolution: row.requires_exception_resolution === true || row.requires_exception_resolution === "true",
-      blockingReasons: stringArray(row.blocking_reasons, "persisted blocking reasons"),
-    };
-    const expected = {
-      candidateFingerprintSha256: requirement.candidateFingerprintSha256,
-      riskTier: requirement.riskTier,
-      requiredApprovals: requirement.requiredApprovals,
-      requiresExceptionResolution: requirement.requiresExceptionResolution,
-      blockingReasons: requirement.blockingReasons,
-    };
-    if (stable(actual) !== stable(expected)) throw new Error("existing candidate review requirement conflicts with immutable review policy");
+      where tenant_id=$1::uuid and extraction_run_id=$2::uuid and review_policy_version=$3`, [
+      input.tenantId,input.extractionRunId,CANDIDATE_REVIEW_POLICY_VERSION,
+    ]);
+    const persistedByCandidate = new Map(rows.map((row) => [text(row, "candidate_id"), row]));
+    for (const requirement of input.requirements) {
+      const row = persistedByCandidate.get(requirement.candidateId);
+      if (!row) throw new Error("reviewed stage could not persist candidate review requirement");
+      const actual = {
+        candidateFingerprintSha256: text(row, "candidate_fingerprint_sha256"),
+        riskTier: text(row, "risk_tier"),
+        requiredApprovals: Number(row.required_approvals ?? -1),
+        requiresExceptionResolution: row.requires_exception_resolution === true || row.requires_exception_resolution === "true",
+        blockingReasons: stringArray(row.blocking_reasons, "persisted blocking reasons"),
+      };
+      const expected = {
+        candidateFingerprintSha256: requirement.candidateFingerprintSha256,
+        riskTier: requirement.riskTier,
+        requiredApprovals: requirement.requiredApprovals,
+        requiresExceptionResolution: requirement.requiresExceptionResolution,
+        blockingReasons: requirement.blockingReasons,
+      };
+      if (stable(actual) !== stable(expected)) throw new Error("existing candidate review requirement conflicts with immutable review policy");
+    }
   }
 
   async listEvents(input: { tenantId: string; extractionRunId: string }): Promise<StoredCandidateReviewEvent[]> {
@@ -474,12 +494,34 @@ export class PostgresCandidateReviewRepository {
   }
 
   async resumeReviewedStage(input: { tenantId: string; documentId: string; extractionRunId: string }): Promise<boolean> {
-    const rows = await this.db.query(`select * from corvis_control.resume_blocked_reviewed_stage(
-      $1::uuid,$2,$3::uuid,$4)`, [
-      input.tenantId,`reviewed:${input.documentId}`,input.extractionRunId,CANDIDATE_REVIEW_POLICY_VERSION,
-    ]);
-    const row = rows[0];
-    return row?.resumed === true || row?.resumed === "true";
+    // Resume the blocked reviewed job of the processing correlation that produced
+    // this extraction run. Correction replays use scoped job ids (migration 031),
+    // so the primary `reviewed:<document>` id is not necessarily the parked job.
+    const jobs = await this.db.query(`select j.job_id
+      from corvis_control.processing_job j
+      where j.tenant_id=$1::uuid and j.document_id=$2::uuid
+        and j.stage='reviewed' and j.state='blocked'
+        and exists (
+          select 1
+          from corvis_control.processing_stage_effect e
+          join corvis_control.processing_job extracted
+            on extracted.tenant_id=e.tenant_id and extracted.job_id=e.job_id
+          where e.tenant_id=j.tenant_id and e.document_id=j.document_id
+            and e.stage='extracted' and e.state='complete'
+            and e.result ->> 'extractionRunId'=$3
+            and extracted.correlation_id=j.correlation_id
+        )
+      order by j.updated_at desc,j.job_id`, [input.tenantId, input.documentId, input.extractionRunId]);
+    let resumed = false;
+    for (const job of jobs) {
+      const rows = await this.db.query(`select * from corvis_control.resume_blocked_reviewed_stage(
+        $1::uuid,$2,$3::uuid,$4)`, [
+        input.tenantId,text(job, "job_id"),input.extractionRunId,CANDIDATE_REVIEW_POLICY_VERSION,
+      ]);
+      const row = rows[0];
+      if (row?.resumed === true || row?.resumed === "true") resumed = true;
+    }
+    return resumed;
   }
 }
 
@@ -514,9 +556,7 @@ async function loadGateState(input: {
   const candidates = await input.repository.listCandidates({ tenantId: input.tenantId, extractionRunId: run.extractionRunId });
   if (candidates.length !== run.candidateCount) throw new Error("reviewed stage candidate count no longer matches finalized extraction run");
   const requirements = candidates.map(reviewRequirementFor);
-  for (const requirement of requirements) {
-    await input.repository.ensureRequirement({ tenantId: input.tenantId, extractionRunId: run.extractionRunId, requirement });
-  }
+  await input.repository.ensureRequirements({ tenantId: input.tenantId, extractionRunId: run.extractionRunId, requirements });
   const events = await input.repository.listEvents({ tenantId: input.tenantId, extractionRunId: run.extractionRunId });
   const gate = evaluateExtractionReviewGate({ run, candidates, requirements, events });
   await input.repository.saveGate({ tenantId: input.tenantId, gate });

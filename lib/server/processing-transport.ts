@@ -107,29 +107,46 @@ export class PostgresProcessingTransportRepository implements TransportRepositor
   }
 }
 
-async function metadataToken(fetchImpl: typeof fetch): Promise<string> {
-  const response = await fetchImpl("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", { headers: { "Metadata-Flavor": "Google" } });
+// Every outbound call is bounded well inside the 60s transport lease, so a hung
+// GCP endpoint fails the event for bounded retry instead of stalling the batch
+// past its lease (which would let another dispatcher re-claim and double-send).
+const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+
+async function metadataToken(fetchImpl: typeof fetch, timeoutMs: number): Promise<{ value: string; expiresAt: number }> {
+  const response = await fetchImpl("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+    headers: { "Metadata-Flavor": "Google" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) throw new Error(`GCP metadata token request failed with status ${response.status}`);
-  const payload = await response.json() as { access_token?: string };
+  const payload = await response.json() as { access_token?: string; expires_in?: number };
   if (!payload.access_token) throw new Error("GCP metadata token response did not include access_token");
-  return payload.access_token;
+  const expiresIn = typeof payload.expires_in === "number" && Number.isFinite(payload.expires_in) ? payload.expires_in : 300;
+  return { value: payload.access_token, expiresAt: Date.now() + Math.max(60, expiresIn) * 1000 };
 }
 
 export class GcpProcessingTransportAdapter implements ProcessingTransportAdapter {
   private readonly config: ProcessingTransportConfig;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+  private cachedToken?: { value: string; expiresAt: number };
 
-  constructor(config: ProcessingTransportConfig, fetchImpl: typeof fetch = fetch) {
+  constructor(config: ProcessingTransportConfig, fetchImpl: typeof fetch = fetch, options: { timeoutMs?: number } = {}) {
     this.config = config;
     this.fetchImpl = fetchImpl;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   }
-  private async token(): Promise<string> { return metadataToken(this.fetchImpl); }
+  private async token(): Promise<string> {
+    if (this.cachedToken && this.cachedToken.expiresAt - Date.now() > 60_000) return this.cachedToken.value;
+    this.cachedToken = await metadataToken(this.fetchImpl, this.timeoutMs);
+    return this.cachedToken.value;
+  }
 
   async publish(delivery: ProcessingStageDelivery): Promise<void> {
     const token = await this.token();
     const url = `https://pubsub.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/topics/${encodeURIComponent(this.config.topicName)}:publish`;
     const response = await this.fetchImpl(url, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      signal: AbortSignal.timeout(this.timeoutMs),
       body: JSON.stringify({ messages: [{ data: Buffer.from(JSON.stringify(delivery)).toString("base64"), attributes: { eventType: delivery.eventType, tenantId: delivery.tenantId } }] }),
     });
     if (!response.ok) throw new Error(`Pub/Sub processing publish failed with status ${response.status}`);
@@ -140,6 +157,7 @@ export class GcpProcessingTransportAdapter implements ProcessingTransportAdapter
     const url = `https://cloudtasks.googleapis.com/v2/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.region)}/queues/${encodeURIComponent(this.config.queueName)}/tasks`;
     const response = await this.fetchImpl(url, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      signal: AbortSignal.timeout(this.timeoutMs),
       body: JSON.stringify({ task: {
         scheduleTime,
         httpRequest: {
