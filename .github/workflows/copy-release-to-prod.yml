@@ -59,14 +59,14 @@ jobs:
           [[ "${SOURCE_PROJECT_ID}" != "${TARGET_PROJECT_ID}" ]] || { echo "UAT and prod must use separate GCP projects."; exit 1; }
 
       - name: Authenticate as UAT deploy identity
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ needs.source-metadata.outputs.project_id }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.SOURCE_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
 
@@ -110,14 +110,14 @@ jobs:
           [[ "${SOURCE_PROJECT_ID}" != "${TARGET_PROJECT_ID}" ]] || { echo "UAT and prod must use separate GCP projects for cross-project promotion."; exit 1; }
 
       - name: Authenticate as prod deploy identity
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ needs.target-metadata.outputs.project_id }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: ">= 416.0.0"
 
@@ -191,7 +191,7 @@ jobs:
             --arg copiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,copiedAt:$copiedAt,mechanism:"gcrane-copy-digest-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-copy-prod-${{ inputs.release_sha }}
           path: release-copy-evidence.json
