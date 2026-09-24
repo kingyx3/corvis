@@ -20,7 +20,10 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     return json({
       data: {
-        permissions: PERMISSIONS.filter((permission) => hasPermission(identity, permission)),
+        permissions: PERMISSIONS.filter((permission) =>
+          hasPermission(identity, permission) && (permission !== "admin:manage" || identity.isTenantAdmin === true)
+        ),
+        tenantAdmin: identity.isTenantAdmin === true,
         sourceDocumentAccessAllowed: identity.entitlements.sourceDocumentAccessAllowed === true,
         redistributionAllowed: identity.entitlements.redistributionAllowed === true,
       },
