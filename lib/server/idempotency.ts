@@ -182,3 +182,29 @@ export async function withIdempotency<T>(
   const winner = await findRecord(db, identity.tenantId, scope, key);
   return winner ? toOutcome<T>(winner, true) : { ...fresh, replayed: false };
 }
+
+/** Upper bound on one call to {@link sweepExpiredIdempotencyKeys}. */
+export const IDEMPOTENCY_KEY_SWEEP_LIMIT = 5000;
+
+/**
+ * Deletes past-expiry rows from `corvis_control.idempotency_key`. Every row
+ * carries its own `expires_at` (set at insert time, see
+ * `insertRecordIfAbsent`), but until now nothing ever deleted an expired
+ * row, so the table grew forever. Idempotency keys are not meaningfully
+ * swept per-tenant -- an expired key can never be replayed regardless of
+ * which tenant wrote it -- so this is a single global, bounded delete
+ * (migration 049 adds the supporting index on `expires_at`), matching how
+ * the export/webhook reclaim sweeps in this file's neighbors are also
+ * tenant-agnostic. Bounded to `IDEMPOTENCY_KEY_SWEEP_LIMIT` rows per call so
+ * it can never hold a long-running scan or lock.
+ */
+export async function sweepExpiredIdempotencyKeys(db: PostgresSqlApi = controlDb(), limit = IDEMPOTENCY_KEY_SWEEP_LIMIT): Promise<number> {
+  const rows = await db.query(`delete from corvis_control.idempotency_key
+    where ctid in (
+      select ctid from corvis_control.idempotency_key
+      where expires_at <= now()
+      limit $1
+    )
+    returning tenant_id`,[limit]);
+  return rows.length;
+}

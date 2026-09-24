@@ -146,6 +146,49 @@ async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: 
       )`,[tenantId,eventId]);
 }
 
+/** Upper bound on one call to {@link sweepUnsubscribedWebhookFanoutEvents}. */
+export const WEBHOOK_FANOUT_SWEEP_LIMIT = 1000;
+
+/**
+ * `markWebhookFanoutCompleteIfDone` only ever runs as a side effect of
+ * processing a delivery row for a matched subscription, so a customer-facing
+ * event with no subscriber at all -- not one delivery ever attempted --
+ * never gets a chance to be marked done and stays in
+ * `outbox_processing_transport_ready_idx`'s webhook-fanout-pending partial
+ * index (migration 047) forever. This sweep closes that gap directly: it
+ * proves an event can never be delivered by checking there is no
+ * subscription -- active *or* paused -- for its tenant+event_type created at
+ * or before it, mirroring the fan-out query's own
+ * `s.created_at<=e.created_at` semantics (a subscription created after the
+ * event can never need it, matching `processWebhookDeliveries`'s join).
+ * Paused subscriptions count as still-possibly-eligible because pause is
+ * reversible (unlike revoke) and resuming does not change `created_at`, so a
+ * currently-paused subscription created before the event could still be
+ * resumed and pick it up later; only when no active-or-paused subscription
+ * exists at all can this sweep prove nothing will ever need the event.
+ * Bounded to `WEBHOOK_FANOUT_SWEEP_LIMIT` rows per call so it can never hold
+ * a long-running scan or lock.
+ */
+export async function sweepUnsubscribedWebhookFanoutEvents(store: PostgresSqlApi = db(), limit = WEBHOOK_FANOUT_SWEEP_LIMIT): Promise<number> {
+  const rows = await store.query(`update corvis_control.outbox_event e
+    set webhook_fanout_completed_at=now()
+    where e.event_id in (
+      select e2.event_id from corvis_control.outbox_event e2
+      where e2.webhook_fanout_completed_at is null
+        and e2.event_type not in (${processingTransportEventTypesSqlList()})
+        and e2.event_type in (${webhookEventTypesSqlList()})
+        and not exists (
+          select 1 from corvis_control.webhook_subscription s
+          where s.tenant_id=e2.tenant_id and s.status in ('active','paused') and e2.event_type=any(s.event_types)
+            and s.created_at<=e2.created_at
+        )
+      order by e2.created_at
+      limit $1
+    )
+    returning e.event_id`,[limit]);
+  return rows.length;
+}
+
 export async function reclaimStaleWebhookDeliveries(store: PostgresSqlApi): Promise<number> {
   const rows = await store.query(`update corvis_control.webhook_delivery
     set state=case when attempt>=$1 then 'failed' else 'retryable' end,
