@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
+import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { assertWebhookId, webhookSubscriptionTransition } from "@/lib/server/webhook-subscriptions";
 
@@ -16,11 +16,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ webho
     const transition = webhookSubscriptionTransition(body?.action);
     if (!transition) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
 
-    const data = await transition(identity, webhookId);
-    await platform().audit({
-      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
-      actorSubject: identity.subject, sessionId: identity.sessionId, action: `webhook_subscription.${String(body?.action)}`,
-      targetType: "webhook_subscription", targetId: webhookId, outcome: "success", correlationId: id,
+    const data = await runAuditedMutation({
+      mutate: (db) => transition(identity, webhookId, db),
+      audit: () => ({
+        id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+        actorSubject: identity.subject, sessionId: identity.sessionId, action: `webhook_subscription.${String(body?.action)}`,
+        targetType: "webhook_subscription", targetId: webhookId, outcome: "success", correlationId: id,
+      }),
     });
     return json({ data, correlationId: id });
   } catch (error) { return apiError(error, id); }

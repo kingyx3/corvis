@@ -1,13 +1,10 @@
-import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { reauthorizeAuditedSourceConnection } from "@/lib/server/source-connector-governance";
+import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import {
   assertSourceConnectionId,
-  getSourceConnection,
-  reauthorizeSourceConnection,
   type SourceConnection,
 } from "@/lib/server/source-connectors";
 
@@ -35,13 +32,13 @@ export async function POST(request: Request, context: { params: Promise<{ source
     }
     assertSourceConnectionId(sourceConnectionId);
 
-    await reauthorizeSourceConnection(identity, sourceConnectionId, body.secret as Record<string, unknown>, { secrets: sourceConnectorSecretStore() });
-    const data = await getSourceConnection(identity, sourceConnectionId);
-    await platform().audit({
-      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
-      actorSubject: identity.subject, sessionId: identity.sessionId, action: "source_connection.reauthorize",
-      targetType: "source_connection", targetId: sourceConnectionId, outcome: "success", correlationId: id,
-    });
+    const data = await reauthorizeAuditedSourceConnection(
+      identity,
+      sourceConnectionId,
+      body.secret as Record<string, unknown>,
+      id,
+      { secrets: sourceConnectorSecretStore() },
+    );
     return json({ data: toResponse(data), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
