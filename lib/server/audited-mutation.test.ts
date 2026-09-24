@@ -2,14 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { AuditEvent } from "../../core/enterprise.ts";
 import { runAuditedMutation } from "./audited-mutation.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 class TransactionDb implements PostgresSqlApi {
   mutated = false;
   auditRows = 0;
   failAudit = false;
   async query(): Promise<PostgresRow[]> { return []; }
-  async execute(sql: string, _parameters: PostgresPrimitive[] = []): Promise<void> {
+  async execute(sql: string): Promise<void> {
     if (sql.includes("audit_event")) {
       if (this.failAudit) throw new Error("audit insert failed");
       this.auditRows += 1;
