@@ -83,9 +83,9 @@ jobs:
         with:
           version: ">= 416.0.0"
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: ./.github/actions/setup-terraform-cached
         with:
-          terraform_version: "1.13.3"
+          terraform-version: "1.13.3"
 
       - name: Verify keyless trust anchor
         shell: bash
