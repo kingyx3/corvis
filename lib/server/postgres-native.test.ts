@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { nativePostgresConfig, NativePostgresSqlApi, PostgresDriverError, postgresCaCertificates, postgresDiagnosticCode } from "./postgres-native.ts";
 import { postgres } from "./postgres.ts";
+
+const LOCAL_TEST_DSN = "postgres://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable";
 
 test("provider URLs always verify TLS even when sslmode=require is supplied", () => {
   for (const suffix of ["", "?sslmode=require", "?sslmode=verify-full"]) {
@@ -65,6 +68,37 @@ test("connection failures report the Node error code without leaking the DSN", a
       return true;
     });
   } finally {
+    await api.close();
+  }
+});
+
+test("transaction() commits a mutation and its audit insert together, and rolls back the mutation when the callback throws", async () => {
+  const api = new NativePostgresSqlApi(LOCAL_TEST_DSN);
+  const table = `txn_probe_${randomUUID().replace(/-/g, "_")}`;
+  try {
+    await api.execute(`create table ${table} (id text primary key, kind text not null)`);
+
+    // The mutation and the "audit" write run on the same transaction and both commit.
+    await api.transaction(async (tx) => {
+      await tx.execute(`insert into ${table} (id, kind) values ($1, 'mutation')`, ["row-1"]);
+      await tx.execute(`insert into ${table} (id, kind) values ($1, 'audit')`, ["row-1-audit"]);
+    });
+    const committed = await api.query(`select kind from ${table} order by kind`);
+    assert.deepEqual(committed.map((row) => row.kind), ["audit", "mutation"]);
+
+    // An error thrown after the mutation (standing in for a failing audit insert)
+    // rolls the mutation back too: nothing from this attempt is visible afterward.
+    await assert.rejects(
+      api.transaction(async (tx) => {
+        await tx.execute(`insert into ${table} (id, kind) values ($1, 'mutation')`, ["row-2"]);
+        throw new Error("audit insert failed");
+      }),
+      /audit insert failed/,
+    );
+    const afterRollback = await api.query(`select id from ${table} where id=$1`, ["row-2"]);
+    assert.deepEqual(afterRollback, []);
+  } finally {
+    await api.execute(`drop table if exists ${table}`).catch(() => {});
     await api.close();
   }
 });
