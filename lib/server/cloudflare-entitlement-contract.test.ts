@@ -104,6 +104,15 @@ test("shared zone workflow uses independent state and a dedicated least-privileg
   assert.match(workflow, /release-governance\.mjs/);
 });
 
+test("required Terraform CI validates the independent shared Cloudflare root", async () => {
+  const workflow = await read(".github/workflows/terraform.yml");
+
+  assert.match(workflow, /infra\/terraform\/shared/);
+  assert.match(workflow, /cloudflare-zone-policy\.yml/);
+  assert.match(workflow, /find infra\/terraform\/shared/);
+  assert.match(workflow, /terraform -chdir="\$\{root\}" validate/);
+});
+
 test("environment lifecycle cannot delete or address the independent shared Cloudflare state", async () => {
   const lifecycle = await read(".github/workflows/gcp-decommission.yml");
   const shared = await read(".github/workflows/cloudflare-zone-policy.yml");
