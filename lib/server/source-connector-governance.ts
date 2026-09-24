@@ -5,7 +5,6 @@ import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import {
   ConnectorGovernanceError,
-  createSourceConnection,
   getSourceConnection,
   pauseSourceConnection,
   resumeSourceConnection,
@@ -19,6 +18,9 @@ import {
   type SourceConnection,
   type SourceScope,
 } from "./source-connectors.ts";
+
+const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+const MAX_CONNECTION_LABEL_LENGTH = 200;
 
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
@@ -78,11 +80,18 @@ async function loadRawConnection(db: PostgresSqlApi, identity: RequestIdentity, 
   return row;
 }
 
+function validateCreateInput(input: CreateConnectionInput): void {
+  if (!PROVIDER_KEY_PATTERN.test(input.providerKey)) throw new ConnectorGovernanceError("invalid_provider_key");
+  if (!input.connectionLabel.trim()) throw new ConnectorGovernanceError("connection_label_required");
+  if (input.connectionLabel.length > MAX_CONNECTION_LABEL_LENGTH) throw new ConnectorGovernanceError("connection_label_too_long");
+  if (input.sourceScope.length === 0) throw new ConnectorGovernanceError("source_scope_confirmation_required");
+}
+
 /**
  * Creates the managed secret before opening the database transaction, then
- * commits the source-connection row and required audit event together. If the
- * transaction or audit fails, the just-created secret is compensatingly
- * revoked so no unreferenced credential is left live.
+ * commits only the source-connection metadata row and required audit event in
+ * one short transaction. If the insert or audit fails, the just-created secret
+ * is compensatingly revoked so no unreferenced credential is left live.
  */
 export async function createAuditedSourceConnection(
   identity: RequestIdentity,
@@ -90,18 +99,27 @@ export async function createAuditedSourceConnection(
   correlationId: string,
   dependencies: { db?: PostgresSqlApi; secrets: SecretStore },
 ): Promise<SourceConnection> {
+  validateCreateInput(input);
   const db = dependencies.db ?? controlDb();
-  let created: SourceConnection | undefined;
+  const secretReference = await dependencies.secrets.write(identity.tenantId, input.providerKey, input.secret);
+
   try {
     return await withTransaction(db, async (tx) => {
-      created = await createSourceConnection(identity, input, { db: tx, secrets: dependencies.secrets });
-      await writeAudit(tx, identity, correlationId, "source_connection.create", created.sourceConnectionId, "success", {
-        providerKey: created.providerKey,
+      const inserted = await tx.query(`insert into corvis_source.source_connection
+        (tenant_id, workspace_id, provider_key, connection_label, credential_type, source_scope,
+         scope_confirmed_by, scope_confirmed_at, secret_reference, connector_version, created_by)
+      values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,now(),$8,$9,$7)
+      returning source_connection_id`,
+      [identity.tenantId, input.workspaceId, input.providerKey, input.connectionLabel, input.credentialType,
+        JSON.stringify(input.sourceScope), identity.subject, secretReference, input.connectorVersion]);
+      const sourceConnectionId = requiredText(inserted[0]!, "source_connection_id");
+      await writeAudit(tx, identity, correlationId, "source_connection.create", sourceConnectionId, "success", {
+        providerKey: input.providerKey,
       });
-      return created;
+      return getSourceConnection(identity, sourceConnectionId, tx);
     });
   } catch (error) {
-    if (created?.secretReference) await dependencies.secrets.revoke(created.secretReference).catch(() => undefined);
+    await dependencies.secrets.revoke(secretReference).catch(() => undefined);
     throw error;
   }
 }
