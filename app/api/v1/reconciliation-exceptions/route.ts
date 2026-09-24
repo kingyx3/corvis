@@ -11,7 +11,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const snapshotId = url.searchParams.get("snapshotId") ?? "";
     const snapshotVersion = Number(url.searchParams.get("snapshotVersion"));
-    if (!snapshotId || !Number.isInteger(snapshotVersion) || snapshotVersion <= 0) {
+    // snapshot_version is a Postgres integer; a larger value would fail the query with a 500.
+    if (!snapshotId || !Number.isInteger(snapshotVersion) || snapshotVersion <= 0 || snapshotVersion > 2_147_483_647) {
       return json({ error: "invalid_reconciliation_query", correlationId: id }, { status: 400 });
     }
     const data = await platform().listReconciliationExceptions(identity, snapshotId, snapshotVersion);

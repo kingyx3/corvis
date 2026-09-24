@@ -10,19 +10,27 @@ import { withIdempotency } from "@/lib/server/idempotency";
 import { platform } from "@/lib/server/platform";
 
 const actions: ReconciliationResolutionAction[] = ["select_source", "mark_immaterial", "accept_reconciliation"];
+/** Versions are Postgres `integer` columns; anything above 2^31-1 is malformed input, not a conflict. */
+const MAX_VERSION = 2_147_483_647;
 
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "observations:review");
-    const command = await request.json() as ReconciliationResolutionCommand & { idempotencyKey?: string };
+    const body = await request.json() as unknown;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return json({ error: "invalid_reconciliation_resolution", correlationId: id }, { status: 400 });
+    }
+    const command = body as ReconciliationResolutionCommand & { idempotencyKey?: string };
     if (
-      !command.exceptionId ||
-      !Number.isInteger(command.expectedVersion) || command.expectedVersion <= 0 ||
+      typeof command.exceptionId !== "string" || !command.exceptionId ||
+      !Number.isInteger(command.expectedVersion) || command.expectedVersion <= 0 || command.expectedVersion > MAX_VERSION ||
       !actions.includes(command.action) ||
-      !command.reasonCode ||
-      (command.action === "select_source" && !command.selectedSourceReferenceId)
+      typeof command.reasonCode !== "string" || !command.reasonCode.trim() ||
+      (command.action === "select_source" && (typeof command.selectedSourceReferenceId !== "string" || !command.selectedSourceReferenceId)) ||
+      (command.note !== undefined && command.note !== null && typeof command.note !== "string") ||
+      (command.idempotencyKey !== undefined && typeof command.idempotencyKey !== "string")
     ) {
       return json({ error: "invalid_reconciliation_resolution", correlationId: id }, { status: 400 });
     }

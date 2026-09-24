@@ -82,6 +82,19 @@ function objectArray(value: unknown): Array<Record<string, unknown>> {
   }
   return [];
 }
+/**
+ * Snapshot states a transition may not start from. Publication requires a
+ * draft (mirroring assert_snapshot_publishable, so the refusal is a 409 instead
+ * of a raised database exception); withdraw and supersede only apply to a
+ * published snapshot, so a draft cannot be "withdrawn" and a withdrawn or
+ * superseded version cannot be transitioned again.
+ */
+const DISALLOWED_SNAPSHOT_SOURCE_STATUSES: Record<SnapshotPublication["action"], readonly string[]> = {
+  publish: ["blocked", "published", "withdrawn", "superseded"],
+  withdraw: ["draft", "blocked", "withdrawn", "superseded"],
+  supersede: ["draft", "blocked", "withdrawn", "superseded"],
+};
+
 function allowedActions(type: ReconciliationExceptionType): ReconciliationResolutionAction[] {
   if (type === "source_authority") return ["select_source"];
   if (type === "materiality") return ["mark_immaterial"];
@@ -223,7 +236,9 @@ export class PostgresProductionPlatform implements PlatformPort {
 
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     const current = await this.reviewPublication.observation(identity, decision.observationId);
-    if (!current) throw new Error("Observation not found");
+    // Unknown, out-of-entitlement and malformed ids all answer the same way,
+    // like the reconciliation and snapshot paths, instead of a generic 500.
+    if (!current) throw new ConflictError("observation_not_found_or_version_conflict");
     if (num(current,"version") !== decision.expectedVersion) throw new ConflictError("observation_version_conflict");
     if (decision.decision === "correct" && !decision.correctedValue) throw new Error("Corrected value is required");
     const reviewEventId = randomUUID();
@@ -254,6 +269,10 @@ export class PostgresProductionPlatform implements PlatformPort {
   async publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }> {
     const snapshot = await this.reviewPublication.snapshot(identity, command.snapshotId, command.expectedVersion);
     if (!snapshot) throw new ConflictError("snapshot_not_found_or_version_conflict");
+    const currentStatus = text(snapshot,"status").toLowerCase();
+    if (currentStatus && DISALLOWED_SNAPSHOT_SOURCE_STATUSES[command.action]?.includes(currentStatus)) {
+      throw new ConflictError("snapshot_transition_not_allowed");
+    }
     if (command.action === "publish") {
       const fundId = text(snapshot,"fund_id");
       const counts = await this.reviewPublication.publicationCounts(identity.tenantId, fundId);
@@ -268,7 +287,20 @@ export class PostgresProductionPlatform implements PlatformPort {
       if (!gate.allowed) throw new PublicationGateError(gate.reasons);
     }
     const publicationEventId = randomUUID();
-    if (!await this.reviewPublication.appendSnapshotTransition(identity, command, publicationEventId)) throw new ConflictError("snapshot_not_found_or_version_conflict");
+    let appended: boolean;
+    try {
+      appended = await this.reviewPublication.appendSnapshotTransition(identity, command, publicationEventId);
+    } catch (error) {
+      // assert_snapshot_publishable re-checks the publication invariants at the
+      // persistence boundary and raises (SQLSTATE P0001) when one fails that the
+      // application preflight did not see, e.g. an active data-correction
+      // incident. That is a blocked publication, not a server fault.
+      if (command.action === "publish" && (error as { code?: unknown } | null)?.code === "P0001") {
+        throw new PublicationGateError(["publication_invariant_failed"]);
+      }
+      throw error;
+    }
+    if (!appended) throw new ConflictError("snapshot_not_found_or_version_conflict");
     return { accepted: true, publicationEventId };
   }
 

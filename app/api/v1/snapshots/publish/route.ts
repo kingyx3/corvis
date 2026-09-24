@@ -5,13 +5,22 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { logEvent } from "@/lib/server/telemetry";
 
+/** Versions are Postgres `integer` columns; anything outside 1..2^31-1 is malformed input, not a conflict. */
+const MAX_VERSION = 2_147_483_647;
+
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "snapshots:publish");
-    const command = await request.json() as SnapshotPublication;
-    if (!command.snapshotId || !["publish","withdraw","supersede"].includes(command.action) || !Number.isInteger(command.expectedVersion)) {
+    const body = await request.json() as unknown;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return json({ error: "invalid_snapshot_command", correlationId: id }, { status: 400 });
+    }
+    const command = body as SnapshotPublication;
+    if (typeof command.snapshotId !== "string" || !command.snapshotId || !["publish","withdraw","supersede"].includes(command.action)
+      || !Number.isInteger(command.expectedVersion) || command.expectedVersion < 1 || command.expectedVersion > MAX_VERSION
+      || (command.reason !== undefined && command.reason !== null && typeof command.reason !== "string")) {
       return json({ error: "invalid_snapshot_command", correlationId: id }, { status: 400 });
     }
     const data = await platform().publish(identity, command);

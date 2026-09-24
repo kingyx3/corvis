@@ -4,7 +4,7 @@ import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
-import { testSourceConnection } from "@/lib/server/source-connectors";
+import { assertSourceConnectionId, testSourceConnection } from "@/lib/server/source-connectors";
 
 /**
  * A scoped connectivity check: reads the credential and calls the driver's
@@ -19,6 +19,7 @@ export async function POST(request: Request, context: { params: Promise<{ source
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
+    assertSourceConnectionId(sourceConnectionId);
     const result = await testSourceConnection(identity, sourceConnectionId, {
       secrets: sourceConnectorSecretStore(),
       drivers: sourceConnectorDrivers(),

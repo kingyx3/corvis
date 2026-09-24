@@ -12,6 +12,14 @@ import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Customer-supplied ids reach `::uuid` casts below. A malformed id can never
+ * name a row, so it is treated as not-found instead of letting Postgres raise
+ * an invalid-input error (surfaced as a 500).
+ */
+function isUuid(value: unknown): value is string { return typeof value === "string" && UUID_PATTERN.test(value); }
+
 export class PostgresWorkspaceRepository {
   private readonly db: PostgresSqlApi;
   constructor(db: PostgresSqlApi) { this.db = db; }
@@ -58,7 +66,7 @@ export class PostgresReviewPublicationRepository {
   async observation(identity: RequestIdentity, observationId: string): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
     const documentIds = identity.entitlements.documentIds ?? [];
-    if (fundIds.length === 0 || documentIds.length === 0) return undefined;
+    if (fundIds.length === 0 || documentIds.length === 0 || !isUuid(observationId)) return undefined;
     const rows = await this.db.query(`select o.observation_id,o.version,o.review_state,o.value_number,o.value_string,o.risk_tier
       from corvis_facts.observation o
       join corvis_source.source_reference r
@@ -79,7 +87,7 @@ export class PostgresReviewPublicationRepository {
 
   async reconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<PostgresRow[]> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return [];
+    if (fundIds.length === 0 || !isUuid(snapshotId)) return [];
     const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
       ? identity.entitlements.sourceDocumentIds ?? []
       : [];
@@ -110,12 +118,12 @@ export class PostgresReviewPublicationRepository {
     command: ReconciliationResolutionCommand,
   ): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return undefined;
+    if (fundIds.length === 0 || !isUuid(command.exceptionId)) return undefined;
     const selectingSource = command.action === "select_source";
     const sourceDocumentIds = identity.entitlements.sourceDocumentAccessAllowed
       ? identity.entitlements.sourceDocumentIds ?? []
       : [];
-    if (selectingSource && (!command.selectedSourceReferenceId || sourceDocumentIds.length === 0)) return undefined;
+    if (selectingSource && (!isUuid(command.selectedSourceReferenceId) || sourceDocumentIds.length === 0)) return undefined;
     const rows = await this.db.query(`select e.*
       from corvis_consolidated.reconciliation_exception e
       where e.tenant_id=$1 and e.exception_id=$2::uuid and e.version=$3 and e.status='open'
@@ -149,10 +157,18 @@ export class PostgresReviewPublicationRepository {
 
   async snapshot(identity: RequestIdentity, snapshotId: string, version: number): Promise<PostgresRow | undefined> {
     const fundIds = identity.entitlements.fundIds ?? [];
-    if (fundIds.length === 0) return undefined;
-    const rows = await this.db.query(`select * from corvis_serving.fund_period_snapshots
-      where tenant_id=$1 and snapshot_id=$2::uuid and version=$3
-        and fund_id in (select jsonb_array_elements_text($4::jsonb))
+    if (fundIds.length === 0 || !isUuid(snapshotId)) return undefined;
+    // Only the current (highest) version of a snapshot may transition. A stale
+    // expectedVersion would otherwise pass this preflight and then collide on
+    // the (tenant_id, snapshot_id, version) primary key inside
+    // append_snapshot_transition, surfacing a lost update as a 500.
+    const rows = await this.db.query(`select * from corvis_serving.fund_period_snapshots s
+      where s.tenant_id=$1 and s.snapshot_id=$2::uuid and s.version=$3
+        and s.fund_id in (select jsonb_array_elements_text($4::jsonb))
+        and not exists (
+          select 1 from corvis_serving.fund_period_snapshots n
+          where n.tenant_id=s.tenant_id and n.snapshot_id=s.snapshot_id and n.version>s.version
+        )
       limit 1`, [identity.tenantId,snapshotId,version,jsonIds(fundIds)]);
     return rows[0];
   }
@@ -185,9 +201,18 @@ export class PostgresReviewPublicationRepository {
   }
 
   async appendSnapshotTransition(identity: RequestIdentity, command: SnapshotPublication, eventId: string): Promise<boolean> {
-    const rows = await this.db.query(`select corvis_consolidated.append_snapshot_transition(
-      $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7) as new_version`,
-    [identity.tenantId,command.snapshotId,command.expectedVersion,eventId,command.action,identity.subject,command.reason ?? null]);
+    let rows: PostgresRow[];
+    try {
+      rows = await this.db.query(`select corvis_consolidated.append_snapshot_transition(
+        $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7) as new_version`,
+      [identity.tenantId,command.snapshotId,command.expectedVersion,eventId,command.action,identity.subject,command.reason ?? null]);
+    } catch (error) {
+      // Two concurrent transitions of the same version both pass the row lock
+      // in turn; the loser's insert of expectedVersion+1 hits the primary key.
+      // That is an optimistic-concurrency conflict, not a server fault.
+      if ((error as { code?: unknown } | null)?.code === "23505") return false;
+      throw error;
+    }
     return Number(rows[0]?.new_version ?? 0) === command.expectedVersion + 1;
   }
 }
