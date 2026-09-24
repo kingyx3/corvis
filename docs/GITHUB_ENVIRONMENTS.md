@@ -61,7 +61,7 @@ See [`CLOUDFLARE_SHARED_ZONE.md`](CLOUDFLARE_SHARED_ZONE.md) for the detailed on
 
 ### Release governance token
 
-Use a fine-grained token or GitHub App credential scoped only to this repository with the repository administration visibility needed to read effective ruleset bypass configuration, plus Contents read and Checks read. Store it as an environment secret, rotate it, and do not reuse it for deployment-provider access.
+Use a fine-grained token or GitHub App credential scoped only to this repository. A fine-grained token needs **Administration: Read and write**, **Contents: Read**, **Checks: Read** and implicit Metadata read so the verifier can see effective ruleset bypass configuration. Store it as an environment secret, rotate it, and do not reuse it for deployment-provider access.
 
 ## Derived values
 
@@ -76,11 +76,16 @@ Use a fine-grained token or GitHub App credential scoped only to this repository
 | Shared Cloudflare Terraform root | `infra/terraform/shared/cloudflare` |
 | Source bucket | `${GCP_PROJECT_ID}-documents` |
 | Artifact Registry API repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api` |
+| Runtime API/worker image | selected release tag resolved to the immutable `image@sha256:<digest>` before Terraform runs |
 | Postgres runtime secret | `corvis-postgres-dsn-${environment}` |
 | Cloudflare zone/account IDs | Provider lookup from `CLOUDFLARE_ZONE_NAME` |
 | Public hostnames | Derived from the single zone and environment as listed above |
 
-Do not create GitHub variables for Cloudflare zone/account IDs, API/customer/admin hostnames, API Gateway hostnames/keys, Cloud Run URLs, service-account names, state bucket names or image digests.
+`API_IMAGE` is not a human-managed GitHub Environment variable. The build/deploy path derives the runtime API/worker image from a reviewed `main` release and its immutable registry digest. Known-good rollback state is acceptance-gated rather than manually entered.
+
+## Remove or avoid creating
+
+Do not create GitHub variables for derived values such as `API_IMAGE`, Cloudflare zone/account IDs, API/customer/admin hostnames, API Gateway hostnames/keys, Cloud Run URLs, service-account names, state bucket names or image digests.
 
 Do not hardcode `corvis.com`, `corvis.ai`, or another candidate TLD anywhere in the deployment contract.
 
