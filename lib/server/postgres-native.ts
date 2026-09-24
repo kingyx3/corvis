@@ -95,8 +95,9 @@ export class PostgresDriverError extends Error {
 
 export class NativePostgresSqlApi implements PostgresSqlApi {
   private readonly pool: Pool;
-  constructor(dsn: string) {
-    this.pool = new Pool(nativePostgresConfig(dsn));
+  /** `limits` may only tune pool size and timeouts (the migration CLI); TLS and connection settings always come from the DSN policy. */
+  constructor(dsn: string, limits: Pick<PoolConfig, "max" | "statement_timeout" | "lock_timeout" | "query_timeout"> = {}) {
+    this.pool = new Pool({ ...nativePostgresConfig(dsn), ...limits });
     // An idle socket error must not crash the API process. The pool discards
     // that socket; subsequent requests reconnect under the bounded timeout.
     this.pool.on("error", () => {});

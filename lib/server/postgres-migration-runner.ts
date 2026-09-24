@@ -29,6 +29,23 @@ alter table ${LEDGER_TABLE} enable row level security;
 revoke all on ${LEDGER_TABLE} from public;
 revoke all on schema ${LEDGER_SCHEMA} from public;`;
 
+/**
+ * Connection limits for the migration CLI. The shared API pool caps every
+ * statement at 30s and every query call at 35s client-side; a migration is one
+ * query call holding many statements, so an index build or backfill on a real
+ * table would be cancelled mid-transaction (or, worse, abandoned client-side
+ * while the server goes on to commit it). Migrations get a long statement
+ * budget and no client-side read timeout, while lock waits stay bounded so a
+ * migration queued behind a long transaction fails fast instead of stalling
+ * all traffic queued behind its lock request.
+ */
+export const MIGRATION_CONNECTION_LIMITS = {
+  max: 1,
+  statement_timeout: 15 * 60_000,
+  lock_timeout: 30_000,
+  query_timeout: 0,
+} as const;
+
 const migrationFileNamePattern = /^(\d{3})_([a-z0-9_]+)\.sql$/;
 const appliedByPattern = /^[A-Za-z0-9._@:+\-/]{1,128}$/;
 const trailingCommitPattern = /commit\s*;$/i;
@@ -255,17 +272,25 @@ export async function readAppliedMigrations(client: MigrationSqlClient): Promise
 /**
  * Splices the ledger insert into the migration's own transaction so a version
  * can never be recorded without its DDL, or applied without being recorded.
+ *
+ * The ledger row is claimed first, straight after `begin;`, with no conflict
+ * clause. Two runners that planned the same pending version concurrently (a
+ * re-run deploy, a manual apply beside CI) therefore serialize on the ledger
+ * primary key: the second blocks until the first commits and then fails with a
+ * unique violation, rolling back before any of the migration's SQL runs,
+ * instead of silently re-executing the migration body a second time.
  */
 export function transactionalMigrationSql(migration: MigrationFile, appliedBy: string): string {
   const normalized = normalizeSql(migration.sql).trimEnd();
-  if (!leadingBeginPattern.test(normalized) || !trailingCommitPattern.test(normalized)) {
+  const opening = leadingBeginPattern.exec(normalized);
+  if (!opening || !trailingCommitPattern.test(normalized)) {
     throw new MigrationContractError(
       "not_single_transaction",
       `migration ${migration.name} must open with begin; and close with commit; so replay is atomic`,
     );
   }
-  const body = normalized.replace(trailingCommitPattern, "").trimEnd();
-  return `${body}\n\n${ledgerInsertSql(migration, appliedBy)}\n\ncommit;\n`;
+  const body = normalized.slice(opening[0].length).replace(trailingCommitPattern, "").trim();
+  return `${opening[0]}\n\n${ledgerInsertSql(migration, appliedBy)}\n\n${body}\n\ncommit;\n`;
 }
 
 export function ledgerInsertSql(migration: MigrationFile, appliedBy: string): string {
@@ -276,8 +301,7 @@ export function ledgerInsertSql(migration: MigrationFile, appliedBy: string): st
     );
   }
   return `insert into ${LEDGER_TABLE} (version, name, checksum, applied_by)
-values (${migration.version}, '${migration.name}', '${migration.checksum}', '${appliedBy}')
-on conflict (version) do nothing;`;
+values (${migration.version}, '${migration.name}', '${migration.checksum}', '${appliedBy}');`;
 }
 
 /** Idempotent: a second run against an up-to-date database executes no migration SQL. */

@@ -12,11 +12,12 @@ import { parseArgs } from "node:util";
 import {
   MIGRATION_DIRECTORY,
   MigrationApplyError,
+  MIGRATION_CONNECTION_LIMITS,
   MigrationContractError,
   applyMigrations,
   planFromDirectory,
 } from "../../lib/server/postgres-migration-runner.ts";
-import { PostgresDriverError } from "../../lib/server/postgres-native.ts";
+import { NativePostgresSqlApi, PostgresDriverError } from "../../lib/server/postgres-native.ts";
 import { postgres } from "../../lib/server/postgres.ts";
 
 const { values } = parseArgs({
@@ -40,8 +41,15 @@ async function run(): Promise<Record<string, unknown>> {
   }
   const dsn = process.env.CORVIS_POSTGRES_DSN;
   if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required to apply Postgres migrations");
-  const report = await applyMigrations(postgres(dsn), { directory, appliedBy });
-  return { ...report, mode: "apply" };
+  // Native DSNs get a dedicated pool with migration-sized timeouts instead of
+  // the shared API pool's 30s statement / 35s query caps.
+  const native = /^postgres(?:ql)?:\/\//.test(dsn) ? new NativePostgresSqlApi(dsn, MIGRATION_CONNECTION_LIMITS) : undefined;
+  try {
+    const report = await applyMigrations(native ?? postgres(dsn), { directory, appliedBy });
+    return { ...report, mode: "apply" };
+  } finally {
+    await native?.close();
+  }
 }
 
 const startedAt = new Date().toISOString();
