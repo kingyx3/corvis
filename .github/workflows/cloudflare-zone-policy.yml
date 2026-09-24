@@ -1,0 +1,139 @@
+name: Cloudflare shared zone policy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action for the shared Cloudflare zone policy
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+  checks: read
+  id-token: write
+
+concurrency:
+  group: cloudflare-shared-zone-policy
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The independent shared-state bucket is anchored in the UAT GCP project so
+    # the public edge can be prepared before prod bootstrap. It is a different
+    # bucket from UAT environment state and is never deleted by UAT lifecycle.
+    environment: uat
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_IN_AUTOMATION: "true"
+      TF_ROOT: infra/terraform/shared/cloudflare
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-shared-tf-state', vars.GCP_PROJECT_ID) }}
+      TF_VAR_cloudflare_zone_name: ${{ vars.CLOUDFLARE_ZONE_NAME }}
+      TF_VAR_enable_cloudflare_managed_waf: ${{ vars.CLOUDFLARE_MANAGED_WAF_ENABLED || 'false' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ZONE_POLICY_TOKEN }}
+
+    steps:
+      - name: Validate shared zone request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.action }}" in
+            plan|apply) ;;
+            *) echo "Unsupported Terraform action: ${{ inputs.action }}"; exit 1 ;;
+          esac
+          if [[ -z "${GCP_PROJECT_ID}" || -z "${GCP_WIF_PROVIDER}" ]]; then
+            echo "UAT GCP_PROJECT_ID and GCP_WIF_PROVIDER are required for protected shared Terraform state."
+            exit 1
+          fi
+          if [[ -z "${TF_VAR_cloudflare_zone_name}" ]]; then
+            echo "CLOUDFLARE_ZONE_NAME must be set before Cloudflare zone policy can be planned."
+            exit 1
+          fi
+          if [[ "${TF_VAR_cloudflare_zone_name}" == http://* || "${TF_VAR_cloudflare_zone_name}" == https://* || "${TF_VAR_cloudflare_zone_name}" == */* || "${TF_VAR_cloudflare_zone_name}" == *\** ]]; then
+            echo "CLOUDFLARE_ZONE_NAME must be a bare root zone name, not a URL, path or wildcard."
+            exit 1
+          fi
+          if [[ "${TF_VAR_cloudflare_zone_name}" != "${TF_VAR_cloudflare_zone_name,,}" ]]; then
+            echo "CLOUDFLARE_ZONE_NAME must be lowercase."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "CLOUDFLARE_ZONE_POLICY_TOKEN is required. Keep zone-policy authority separate from UAT/prod DNS/Worker deployment tokens."
+            exit 1
+          fi
+
+      - name: Guard apply source
+        if: inputs.action == 'apply' && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "Shared Cloudflare policy apply is allowed only from main."
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - name: Verify effective release governance
+        if: inputs.action == 'apply'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: node .github/scripts/release-governance.mjs
+
+      - name: Authenticate to GCP for shared Terraform state
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 416.0.0"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+
+      - name: Ensure independent protected shared state
+        run: bash .github/scripts/terraform-state.sh ensure
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          terraform -chdir="${TF_ROOT}" init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=corvis/cloudflare-zone-policy"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Terraform validate
+        run: terraform -chdir="${TF_ROOT}" validate
+
+      - name: Terraform plan
+        run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Shared-zone summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Cloudflare shared zone policy"
+            echo "- Action: `${{ inputs.action }}`"
+            echo "- Root zone: `${TF_VAR_cloudflare_zone_name}`"
+            echo "- State: `gs://${TF_STATE_BUCKET}/corvis/cloudflare-zone-policy`"
+            echo "- Prod hostnames: `api`, `app`, `admin`"
+            echo "- UAT hostnames: `api-uat`, `app-uat`, `admin-uat`"
+            echo "- Environment DNS/Workers/routes remain owned by their environment Terraform states."
+          } >> "${GITHUB_STEP_SUMMARY}"
