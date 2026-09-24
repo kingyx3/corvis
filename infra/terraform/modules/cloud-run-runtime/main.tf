@@ -104,6 +104,29 @@ resource "google_secret_manager_secret_iam_member" "deployer_postgres" {
   member    = "serviceAccount:${local.deployer_service_account_email}"
 }
 
+# GcpSecretManagerSecretStore (lib/server/source-connector-runtime.ts, used
+# only by the customer-facing /api/v1/source-connections routes, which run on
+# the API service -- never the worker) creates, adds versions to, reads and
+# deletes per-tenant source-connector credential secrets under the
+# corvis-src-<tenant>-<provider>-<sequence> naming convention that
+# sourceConnectorSecretReference() enforces. Those secrets do not exist yet at
+# apply time, so a per-secret IAM binding (like the Postgres DSN grants above)
+# cannot express "may create secrets matching this name": only a project-level
+# binding can. roles/secretmanager.admin project-wide would let this identity
+# touch every other secret too, including the Postgres DSN; the IAM condition
+# narrows it to exactly the resource-name prefix that convention produces.
+resource "google_project_iam_member" "api_source_connector_secrets" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${var.api_service_account_email}"
+
+  condition {
+    title       = "corvis-source-connector-secrets-${var.environment}"
+    description = "Scopes secretmanager.admin to only the corvis-src- source-connector credential secrets this environment's API creates, not the whole project."
+    expression  = "resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.startsWith(\"projects/${var.project_id}/secrets/corvis-src-\")"
+  }
+}
+
 resource "google_cloud_run_v2_service" "worker" {
   count    = local.runtime_enabled ? 1 : 0
   project  = var.project_id
