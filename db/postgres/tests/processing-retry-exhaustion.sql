@@ -44,6 +44,11 @@ declare
   final_job corvis_control.processing_job%rowtype;
   recovered record;
 begin
+  -- The first delivery's outbox record (later attempts are selected straight
+  -- out of outbox_event below, so they are already genuine).
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values (tenant,current_event,current_type,'document',job,current_payload);
+
   for i in 1..5 loop
     select * into claim from corvis_control.claim_processing_stage_delivery(
       tenant,'processing-stage-worker',current_event,current_type,doc,job,'registered',
@@ -97,6 +102,10 @@ declare
   job_row corvis_control.processing_job%rowtype;
   payload jsonb := jsonb_build_object('jobId','registered:a0430000-0000-4000-8000-0000000000d2');
 begin
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values (tenant,'a0430000-0000-4000-8000-0000000000e2','ProcessingStageRetryScheduled','processing_job',
+    'registered:a0430000-0000-4000-8000-0000000000d2',payload);
+
   select * into claim from corvis_control.claim_processing_stage_delivery(
     tenant,'processing-stage-worker','a0430000-0000-4000-8000-0000000000e2','ProcessingStageRetryScheduled',
     'a0430000-0000-4000-8000-0000000000d2','registered:a0430000-0000-4000-8000-0000000000d2','registered',
@@ -116,6 +125,10 @@ declare
   claim record;
   payload jsonb := jsonb_build_object('jobId','registered:a0430000-0000-4000-8000-0000000000d3');
 begin
+  insert into corvis_control.outbox_event (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload)
+  values (tenant,'a0430000-0000-4000-8000-0000000000e3','ProcessingJobRetryRequested','processing_job',
+    'registered:a0430000-0000-4000-8000-0000000000d3',payload);
+
   select * into claim from corvis_control.claim_processing_stage_delivery(
     tenant,'processing-stage-worker','a0430000-0000-4000-8000-0000000000e3','ProcessingJobRetryRequested',
     'a0430000-0000-4000-8000-0000000000d3','registered:a0430000-0000-4000-8000-0000000000d3','registered',

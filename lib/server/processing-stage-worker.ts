@@ -44,7 +44,24 @@ export type ProcessingStageWorkerResult =
   | { outcome: "retryable"; nextAttemptAt?: string }
   | { outcome: "dead_letter" }
   /** The delivery is superseded (job already succeeded/blocked/failed, or this inbox event is exhausted); acknowledge and drop it. */
-  | { outcome: "stale"; state: string };
+  | { outcome: "stale"; state: string }
+  /**
+   * The event_id/event_type/payload carries no matching corvis_control.outbox_event
+   * row (claim_event_delivery / claim_processing_stage_delivery, migration 049):
+   * this delivery was never published by Corvis. Terminal and poison, never
+   * transient — acknowledge and drop it rather than let the transport retry
+   * forever.
+   */
+  | { outcome: "rejected"; reason: "event_not_authentic" };
+
+/**
+ * The exact exception message claim_event_delivery / claim_processing_stage_delivery
+ * (migration 049) raise when no corvis_control.outbox_event row matches the
+ * delivered tenant_id/event_id/event_type/payload. Matched by message text
+ * because the claim is a single SQL call whose failure otherwise surfaces as an
+ * untyped driver error.
+ */
+const EVENT_NOT_AUTHENTIC_MESSAGE = "event id has no matching outbox record";
 
 /**
  * Job states in which a non-claimed delivery is terminal for this event.
@@ -84,7 +101,21 @@ export async function runProcessingStageDelivery(input: {
   if (identity.tenantId !== delivery.tenantId) throw new Error("processing stage tenant mismatch");
   assertDocumentAccess(identity, delivery.documentId);
 
-  const claim = await stages.claim(delivery);
+  let claim;
+  try {
+    claim = await stages.claim(delivery);
+  } catch (error) {
+    // A raised claim exception is normally transient (e.g. "processing job is
+    // not claimable" while another lease is live) and must propagate so the
+    // caller answers with a retryable status. The authenticity guard is the
+    // one exception that is never transient: no future redelivery of a
+    // fabricated event can ever become genuine, so it must be acknowledged
+    // and dropped here rather than left to loop as a 500 forever.
+    if (errorText(error).includes(EVENT_NOT_AUTHENTIC_MESSAGE)) {
+      return { outcome: "rejected", reason: "event_not_authentic" };
+    }
+    throw error;
+  }
   if (claim.duplicateComplete) return { outcome: "duplicate" };
   if (!claim.claimed || !claim.leaseToken) {
     // A terminally-handled delivery must be acknowledged (2xx), never answered
