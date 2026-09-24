@@ -105,6 +105,31 @@ function checkExecutionSignal(signal: AbortSignal): void {
   if (signal.aborted) throwExecutionAbort(signal);
 }
 
+// A provider that is unreachable or answers with a non-JSON body is a provider outage (502),
+// not an internal Corvis failure; an abort while the body streams keeps its timeout/cancel code.
+async function providerJson<T>(response: Response, provider: "search" | "ai", signal: AbortSignal): Promise<T> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    if (signal.aborted) throwExecutionAbort(signal);
+    throw new ResearchProviderError(provider, response.status);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new ResearchProviderError(provider, response.status);
+  return body as T;
+}
+
+export const MAX_RESEARCH_QUESTION_LENGTH = 4000;
+
+/** Returns the trimmed question, or null when the request body does not carry a usable one. */
+export function parseResearchQuestion(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const raw = (body as { question?: unknown }).question;
+  if (typeof raw !== "string") return null;
+  const question = raw.trim();
+  return question && question.length <= MAX_RESEARCH_QUESTION_LENGTH ? question : null;
+}
+
 export class PermissionedResearchService {
   private readonly db: PostgresSqlApi;
 
@@ -137,12 +162,12 @@ export class PermissionedResearchService {
         cache: "no-store",
         signal,
       });
-    } catch (error) {
+    } catch {
       if (signal.aborted) throwExecutionAbort(signal);
-      throw error;
+      throw new ResearchProviderError("search");
     }
     if (!response.ok) throw new ResearchProviderError("search", response.status);
-    const body = await response.json() as SearchResponse;
+    const body = await providerJson<SearchResponse>(response, "search", signal);
     return (body.hits ?? [])
       .filter((hit) => hit.sourceReferenceId && hit.documentId && sourceDocumentIds.includes(hit.documentId))
       .map((hit) => ({ ...hit, text: sanitizeSnippet(hit.text) }));
@@ -204,12 +229,12 @@ export class PermissionedResearchService {
           cache: "no-store",
           signal: execution.signal,
         });
-      } catch (error) {
+      } catch {
         if (execution.signal.aborted) throwExecutionAbort(execution.signal);
-        throw error;
+        throw new ResearchProviderError("ai");
       }
       if (!response.ok) throw new ResearchProviderError("ai", response.status);
-      const body = await response.json() as AiResponse;
+      const body = await providerJson<AiResponse>(response, "ai", execution.signal);
       if (!body.answer) throw new ResearchProviderError("ai", response.status);
       validateUsedFactIds(body.usedFactIds, semantic.factIds);
 
