@@ -155,7 +155,7 @@ resource "cloudflare_ruleset" "rate_limits" {
         mitigation_timeout  = 10
       }
     },
-  ] : [
+    ] : [
     {
       ref         = "rate_limit_corvis_api_by_ip_free"
       description = "Free-plan defense-in-depth API path rate limit across the shared zone"
