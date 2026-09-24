@@ -74,10 +74,17 @@ async function writeAudit(
 
 async function loadRawConnection(db: PostgresSqlApi, identity: RequestIdentity, sourceConnectionId: string): Promise<PostgresRow> {
   const rows = await db.query(`select * from corvis_source.source_connection
-    where tenant_id=$1 and source_connection_id=$2::uuid limit 1`, [identity.tenantId, sourceConnectionId]);
+    where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid limit 1`,
+  [identity.tenantId, identity.workspaceId, sourceConnectionId]);
   const row = rows[0];
   if (!row) throw new ConnectorGovernanceError("connection_not_found");
   return row;
+}
+
+async function getWorkspaceConnection(db: PostgresSqlApi, identity: RequestIdentity, sourceConnectionId: string): Promise<SourceConnection> {
+  const connection = await getSourceConnection(identity, sourceConnectionId, db);
+  if (connection.workspaceId !== identity.workspaceId) throw new ConnectorGovernanceError("connection_not_found");
+  return connection;
 }
 
 function validateCreateInput(input: CreateConnectionInput): void {
@@ -100,6 +107,7 @@ export async function createAuditedSourceConnection(
   dependencies: { db?: PostgresSqlApi; secrets: SecretStore },
 ): Promise<SourceConnection> {
   validateCreateInput(input);
+  if (input.workspaceId !== identity.workspaceId) throw new ConnectorGovernanceError("connection_not_found");
   const db = dependencies.db ?? controlDb();
   const secretReference = await dependencies.secrets.write(identity.tenantId, input.providerKey, input.secret);
 
@@ -110,13 +118,13 @@ export async function createAuditedSourceConnection(
          scope_confirmed_by, scope_confirmed_at, secret_reference, connector_version, created_by)
       values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,now(),$8,$9,$7)
       returning source_connection_id`,
-      [identity.tenantId, input.workspaceId, input.providerKey, input.connectionLabel, input.credentialType,
+      [identity.tenantId, identity.workspaceId, input.providerKey, input.connectionLabel, input.credentialType,
         JSON.stringify(input.sourceScope), identity.subject, secretReference, input.connectorVersion]);
       const sourceConnectionId = requiredText(inserted[0]!, "source_connection_id");
       await writeAudit(tx, identity, correlationId, "source_connection.create", sourceConnectionId, "success", {
         providerKey: input.providerKey,
       });
-      return getSourceConnection(identity, sourceConnectionId, tx);
+      return getWorkspaceConnection(tx, identity, sourceConnectionId);
     });
   } catch (error) {
     await dependencies.secrets.revoke(secretReference).catch(() => undefined);
@@ -132,11 +140,12 @@ export async function transitionAuditedSourceConnection(
   dependencies: { db?: PostgresSqlApi; secrets: SecretStore },
 ): Promise<SourceConnection> {
   const db = dependencies.db ?? controlDb();
+  await loadRawConnection(db, identity, sourceConnectionId);
   if (action === "pause" || action === "resume") {
     return withTransaction(db, async (tx) => {
       if (action === "pause") await pauseSourceConnection(identity, sourceConnectionId, tx);
       else await resumeSourceConnection(identity, sourceConnectionId, tx);
-      const connection = await getSourceConnection(identity, sourceConnectionId, tx);
+      const connection = await getWorkspaceConnection(tx, identity, sourceConnectionId);
       await writeAudit(tx, identity, correlationId, `source_connection.${action}`, sourceConnectionId);
       return connection;
     });
@@ -145,23 +154,21 @@ export async function transitionAuditedSourceConnection(
   let secretReference = "";
   const connection = await withTransaction(db, async (tx) => {
     const rows = await tx.query(`select status,secret_reference from corvis_source.source_connection
-      where tenant_id=$1 and source_connection_id=$2::uuid for update`, [identity.tenantId, sourceConnectionId]);
+      where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid for update`,
+    [identity.tenantId, identity.workspaceId, sourceConnectionId]);
     const row = rows[0];
     if (!row) throw new ConnectorGovernanceError("connection_not_found");
     secretReference = requiredText(row, "secret_reference");
     const status = requiredText(row, "status") as ConnectionStatus;
     if (status !== "revoked") {
       await tx.execute(`update corvis_source.source_connection set status='revoked', revoked_at=now(), updated_at=now()
-        where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId]);
+        where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid`,
+      [identity.tenantId, identity.workspaceId, sourceConnectionId]);
       await writeAudit(tx, identity, correlationId, "source_connection.revoke", sourceConnectionId);
     }
-    return getSourceConnection(identity, sourceConnectionId, tx);
+    return getWorkspaceConnection(tx, identity, sourceConnectionId);
   });
 
-  // Logical revocation and its audit are already committed. Physical secret
-  // cleanup happens afterwards so a provider outage cannot roll the row back
-  // to active after the credential has been destroyed. A retry on an already
-  // revoked row reaches this cleanup again and is therefore safe/idempotent.
   await dependencies.secrets.revoke(secretReference);
   return connection;
 }
@@ -184,10 +191,11 @@ export async function reauthorizeAuditedSourceConnection(
   try {
     const connection = await withTransaction(db, async (tx) => {
       const updated = await tx.query(`update corvis_source.source_connection set
-          secret_reference=$3, status=case when status='paused' then 'paused' else 'active' end,
+          secret_reference=$4, status=case when status='paused' then 'paused' else 'active' end,
           consecutive_failures=0, last_error_class=null, last_authorized_at=now(), updated_at=now()
-        where tenant_id=$1 and source_connection_id=$2::uuid and status<>'revoked' and secret_reference=$4
-        returning source_connection_id`, [identity.tenantId, sourceConnectionId, newReference, previousReference]);
+        where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid and status<>'revoked' and secret_reference=$5
+        returning source_connection_id`,
+      [identity.tenantId, identity.workspaceId, sourceConnectionId, newReference, previousReference]);
       if (updated.length === 0) {
         const latest = await loadRawConnection(tx, identity, sourceConnectionId);
         throw new ConnectorGovernanceError(requiredText(latest, "status") === "revoked"
@@ -195,12 +203,8 @@ export async function reauthorizeAuditedSourceConnection(
           : "invalid_transition_from_concurrent_change");
       }
       await writeAudit(tx, identity, correlationId, "source_connection.reauthorize", sourceConnectionId);
-      return getSourceConnection(identity, sourceConnectionId, tx);
+      return getWorkspaceConnection(tx, identity, sourceConnectionId);
     });
-    // The new reference is authoritative only after the row+audit transaction
-    // commits. Retiring the old credential after commit avoids deleting the
-    // still-authoritative credential when an audit/transaction failure rolls
-    // the database change back.
     await dependencies.secrets.revoke(previousReference).catch(() => undefined);
     return connection;
   } catch (error) {
@@ -234,12 +238,13 @@ export async function testAuditedSourceConnection(
   await withTransaction(db, async (tx) => {
     if (result.ok && status === "pending_authorization") {
       await tx.execute(`update corvis_source.source_connection set status='active', last_authorized_at=now(), updated_at=now()
-        where tenant_id=$1 and source_connection_id=$2::uuid and status='pending_authorization'`, [identity.tenantId, sourceConnectionId]);
+        where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid and status='pending_authorization'`,
+      [identity.tenantId, identity.workspaceId, sourceConnectionId]);
     } else if (!result.ok && result.errorClass) {
       const nextStatus = statusAfterError(status, result.errorClass, numberValue(row, "consecutive_failures"));
-      await tx.execute(`update corvis_source.source_connection set status=$3, last_error_class=$4, updated_at=now()
-        where tenant_id=$1 and source_connection_id=$2::uuid and status=$5`,
-      [identity.tenantId, sourceConnectionId, nextStatus, result.errorClass, status]);
+      await tx.execute(`update corvis_source.source_connection set status=$4, last_error_class=$5, updated_at=now()
+        where tenant_id=$1 and workspace_id=$2::uuid and source_connection_id=$3::uuid and status=$6`,
+      [identity.tenantId, identity.workspaceId, sourceConnectionId, nextStatus, result.errorClass, status]);
     }
     await writeAudit(tx, identity, correlationId, "source_connection.test", sourceConnectionId,
       result.ok ? "success" : "failure", { errorClass: result.errorClass ?? null });
