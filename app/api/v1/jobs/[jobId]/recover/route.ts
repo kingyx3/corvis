@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
+import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
 import { recoverDeadLetterProcessingJob } from "@/lib/server/processing-recovery";
 
 type RecoveryCommand = {
@@ -44,13 +44,34 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       jobId,
       idempotencyKey,
     ].join(":"));
-    const result = await recoverDeadLetterProcessingJob({
-      identity,
-      jobId,
-      expectedVersion: Number(command.expectedVersion),
-      recoveryEventId,
-      reasonCode: command.reasonCode.trim(),
-      note: command.note?.trim() || undefined,
+    const result = await runAuditedMutation({
+      mutate: (db) => recoverDeadLetterProcessingJob({
+        identity,
+        jobId,
+        expectedVersion: Number(command.expectedVersion),
+        recoveryEventId,
+        reasonCode: command.reasonCode!.trim(),
+        note: command.note?.trim() || undefined,
+        db,
+      }),
+      audit: (outcome) => outcome.ok ? ({
+        id: randomUUID(),
+        occurredAt: new Date().toISOString(),
+        tenantId: identity.tenantId,
+        workspaceId: identity.workspaceId,
+        actorSubject: identity.subject,
+        sessionId: identity.sessionId,
+        action: "processing_job.recover_dead_letter",
+        targetType: "processing_job",
+        targetId: jobId,
+        outcome: "success",
+        correlationId: id,
+        metadata: {
+          recoveryEventId: outcome.recoveryEventId,
+          recoveryCount: outcome.recoveryCount,
+          reasonCode: command.reasonCode!.trim(),
+        },
+      }) : undefined,
     });
 
     if (!result.ok) {
@@ -68,25 +89,6 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       }
       return json({ error: "job_not_found_or_version_conflict", correlationId: id }, { status: 409 });
     }
-
-    await platform().audit({
-      id: randomUUID(),
-      occurredAt: new Date().toISOString(),
-      tenantId: identity.tenantId,
-      workspaceId: identity.workspaceId,
-      actorSubject: identity.subject,
-      sessionId: identity.sessionId,
-      action: "processing_job.recover_dead_letter",
-      targetType: "processing_job",
-      targetId: jobId,
-      outcome: "success",
-      correlationId: id,
-      metadata: {
-        recoveryEventId: result.recoveryEventId,
-        recoveryCount: result.recoveryCount,
-        reasonCode: command.reasonCode.trim(),
-      },
-    });
 
     return json({
       data: {
