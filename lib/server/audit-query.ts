@@ -24,6 +24,16 @@ export type AuditRecord = {
   correlationId: string;
 };
 
+/** A caller-supplied filter is malformed; routes answer 400 rather than a 500. */
+export class AuditQueryValidationError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.name = "AuditQueryValidationError";
+    this.code = code;
+  }
+}
+
 function value(row: PostgresRow, key: string): string | undefined {
   const raw = row[key];
   if (raw == null) return undefined;
@@ -38,7 +48,7 @@ function boundedLimit(input?: number): number {
 function timestamp(input: string | undefined, name: string): string | undefined {
   if (!input) return undefined;
   const parsed = Date.parse(input);
-  if (!Number.isFinite(parsed)) throw new Error(`invalid_${name}`);
+  if (!Number.isFinite(parsed)) throw new AuditQueryValidationError(`invalid_${name}`);
   return new Date(parsed).toISOString();
 }
 

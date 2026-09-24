@@ -1,5 +1,5 @@
 import { assertPermission } from "@/core/enterprise";
-import { listAuditRecords } from "@/lib/server/audit-query";
+import { AuditQueryValidationError, listAuditRecords } from "@/lib/server/audit-query";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
@@ -25,6 +25,7 @@ export async function GET(request: Request) {
     });
     return json({ data, correlationId: id });
   } catch (error) {
+    if (error instanceof AuditQueryValidationError) return json({ error: error.code, correlationId: id }, { status: 400 });
     return apiError(error, id);
   }
 }

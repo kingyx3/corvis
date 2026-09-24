@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { listAuditRecords } from "./audit-query.ts";
+import { AuditQueryValidationError, listAuditRecords } from "./audit-query.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
@@ -71,4 +71,13 @@ test("audit query is tenant-scoped, bounded and omits raw metadata", async () =>
 
 test("audit query rejects invalid time filters", async () => {
   await assert.rejects(() => listAuditRecords(identity(), { after: "not-a-date" }, new FakeDb()), /invalid_after/);
+});
+
+test("malformed time filters raise a typed validation error the route maps to 400 before any query runs", async () => {
+  const db = new FakeDb();
+  await assert.rejects(
+    () => listAuditRecords(identity(), { before: "yesterday-ish" }, db),
+    (error: unknown) => error instanceof AuditQueryValidationError && error.code === "invalid_before",
+  );
+  assert.equal(db.sql, "");
 });

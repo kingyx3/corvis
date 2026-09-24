@@ -73,3 +73,19 @@ test("access review exposes every launch authorization layer through tenant-boun
   assert.ok((route.match(/where .*tenant_id=\$1/g) ?? []).length >= 4, "access-review queries must bind the current tenant");
   assert.match(route, /identity\.tenantId/);
 });
+
+test("support access can never be self-approved by the granting administrator", async () => {
+  const sql = (await read("db/postgres/migrations/045_support_access_separation_of_duties.sql")).toLowerCase();
+  assert.match(sql, /create or replace function corvis_control\.apply_support_access_admin/);
+  assert.match(sql, /p_subject=p_actor_subject/);
+  assert.match(sql, /a\.subject=p_actor_subject and a\.user_id=p_user_id/);
+  assert.match(sql, /support access cannot be self-approved/);
+  // The rest of the 041 contract must survive the redefinition.
+  assert.match(sql, /support access requires a future expiry/);
+  assert.match(sql, /requested support role is already active outside this grant/);
+  assert.match(sql, /access\.support\.'\|\|p_operation/);
+
+  const route = await read("app/api/v1/admin/support-access/route.ts");
+  assert.match(route, /subject === identity\.subject/);
+  assert.match(route, /support_access_self_approval_denied/);
+});
