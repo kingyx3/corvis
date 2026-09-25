@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentSecurityNotice } from "./document-processing";
+import { documentSecurityNotice } from "./document-processing.ts";
 
 test("maps malware states to plain-language security failure copy", () => {
   assert.deepEqual(documentSecurityNotice({ processingState: "malware_detected" }), {
