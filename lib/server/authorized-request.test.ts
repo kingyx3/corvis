@@ -69,6 +69,8 @@ test("authoritative Postgres roles, resource grants and data rights override sig
         modelTrainingAllowed: false,
         redistributionAllowed: false,
         isTenantAdmin: false,
+        tenantDisplayName: "Meridian Capital Partners",
+        workspaceDisplayName: "Primary Workspace",
       };
     },
   };
@@ -79,6 +81,8 @@ test("authoritative Postgres roles, resource grants and data rights override sig
     });
     const identity = await resolveAuthorizedRequestIdentity(request, { repository, requireAuthoritative: true });
     assert.deepEqual(identity.roles, ["read_only"]);
+    assert.equal(identity.tenantDisplayName, "Meridian Capital Partners");
+    assert.equal(identity.workspaceDisplayName, "Primary Workspace");
     assert.deepEqual(identity.entitlements.workspaceIds, [
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",

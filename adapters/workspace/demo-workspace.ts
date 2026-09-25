@@ -1,8 +1,13 @@
 import type { Permission } from "@/core/enterprise";
-import type { WorkspacePort } from "@/core/workspace";
+import type { WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 import { portfolioValueFacts } from "@/adapters/demo/catalog";
 import { buildWorkspaceSummary } from "@/core/workspace-summary";
+
+// Matches the CORVIS_DEMO_MODE defaults in lib/server/request-context.ts, so
+// the client-side demo port and the server-side demo identity path agree.
+const DEMO_TENANT_DISPLAY_NAME = "Meridian Capital Partners";
+const DEMO_WORKSPACE_DISPLAY_NAME = "Primary Workspace";
 
 // Demo sessions can simulate a read-only viewer or a tenant admin
 // (sessionStorage "corvis:demo:role" = "read_only" | "admin") to exercise
@@ -46,6 +51,9 @@ export function createDemoWorkspacePort(): WorkspacePort {
         redistributionAllowed: true,
         features,
       };
+    },
+    async whoAmI(): Promise<WorkspaceIdentity> {
+      return { subject: "demo-user", tenantDisplayName: DEMO_TENANT_DISPLAY_NAME, workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME };
     },
     async listDocuments() {
       assertDemoModuleAvailable("documents");

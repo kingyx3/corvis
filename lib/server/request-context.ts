@@ -238,6 +238,8 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
       },
       authMethod: "demo",
       sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
+      tenantDisplayName: request.headers.get("x-corvis-demo-tenant-name") || "Meridian Capital Partners",
+      workspaceDisplayName: request.headers.get("x-corvis-demo-workspace-name") || "Primary Workspace",
     };
   }
 

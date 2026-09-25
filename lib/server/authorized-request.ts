@@ -85,6 +85,8 @@ export async function resolveAuthorizedRequestIdentity(
     ...authenticated,
     roles: authorized.roles,
     isTenantAdmin: authorized.isTenantAdmin,
+    tenantDisplayName: authorized.tenantDisplayName,
+    workspaceDisplayName: authorized.workspaceDisplayName,
     entitlements: {
       workspaceIds: authorized.workspaceIds,
       fundIds: authorized.fundIds,
