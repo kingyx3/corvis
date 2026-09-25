@@ -1,4 +1,4 @@
-export type View = "overview" | "analytics" | "documents" | "review" | "delivery" | "research";
+export type View = "overview" | "analytics" | "documents" | "review" | "delivery" | "research" | "access";
 
 export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
 export type DocumentQuality = "High" | "Medium" | "Pending";
@@ -51,8 +51,6 @@ export type FundSnapshot = {
   facts: number;
   changed: string;
   blockingExceptions?: number;
-  /** ISO publication timestamp for a published version, when known. */
-  publishedAt?: string;
 };
 
 export type StatementPeriodicity = "reported" | "quarterly" | "annual";
