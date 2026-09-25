@@ -1,6 +1,7 @@
 import type { WorkspaceCapabilities, WorkspaceIdentity, WorkspacePort, SourceEvidence } from "@/core/workspace";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { WorkspaceSummary } from "@/core/workspace-summary";
+import type { CompanySectorAssignment, CompanySectorAssignmentOutcome, CompanySectorRecord } from "@/core/sector-taxonomy";
 import type {
   ReconciliationException,
   ReconciliationResolutionCommand,
@@ -86,6 +87,8 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     listObservations: () => request<ObservationRecord[]>("/api/v1/observations"),
     listSnapshots: () => request<FundSnapshot[]>("/api/v1/snapshots"),
     workspaceSummary: () => request<WorkspaceSummary>("/api/v1/workspace-summary"),
+    listCompanySectors: () => request<CompanySectorRecord[]>("/api/v1/company-sectors"),
+    assignCompanySector: (command: CompanySectorAssignment) => request<CompanySectorAssignmentOutcome>("/api/v1/company-sectors", { method: "POST", body: JSON.stringify({ ...command, idempotencyKey: crypto.randomUUID() }) }),
     listReconciliationExceptions: (snapshotId: string, snapshotVersion: number) => request<ReconciliationException[]>(
       `/api/v1/reconciliation-exceptions?snapshotId=${encodeURIComponent(snapshotId)}&snapshotVersion=${snapshotVersion}`,
     ),

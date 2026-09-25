@@ -197,3 +197,25 @@ test("a breakdown is omitted when no fund reports any classification, and may ca
   const levered = buildWorkspaceSummary({ ...empty, valueFacts: [fact({ value: 100 })], dimensionFacts: [dimension({ value: 130 })] });
   assert.deepEqual(levered.exposure.byAssetType.map((row) => [row.label, row.value]), [["Common equity", 130], ["Not attributed", -30]]);
 });
+
+test("sector uses governed holding classifications over a GP fund-level breakdown, with taxonomy labels", () => {
+  const summary = buildWorkspaceSummary({ ...empty,
+    valueFacts: [fact({ value: 1000 }), fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", value: 400 })],
+    dimensionFacts: [
+      dimension({ dimension: "sector", subjectLevel: "holding", category: "technology", label: "Technology", value: 600 }),
+      dimension({ dimension: "sector", subjectLevel: "holding", category: null, value: 300 }),
+      // Fund A's GP breakdown re-slices the same value; the governed holding level wins.
+      dimension({ dimension: "sector", subjectLevel: "fund", category: "healthcare", label: "Healthcare", value: 900 }),
+      // Fund B reports only a GP breakdown, mapped onto the taxonomy.
+      dimension({ snapshotId: "b1", fundId: "fund-b", dimension: "sector", subjectLevel: "fund", category: "healthcare", label: "Healthcare", value: 250 }),
+      dimension({ snapshotId: "b1", fundId: "fund-b", dimension: "sector", subjectLevel: "fund", category: null, value: 150 }),
+    ],
+  });
+  assert.deepEqual(summary.exposure.bySector.map((row) => [row.label, row.value, row.kind]), [
+    ["Technology", 600, "category"],
+    ["Healthcare", 250, "category"],
+    ["Unclassified", 450, "unclassified"],
+    ["Not attributed", 100, "not_attributed"],
+  ]);
+  assert.equal(summary.exposure.bySector.reduce((sum, row) => sum + row.value, 0), summary.exposure.total);
+});

@@ -55,10 +55,11 @@ export type PortfolioValueFact = {
 /**
  * Exposure dimensions with a real classification behind them. Asset type is
  * the governed instrument_type of the holding (or instrument) a fair value is
- * reported for. Sector is the GP's own fund-level fair-value breakdown whose
- * breakdown category is "sector" or "industry"; Corvis has no governed sector
- * taxonomy, so a fund that does not report one is shown as not attributed
- * rather than classified by guesswork.
+ * reported for. Sector is the Corvis sector taxonomy (core/sector-taxonomy.ts):
+ * the tenant's governed classification of the held company, or, for a fund
+ * that reports only a fund-level sector breakdown, the GP's labels mapped
+ * onto the taxonomy through its governed aliases. Anything else is
+ * unclassified or not attributed, never guessed.
  */
 export type ExposureDimension = "asset_type" | "sector";
 
@@ -70,8 +71,10 @@ export type ExposureDimensionFact = {
   fundId: string;
   dimension: ExposureDimension;
   subjectLevel: string | null;
-  /** Governed instrument type or reported sector label; null when unclassified. */
+  /** Governed instrument type or sector code; null when unclassified. */
   category: string | null;
+  /** Display name from the taxonomy (sector); absent means derive one from the category. */
+  label?: string | null;
   currency: string | null;
   value: number;
   factCount: number;
@@ -266,6 +269,24 @@ function mostAggregateLevel(rows: Array<{ subjectLevel?: string | null }>): stri
   return best;
 }
 
+/**
+ * Dimension facts are classified per holding, so the most granular governed
+ * level wins: holding over instrument (one holding may hold several
+ * instruments), and either over a fund-level GP breakdown of the same value.
+ */
+const DIMENSION_LEVEL_PREFERENCE = ["holding", "instrument", "company", "fund"] as const;
+
+function preferredDimensionLevel(rows: Array<{ subjectLevel?: string | null }>): string | null {
+  let best: string | null = null;
+  let bestRank = Infinity;
+  for (const row of rows) {
+    const index = (DIMENSION_LEVEL_PREFERENCE as readonly string[]).indexOf(row.subjectLevel ?? "");
+    const rank = index === -1 ? DIMENSION_LEVEL_PREFERENCE.length : index;
+    if (rank < bestRank) { best = row.subjectLevel ?? null; bestRank = rank; }
+  }
+  return best;
+}
+
 function humanize(value: string): string {
   const spaced = value.replaceAll("_", " ").replace(/\s+/g, " ").trim();
   return spaced === spaced.toLowerCase() ? spaced[0]!.toUpperCase() + spaced.slice(1) : spaced;
@@ -293,9 +314,8 @@ function exposureBreakdown(items: ExposureItem[], facts: ExposureDimensionFact[]
   let classified = false;
   for (const item of items) {
     const candidates = facts.filter((fact) => fact.dimension === dimension && fact.snapshotId === item.snapshotId && (fact.currency ?? null) === currency && Number.isFinite(fact.value));
-    // Asset type is reported per holding or per instrument; use one level only,
-    // for the same no-double-count reason as the value rollup.
-    const level = mostAggregateLevel(candidates);
+    // Use one subject level only, for the same no-double-count reason as the value rollup.
+    const level = preferredDimensionLevel(candidates);
     const own = candidates.filter((fact) => (fact.subjectLevel ?? null) === level);
     let attributed = 0;
     for (const fact of own) {
@@ -304,7 +324,7 @@ function exposureBreakdown(items: ExposureItem[], facts: ExposureDimensionFact[]
       if (!category) { add(UNCLASSIFIED_KEY, "Unclassified", "unclassified", fact.value, item.fundId); continue; }
       classified = true;
       if (category === MIXED_INSTRUMENT_TYPES) { add(MIXED_INSTRUMENT_TYPES, "Mixed instruments", "category", fact.value, item.fundId); continue; }
-      add(`${dimension}:${category.toLowerCase()}`, humanize(category), "category", fact.value, item.fundId);
+      add(`${dimension}:${category.toLowerCase()}`, fact.label?.trim() || humanize(category), "category", fact.value, item.fundId);
     }
     const residual = item.value - attributed;
     // Below half a cent is float noise from summing, not unattributed value.

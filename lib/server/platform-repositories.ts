@@ -8,6 +8,7 @@ import {
   type ReviewDecision,
   type SnapshotPublication,
 } from "../../core/enterprise.ts";
+import { SECTOR_TAXONOMY_VERSION } from "../../core/sector-taxonomy.ts";
 import { MIXED_INSTRUMENT_TYPES } from "../../core/workspace-summary.ts";
 import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -126,8 +127,14 @@ export class PostgresWorkspaceRepository {
    * - asset_type: holding/instrument fair values classified by the governed
    *   instrument_type of approved instruments (a holding whose instruments
    *   span several types is reported as mixed, never picked arbitrarily);
-   * - sector: the GP's own fund-level fair-value breakdown rows whose
-   *   breakdown category is sector or industry.
+   * - sector: holding/instrument fair values classified by the tenant's
+   *   current governed sector for the held company
+   *   (corvis_serving.company_sectors, migration 055), plus the GP's own
+   *   fund-level sector/industry breakdown rows mapped onto the same
+   *   taxonomy through corvis_semantic.sector_alias. An unmapped GP label or
+   *   an unclassified company yields a null category (unclassified), never a
+   *   guess. The caller uses one subject level per snapshot, preferring the
+   *   governed holding level, so the two sector sources never add up.
    * Look-through rows are excluded from both.
    */
   exposureDimensionFacts(identity: RequestIdentity): Promise<PostgresRow[]> {
@@ -143,7 +150,7 @@ export class PostgresWorkspaceRepository {
       ), classified as (
         select pf.snapshot_id, pf.fund_id, pf.currency, 'asset_type' as dimension, pf.subject_level,
                case when pf.subject_level='instrument' then inst.instrument_type else ht.instrument_type end as category,
-               pf.amount
+               null::text as label, pf.amount
         from published_fact pf
         left join corvis_serving.instruments inst
           on pf.subject_level='instrument' and inst.tenant_id=$1::uuid and inst.instrument_id::text=pf.subject_id
@@ -154,17 +161,36 @@ export class PostgresWorkspaceRepository {
           and pf.breakdown_category is null and pf.lookthrough_source is null
         union all
         select pf.snapshot_id, pf.fund_id, pf.currency, 'sector' as dimension, pf.subject_level,
-               pf.breakdown_value as category, pf.amount
+               cs.sector_code as category, cs.sector_name as label, pf.amount
         from published_fact pf
+        left join corvis_serving.holdings h
+          on pf.subject_level='holding' and h.tenant_id=$1::uuid and h.holding_id::text=pf.subject_id
+        left join corvis_serving.instruments held
+          on pf.subject_level='instrument' and held.tenant_id=$1::uuid and held.instrument_id::text=pf.subject_id
+        left join corvis_serving.company_sectors cs
+          on cs.tenant_id=$1::uuid
+         and cs.company_id=case when pf.subject_level='holding' and h.target_type='company' then h.target_company_id else held.company_id end
+        where pf.metric_code='fair_value'
+          and pf.subject_level in ('holding','instrument')
+          and pf.breakdown_category is null and pf.lookthrough_source is null
+        union all
+        select pf.snapshot_id, pf.fund_id, pf.currency, 'sector' as dimension, pf.subject_level,
+               sector.sector_code as category, sector.display_name as label, pf.amount
+        from published_fact pf
+        left join corvis_semantic.sector_alias alias
+          on alias.taxonomy_version='${SECTOR_TAXONOMY_VERSION}'
+         and alias.alias_normalized=corvis_semantic.normalize_sector_label(pf.breakdown_value)
+        left join corvis_semantic.sector sector
+          on sector.taxonomy_version=alias.taxonomy_version and sector.sector_code=alias.sector_code
         where pf.metric_code='fair_value'
           and pf.subject_level='fund'
           and lower(pf.breakdown_category) in ('sector','industry')
           and pf.lookthrough_source is null
       )
-      select snapshot_id, fund_id, currency, dimension, subject_level, category,
+      select snapshot_id, fund_id, currency, dimension, subject_level, category, label,
              sum(amount) as total_value, count(*)::integer as fact_count
       from classified
-      group by snapshot_id, fund_id, currency, dimension, subject_level, category
+      group by snapshot_id, fund_id, currency, dimension, subject_level, category, label
       order by fund_id, snapshot_id, dimension, category`, [identity.tenantId, jsonIds(fundIds)]);
   }
 }

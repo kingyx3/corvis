@@ -6,6 +6,8 @@
     { "pattern": "/source-connections/**", "visibility": "workspace_control", "reason": "Workspace source-connector configuration surface; not a stable customer data-integration API." },
     { "pattern": "/extraction-review/**", "visibility": "workspace_control", "reason": "Review Analyst workflow command surface used by the Corvis product." },
     { "pattern": "/reconciliation-exceptions/**", "visibility": "workspace_control", "reason": "Review Analyst/reconciliation workflow surface used by the Corvis product." },
+    { "pattern": "/sectors", "visibility": "workspace_control", "reason": "Corvis sector taxonomy reference read used by the product UI; versioned with the taxonomy rather than the stable integration contract." },
+    { "pattern": "/company-sectors", "visibility": "workspace_control", "reason": "Review Analyst company-to-sector classification workflow (read and governed assign command) used by the Corvis product." },
     { "pattern": "/workspace-summary", "visibility": "workspace_control", "reason": "Customer Overview rollup (value trend, exposure, attention, freshness) composed for the Corvis product UI; its shape follows the dashboard, not the stable integration contract." },
     { "pattern": "/portfolios", "visibility": "workspace_control", "reason": "Workspace portfolio-attribution read surface; kept outside the stable integration contract until portfolio management/import semantics are finalized." },
     { "pattern": "/portfolio-holdings", "visibility": "workspace_control", "reason": "Workspace portfolio-to-holding attribution/read surface; it never grants fund access or ownership-weights underlying operating facts." },

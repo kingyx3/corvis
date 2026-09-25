@@ -13,6 +13,7 @@ export const CHART_SERIES_COLORS = [
 ] as const;
 
 export const CHART_SERIES_OTHER_COLOR = "var(--chart-series-other)";
+export const CHART_SERIES_UNASSIGNED_COLOR = "var(--chart-series-unassigned)";
 
 export function seriesColor(index: number, isOther = false): string {
   if (isOther) return CHART_SERIES_OTHER_COLOR;

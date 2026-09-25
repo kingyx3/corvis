@@ -59,6 +59,8 @@
   --chart-series-7: #4a3aa7;
   --chart-series-8: #e34948;
   --chart-series-other: var(--text-subtle);
+  /* Value with no classification (unclassified / not attributed): muted, never a categorical hue. */
+  --chart-series-unassigned: var(--border-strong);
   --chart-grid: var(--border-subtle);
   --chart-axis: var(--text-subtle);
 }
@@ -864,6 +866,51 @@ button.metric-card:hover {
 .breakdown-note {
   padding: 0 20px 16px;
   margin: 0;
+}
+.breakdown-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 0 20px 16px;
+}
+.breakdown-footer .chart-description {
+  margin: 0;
+}
+.sector-dialog .sector-table {
+  width: 100%;
+  margin-top: 8px;
+}
+.sector-table th[scope="row"] small {
+  display: block;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.sector-table td,
+.sector-table th {
+  vertical-align: middle;
+}
+.sector-table .select-control {
+  width: 100%;
+  min-width: 180px;
+}
+.sector-dialog-message {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+.sector-dialog-message.tone-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success);
+}
+.sector-dialog-message.tone-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 .freshness-note {
   display: flex;

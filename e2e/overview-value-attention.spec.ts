@@ -64,3 +64,32 @@ test("exposure breaks down by governed asset type and GP-reported sector, reconc
   await expect(breakdowns.getByText(/healthcare/i).first()).toBeVisible();
   await expect(breakdowns.getByText(/rows sum exactly to the .* exposure total/i).first()).toBeVisible();
 });
+
+test("a reviewer classifies an unclassified company and the sector breakdown picks it up", async ({ page }) => {
+  await page.goto("/");
+  const breakdowns = page.getByRole("region", { name: /exposure breakdowns/i });
+  await expect(breakdowns.getByRole("heading", { name: /exposure by sector/i })).toBeVisible();
+  await expect(breakdowns.getByText(/in companies not yet classified/i)).toBeVisible();
+
+  await breakdowns.getByRole("button", { name: /classify companies/i }).click();
+  const dialog = page.getByRole("dialog", { name: /classify portfolio companies by sector/i });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: /sector for project sparrow/i }).selectOption("consumer_staples");
+  await dialog.getByRole("button", { name: /save sector for project sparrow/i }).click();
+  await expect(dialog.getByRole("status")).toContainText(/project sparrow classified as consumer staples/i);
+
+  const results = await new AxeBuilder({ page }).include('[role="dialog"]').withTags([...accessibilityBudget.tags]).analyze();
+  const blocking = results.violations.filter((violation) => (accessibilityBudget.blockedImpacts as readonly string[]).includes(violation.impact ?? ""));
+  expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+
+  await dialog.getByRole("button", { name: /^done$/i }).click();
+  await expect(breakdowns.getByText(/consumer staples/i).first()).toBeVisible();
+});
+
+test("viewers see the sector breakdown but cannot classify companies", async ({ page }) => {
+  await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "read_only"));
+  await page.goto("/");
+  const breakdowns = page.getByRole("region", { name: /exposure breakdowns/i });
+  await expect(breakdowns.getByRole("heading", { name: /exposure by sector/i })).toBeVisible();
+  await expect(breakdowns.getByRole("button", { name: /classify companies/i })).toHaveCount(0);
+});

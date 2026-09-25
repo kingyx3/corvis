@@ -1,7 +1,8 @@
 import type { Permission } from "@/core/enterprise";
 import type { WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
-import { exposureDimensionFacts, portfolioValueFacts } from "@/adapters/demo/catalog";
+import { demoExposureDimensionFacts, portfolioValueFacts } from "@/adapters/demo/catalog";
+import { demoCompanySectorStore } from "@/adapters/demo/company-sector-store";
 import { buildWorkspaceSummary } from "@/core/workspace-summary";
 
 // Matches the CORVIS_DEMO_MODE defaults in lib/server/request-context.ts, so
@@ -79,10 +80,18 @@ export function createDemoWorkspacePort(): WorkspacePort {
         observations: demoCustomerJourneyStore.listObservations(),
         documents: demoCustomerJourneyStore.listDocuments(),
         valueFacts: portfolioValueFacts.filter((fact) => !unpublished.has(fact.snapshotId)),
-        dimensionFacts: exposureDimensionFacts.filter((fact) => !unpublished.has(fact.snapshotId)),
+        dimensionFacts: demoExposureDimensionFacts(demoCompanySectorStore().sectorByCompany()).filter((fact) => !unpublished.has(fact.snapshotId)),
         sources: role === "admin" ? [{ sourceConnectionId: "demo-source-sharepoint", connectionLabel: "GP data room (SharePoint)", status: "reauthorization_required", consecutiveFailures: 3, lastErrorClass: "auth_expired", lastSuccessAt: "2026-09-18" }] : undefined,
         now: new Date(),
       });
+    },
+    async listCompanySectors() {
+      return demoCompanySectorStore().list();
+    },
+    async assignCompanySector(command) {
+      const result = demoCompanySectorStore().assign("demo|reviewer", command);
+      if ("refused" in result) throw new Error(result.refused);
+      return { accepted: true as const, companyId: command.companyId, sectorCode: command.sectorCode, newVersion: result.newVersion };
     },
     async listReconciliationExceptions() {
       return [];
