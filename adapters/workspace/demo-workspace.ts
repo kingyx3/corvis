@@ -1,11 +1,14 @@
+import type { Permission } from "@/core/enterprise";
 import type { WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 
-// Demo sessions can simulate a read-only viewer (sessionStorage
-// "corvis:demo:role" = "read_only") to exercise capability-aware presentation.
-function demoReadOnly(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.sessionStorage.getItem("corvis:demo:role") === "read_only";
+// Demo sessions can simulate a read-only viewer or a tenant admin
+// (sessionStorage "corvis:demo:role" = "read_only" | "admin") to exercise
+// capability-aware presentation without a real Postgres-backed membership.
+function demoRole(): "read_only" | "admin" | null {
+  if (typeof window === "undefined") return null;
+  const value = window.sessionStorage.getItem("corvis:demo:role");
+  return value === "read_only" || value === "admin" ? value : null;
 }
 
 // Optional product modules are independent from RBAC. Keep the portfolio
@@ -20,20 +23,23 @@ export function createDemoWorkspacePort(): WorkspacePort {
   return {
     async capabilities() {
       const features = { portfolioAttribution: demoPortfolioAttributionEnabled() };
-      if (demoReadOnly()) {
+      const role = demoRole();
+      if (role === "read_only") {
         return { permissions: ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false, features };
       }
+      const permissions: Permission[] = [
+        "documents:read",
+        "documents:write",
+        "sources:read",
+        "observations:read",
+        "observations:review",
+        "snapshots:publish",
+        "research:query",
+        "exports:create",
+      ];
+      if (role === "admin") permissions.push("admin:manage");
       return {
-        permissions: [
-          "documents:read",
-          "documents:write",
-          "sources:read",
-          "observations:read",
-          "observations:review",
-          "snapshots:publish",
-          "research:query",
-          "exports:create",
-        ],
+        permissions,
         sourceDocumentAccessAllowed: true,
         redistributionAllowed: true,
         features,
