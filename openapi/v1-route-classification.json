@@ -6,6 +6,8 @@
     { "pattern": "/source-connections/**", "visibility": "workspace_control", "reason": "Workspace source-connector configuration surface; not a stable customer data-integration API." },
     { "pattern": "/extraction-review/**", "visibility": "workspace_control", "reason": "Reviewer workflow command surface used by the Corvis product." },
     { "pattern": "/reconciliation-exceptions/**", "visibility": "workspace_control", "reason": "Reviewer/reconciliation workflow surface used by the Corvis product." },
+    { "pattern": "/portfolios", "visibility": "workspace_control", "reason": "Workspace portfolio-attribution read surface; kept outside the stable integration contract until portfolio management/import semantics are finalized." },
+    { "pattern": "/portfolio-holdings", "visibility": "workspace_control", "reason": "Workspace portfolio-to-holding attribution/read surface; it never grants fund access or ownership-weights underlying operating facts." },
     { "pattern": "/jobs/{jobId}/retry", "visibility": "operator", "reason": "Tenant operator recovery command; requires tenant_admin scope." },
     { "pattern": "/jobs/{jobId}/recover", "visibility": "operator", "reason": "Tenant operator dead-letter recovery command; requires tenant_admin scope." },
     { "pattern": "/health", "visibility": "operator", "reason": "Runtime health endpoint, not a customer data contract." }

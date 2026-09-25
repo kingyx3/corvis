@@ -55,6 +55,7 @@ export type PositionFinancialStatementRow = {
 };
 
 export type PositionFinancialStatementQuery = {
+  portfolioId?: string;
   fundId?: string;
   holdingId?: string;
   companyId?: string;
@@ -186,7 +187,7 @@ export class PostgresPositionFinancialStatementRepository {
     if (fundIds.length === 0 || documentIds.length === 0) return [];
     if (query.fundId && !fundIds.includes(query.fundId)) return [];
 
-    const parameters: PostgresPrimitive[] = [identity.tenantId,allowedJson(fundIds),allowedJson(documentIds)];
+    const parameters: PostgresPrimitive[] = [identity.tenantId,allowedJson(fundIds),allowedJson(documentIds),identity.workspaceId];
     const predicates: string[] = [
       "v.tenant_id=$1::uuid",
       "v.fund_id in (select jsonb_array_elements_text($2::jsonb))",
@@ -213,6 +214,20 @@ export class PostgresPositionFinancialStatementRepository {
           )
       )`,
     ];
+    if (query.portfolioId) {
+      parameters.push(query.portfolioId);
+      predicates.push(`exists (
+        select 1
+        from corvis_serving.client_portfolio_holding_attribution pa
+        where pa.tenant_id=v.tenant_id
+          and pa.workspace_id::text=$4
+          and pa.portfolio_id::text=$${parameters.length}
+          and pa.owning_fund_id=v.fund_id
+          and pa.holding_id::text=v.holding_id
+          and pa.root_fund_id in (select jsonb_array_elements_text($2::jsonb))
+          and pa.owning_fund_id in (select jsonb_array_elements_text($2::jsonb))
+      )`);
+    }
     const add = (column: string, value: string | undefined) => {
       if (!value) return;
       parameters.push(value); predicates.push(`${column}=$${parameters.length}`);
