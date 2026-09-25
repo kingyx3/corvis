@@ -130,11 +130,60 @@ export function parseResearchQuestion(body: unknown): string | null {
   return question && question.length <= MAX_RESEARCH_QUESTION_LENGTH ? question : null;
 }
 
+// Loose shape check only (unlike a strict RFC4122 version/variant match): this
+// gates a cast in a query built from an external search index's own ids, not
+// a client-authorization boundary, and Postgres's uuid type itself accepts
+// any 8-4-4-4-12 hex string.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type CitationLink = { observationId?: string; hasOpenReconciliation: boolean };
+
 export class PermissionedResearchService {
   private readonly db: PostgresSqlApi;
 
   constructor(db?: PostgresSqlApi) {
     this.db = db ?? postgres(getServerConfig().postgresDsn);
+  }
+
+  /**
+   * Links each citation's source reference to the reviewed observation it
+   * produced (D2, #177) and flags whether that source is part of a currently
+   * open reconciliation exception. Best-effort: retrieval hits come from an
+   * external search index, so a source reference id that doesn't resolve to
+   * anything in Postgres (or isn't even a UUID) just gets no link rather than
+   * failing the whole answer -- this is chrome on top of an already-returned,
+   * already-entitled answer, never a gate on it.
+   */
+  private async citationLinks(tenantId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
+    const ids = [...new Set(sourceReferenceIds)].filter((id) => UUID.test(id));
+    const links = new Map<string, CitationLink>();
+    if (ids.length === 0) return links;
+    try {
+      const rows = await this.db.query(`select osr.source_reference_id, osr.observation_id,
+          exists (
+            select 1 from corvis_consolidated.reconciliation_exception e
+            where e.tenant_id=osr.tenant_id and e.status='open'
+              and osr.source_reference_id=any(e.competing_source_reference_ids)
+          ) as has_open_reconciliation
+        from corvis_facts.observation_source_reference osr
+        where osr.tenant_id=$1 and osr.source_reference_id in (select jsonb_array_elements_text($2::jsonb)::uuid)
+        order by osr.source_reference_id, osr.observation_id`, [tenantId, JSON.stringify(ids)]);
+      for (const row of rows) {
+        const sourceReferenceId = String(row.source_reference_id);
+        const hasOpenReconciliation = row.has_open_reconciliation === true || row.has_open_reconciliation === "true";
+        const existing = links.get(sourceReferenceId);
+        if (existing) {
+          existing.hasOpenReconciliation ||= hasOpenReconciliation;
+          continue;
+        }
+        links.set(sourceReferenceId, { observationId: String(row.observation_id), hasOpenReconciliation });
+      }
+    } catch {
+      // Enrichment only; an unreachable/misbehaving database here must not
+      // turn an already-governed, already-entitled answer into a failure.
+      return new Map();
+    }
+    return links;
   }
 
   private async search(identity: RequestIdentity, question: string, fundIds: string[], signal: AbortSignal): Promise<SearchHit[]> {
@@ -238,12 +287,18 @@ export class PermissionedResearchService {
       if (!body.answer) throw new ResearchProviderError("ai", response.status);
       validateUsedFactIds(body.usedFactIds, semantic.factIds);
 
-      const citations: SourceCitation[] = hits.map((hit) => ({
-        sourceReferenceId: hit.sourceReferenceId,
-        documentId: hit.documentId,
-        page: hit.page,
-        label: hit.label || `Source ${hit.sourceReferenceId}`,
-      }));
+      const links = await this.citationLinks(identity.tenantId, hits.map((hit) => hit.sourceReferenceId));
+      const citations: SourceCitation[] = hits.map((hit) => {
+        const link = links.get(hit.sourceReferenceId);
+        return {
+          sourceReferenceId: hit.sourceReferenceId,
+          documentId: hit.documentId,
+          page: hit.page,
+          label: hit.label || `Source ${hit.sourceReferenceId}`,
+          observationId: link?.observationId,
+          hasOpenReconciliation: link?.hasOpenReconciliation,
+        };
+      });
       const computed: SemanticComputedResult = {
         semanticQueryId,
         status: semantic.status,
