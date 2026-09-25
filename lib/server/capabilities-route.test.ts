@@ -11,7 +11,12 @@ process.env.CORVIS_DEMO_MODE = "true";
 
 const { GET: capabilitiesGet } = await import("@/app/api/v1/capabilities/route");
 
-type Capabilities = { permissions: string[]; sourceDocumentAccessAllowed: boolean; redistributionAllowed: boolean };
+type Capabilities = {
+  permissions: string[];
+  sourceDocumentAccessAllowed: boolean;
+  redistributionAllowed: boolean;
+  features: { portfolioAttribution: boolean };
+};
 
 function request(roles: string, options: { redistribution?: boolean } = {}): Request {
   return new Request("https://corvis.test/api/v1/capabilities", {
@@ -56,8 +61,15 @@ test("GET /capabilities reflects data rights, not just roles", async () => {
   assert.equal(typeof withRedistribution.sourceDocumentAccessAllowed, "boolean");
 });
 
+test("GET /capabilities fails closed for an unavailable optional module without breaking base capabilities", async () => {
+  const result = await capabilities(await capabilitiesGet(request("analyst")));
+  assert.equal(result.features.portfolioAttribution, false, "missing optional feature storage/configuration must not default open");
+  assert.ok(result.permissions.includes("observations:read"), "base fund/holding permissions remain usable when the optional module is unavailable");
+});
+
 test("GET /capabilities returns only presentation fields, never identity internals", async () => {
   const response = await capabilitiesGet(request("admin"));
   const body = await response.json() as { data: Record<string, unknown> };
-  assert.deepEqual(Object.keys(body.data).sort(), ["permissions", "redistributionAllowed", "sourceDocumentAccessAllowed"]);
+  assert.deepEqual(Object.keys(body.data).sort(), ["features", "permissions", "redistributionAllowed", "sourceDocumentAccessAllowed"]);
+  assert.deepEqual(Object.keys(body.data.features as Record<string, unknown>).sort(), ["portfolioAttribution"]);
 });

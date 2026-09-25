@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { FEATURE_FLAG_REGISTRY } from "./feature-flags.ts";
+import { FEATURE_FLAG_REGISTRY, PORTFOLIO_ATTRIBUTION_FLAG } from "./feature-flags.ts";
 
 type LaunchFlagContract = {
   key: string;
   enforcementFiles: string[];
+  enforcementSymbol?: string;
 };
 
 // Only features intended to be launch-active belong here. Adding a new launch
@@ -13,6 +14,15 @@ type LaunchFlagContract = {
 // the authoritative Postgres-backed evaluator. Registry-only metadata is not
 // considered enforcement.
 const LAUNCH_FLAGS: LaunchFlagContract[] = [
+  {
+    key: PORTFOLIO_ATTRIBUTION_FLAG,
+    enforcementFiles: [
+      "app/api/v1/portfolios/route.ts",
+      "app/api/v1/portfolio-holdings/route.ts",
+      "app/api/v1/position-financials/route.ts",
+    ],
+    enforcementSymbol: "PORTFOLIO_ATTRIBUTION_FLAG",
+  },
   {
     key: "exports.parquet_delivery",
     enforcementFiles: ["app/api/v1/exports/route.ts"],
@@ -48,7 +58,8 @@ test("launch flags are evaluated at their declared server-side execution points"
     for (const file of flag.enforcementFiles) {
       const source = await readFile(file, "utf8");
       assert.match(source, /(?:assertFeatureEnabled|isFeatureEnabled)\s*\(/, `${file} must call the authoritative evaluator`);
-      assert.ok(source.includes(`"${flag.key}"`) || source.includes(`'${flag.key}'`), `${file} must enforce ${flag.key}`);
+      const declared = source.includes(`"${flag.key}"`) || source.includes(`'${flag.key}'`) || (flag.enforcementSymbol != null && source.includes(flag.enforcementSymbol));
+      assert.ok(declared, `${file} must enforce ${flag.key}`);
     }
   }
 });

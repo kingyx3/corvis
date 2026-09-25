@@ -11,15 +11,19 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
  * and data rights, so an enabled flag can never widen authority: the guard is
  * applied before the rollout state is consulted and an unsatisfied guard is a
  * denial regardless of how the flag is configured. Every channel (customer UI,
- * admin API, workers, exports, AI/retrieval) resolves through this module so a
- * kill switch lands identically everywhere.
+ * customer API, admin API, workers, exports, AI/retrieval) resolves through
+ * this module so a kill switch lands identically everywhere.
  */
 
-export type FeatureFlagChannel = "customer_ui" | "admin_api" | "worker" | "export" | "ai_retrieval";
+export type FeatureFlagChannel = "customer_ui" | "customer_api" | "admin_api" | "worker" | "export" | "ai_retrieval";
 
 export const FEATURE_FLAG_CHANNELS: readonly FeatureFlagChannel[] = [
-  "customer_ui", "admin_api", "worker", "export", "ai_retrieval",
+  "customer_ui", "customer_api", "admin_api", "worker", "export", "ai_retrieval",
 ];
+
+export type FeatureFlagKind = "rollout" | "capability";
+
+export const PORTFOLIO_ATTRIBUTION_FLAG = "module.portfolio_attribution";
 
 type EntitlementGate = keyof Pick<Entitlements,
   "sourceDocumentAccessAllowed" | "internalAnalyticsAllowed" | "modelTrainingAllowed" | "redistributionAllowed">;
@@ -30,6 +34,13 @@ export type FeatureFlagDefinition = {
   channels: readonly FeatureFlagChannel[];
   permission?: Permission;
   entitlement?: EntitlementGate;
+  /**
+   * Rollout flags are temporary operational controls and require retire-by
+   * governance. Capability flags are durable per-tenant product composition
+   * switches and may remain configured indefinitely until the customer/module
+   * contract changes.
+   */
+  kind?: FeatureFlagKind;
 };
 
 /**
@@ -37,6 +48,7 @@ export type FeatureFlagDefinition = {
  * straight into the control plane cannot create an ungoverned code path.
  */
 export const FEATURE_FLAG_REGISTRY: readonly FeatureFlagDefinition[] = [
+  { key: PORTFOLIO_ATTRIBUTION_FLAG, description: "Optional client-portfolio attribution above the canonical fund/holding graph.", channels: ["customer_ui", "customer_api", "admin_api"], permission: "observations:read", kind: "capability" },
   { key: "ui.delivery_workspace", description: "Data delivery workspace surfaces in the customer UI.", channels: ["customer_ui"] },
   { key: "ui.review_bulk_actions", description: "Bulk approve/reject controls in data review.", channels: ["customer_ui", "admin_api"], permission: "observations:review" },
   { key: "admin.flag_self_service", description: "Tenant admins manage their own flags.", channels: ["admin_api"], permission: "admin:manage" },
@@ -156,6 +168,7 @@ export function enabledFeatureKeys(decisions: readonly FeatureFlagDecision[]): s
 export type FeatureFlagGovernanceRow = FeatureFlagRecord & {
   registered: boolean;
   description?: string;
+  kind?: FeatureFlagKind;
   stale: boolean;
   retired: boolean;
   channels: readonly FeatureFlagChannel[];
@@ -173,6 +186,7 @@ export function governanceRows(snapshot: FeatureFlagSnapshot, now: Date = new Da
       key,
       registered: definition != null,
       description: definition?.description,
+      kind: definition?.kind ?? (definition ? "rollout" : undefined),
       channels: definition?.channels ?? [],
       retired,
       stale: overdue || (!retired && definition == null && snapshot.flags[key] != null),
@@ -344,16 +358,18 @@ function isoOrThrow(value: string, code: string): string {
 }
 
 /**
- * Upserts rollout state. Ownership and a retire-by date are mandatory
- * governance metadata: a flag with no owner or no retirement date cannot be
- * created, which is what keeps the stale-flag report meaningful.
+ * Upserts rollout/capability state. Ownership is mandatory for every flag.
+ * Temporary rollout flags additionally require a retire-by date; durable
+ * product capability flags do not, because their enabled/disabled state is a
+ * customer configuration rather than temporary release scaffolding.
  */
 export async function setFeatureFlag(
   identity: RequestIdentity,
   write: FeatureFlagWrite,
   db: PostgresSqlApi = controlDb(),
 ): Promise<void> {
-  if (!REGISTRY_BY_KEY.has(write.key)) throw new FeatureFlagGovernanceError("unregistered_flag");
+  const definition = REGISTRY_BY_KEY.get(write.key);
+  if (!definition) throw new FeatureFlagGovernanceError("unregistered_flag");
   const existing = await db.query(`select owner, retire_by, retired_at from corvis_control.feature_flag
     where tenant_id=$1 and flag_key=$2 limit 1`, [identity.tenantId, write.key]);
   const current = existing[0];
@@ -362,8 +378,8 @@ export async function setFeatureFlag(
   const owner = optionalText(write.owner, "invalid_owner") || (current ? text(current, "owner") : undefined);
   const retireByRaw = optionalText(write.retireBy, "invalid_retire_by") || (current ? text(current, "retire_by") : undefined);
   if (!owner) throw new FeatureFlagGovernanceError("flag_owner_required");
-  if (!retireByRaw) throw new FeatureFlagGovernanceError("flag_retire_by_required");
-  const retireBy = isoOrThrow(retireByRaw, "invalid_retire_by");
+  if ((definition.kind ?? "rollout") === "rollout" && !retireByRaw) throw new FeatureFlagGovernanceError("flag_retire_by_required");
+  const retireBy = retireByRaw ? isoOrThrow(retireByRaw, "invalid_retire_by") : null;
 
   const written = await db.query(`insert into corvis_control.feature_flag
       (tenant_id, flag_key, enabled, configuration, owner, retire_by, updated_at, updated_by)
