@@ -1,4 +1,4 @@
-import type { DocumentRecord } from "@/core/contracts";
+import type { DocumentRecord } from "./contracts";
 
 export type DocumentSecurityNotice = {
   label: string;
