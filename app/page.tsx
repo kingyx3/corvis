@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
 import type { Permission } from "@/core/enterprise";
-import type { WorkspaceCapabilities } from "@/core/workspace";
+import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -48,6 +48,17 @@ export default function CorvisApp() {
   const [activeResult, setActiveResult] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
   const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
+  const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null);
+
+  // Chrome-only (the sidebar's tenant/workspace identity); never gates
+  // access. Fetched independently of loadWorkspace so an unavailable "who am
+  // I" call falls back to the existing placeholder rather than blocking or
+  // failing anything else.
+  useEffect(() => {
+    let active = true;
+    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const applyWorkspaceResults = useCallback((results: [PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]) => {
     const [capabilitiesResult, documentsResult, snapshotsResult, observationsResult] = results;
@@ -179,7 +190,7 @@ export default function CorvisApp() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
-    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} aria-current={activeView === item.id ? "page" : undefined} aria-label={item.label} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav><div className="sidebar-section"><p>WORKSPACE</p><div className="profile"><span className="workspace-dot" aria-hidden="true">N</span><span><strong>Current workspace</strong><small>Tenant-scoped</small></span></div></div><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>Signed-in user</strong><small>Enterprise session</small></span></div></div></aside>
+    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} aria-current={activeView === item.id ? "page" : undefined} aria-label={item.label} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav><div className="sidebar-section"><p>WORKSPACE</p><div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? identity?.tenantDisplayName ?? "N")[0].toUpperCase()}</span><span><strong>{identity?.workspaceDisplayName ?? "Current workspace"}</strong><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div></div><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>Signed-in user</strong><small>Enterprise session</small></span></div></div></aside>
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{canSearch && <button className="global-search" aria-label="Search entitled workspace data" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search entitled workspace data</span><kbd aria-hidden="true">⌘K</kbd></button>}</div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {loading && <section className="page-heading" aria-busy="true"><div><p className="eyebrow">Workspace</p><h1>Loading trusted data…</h1><p className="lede">Fetching entitled documents, snapshots and observations.</p></div></section>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}

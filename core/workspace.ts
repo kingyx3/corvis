@@ -39,8 +39,16 @@ export type WorkspaceCapabilities = {
   features?: WorkspaceFeatures;
 };
 
+/** Chrome-only identity (e.g. the sidebar) — never for access decisions. */
+export type WorkspaceIdentity = {
+  subject: string;
+  tenantDisplayName?: string;
+  workspaceDisplayName?: string;
+};
+
 export interface WorkspacePort {
   capabilities(): Promise<WorkspaceCapabilities>;
+  whoAmI(): Promise<WorkspaceIdentity>;
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;

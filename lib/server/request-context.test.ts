@@ -181,6 +181,18 @@ test("demo identity is available only when explicitly enabled outside production
     const identity = await resolveRequestIdentity(new Request("https://localhost/api/v1/me"));
     assert.equal(identity.authMethod, "demo");
     assert.equal(identity.tenantId, "tenant_demo");
+    assert.equal(identity.tenantDisplayName, "Meridian Capital Partners");
+    assert.equal(identity.workspaceDisplayName, "Primary Workspace");
+  });
+});
+
+test("demo tenant/workspace display names can be overridden by header, e.g. for e2e coverage", { concurrency: false }, async () => {
+  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "true", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined }, async () => {
+    const identity = await resolveRequestIdentity(new Request("https://localhost/api/v1/me", {
+      headers: { "x-corvis-demo-tenant-name": "Acme Allocators", "x-corvis-demo-workspace-name": "EMEA Team" },
+    }));
+    assert.equal(identity.tenantDisplayName, "Acme Allocators");
+    assert.equal(identity.workspaceDisplayName, "EMEA Team");
   });
 });
 

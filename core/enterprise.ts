@@ -61,6 +61,15 @@ export type RequestIdentity = {
    * treated as false (fail closed) by every caller that checks it.
    */
   isTenantAdmin?: boolean;
+  /**
+   * Human-readable tenant/workspace names for chrome (e.g. the sidebar),
+   * never for access decisions. Only populated where the identity path
+   * queries corvis_control.tenant/workspace directly (the authoritative
+   * membership lookup, and demo mode); undefined elsewhere, and callers must
+   * fall back to a placeholder rather than assume presence.
+   */
+  tenantDisplayName?: string;
+  workspaceDisplayName?: string;
 };
 
 export function hasPermission(identity: RequestIdentity, permission: Permission): boolean {
