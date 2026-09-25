@@ -35,7 +35,8 @@ export type WorkspaceCapabilities = {
   permissions: Permission[];
   sourceDocumentAccessAllowed: boolean;
   redistributionAllowed: boolean;
-  features: WorkspaceFeatures;
+  /** Optional for backward-compatible/demo adapters; absence fails closed. */
+  features?: WorkspaceFeatures;
 };
 
 export interface WorkspacePort {
