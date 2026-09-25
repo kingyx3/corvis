@@ -42,8 +42,6 @@ uat
 prod
 ```
 
-The old name `staging` is deprecated in favor of `uat`.
-
 Human-entered technical deployment configuration should be set in GitHub Environment variables/secrets and propagated by GitHub Actions to GCP, Cloudflare and Supabase wherever provider APIs/IaC allow. GCP runtime secrets ultimately live in Secret Manager; GitHub is the deployment control plane, not the application runtime secret store.
 
 See [`docs/GITHUB_ENVIRONMENTS.md`](docs/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
