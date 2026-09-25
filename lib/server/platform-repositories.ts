@@ -8,6 +8,7 @@ import {
   type ReviewDecision,
   type SnapshotPublication,
 } from "../../core/enterprise.ts";
+import { MIXED_INSTRUMENT_TYPES } from "../../core/workspace-summary.ts";
 import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
@@ -99,38 +100,105 @@ export class PostgresWorkspaceRepository {
   /**
    * Portfolio-value rollup for the Overview (issue #175 A3/A4): for each
    * snapshot whose *current* version is published, the summed nav/fair_value
-   * consolidated facts per metric and currency. Draft, blocked, withdrawn and
-   * superseded versions never contribute, and a conflicting-alternative fact
-   * (two different values at one semantic grain) is left out rather than
-   * double-counted.
+   * consolidated facts per metric, subject level and currency. Draft,
+   * blocked, withdrawn and superseded versions never contribute. Three kinds
+   * of fact are left out because they re-slice value already counted: a
+   * conflicting alternative (a second value at one semantic grain), a
+   * breakdown row (e.g. fair value by sector) and a look-through row. The
+   * caller keeps only the most aggregate subject level per snapshot.
    */
   portfolioValueFacts(identity: RequestIdentity): Promise<PostgresRow[]> {
     const fundIds = identity.entitlements.fundIds ?? [];
     if (fundIds.length === 0) return Promise.resolve([]);
-    return this.db.query(`with current_snapshot as (
+    return this.db.query(`${PUBLISHED_VALUE_FACTS}
+      select pf.snapshot_id, pf.fund_id, coalesce(fund.canonical_name, pf.fund_id) as fund_name,
+             pf.report_period, pf.published_at, pf.metric_code, pf.subject_level, pf.currency,
+             sum(pf.amount) as total_value, count(*)::integer as fact_count
+      from published_fact pf
+      left join corvis_identity.fund fund on fund.global_fund_id=pf.fund_id
+      where pf.breakdown_category is null and pf.lookthrough_source is null
+      group by pf.snapshot_id, pf.fund_id, fund.canonical_name, pf.report_period, pf.published_at, pf.metric_code, pf.subject_level, pf.currency
+      order by pf.fund_id, pf.report_period, pf.snapshot_id`, [identity.tenantId, jsonIds(fundIds)]);
+  }
+
+  /**
+   * Exposure-dimension rollup (issue #175 A4) over the same published facts:
+   * - asset_type: holding/instrument fair values classified by the governed
+   *   instrument_type of approved instruments (a holding whose instruments
+   *   span several types is reported as mixed, never picked arbitrarily);
+   * - sector: the GP's own fund-level fair-value breakdown rows whose
+   *   breakdown category is sector or industry.
+   * Look-through rows are excluded from both.
+   */
+  exposureDimensionFacts(identity: RequestIdentity): Promise<PostgresRow[]> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return Promise.resolve([]);
+    return this.db.query(`${PUBLISHED_VALUE_FACTS}, holding_type as (
+        select i.holding_id::text as holding_id,
+               case when count(distinct i.instrument_type)=1 then min(i.instrument_type) else '${MIXED_INSTRUMENT_TYPES}' end as instrument_type
+        from corvis_serving.instruments i
+        where i.tenant_id=$1::uuid
+          and i.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        group by i.holding_id
+      ), classified as (
+        select pf.snapshot_id, pf.fund_id, pf.currency, 'asset_type' as dimension, pf.subject_level,
+               case when pf.subject_level='instrument' then inst.instrument_type else ht.instrument_type end as category,
+               pf.amount
+        from published_fact pf
+        left join corvis_serving.instruments inst
+          on pf.subject_level='instrument' and inst.tenant_id=$1::uuid and inst.instrument_id::text=pf.subject_id
+        left join holding_type ht
+          on pf.subject_level='holding' and ht.holding_id=pf.subject_id
+        where pf.metric_code='fair_value'
+          and pf.subject_level in ('holding','instrument')
+          and pf.breakdown_category is null and pf.lookthrough_source is null
+        union all
+        select pf.snapshot_id, pf.fund_id, pf.currency, 'sector' as dimension, pf.subject_level,
+               pf.breakdown_value as category, pf.amount
+        from published_fact pf
+        where pf.metric_code='fair_value'
+          and pf.subject_level='fund'
+          and lower(pf.breakdown_category) in ('sector','industry')
+          and pf.lookthrough_source is null
+      )
+      select snapshot_id, fund_id, currency, dimension, subject_level, category,
+             sum(amount) as total_value, count(*)::integer as fact_count
+      from classified
+      group by snapshot_id, fund_id, currency, dimension, subject_level, category
+      order by fund_id, snapshot_id, dimension, category`, [identity.tenantId, jsonIds(fundIds)]);
+  }
+}
+
+/**
+ * Nav/fair_value consolidated facts of every entitled snapshot whose current
+ * version is published, with the semantic dimensions the Overview rollups
+ * filter and group on. Conflicting alternatives are dropped here, once.
+ * Parameters: $1 tenant id, $2 JSON array of entitled fund ids.
+ */
+const PUBLISHED_VALUE_FACTS = `with current_snapshot as (
         select distinct on (s.snapshot_id)
                s.tenant_id, s.snapshot_id, s.version, s.fund_id, s.report_period, s.status, s.fact_ids, s.published_at
         from corvis_consolidated.fund_period_snapshot s
         where s.tenant_id=$1::uuid
           and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
         order by s.snapshot_id, s.version desc
-      )
-      select cs.snapshot_id, cs.fund_id, coalesce(fund.canonical_name, cs.fund_id) as fund_name,
-             cs.report_period, cs.published_at, f.metric_code, f.value->>'currency' as currency,
-             sum((f.value->>'number')::numeric) as total_value, count(*)::integer as fact_count
-      from current_snapshot cs
-      cross join lateral unnest(cs.fact_ids) as published(fact_id)
-      join corvis_consolidated.consolidated_fact f
-        on f.tenant_id=cs.tenant_id and f.consolidated_fact_id=published.fact_id and f.fund_id=cs.fund_id
-      left join corvis_identity.fund fund on fund.global_fund_id=cs.fund_id
-      where cs.status='published'
-        and f.metric_code in ('nav','fair_value')
-        and jsonb_typeof(f.value->'number')='number'
-        and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
-      group by cs.snapshot_id, cs.fund_id, fund.canonical_name, cs.report_period, cs.published_at, f.metric_code, f.value->>'currency'
-      order by cs.fund_id, cs.report_period, cs.snapshot_id`, [identity.tenantId, jsonIds(fundIds)]);
-  }
-}
+      ), published_fact as (
+        select cs.snapshot_id, cs.fund_id, cs.report_period, cs.published_at, f.metric_code, f.subject_id,
+               coalesce(nullif(btrim(f.value->'semanticDimensions'->>'subjectLevel'),''), f.subject_type) as subject_level,
+               nullif(btrim(f.value->'semanticDimensions'->>'breakdownCategory'),'') as breakdown_category,
+               nullif(btrim(f.value->'semanticDimensions'->>'breakdownValue'),'') as breakdown_value,
+               nullif(btrim(f.value->'semanticDimensions'->>'lookthroughSource'),'') as lookthrough_source,
+               f.value->>'currency' as currency,
+               (f.value->>'number')::numeric as amount
+        from current_snapshot cs
+        cross join lateral unnest(cs.fact_ids) as published(fact_id)
+        join corvis_consolidated.consolidated_fact f
+          on f.tenant_id=cs.tenant_id and f.consolidated_fact_id=published.fact_id and f.fund_id=cs.fund_id
+        where cs.status='published'
+          and f.metric_code in ('nav','fair_value')
+          and jsonb_typeof(f.value->'number')='number'
+          and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
+      )`;
 
 export class PostgresReviewPublicationRepository {
   private readonly db: PostgresSqlApi;

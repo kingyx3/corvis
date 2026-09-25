@@ -38,12 +38,13 @@ async function workspaceSourceHealth(identity: RequestIdentity): Promise<SourceH
  */
 export async function workspaceSummary(identity: RequestIdentity, dependencies: WorkspaceSummaryDependencies = {}): Promise<WorkspaceSummary> {
   const port = dependencies.platform ?? defaultPlatform();
-  const [snapshots, observations, documents, valueFacts, sources] = await Promise.all([
+  const [snapshots, observations, documents, valueFacts, dimensionFacts, sources] = await Promise.all([
     port.listSnapshots(identity),
     port.listObservations(identity),
     hasPermission(identity, "documents:read") ? port.listDocuments(identity) : Promise.resolve([]),
     port.portfolioValueFacts(identity),
+    port.exposureDimensionFacts(identity),
     hasPermission(identity, "admin:manage") ? (dependencies.sources ?? workspaceSourceHealth)(identity) : Promise.resolve(undefined),
   ]);
-  return buildWorkspaceSummary({ snapshots, observations, documents, valueFacts, sources, now: dependencies.now ?? new Date() });
+  return buildWorkspaceSummary({ snapshots, observations, documents, valueFacts, dimensionFacts, sources, now: dependencies.now ?? new Date() });
 }

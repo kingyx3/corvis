@@ -1,5 +1,5 @@
 import type { ActivityRecord, DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
-import type { PortfolioValueFact } from "../../core/workspace-summary.ts";
+import type { ExposureDimensionFact, PortfolioValueFact } from "../../core/workspace-summary.ts";
 
 export const documents: DocumentRecord[] = [
   { id: "doc-adv-viii-q2", name: "Advent International GPE VIII — Q2 2026.pdf", fund: "Advent International GPE VIII", period: "Q2 2026", type: "Quarterly report", pages: 124, size: "86.4 MB", status: "Published", uploaded: "18 Sep, 08:31", quality: "High", observations: 486 },
@@ -32,7 +32,7 @@ export const fundSnapshots: FundSnapshot[] = [
 // Snapshot ids for the current periods match customer-journey-store's seeded
 // ids (seed-snapshot-N, in fundSnapshots order); earlier periods are history.
 function navFact(snapshotId: string, fundId: string, fund: string, period: string, value: number): PortfolioValueFact {
-  return { snapshotId, fundId, fund, period, publishedAt: null, metricCode: "nav", currency: "USD", value, factCount: 1 };
+  return { snapshotId, fundId, fund, period, publishedAt: null, metricCode: "nav", subjectLevel: "fund", currency: "USD", value, factCount: 1 };
 }
 export const portfolioValueFacts: PortfolioValueFact[] = [
   navFact("history-adv-viii-q3-25", "fund-advent-viii", "Advent International GPE VIII", "Q3 2025", 1_812_000_000),
@@ -45,6 +45,27 @@ export const portfolioValueFacts: PortfolioValueFact[] = [
   navFact("history-hg-genesis-9-q3-25", "fund-hg-genesis-9", "Hg Genesis 9", "Q3 2025", 684_000_000),
   navFact("history-hg-genesis-9-q4-25", "fund-hg-genesis-9", "Hg Genesis 9", "Q4 2025", 702_000_000),
   navFact("seed-snapshot-4", "fund-hg-genesis-9", "Hg Genesis 9", "Q1 2026", 719_000_000),
+];
+
+// Classification of the latest published periods' fair values. Advent VIII
+// reports governed instrument types per holding and a GP sector breakdown;
+// EQT IX reports instrument types only; Hg Genesis 9 reports neither, so its
+// whole NAV is "not attributed" in both breakdowns. NAV beyond the classified
+// holdings (cash, fund-level net assets) is likewise not attributed, so every
+// breakdown still sums exactly to the exposure total.
+function dimensionFact(snapshotId: string, fundId: string, dimension: ExposureDimensionFact["dimension"], category: string | null, value: number): ExposureDimensionFact {
+  return { snapshotId, fundId, dimension, subjectLevel: dimension === "sector" ? "fund" : "holding", category, currency: "USD", value, factCount: 1 };
+}
+export const exposureDimensionFacts: ExposureDimensionFact[] = [
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "common_equity", 1_322_000_000),
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "preferred_equity", 318_000_000),
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "senior_debt", 154_000_000),
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Healthcare", 702_000_000),
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Technology", 611_000_000),
+  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Industrials", 481_000_000),
+  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", "common_equity", 1_046_000_000),
+  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", "__mixed__", 139_000_000),
+  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", null, 41_000_000),
 ];
 
 export const recentActivity: ActivityRecord[] = [

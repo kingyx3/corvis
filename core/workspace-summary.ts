@@ -26,7 +26,18 @@ export const STUCK_DOCUMENT_AFTER_HOURS = 24;
 export const PORTFOLIO_VALUE_METRICS = ["nav", "fair_value"] as const;
 export type PortfolioValueMetric = (typeof PORTFOLIO_VALUE_METRICS)[number];
 
-/** One published snapshot's summed value for one metric and currency. */
+/**
+ * Subject levels a portfolio value can be reported at, most aggregate first.
+ * Within one snapshot only the most aggregate level present counts, so a
+ * fund-level fair value is never added to the holding fair values it sums.
+ */
+export const VALUE_SUBJECT_LEVELS = ["fund", "company", "holding", "instrument"] as const;
+
+/**
+ * One published snapshot's summed value for one metric, subject level and
+ * currency. Breakdown and look-through facts are never included: they re-slice
+ * value already counted at their subject, so adding them would double-count.
+ */
 export type PortfolioValueFact = {
   snapshotId: string;
   fundId: string;
@@ -34,9 +45,45 @@ export type PortfolioValueFact = {
   period: string;
   publishedAt: string | null;
   metricCode: PortfolioValueMetric;
+  /** Absent for legacy facts without semantic dimensions; ranked after every known level. */
+  subjectLevel?: string | null;
   currency: string | null;
   value: number;
   factCount: number;
+};
+
+/**
+ * Exposure dimensions with a real classification behind them. Asset type is
+ * the governed instrument_type of the holding (or instrument) a fair value is
+ * reported for. Sector is the GP's own fund-level fair-value breakdown whose
+ * breakdown category is "sector" or "industry"; Corvis has no governed sector
+ * taxonomy, so a fund that does not report one is shown as not attributed
+ * rather than classified by guesswork.
+ */
+export type ExposureDimension = "asset_type" | "sector";
+
+/** Sentinel category for a holding whose instruments span several governed types. */
+export const MIXED_INSTRUMENT_TYPES = "__mixed__";
+
+export type ExposureDimensionFact = {
+  snapshotId: string;
+  fundId: string;
+  dimension: ExposureDimension;
+  subjectLevel: string | null;
+  /** Governed instrument type or reported sector label; null when unclassified. */
+  category: string | null;
+  currency: string | null;
+  value: number;
+  factCount: number;
+};
+
+export type ExposureBreakdownRow = {
+  key: string;
+  label: string;
+  value: number;
+  /** category: a real classification; unclassified: a value with no classification; not_attributed: exposure no reported fact attributes to this dimension. */
+  kind: "category" | "unclassified" | "not_attributed";
+  fundCount: number;
 };
 
 export type SourceHealthInput = {
@@ -99,7 +146,14 @@ export type WorkspaceSummary = {
   generatedAt: string;
   currency: string | null;
   valueTrend: ValueTrendPoint[];
-  exposure: { total: number; items: ExposureItem[]; excludedFundPeriods: number };
+  exposure: {
+    total: number;
+    items: ExposureItem[];
+    excludedFundPeriods: number;
+    /** Each sums exactly to `total`; empty when no fund reports any classification for the dimension. */
+    byAssetType: ExposureBreakdownRow[];
+    bySector: ExposureBreakdownRow[];
+  };
   attention: {
     items: AttentionItem[];
     counts: Record<AttentionKind, number> & { total: number };
@@ -117,6 +171,7 @@ export type WorkspaceSummaryInput = {
   observations: ObservationRecord[];
   documents: DocumentRecord[];
   valueFacts: PortfolioValueFact[];
+  dimensionFacts?: ExposureDimensionFact[];
   /** Only supplied for callers entitled to source-connection health (admin:manage). */
   sources?: SourceHealthInput[];
   now: Date;
@@ -181,7 +236,8 @@ function snapshotValues(facts: PortfolioValueFact[]): SnapshotValue[] {
   for (const rows of bySnapshot.values()) {
     const metric = PORTFOLIO_VALUE_METRICS.find((code) => rows.some((row) => row.metricCode === code));
     if (!metric) continue;
-    const chosen = rows.filter((row) => row.metricCode === metric);
+    const forMetric = rows.filter((row) => row.metricCode === metric);
+    const chosen = forMetric.filter((row) => (row.subjectLevel ?? null) === mostAggregateLevel(forMetric));
     // A snapshot whose chosen metric spans several currencies has no single
     // value without FX conversion; each currency is kept separately and the
     // reporting-currency filter below decides which one counts.
@@ -193,6 +249,72 @@ function snapshotValues(facts: PortfolioValueFact[]): SnapshotValue[] {
     }
   }
   return values;
+}
+
+function levelRank(level: string | null | undefined): number {
+  const index = (VALUE_SUBJECT_LEVELS as readonly string[]).indexOf(level ?? "");
+  return index === -1 ? VALUE_SUBJECT_LEVELS.length : index;
+}
+
+function mostAggregateLevel(rows: Array<{ subjectLevel?: string | null }>): string | null {
+  let best: string | null = null;
+  let bestRank = Infinity;
+  for (const row of rows) {
+    const rank = levelRank(row.subjectLevel);
+    if (rank < bestRank) { best = row.subjectLevel ?? null; bestRank = rank; }
+  }
+  return best;
+}
+
+function humanize(value: string): string {
+  const spaced = value.replaceAll("_", " ").replace(/\s+/g, " ").trim();
+  return spaced === spaced.toLowerCase() ? spaced[0]!.toUpperCase() + spaced.slice(1) : spaced;
+}
+
+const UNCLASSIFIED_KEY = "__unclassified__";
+const NOT_ATTRIBUTED_KEY = "__not_attributed__";
+
+/**
+ * Splits every exposure item across one dimension. Classified facts for the
+ * item's own snapshot and currency fill their categories; whatever of the
+ * item's value they do not cover (NAV beyond classified holdings, or a fund
+ * that reports no such facts) is one explicit "not attributed" row, which may
+ * be negative when classified holdings exceed NAV (fund-level leverage). The
+ * rows therefore always sum to the exposure total.
+ */
+function exposureBreakdown(items: ExposureItem[], facts: ExposureDimensionFact[], dimension: ExposureDimension, currency: string | null): ExposureBreakdownRow[] {
+  const rows = new Map<string, ExposureBreakdownRow & { funds: Set<string> }>();
+  const add = (key: string, label: string, kind: ExposureBreakdownRow["kind"], value: number, fundId: string) => {
+    const row = rows.get(key) ?? { key, label, kind, value: 0, fundCount: 0, funds: new Set<string>() };
+    row.value += value;
+    row.funds.add(fundId);
+    rows.set(key, row);
+  };
+  let classified = false;
+  for (const item of items) {
+    const candidates = facts.filter((fact) => fact.dimension === dimension && fact.snapshotId === item.snapshotId && (fact.currency ?? null) === currency && Number.isFinite(fact.value));
+    // Asset type is reported per holding or per instrument; use one level only,
+    // for the same no-double-count reason as the value rollup.
+    const level = mostAggregateLevel(candidates);
+    const own = candidates.filter((fact) => (fact.subjectLevel ?? null) === level);
+    let attributed = 0;
+    for (const fact of own) {
+      attributed += fact.value;
+      const category = fact.category?.trim();
+      if (!category) { add(UNCLASSIFIED_KEY, "Unclassified", "unclassified", fact.value, item.fundId); continue; }
+      classified = true;
+      if (category === MIXED_INSTRUMENT_TYPES) { add(MIXED_INSTRUMENT_TYPES, "Mixed instruments", "category", fact.value, item.fundId); continue; }
+      add(`${dimension}:${category.toLowerCase()}`, humanize(category), "category", fact.value, item.fundId);
+    }
+    const residual = item.value - attributed;
+    // Below half a cent is float noise from summing, not unattributed value.
+    if (Math.abs(residual) >= 0.005) add(NOT_ATTRIBUTED_KEY, "Not attributed", "not_attributed", residual, item.fundId);
+  }
+  if (!classified) return [];
+  const kindRank = { category: 0, unclassified: 1, not_attributed: 2 };
+  return [...rows.values()]
+    .map(({ funds, ...row }) => ({ ...row, fundCount: funds.size }))
+    .sort((a, b) => kindRank[a.kind] - kindRank[b.kind] || b.value - a.value || a.label.localeCompare(b.label));
 }
 
 function reportingCurrency(values: SnapshotValue[]): string | null {
@@ -362,7 +484,13 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
     generatedAt: input.now.toISOString(),
     currency,
     valueTrend,
-    exposure: { total: exposureItems.reduce((sum, item) => sum + item.value, 0), items: exposureItems, excludedFundPeriods: values.length - inCurrency.length },
+    exposure: {
+      total: exposureItems.reduce((sum, item) => sum + item.value, 0),
+      items: exposureItems,
+      excludedFundPeriods: values.length - inCurrency.length,
+      byAssetType: exposureBreakdown(exposureItems, input.dimensionFacts ?? [], "asset_type", currency),
+      bySector: exposureBreakdown(exposureItems, input.dimensionFacts ?? [], "sector", currency),
+    },
     attention: { items, counts },
     freshness: freshness(input),
   };

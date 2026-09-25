@@ -861,6 +861,10 @@ button.metric-card:hover {
 .chart-panel > .chart-empty {
   padding: 18px 20px;
 }
+.breakdown-note {
+  padding: 0 20px 16px;
+  margin: 0;
+}
 .freshness-note {
   display: flex;
   flex-wrap: wrap;

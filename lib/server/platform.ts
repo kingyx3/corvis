@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
-import { documents, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
+import { documents, exposureDimensionFacts, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
-import type { PortfolioValueFact } from "../../core/workspace-summary.ts";
+import type { ExposureDimension, ExposureDimensionFact, PortfolioValueFact } from "../../core/workspace-summary.ts";
 import {
   assertRedistributionAllowed,
   type AuditEvent,
@@ -46,6 +46,8 @@ export interface PlatformPort {
   listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   /** Summed nav/fair_value facts of every entitled snapshot whose current version is published. */
   portfolioValueFacts(identity: RequestIdentity): Promise<PortfolioValueFact[]>;
+  /** Asset-type and sector classification of the same published fair values. */
+  exposureDimensionFacts(identity: RequestIdentity): Promise<ExposureDimensionFact[]>;
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
@@ -144,6 +146,7 @@ class DemoPlatform implements PlatformPort {
   async listSnapshots() { return fundSnapshots; }
   async listReconciliationExceptions() { return []; }
   async portfolioValueFacts() { return portfolioValueFacts; }
+  async exposureDimensionFacts() { return exposureDimensionFacts; }
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     void identity;
     return {
@@ -272,6 +275,20 @@ export class PostgresProductionPlatform implements PlatformPort {
       return [{
         snapshotId: text(row,"snapshot_id"), fundId: text(row,"fund_id"), fund: text(row,"fund_name",text(row,"fund_id")),
         period: text(row,"report_period"), publishedAt: isoText(row,"published_at") ?? null, metricCode,
+        subjectLevel: text(row,"subject_level") || null, currency: text(row,"currency") || null, value, factCount: num(row,"fact_count"),
+      }];
+    });
+  }
+
+  async exposureDimensionFacts(identity: RequestIdentity): Promise<ExposureDimensionFact[]> {
+    const rows = await this.workspace.exposureDimensionFacts(identity);
+    return rows.flatMap((row) => {
+      const dimension = text(row,"dimension");
+      const value = Number(row.total_value);
+      if ((dimension !== "asset_type" && dimension !== "sector") || !Number.isFinite(value)) return [];
+      return [{
+        snapshotId: text(row,"snapshot_id"), fundId: text(row,"fund_id"), dimension: dimension as ExposureDimension,
+        subjectLevel: text(row,"subject_level") || null, category: text(row,"category") || null,
         currency: text(row,"currency") || null, value, factCount: num(row,"fact_count"),
       }];
     });
