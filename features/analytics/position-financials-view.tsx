@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PositionFinancialStatementRow, StatementPeriodicity } from "@/core/contracts";
+import { workspacePort } from "@/runtime/workspace-services";
 import styles from "./position-financials.module.css";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
@@ -43,6 +44,7 @@ function latest(a: PositionFinancialStatementRow, b: PositionFinancialStatementR
 
 export function PositionFinancialsView() {
   const [periodicity,setPeriodicity] = useState<StatementPeriodicity>("quarterly");
+  const [portfolioAttributionEnabled,setPortfolioAttributionEnabled] = useState(false);
   const [portfolios,setPortfolios] = useState<Portfolio[]>([]);
   const [selectedPortfolio,setSelectedPortfolio] = useState("");
   const [rows,setRows] = useState<PositionFinancialStatementRow[]>([]);
@@ -50,19 +52,35 @@ export function PositionFinancialsView() {
   const [loading,setLoading] = useState(true);
   const [error,setError] = useState<string | null>(null);
 
+  // Product-module composition is separate from RBAC. Failure to resolve the
+  // optional capability fails closed for portfolio attribution while the base
+  // fund/holding financial-statements experience remains fully usable.
   useEffect(() => {
+    let active = true;
+    void workspacePort.capabilities()
+      .then((capabilities) => { if (active) setPortfolioAttributionEnabled(capabilities.features?.portfolioAttribution === true); })
+      .catch(() => { if (active) setPortfolioAttributionEnabled(false); });
+    return () => { active = false; };
+  },[]);
+
+  useEffect(() => {
+    if (!portfolioAttributionEnabled) {
+      setPortfolios([]);
+      setSelectedPortfolio("");
+      return;
+    }
     const controller = new AbortController();
     void fetch("/api/v1/portfolios?limit=100",{ signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => response.ok ? await response.json() as PortfolioEnvelope : { data: [] })
       .then((payload) => setPortfolios(payload.data ?? []))
       .catch(() => { if (!controller.signal.aborted) setPortfolios([]); });
     return () => controller.abort();
-  },[]);
+  },[portfolioAttributionEnabled]);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    const portfolio = selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
+    const portfolio = portfolioAttributionEnabled && selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
     void fetch(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`,{ signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
         const payload = await response.json() as ApiEnvelope;
@@ -72,7 +90,7 @@ export function PositionFinancialsView() {
       .then((data) => { if (active) { setRows(data); setLoading(false); } })
       .catch((reason: unknown) => { if (active && !controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "Financial statements are temporarily unavailable"); setLoading(false); } });
     return () => { active = false; controller.abort(); };
-  },[periodicity,selectedPortfolio]);
+  },[periodicity,portfolioAttributionEnabled,selectedPortfolio]);
 
   const positions = useMemo(() => {
     const map = new Map<string,{ key: string; fundId: string; holdingId: string; companyId: string }>();
@@ -115,7 +133,7 @@ export function PositionFinancialsView() {
   },[selectedRows]);
 
   const chosen = positions.find((position) => position.key === effectiveSelectedPosition);
-  const chosenPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolio);
+  const chosenPortfolio = portfolioAttributionEnabled ? portfolios.find((portfolio) => portfolio.id === selectedPortfolio) : undefined;
   const valueFor = (line: LineGroup, period: PeriodColumn): PositionFinancialStatementRow | undefined => {
     const matching = line.rows.filter((row) => row.valueId != null && periodKey(row) === period.key);
     return matching.reduce<PositionFinancialStatementRow | undefined>((best,row) => best ? latest(best,row) : row,undefined);
@@ -127,7 +145,7 @@ export function PositionFinancialsView() {
     setPeriodicity(value);
   };
   const changePortfolio = (portfolioId: string) => {
-    if (portfolioId === selectedPortfolio) return;
+    if (!portfolioAttributionEnabled || portfolioId === selectedPortfolio) return;
     setLoading(true);
     setError(null);
     setSelectedPosition("");
@@ -136,15 +154,15 @@ export function PositionFinancialsView() {
 
   return <section className={styles.page} aria-label="Position financial statements">
     <div className={styles.heading}>
-      <div><p className="eyebrow">Portfolio analytics</p><h1>Position financials</h1><p className="lede">Select a client portfolio, then compare the complete source-reported income statement for each attributed fund position across published reporting periods.</p></div>
+      <div><p className="eyebrow">{portfolioAttributionEnabled ? "Portfolio analytics" : "Fund analytics"}</p><h1>Position financials</h1><p className="lede">{portfolioAttributionEnabled ? "Optionally scope by a client portfolio, then compare the complete source-reported income statement for each attributed fund position across published reporting periods." : "Compare the complete source-reported income statement for each entitled fund holding across published reporting periods. Portfolio attribution is not required."}</p></div>
       <div className={styles.controls}>
-        <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>
+        {portfolioAttributionEnabled && <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>}
         <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
         <fieldset className={styles.segmented}><legend>Periodicity</legend>{(["quarterly","annual","reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? styles.active : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase()+value.slice(1)}</button>)}</fieldset>
       </div>
     </div>
 
-    <div className={styles.ruleNote}><strong>Attribution guardrail.</strong> {chosenPortfolio ? `${chosenPortfolio.displayName} scopes which fund holdings appear; ` : "Portfolio filters scope which fund holdings appear; "}company revenue, EBITDA and other operating statement values remain the full source-reported amounts and are never multiplied by ownership stake or position size.</div>
+    {portfolioAttributionEnabled && <div className={styles.ruleNote}><strong>Attribution guardrail.</strong> {chosenPortfolio ? `${chosenPortfolio.displayName} scopes which fund holdings appear; ` : "Portfolio filters scope which fund holdings appear; "}company revenue, EBITDA and other operating statement values remain the full source-reported amounts and are never multiplied by ownership stake or position size.</div>}
     <div className={styles.ruleNote}><strong>Aggregation guardrail.</strong> Annual mode prefers a reported annual disclosure. A derived annual value appears only when four explicit, compatible fiscal-quarter flow values exist; YTD, LTM, stock and cumulative values are never silently summed.</div>
 
     {loading && <div className={styles.state} aria-busy="true">Loading published financial statements…</div>}
