@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertDocumentAccess, assertPermission, assertRedistributionAllowed, assertWorkspace, hasPermission, type Permission, type RequestIdentity, type Role } from "./enterprise.ts";
+import { assertDocumentAccess, assertPermission, assertRedistributionAllowed, assertWorkspace, hasPermission, roleDisplayName, type Permission, type RequestIdentity, type Role } from "./enterprise.ts";
 
 const base: RequestIdentity = {
   subject: "user-1",
@@ -34,6 +34,10 @@ const roleCases: Array<{ role: Role; allowed: Permission[]; denied: Permission[]
     denied: ["documents:write", "snapshots:publish", "admin:manage"],
   },
 ];
+
+test("legacy reviewer machine role is presented as Review Analyst", () => {
+  assert.equal(roleDisplayName("reviewer"), "Review Analyst");
+});
 
 test("analyst can query research but cannot publish snapshots", () => {
   assert.equal(hasPermission(base, "research:query"), true);
