@@ -201,6 +201,8 @@ export class PostgresProductionPlatform implements PlatformPort {
         id: text(row,"observation_id"), company: text(row,"company_name",text(row,"company_id","Unknown company")), metric: text(row,"metric_code"), value: valueString,
         period: text(row,"economic_period") || text(row,"report_date"), source, sourceReferenceId: text(row,"source_reference_id") || undefined,
         confidence, state: reviewState(text(row,"review_state")), delta: text(row,"delta_display","—"), version: num(row,"version",1),
+        fund: text(row,"fund_name") || undefined, fundId: text(row,"fund_id") || undefined,
+        companyId: text(row,"company_id") || undefined, holdingId: text(row,"holding_id") || undefined,
       };
     });
   }

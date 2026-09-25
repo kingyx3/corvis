@@ -23,6 +23,22 @@ export type ReviewFocusRequest = { observationId: string; key: number };
 // Queue focus is a position (Previous/Next) or a specific observation (drill-through).
 type QueueFocus = { index: number } | { observationId: string };
 
+// Review's filters/sort/scroll position outlive navigating away (e.g. via a
+// drill-through to Position Financials, per issue #177 D1) so returning to
+// Review doesn't force re-deriving the same scope from scratch.
+const REVIEW_UI_STATE_KEY = "corvis:review:ui-state";
+type PersistedReviewState = { stateFilter: string; query: string; confidenceFilter: string; sortMode: string; focusedObservationId?: string };
+function readPersistedReviewState(): PersistedReviewState | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.sessionStorage.getItem(REVIEW_UI_STATE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PersistedReviewState; } catch { return null; }
+}
+function writePersistedReviewState(state: PersistedReviewState): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(REVIEW_UI_STATE_KEY, JSON.stringify(state));
+}
+
 export function ReviewView({
   observations,
   snapshot,
@@ -33,6 +49,7 @@ export function ReviewView({
   canReadSources,
   canExport,
   focusRequest,
+  onViewPositionFinancials,
 }: {
   observations: ObservationRecord[];
   snapshot?: FundSnapshot;
@@ -43,11 +60,16 @@ export function ReviewView({
   canReadSources: boolean;
   canExport: boolean;
   focusRequest?: ReviewFocusRequest | null;
+  onViewPositionFinancials?: (row: ObservationRecord) => void;
 }) {
-  const [stateFilter, setStateFilter] = useState<"all" | ObservationRecord["state"]>("all");
-  const [query, setQuery] = useState("");
-  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "under90" | "under75">("all");
-  const [sortMode, setSortMode] = useState<"risk" | "company" | "confidence">("risk");
+  // A fresh drill-through (focusRequest) always starts from a clean scope so the
+  // requested observation can't be hidden by a stale filter; otherwise restore
+  // whatever was last persisted (e.g. returning from Position Financials).
+  const persistedReviewState = focusRequest ? null : readPersistedReviewState();
+  const [stateFilter, setStateFilter] = useState<"all" | ObservationRecord["state"]>((persistedReviewState?.stateFilter as "all" | ObservationRecord["state"] | undefined) ?? "all");
+  const [query, setQuery] = useState(persistedReviewState?.query ?? "");
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "under90" | "under75">((persistedReviewState?.confidenceFilter as "all" | "under90" | "under75" | undefined) ?? "all");
+  const [sortMode, setSortMode] = useState<"risk" | "company" | "confidence">((persistedReviewState?.sortMode as "risk" | "company" | "confidence" | undefined) ?? "risk");
   const [overrides, setOverrides] = useState<Record<string, ObservationRecord>>({});
   const rows = observations.map((row) => {
     const override = overrides[row.id];
@@ -63,9 +85,9 @@ export function ReviewView({
   const [reviewReason, setReviewReason] = useState("reviewer_corrected");
   const [exceptionDialog, setExceptionDialog] = useState<ExceptionDialog | null>(null);
   const [exceptionNote, setExceptionNote] = useState("");
-  const [queueFocus, setQueueFocus] = useState<QueueFocus>(focusRequest ? { observationId: focusRequest.observationId } : { index: 0 });
+  const [queueFocus, setQueueFocus] = useState<QueueFocus>(focusRequest ? { observationId: focusRequest.observationId } : persistedReviewState?.focusedObservationId ? { observationId: persistedReviewState.focusedObservationId } : { index: 0 });
   const [appliedFocusKey, setAppliedFocusKey] = useState(focusRequest?.key);
-  const [scrollTarget, setScrollTarget] = useState<{ observationId: string; request: number } | null>(focusRequest ? { observationId: focusRequest.observationId, request: focusRequest.key } : null);
+  const [scrollTarget, setScrollTarget] = useState<{ observationId: string; request: number } | null>(focusRequest ? { observationId: focusRequest.observationId, request: focusRequest.key } : persistedReviewState?.focusedObservationId ? { observationId: persistedReviewState.focusedObservationId, request: 0 } : null);
   const evidenceRequestRef = useRef(0);
   // A new drill-through while mounted: clear filters that could hide the
   // requested observation, focus it and scroll it into view.
@@ -124,6 +146,9 @@ export function ReviewView({
   const requestedFocusIndex = "observationId" in queueFocus ? visible.findIndex((row) => row.id === queueFocus.observationId) : queueFocus.index;
   const clampedFocusedIndex = Math.min(Math.max(requestedFocusIndex, 0), Math.max(visible.length - 1, 0));
   const focused = visible[clampedFocusedIndex];
+  useEffect(() => {
+    writePersistedReviewState({ stateFilter, query, confidenceFilter, sortMode, focusedObservationId: focused?.id });
+  },[confidenceFilter,focused?.id,query,sortMode,stateFilter]);
   const moveFocus = (delta: number) => {
     const index = Math.min(Math.max(clampedFocusedIndex + delta, 0), Math.max(visible.length - 1, 0));
     const row = visible[index];
@@ -238,7 +263,7 @@ export function ReviewView({
     {focused && <div className="lineage-note" role="status" aria-label="Focused review item"><Icon name="table"/><div><strong>Review queue {clampedFocusedIndex + 1} of {visible.length}</strong><span>{focused.company} · {focused.metric} · {focused.confidence}% confidence</span></div></div>}
     <div className="table-card" tabIndex={0} role="region" aria-label="Data review observations table"><table className="data-table review-table"><thead><tr><th>Company</th><th>Metric</th><th>Value</th><th>Period</th><th>Change</th><th>Confidence</th><th>Source evidence</th><th>State / action</th></tr></thead><tbody>
       {visible.length === 0 && <tr><td colSpan={8} className="empty-cell">{scopedRows.length ? "No observations match the current review filters." : "No observations are available for this snapshot yet."}</td></tr>}
-      {visible.map((row, index) => <tr key={row.id} data-observation-id={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><strong>{row.company}</strong></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={`value-cell ${row.delta.startsWith("+") ? "positive" : ""}`}>{row.delta}</td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy === `source:${row.id}`} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="row-actions"><button className="secondary-button button-small" disabled={busy === row.id} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div> : <StatusPill status={row.state}/>}</td></tr>)}
+      {visible.map((row, index) => <tr key={row.id} data-observation-id={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><div className="cell-stack"><strong>{row.company}</strong>{onViewPositionFinancials && row.companyId && <button type="button" className="inline-link" onClick={() => onViewPositionFinancials(row)}><Icon name="database" size={14}/>View position financials</button>}</div></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={`value-cell ${row.delta.startsWith("+") ? "positive" : ""}`}>{row.delta}</td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy === `source:${row.id}`} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="row-actions"><button className="secondary-button button-small" disabled={busy === row.id} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div> : <StatusPill status={row.state}/>}</td></tr>)}
     </tbody></table></div>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Every published value must be traceable.</strong><span>Snapshot → consolidated fact → reviewed observation → source reference → original document. Exception resolutions are versioned and attributable.</span></div></div>
 

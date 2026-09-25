@@ -19,6 +19,9 @@ type EvidenceState = { sourceReferenceId: string; evidence: SourceEvidence };
 type PeriodColumn = { key: string; label: string; end: string };
 type LineGroup = { key: string; label: string; metricCode: string | null; role: string; depth: number; order: number; rows: PositionFinancialStatementRow[] };
 
+/** A drill-through request (e.g. from Data review) to focus one position; a new key re-applies it. */
+export type PositionFinancialsFocusRequest = { companyId: string; fundId?: string; holdingId?: string; key: number };
+
 function periodKey(row: PositionFinancialStatementRow): string {
   if (row.periodType === "quarter" && row.fiscalYear && row.fiscalQuarter) return `${row.fiscalYear}-Q${row.fiscalQuarter}`;
   if (row.periodType === "annual" && row.fiscalYear) return `${row.fiscalYear}-FY`;
@@ -70,11 +73,14 @@ function displayDelta(
 export function PositionFinancialsView({
   canReadSources = false,
   onOpenDocument,
+  focusRequest,
 }: {
   canReadSources?: boolean;
   onOpenDocument?: (documentId: string) => void;
+  focusRequest?: PositionFinancialsFocusRequest | null;
 }) {
   const [periodicity,setPeriodicity] = useState<StatementPeriodicity>("quarterly");
+  const [appliedFocusKey,setAppliedFocusKey] = useState(focusRequest?.key);
   const [portfolioAttributionEnabled,setPortfolioAttributionEnabled] = useState(false);
   const [portfolios,setPortfolios] = useState<Portfolio[]>([]);
   const [selectedPortfolio,setSelectedPortfolio] = useState("");
@@ -131,6 +137,27 @@ export function PositionFinancialsView({
     }
     return [...map.values()].sort((a,b) => `${a.companyId}:${a.fundId}`.localeCompare(`${b.companyId}:${b.fundId}`));
   },[rows]);
+
+  // A drill-through request may arrive before its position has loaded, so this
+  // re-checks on every render (via `positions`) until a match shows up, and only
+  // marks it applied once it actually lands so it isn't retried forever. A stale
+  // portfolio filter is cleared first, since a drill-through targets a specific
+  // company regardless of scope; that clear's own re-render retries the match
+  // once the refetch it triggers can include the company.
+  if (focusRequest && focusRequest.key !== appliedFocusKey) {
+    if (portfolioAttributionEnabled && selectedPortfolio) {
+      setSelectedPortfolio("");
+    } else {
+      const match = positions.find((position) =>
+        position.companyId === focusRequest.companyId &&
+        (!focusRequest.fundId || position.fundId === focusRequest.fundId) &&
+        (!focusRequest.holdingId || position.holdingId === focusRequest.holdingId));
+      if (match) {
+        setSelectedPosition(match.key);
+        setAppliedFocusKey(focusRequest.key);
+      }
+    }
+  }
 
   const effectiveSelectedPosition = selectedPosition && positions.some((position) => position.key === selectedPosition)
     ? selectedPosition
