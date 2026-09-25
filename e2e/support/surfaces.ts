@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 // The critical customer flows. Every accessibility, performance and resilience assertion is driven
 // from this list so a new surface cannot be added without being covered.
 export type Surface = {
-  id: "overview" | "documents" | "review" | "delivery" | "research";
+  id: "overview" | "analytics" | "documents" | "review" | "delivery" | "research";
   label: string;
   nav: RegExp | null;
   heading: RegExp;
@@ -11,6 +11,7 @@ export type Surface = {
 
 export const surfaces: Surface[] = [
   { id: "overview", label: "Overview", nav: null, heading: /reporting overview/i },
+  { id: "analytics", label: "Portfolio analytics", nav: /^portfolio analytics$/i, heading: /^position financials$/i },
   { id: "documents", label: "Documents", nav: /^documents$/i, heading: /^documents$/i },
   { id: "review", label: "Data review", nav: /^data review$/i, heading: /^data review$/i },
   { id: "delivery", label: "Data delivery", nav: /^data delivery$/i, heading: /deliver structured data/i },
