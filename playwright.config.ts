@@ -29,6 +29,16 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // Dialogs/drawers animate in over ~150-180ms (see app/globals.css
+    // `dialog-in`/`fade-in`/`drawer-in`). `toBeVisible()` passes as soon as the
+    // element has a box and isn't display:none — well before that animation
+    // finishes — so an axe scan run right after can catch every element
+    // mid-fade at ~30-40% opacity, which uniformly dilutes contrast against
+    // the page behind it and fails color-contrast checks that pass once
+    // settled. The app already collapses these animations under
+    // prefers-reduced-motion; matching that here removes the race instead of
+    // padding every dialog assertion with an arbitrary wait.
+    reducedMotion: "reduce",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
