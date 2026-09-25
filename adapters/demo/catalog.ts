@@ -7,12 +7,15 @@ export const documents: DocumentRecord[] = [
   { id: "doc-hg-genesis-q2", name: "Hg Genesis 9 — Investor Report Q2.pdf", fund: "Hg Genesis 9", period: "Q2 2026", type: "Investor report", pages: 151, size: "118.2 MB", status: "Queued", progress: 0, uploaded: "18 Sep, 07:54", quality: "Pending", observations: 0 },
 ];
 
+// fund/company/holding ids match lib/server/position-financial-statements-demo.ts's
+// DEMO_POSITIONS, so drilling through from an observation to Position Financials
+// (see features/review/review-view.tsx) lands on the matching demo position.
 export const observations: ObservationRecord[] = [
-  { id: "obs-1", company: "ABC Corp", metric: "Adjusted EBITDA", value: "$125.0m", period: "LTM Jun-26", source: "p. 18 · Portfolio Company Summary", confidence: 99, state: "Approved", delta: "+8.7%" },
-  { id: "obs-2", company: "ABC Corp", metric: "Revenue", value: "$842.0m", period: "LTM Jun-26", source: "p. 18 · Portfolio Company Summary", confidence: 99, state: "Approved", delta: "+12.1%" },
-  { id: "obs-3", company: "ABC Corp", metric: "Net debt / EBITDA", value: "4.2x", period: "Jun-26", source: "p. 19 · Capital Structure", confidence: 97, state: "Approved", delta: "+0.3x" },
-  { id: "obs-4", company: "Northstar Health", metric: "Fair value", value: "$294.5m", period: "30 Jun 2026", source: "p. 52 · Schedule of Investments", confidence: 91, state: "Needs review", delta: "+4.6%" },
-  { id: "obs-5", company: "Project Sparrow", metric: "Ownership", value: "61.4%", period: "30 Jun 2026", source: "p. 67 · Investment Summary", confidence: 83, state: "Needs review", delta: "—" },
+  { id: "obs-1", company: "ABC Corp", fund: "Advent International GPE VIII", fundId: "fund-advent-viii", companyId: "company-abc-corp", holdingId: "holding-abc-corp", metric: "Adjusted EBITDA", value: "$125.0m", period: "LTM Jun-26", source: "p. 18 · Portfolio Company Summary", confidence: 99, state: "Approved", delta: "+8.7%" },
+  { id: "obs-2", company: "ABC Corp", fund: "Advent International GPE VIII", fundId: "fund-advent-viii", companyId: "company-abc-corp", holdingId: "holding-abc-corp", metric: "Revenue", value: "$842.0m", period: "LTM Jun-26", source: "p. 18 · Portfolio Company Summary", confidence: 99, state: "Approved", delta: "+12.1%" },
+  { id: "obs-3", company: "ABC Corp", fund: "Advent International GPE VIII", fundId: "fund-advent-viii", companyId: "company-abc-corp", holdingId: "holding-abc-corp", metric: "Net debt / EBITDA", value: "4.2x", period: "Jun-26", source: "p. 19 · Capital Structure", confidence: 97, state: "Approved", delta: "+0.3x" },
+  { id: "obs-4", company: "Northstar Health", fund: "Nordic Capital Fund V", fundId: "fund-nordic-v", companyId: "company-northstar-health", holdingId: "holding-northstar-health", metric: "Fair value", value: "$294.5m", period: "30 Jun 2026", source: "p. 52 · Schedule of Investments", confidence: 91, state: "Needs review", delta: "+4.6%" },
+  { id: "obs-5", company: "Project Sparrow", fund: "EQT IX", fundId: "fund-eqt-ix", companyId: "company-project-sparrow", holdingId: "holding-project-sparrow", metric: "Ownership", value: "61.4%", period: "30 Jun 2026", source: "p. 67 · Investment Summary", confidence: 83, state: "Needs review", delta: "—" },
 ];
 
 export const fundSnapshots: FundSnapshot[] = [

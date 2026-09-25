@@ -950,6 +950,13 @@ button.snapshot-row:focus-visible {
   font-size: 12px;
   color: var(--text-muted);
 }
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
 .muted-time {
   font-size: 12px;
   color: var(--text-muted);
@@ -1556,7 +1563,8 @@ button.snapshot-row:focus-visible {
 .row-actions .text-button {
   padding: 6px 8px;
 }
-.source-link {
+.source-link,
+.inline-link {
   border: 0;
   background: transparent;
   padding: 2px 0;
@@ -1569,14 +1577,17 @@ button.snapshot-row:focus-visible {
   text-align: left;
   border-radius: 4px;
 }
-.source-link svg {
+.source-link svg,
+.inline-link svg {
   flex: none;
 }
-.source-link:hover:not(:disabled) {
+.source-link:hover:not(:disabled),
+.inline-link:hover:not(:disabled) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.source-link:disabled {
+.source-link:disabled,
+.inline-link:disabled {
   color: var(--text-muted);
   cursor: default;
 }

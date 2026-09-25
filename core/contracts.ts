@@ -22,6 +22,9 @@ export type ObservationRecord = {
   id: string;
   snapshotId?: string;
   fund?: string;
+  fundId?: string;
+  companyId?: string;
+  holdingId?: string;
   company: string;
   metric: string;
   value: string;

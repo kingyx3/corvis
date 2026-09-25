@@ -9,7 +9,7 @@ import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
 import { OverviewView } from "@/features/overview/overview-view";
-import { PositionFinancialsView } from "@/features/analytics/position-financials-view";
+import { PositionFinancialsView, type PositionFinancialsFocusRequest } from "@/features/analytics/position-financials-view";
 import { DocumentsView } from "@/features/documents/documents-view";
 import { UploadModal } from "@/features/documents/upload-modal";
 import { DocumentDrawer } from "@/features/documents/document-drawer";
@@ -47,6 +47,7 @@ export default function CorvisApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeResult, setActiveResult] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
+  const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
 
   const applyWorkspaceResults = useCallback((results: [PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]) => {
     const [capabilitiesResult, documentsResult, snapshotsResult, observationsResult] = results;
@@ -122,7 +123,12 @@ export default function CorvisApp() {
 
   // Plain navigation drops any pending drill-through focus so a later visit to
   // the review queue does not jump back to an old search result.
-  const navigate = (next: View) => { setReviewFocus(null); setView(next); };
+  const navigate = (next: View) => { setReviewFocus(null); setAnalyticsFocus(null); setView(next); };
+  const viewPositionFinancials = (row: ObservationRecord) => {
+    if (!row.companyId) return;
+    setAnalyticsFocus((current) => ({ companyId: row.companyId!, fundId: row.fundId, holdingId: row.holdingId, key: (current?.key ?? 0) + 1 }));
+    setView("analytics");
+  };
   const openSnapshot = (snapshot: FundSnapshot) => { if (!canReadObservations) return; setSelectedSnapshotId(snapshot.id); navigate("review"); };
   const openDocumentById = (documentId: string) => {
     if (!canReadDocuments) return;
@@ -178,9 +184,9 @@ export default function CorvisApp() {
       {loading && <section className="page-heading" aria-busy="true"><div><p className="eyebrow">Workspace</p><h1>Loading trusted data…</h1><p className="lede">Fetching entitled documents, snapshots and observations.</p></div></section>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
       {!loading && activeView === "overview" && <OverviewView snapshots={snapshots} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/>} 
-      {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined}/>} 
+      {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
       {!loading && activeView === "documents" && canReadDocuments && (moduleErrors.documents ? scopedUnavailable("Documents are temporarily unavailable", moduleErrors.documents) : <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc} canUpload={canUpload}/>)} 
-      {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)} 
+      {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)} 
       {!loading && activeView === "delivery" && canExport && <DeliveryView publishedSnapshots={publishedSnapshots}/>} 
       {!loading && activeView === "research" && canResearch && <ResearchView suggestions={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? researchSuggestions : []} canReadSources={canReadSources}/>} 
     </div></main>
