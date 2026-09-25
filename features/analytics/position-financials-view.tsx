@@ -49,7 +49,6 @@ export function PositionFinancialsView() {
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    setLoading(true); setError(null);
     void fetch(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000`,{ signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
         const payload = await response.json() as ApiEnvelope;
@@ -70,12 +69,10 @@ export function PositionFinancialsView() {
     return [...map.values()].sort((a,b) => `${a.companyId}:${a.fundId}`.localeCompare(`${b.companyId}:${b.fundId}`));
   },[rows]);
 
-  useEffect(() => {
-    if (selectedPosition && positions.some((position) => position.key === selectedPosition)) return;
-    setSelectedPosition(positions[0]?.key ?? "");
-  },[positions,selectedPosition]);
-
-  const selectedRows = useMemo(() => rows.filter((row) => `${row.fundId}\u001f${row.holdingId}\u001f${row.companyId}` === selectedPosition),[rows,selectedPosition]);
+  const effectiveSelectedPosition = selectedPosition && positions.some((position) => position.key === selectedPosition)
+    ? selectedPosition
+    : positions[0]?.key ?? "";
+  const selectedRows = useMemo(() => rows.filter((row) => `${row.fundId}\u001f${row.holdingId}\u001f${row.companyId}` === effectiveSelectedPosition),[rows,effectiveSelectedPosition]);
   const periods = useMemo<PeriodColumn[]>(() => {
     const map = new Map<string,PeriodColumn>();
     for (const row of selectedRows) {
@@ -103,18 +100,24 @@ export function PositionFinancialsView() {
     return [...map.values()].sort((a,b) => a.order - b.order || a.label.localeCompare(b.label));
   },[selectedRows]);
 
-  const chosen = positions.find((position) => position.key === selectedPosition);
+  const chosen = positions.find((position) => position.key === effectiveSelectedPosition);
   const valueFor = (line: LineGroup, period: PeriodColumn): PositionFinancialStatementRow | undefined => {
     const matching = line.rows.filter((row) => row.valueId != null && periodKey(row) === period.key);
     return matching.reduce<PositionFinancialStatementRow | undefined>((best,row) => best ? latest(best,row) : row,undefined);
+  };
+  const changePeriodicity = (value: StatementPeriodicity) => {
+    if (value === periodicity) return;
+    setLoading(true);
+    setError(null);
+    setPeriodicity(value);
   };
 
   return <section className={styles.page} aria-label="Position financial statements">
     <div className={styles.heading}>
       <div><p className="eyebrow">Portfolio analytics</p><h1>Position financials</h1><p className="lede">Compare every disclosed income-statement line across published reporting periods, with source presentation and governed metric mappings preserved side by side.</p></div>
       <div className={styles.controls}>
-        <label><span>Position</span><select value={selectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
-        <fieldset className={styles.segmented}><legend>Periodicity</legend>{(["quarterly","annual","reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? styles.active : ""} onClick={() => setPeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase()+value.slice(1)}</button>)}</fieldset>
+        <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
+        <fieldset className={styles.segmented}><legend>Periodicity</legend>{(["quarterly","annual","reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? styles.active : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase()+value.slice(1)}</button>)}</fieldset>
       </div>
     </div>
 
