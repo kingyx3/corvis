@@ -2799,6 +2799,17 @@ button.snapshot-row:focus-visible {
   .ask-box {
     margin-left: 0;
   }
+  .ask-box {
+    /* Without this, the composer's resting position in document flow can land
+       behind the fixed bottom tab bar before the user ever scrolls — most
+       visibly on a fresh conversation, where there isn't enough content above
+       it to push it into view. Pinning it just above the tab bar keeps the
+       send button reachable regardless of conversation length or scroll
+       position. */
+    position: sticky;
+    bottom: calc(60px + env(safe-area-inset-bottom) + 12px);
+    z-index: 5;
+  }
   .evidence-panel:not(.evidence-open) {
     display: none;
   }
