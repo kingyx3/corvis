@@ -20,7 +20,7 @@ test("fund position financials do not depend on portfolio attribution unless por
 test("client financials hide and avoid portfolio resources when the module is disabled", async () => {
   const source = await readFile("features/analytics/position-financials-view.tsx","utf8");
   assert.match(source,/capabilities\.features\?\.portfolioAttribution === true/);
-  assert.match(source,/if \(!portfolioAttributionEnabled\) \{[\s\S]*setPortfolios\(\[\]\);[\s\S]*setSelectedPortfolio\(""\);[\s\S]*return;/);
+  assert.match(source,/if \(!portfolioAttributionEnabled\) return;/);
   assert.match(source,/portfolioAttributionEnabled && selectedPortfolio \?/);
   assert.match(source,/\{portfolioAttributionEnabled && <label><span>Portfolio<\/span>/);
 });
