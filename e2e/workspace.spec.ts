@@ -3,6 +3,8 @@ import { test, expect } from "@playwright/test";
 test("customer can navigate trusted workspace surfaces", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /portfolio|overview|reporting/i }).first()).toBeVisible();
+  await page.getByRole("button", { name: /portfolio analytics/i }).first().click();
+  await expect(page.getByRole("heading", { name: /position financials/i })).toBeVisible();
   await page.getByRole("button", { name: /documents/i }).first().click();
   await expect(page.getByRole("heading", { name: /documents/i })).toBeVisible();
   await page.getByRole("button", { name: /data review/i }).first().click();
@@ -75,10 +77,14 @@ test("a read-only identity only sees the workflows its capabilities allow", asyn
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   const nav = page.getByRole("navigation", { name: /workspace sections/i });
-  await expect(nav.getByRole("button")).toHaveCount(3);
+  await expect(nav.getByRole("button")).toHaveCount(4);
+  await expect(nav.getByRole("button", { name: /portfolio analytics/i })).toHaveCount(1);
   await expect(nav.getByRole("button", { name: /data delivery/i })).toHaveCount(0);
   await expect(nav.getByRole("button", { name: /ask corvis/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /upload documents/i })).toHaveCount(0);
+
+  await nav.getByRole("button", { name: /portfolio analytics/i }).click();
+  await expect(page.getByRole("heading", { name: /position financials/i })).toBeVisible();
 
   await nav.getByRole("button", { name: /^documents$/i }).click();
   await expect(page.getByRole("heading", { name: /^documents$/i })).toBeVisible();

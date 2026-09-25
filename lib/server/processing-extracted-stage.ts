@@ -4,9 +4,9 @@ import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const EXTRACTION_CONTRACT_VERSION = "1";
-const EXTRACTION_SCHEMA_VERSION = "1.2";
+const EXTRACTION_SCHEMA_VERSION = "1.5";
 const EXTRACTION_SKILL_ID = "quarterly_fund_report_extraction";
-const EXTRACTION_SKILL_VERSION = "1.6";
+const EXTRACTION_SKILL_VERSION = "2.0";
 const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
 const METADATA_TIMEOUT_MS = 5_000;
 const PROVIDER_RESPONSE_LIMIT_BYTES = 64 * 1024;
@@ -19,6 +19,7 @@ const CANDIDATE_TYPES = new Set([
   "instrument",
   "lifecycle_event",
   "metric_observation",
+  "financial_statement_line",
   "exception",
 ]);
 const EXTRACTION_METHODS = new Set([

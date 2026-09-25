@@ -106,6 +106,52 @@ function candidateLine(candidateKey = "metric:revenue:ltm-jun-26"): string {
   });
 }
 
+function statementLine(): string {
+  return JSON.stringify({
+    candidateKey: "statement:income:custom-operating-item",
+    candidateType: "financial_statement_line",
+    payload: {
+      statement_type: "income_statement",
+      statement_key: "company-a-income-statement",
+      statement_line_key: "custom-operating-item",
+      semantic_line_key: "custom_operating_item",
+      statement_line_label: "Custom operating item",
+      statement_line_role: "line_item",
+      display_order: 14,
+      depth: 0,
+      fund_id: "fund-a",
+      holding_id: "55555555-5555-4555-8555-555555555555",
+      company_id: "company-a",
+      report_period: "2026Q2",
+      value_raw: "$12.0m",
+      value_numeric: "12000000",
+      currency: "USD",
+      unit: "currency",
+      reported_multiplier: "1",
+      value_nature: "flow",
+      period_type: "quarter",
+      period_start: "2026-04-01",
+      period_end: "2026-06-30",
+      fiscal_year: 2026,
+      fiscal_quarter: 2,
+      source_document_period_end: "2026-06-30",
+      actuality: "actual",
+    },
+    confidence: { value: 0.99, period: 0.99, entity: 0.99 },
+    provenance: { extractionPass: "primary" },
+    exceptionCodes: ["unmapped_metric"],
+    sourceReferences: [{
+      referenceKey: "page-19:custom-operating-item:q2-26",
+      pageNumber: 19,
+      tableTitle: "Income Statement",
+      rowLabel: "Custom operating item",
+      columnLabel: "Q2 2026",
+      sourceText: "$12.0m",
+      extractionMethod: "table_parser",
+    }],
+  });
+}
+
 function bundleFor(objectUri: string): ExtractionBundleDescriptor {
   return {
     objectUri,
@@ -228,13 +274,28 @@ test("candidate bundle produces deterministic evidence-backed candidate state", 
   assert.equal(candidate.candidateType, "metric_observation");
   assert.equal(candidate.confidence.value, 0.99);
   assert.equal(candidate.provenance.skillId, "quarterly_fund_report_extraction");
-  assert.equal(candidate.provenance.skillVersion, "1.6");
+  assert.equal(candidate.provenance.skillVersion, "2.0");
+  assert.equal(candidate.provenance.schemaVersion, "1.5");
   assert.equal(candidate.provenance.representationId, representationId);
   assert.equal(candidate.provenance.modelProvider, bundle.modelProvider);
   assert.equal(candidate.sourceReferences.length, 1);
   assert.equal(candidate.sourceReferences[0]?.pageNumber, 18);
   assert.equal(candidate.sourceReferences[0]?.sourceText, "$125.4m");
   assert.match(extractionCandidateSetSha256(candidates), /^[0-9a-f]{64}$/);
+});
+
+test("financial statement line candidates are accepted and retain exact statement payload plus evidence", () => {
+  const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
+  const bundle = bundleFor(identity.objectUri);
+  const [candidate] = parseExtractionCandidateBundle({
+    jsonl: `${statementLine()}\n`, extractionRunId: identity.extractionRunId, representation, bundle,
+  });
+  assert.equal(candidate?.candidateType, "financial_statement_line");
+  assert.equal(candidate?.payload.statement_line_label, "Custom operating item");
+  assert.equal(candidate?.payload.metric_code, undefined);
+  assert.equal(candidate?.sourceReferences[0]?.rowLabel, "Custom operating item");
+  assert.equal(candidate?.provenance.skillVersion, "2.0");
+  assert.equal(candidate?.provenance.schemaVersion, "1.5");
 });
 
 test("extracted stage persists candidates idempotently and redelivery reuses one logical run", async () => {
@@ -260,9 +321,9 @@ test("extracted stage persists candidates idempotently and redelivery reuses one
     artifactVersionId,
     candidateCount: 1,
     candidateSetSha256: f.repository.runs.values().next().value?.candidateSetSha256,
-    schemaVersion: "1.2",
+    schemaVersion: "1.5",
     skillId: "quarterly_fund_report_extraction",
-    skillVersion: "1.6",
+    skillVersion: "2.0",
   });
 });
 
@@ -356,8 +417,8 @@ test("HTTP extraction provider uses keyless identity and passes governed contrac
   assert.equal(new Headers(request.init.headers).get("x-corvis-idempotency-key"), base.idempotencyKey);
   const body = JSON.parse(String(request.init.body)) as Record<string, unknown>;
   assert.equal(body.skillId, "quarterly_fund_report_extraction");
-  assert.equal(body.skillVersion, "1.6");
-  assert.equal(body.schemaVersion, "1.2");
+  assert.equal(body.skillVersion, "2.0");
+  assert.equal(body.schemaVersion, "1.5");
   assert.deepEqual(body.output, { objectUri: identity.objectUri, format: "jsonl" });
 });
 
@@ -385,8 +446,8 @@ test("GCS candidate reader verifies immutable representation lineage and actual 
           "corvis-representation-generation": representation.storageGeneration,
           "corvis-representation-sha256": representation.contentSha256,
           "corvis-skill-id": "quarterly_fund_report_extraction",
-          "corvis-skill-version": "1.6",
-          "corvis-schema-version": "1.2",
+          "corvis-skill-version": "2.0",
+          "corvis-schema-version": "1.5",
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
