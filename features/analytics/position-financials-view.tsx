@@ -2,12 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PositionFinancialStatementRow, StatementPeriodicity } from "@/core/contracts";
+import { financialAsOf, financialDelta, financialTrustLabel } from "@/core/position-financial-trends";
+import type { SourceEvidence } from "@/core/workspace";
+import { Modal } from "@/components/ui/modal";
 import { workspacePort } from "@/runtime/workspace-services";
 import styles from "./position-financials.module.css";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
 type PortfolioEnvelope = { data?: Portfolio[] };
+type DeltaDisplay = "value" | "percent" | "both";
+type EvidenceState = { sourceReferenceId: string; evidence: SourceEvidence };
 
 type PeriodColumn = { key: string; label: string; end: string };
 type LineGroup = { key: string; label: string; metricCode: string | null; role: string; depth: number; order: number; rows: PositionFinancialStatementRow[] };
@@ -42,15 +47,43 @@ function latest(a: PositionFinancialStatementRow, b: PositionFinancialStatementR
   return a.reportPeriod >= b.reportPeriod ? a : b;
 }
 
-export function PositionFinancialsView() {
+function signedNumber(value: number, maximumFractionDigits = 2): string {
+  const formatted = new Intl.NumberFormat(undefined,{ maximumFractionDigits }).format(Math.abs(value));
+  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
+}
+
+function displayDelta(
+  current: PositionFinancialStatementRow | undefined,
+  previous: PositionFinancialStatementRow | undefined,
+  mode: DeltaDisplay,
+): { text: string; direction: "up" | "down" | "flat" } | null {
+  const delta = financialDelta(current, previous);
+  if (!delta) return null;
+  const absolute = `${current?.currency ? `${current.currency} ` : ""}${signedNumber(delta.absolute)}`;
+  const percent = delta.percent == null ? "n/a %" : `${signedNumber(delta.percent, 1)}%`;
+  const text = mode === "value" ? absolute : mode === "percent" ? percent : `${absolute} · ${percent}`;
+  return { text, direction: delta.direction };
+}
+
+export function PositionFinancialsView({
+  canReadSources = false,
+  onOpenDocument,
+}: {
+  canReadSources?: boolean;
+  onOpenDocument?: (documentId: string) => void;
+}) {
   const [periodicity,setPeriodicity] = useState<StatementPeriodicity>("quarterly");
   const [portfolioAttributionEnabled,setPortfolioAttributionEnabled] = useState(false);
   const [portfolios,setPortfolios] = useState<Portfolio[]>([]);
   const [selectedPortfolio,setSelectedPortfolio] = useState("");
   const [rows,setRows] = useState<PositionFinancialStatementRow[]>([]);
   const [selectedPosition,setSelectedPosition] = useState("");
+  const [deltaDisplay,setDeltaDisplay] = useState<DeltaDisplay>("both");
   const [loading,setLoading] = useState(true);
   const [error,setError] = useState<string | null>(null);
+  const [evidence,setEvidence] = useState<EvidenceState | null>(null);
+  const [evidenceBusy,setEvidenceBusy] = useState<string | null>(null);
+  const [evidenceError,setEvidenceError] = useState<string | null>(null);
 
   // Product-module composition is separate from RBAC. Failure to resolve the
   // optional capability fails closed for portfolio attribution while the base
@@ -147,6 +180,20 @@ export function PositionFinancialsView() {
     setSelectedPosition("");
     setSelectedPortfolio(portfolioId);
   };
+  const openEvidence = async (row: PositionFinancialStatementRow) => {
+    const sourceReferenceId = row.sourceReferenceIds[0];
+    if (!canReadSources || !sourceReferenceId) return;
+    setEvidenceBusy(sourceReferenceId);
+    setEvidenceError(null);
+    try {
+      const opened = await workspacePort.sourceEvidence(sourceReferenceId);
+      setEvidence({ sourceReferenceId, evidence: opened });
+    } catch (reason) {
+      setEvidenceError(reason instanceof Error ? reason.message : "Source evidence could not be opened");
+    } finally {
+      setEvidenceBusy(null);
+    }
+  };
 
   return <section className={styles.page} aria-label="Position financial statements">
     <div className={styles.heading}>
@@ -155,24 +202,57 @@ export function PositionFinancialsView() {
         {portfolioAttributionEnabled && <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>}
         <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
         <fieldset className={styles.segmented}><legend>Periodicity</legend>{(["quarterly","annual","reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? styles.active : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase()+value.slice(1)}</button>)}</fieldset>
+        <fieldset className={styles.segmented}><legend>Period-over-period change display</legend>{(["value","percent","both"] as const).map((value) => <button type="button" key={value} aria-pressed={deltaDisplay === value} className={deltaDisplay === value ? styles.active : ""} onClick={() => setDeltaDisplay(value)}>{value === "value" ? "Δ value" : value === "percent" ? "Δ %" : "Δ both"}</button>)}</fieldset>
       </div>
     </div>
 
     {portfolioAttributionEnabled && <div className={styles.ruleNote}><strong>Attribution guardrail.</strong> {chosenPortfolio ? `${chosenPortfolio.displayName} scopes which fund holdings appear; ` : "Portfolio filters scope which fund holdings appear; "}company revenue, EBITDA and other operating statement values remain the full source-reported amounts and are never multiplied by ownership stake or position size.</div>}
     <div className={styles.ruleNote}><strong>Aggregation guardrail.</strong> Annual mode prefers a reported annual disclosure. A derived annual value appears only when four explicit, compatible fiscal-quarter flow values exist; YTD, LTM, stock and cumulative values are never silently summed.</div>
+    <div className={styles.ruleNote}><strong>Trust and change.</strong> Each reported value shows its governed as-of/trust state. Period-over-period movement is computed only from adjacent numeric values in this same disclosed line; no missing period is silently imputed.</div>
 
+    {evidenceError && <div className={styles.inlineError} role="alert">{evidenceError}</div>}
     {loading && <div className={styles.state} aria-busy="true">Loading published financial statements…</div>}
     {!loading && error && <div className={styles.state} role="alert"><strong>Financial statements unavailable</strong><span>{error}</span></div>}
     {!loading && !error && !rows.length && <div className={styles.state}><strong>No published position income statements yet</strong><span>Once reviewed statement-line candidates are included in a published fund period, they will appear here without requiring a fixed chart of accounts.</span></div>}
     {!loading && !error && rows.length > 0 && chosen && <>
       <div className={styles.context}>{chosenPortfolio && <span><strong>Portfolio</strong>{chosenPortfolio.displayName}</span>}<span><strong>Company</strong>{chosen.companyId}</span><span><strong>Holding</strong>{chosen.holdingId}</span><span><strong>Fund</strong>{chosen.fundId}</span><span><strong>Periods</strong>{periods.length}</span></div>
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} role="region" aria-label="Position financials table">
         <table className={styles.table}>
-          <thead><tr><th className={styles.lineHeader}>Income statement</th>{periods.map((period) => <th key={period.key}>{period.label}</th>)}</tr></thead>
-          <tbody>{lines.map((line) => <tr key={line.key} data-role={line.role}><th scope="row" style={{ paddingLeft: `${16 + line.depth * 16}px` }}><span>{line.label}</span>{line.metricCode && <small>{line.metricCode}</small>}</th>{periods.map((period) => { const row = valueFor(line,period); return <td key={period.key} title={row?.derivationFormula ?? row?.valueRaw ?? undefined}><span>{displayValue(row)}</span>{row?.isDerived && <small>derived</small>}{row?.isRestatement && <small>restated</small>}{row?.preliminary && <small>prelim</small>}</td>; })}</tr>)}</tbody>
+          <thead><tr><th className={styles.lineHeader}>Income statement</th>{periods.map((period) => <th key={period.key}>{period.label}<small>As of {period.end}</small></th>)}</tr></thead>
+          <tbody>{lines.map((line) => <tr key={line.key} data-role={line.role}><th scope="row" style={{ paddingLeft: `${16 + line.depth * 16}px` }}><span>{line.label}</span>{line.metricCode && <small>{line.metricCode}</small>}</th>{periods.map((period,index) => {
+            const row = valueFor(line,period);
+            const previous = index > 0 ? valueFor(line,periods[index - 1]) : undefined;
+            const delta = displayDelta(row,previous,deltaDisplay);
+            const trust = financialTrustLabel(row);
+            const asOf = financialAsOf(row);
+            const sourceReferenceId = row?.sourceReferenceIds[0];
+            const evidenceLabel = row ? `Open source evidence for ${line.label}, ${period.label}` : "";
+            return <td key={period.key} title={row?.derivationFormula ?? row?.valueRaw ?? undefined}>
+              {row && sourceReferenceId && canReadSources ? <button type="button" className={styles.valueButton} aria-label={evidenceLabel} disabled={evidenceBusy === sourceReferenceId} onClick={() => void openEvidence(row)}><span>{displayValue(row)}</span></button> : <span>{displayValue(row)}</span>}
+              {delta && <small className={`${styles.delta} ${styles[`delta_${delta.direction}`]}`} aria-label={`Change from prior period: ${delta.text}`}>{delta.text}</small>}
+              {row?.valueId != null && <small className={styles.trust}>{trust}{asOf ? ` · as of ${asOf}` : ""}</small>}
+              {row?.isDerived && <small>derived</small>}{row?.isRestatement && <small>restated</small>}{row?.preliminary && <small>preliminary</small>}
+              {row?.valueId != null && !canReadSources && row.sourceReferenceIds.length > 0 && <small>Source evidence restricted by access</small>}
+            </td>;
+          })}</tr>)}</tbody>
         </table>
       </div>
       <p className={styles.footnote}>Source labels, row order, hierarchy and unmapped disclosures are intentionally retained. Canonical metric codes are supplemental semantic mappings, not a replacement for the source statement.</p>
     </>}
+
+    {evidence && <Modal label="Source evidence" onClose={() => setEvidence(null)} width="min(720px, 100%)">
+      <div className={styles.evidencePanel}>
+        <div><p className="eyebrow">Governed source evidence</p><h2>Evidence for reported value</h2></div>
+        <dl>
+          <div><dt>Document</dt><dd>{evidence.evidence.documentId}</dd></div>
+          {evidence.evidence.page != null && <div><dt>Page</dt><dd>{evidence.evidence.page}</dd></div>}
+          {evidence.evidence.sheetName && <div><dt>Sheet</dt><dd>{evidence.evidence.sheetName}</dd></div>}
+          {evidence.evidence.cellRange && <div><dt>Cells</dt><dd>{evidence.evidence.cellRange}</dd></div>}
+          <div><dt>Source reference</dt><dd>{evidence.sourceReferenceId}</dd></div>
+        </dl>
+        {evidence.evidence.excerpt && <blockquote>{evidence.evidence.excerpt}</blockquote>}
+        {onOpenDocument && <button type="button" className="primary-button" onClick={() => { const documentId = evidence.evidence.documentId; setEvidence(null); onOpenDocument(documentId); }}>Open source document</button>}
+      </div>
+    </Modal>}
   </section>;
 }
