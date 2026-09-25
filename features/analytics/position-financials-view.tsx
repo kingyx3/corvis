@@ -64,11 +64,7 @@ export function PositionFinancialsView() {
   },[]);
 
   useEffect(() => {
-    if (!portfolioAttributionEnabled) {
-      setPortfolios([]);
-      setSelectedPortfolio("");
-      return;
-    }
+    if (!portfolioAttributionEnabled) return;
     const controller = new AbortController();
     void fetch("/api/v1/portfolios?limit=100",{ signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => response.ok ? await response.json() as PortfolioEnvelope : { data: [] })
