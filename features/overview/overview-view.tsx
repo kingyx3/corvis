@@ -41,11 +41,21 @@ export function OverviewView({
   }
   const compositionItems = [...holdingsByFund.values()].map((snapshot) => ({ key: snapshot.fund, label: snapshot.fund, value: snapshot.holdings }));
   const audience = canAdmin ? "admin" : canReview ? "review" : "allocator";
-  const reviewFirst = audience !== "allocator";
+  // Per the UX architecture, each role gets fundamentally different priority
+  // content, not the same dashboard reordered: allocators see exposure first
+  // (the default order below), Review Analysts see the review queue first
+  // (reviewFirst reorders the existing metric cards), and administrators see
+  // tenant-wide platform health first (a distinct panel, not a reorder).
+  const reviewFirst = audience === "review";
   const attentionHeadline = review ? `${review} ${review === 1 ? "reporting period needs" : "reporting periods need"} attention` : "All caught up";
+  const statusComposition = [
+    { key: "published", label: "Published", value: published },
+    { key: "review", label: "In review", value: review },
+  ];
 
   return <>
-    <section className="hero-row"><div><p className="eyebrow">Current workspace</p><h1>Reporting overview · {attentionHeadline}</h1><p className="lede">{review ? `${review} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${published} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</p></div><div className="heading-actions">{canReadObservations && review > 0 && <button className="primary-button" onClick={() => onNavigate("review")}><Icon name="alert"/>Review now</button>}{canUpload && <button className={review > 0 ? "secondary-button" : "primary-button"} onClick={onUpload}><Icon name="upload" />Upload documents</button>}</div></section>
+    <section className="hero-row"><div><p className="eyebrow">{audience === "admin" ? "Platform health" : "Current workspace"}</p><h1>Reporting overview · {attentionHeadline}</h1><p className="lede">{review ? `${review} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${published} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</p></div><div className="heading-actions">{canReadObservations && review > 0 && <button className="primary-button" onClick={() => onNavigate("review")}><Icon name="alert"/>Review now</button>}{canUpload && <button className={review > 0 ? "secondary-button" : "primary-button"} onClick={onUpload}><Icon name="upload" />Upload documents</button>}</div></section>
+    {audience === "admin" && (published > 0 || review > 0) && <section className="panel"><CompositionChart eyebrow="Platform health" title="Fund periods by status" description="How every reporting period across the tenant currently breaks down between review and publication, independent of your own review queue." items={statusComposition} unitLabel="Fund periods" /></section>}
     <section className="metric-grid" aria-label={`Workspace metrics ordered for ${audience} workflow`}>
       <div className="metric-card" style={{ order: reviewFirst ? 1 : 2 }}><div className="metric-head"><span>Fund periods</span><span className="metric-icon"><Icon name="file" /></span></div><strong>{snapshots.length}</strong><p><b>{published}</b> published</p></div>
       {canReadObservations ? <button className="metric-card" style={{ order: reviewFirst ? 3 : 1 }} onClick={() => onNavigate("review")}><div className="metric-head"><span>Trusted facts</span><span className="metric-icon"><Icon name="database" /></span></div><strong>{factCount.toLocaleString()}</strong><p>Across <b>{holdingCount.toLocaleString()}</b> holdings</p></button> : <div className="metric-card" style={{ order: reviewFirst ? 3 : 1 }}><div className="metric-head"><span>Trusted facts</span><span className="metric-icon"><Icon name="database" /></span></div><strong>{factCount.toLocaleString()}</strong><p>Read-only summary</p></div>}
