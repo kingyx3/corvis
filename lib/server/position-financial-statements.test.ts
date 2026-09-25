@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { rowsForPeriodicity, type PositionFinancialStatementRow } from "./position-financial-statements.ts";
+import type { RequestIdentity } from "../../core/enterprise.ts";
+import type { PostgresSqlApi } from "./postgres.ts";
+import { PostgresPositionFinancialStatementRepository, rowsForPeriodicity, type PositionFinancialStatementRow } from "./position-financial-statements.ts";
 
 function quarter(quarter: number, value: string, overrides: Partial<PositionFinancialStatementRow> = {}): PositionFinancialStatementRow {
   const startMonth = String((quarter - 1) * 3 + 1).padStart(2,"0");
@@ -53,4 +55,42 @@ test("quarterly mode includes only explicit quarter values and statement structu
   assert.equal(rows.length,2);
   assert.equal(rows.some((row) => row.lineRole === "header"),true);
   assert.equal(rows.some((row) => row.periodType === "quarter"),true);
+});
+
+test("serving binds a reviewed statement to its exact reconciliation and current published snapshot lineage", async () => {
+  let capturedSql = "";
+  let capturedParameters: unknown[] = [];
+  const db: PostgresSqlApi = {
+    async query(sql, parameters = []) { capturedSql = sql; capturedParameters = parameters; return []; },
+    async execute() {},
+    async health() { return true; },
+  };
+  const identity: RequestIdentity = {
+    subject: "analyst@example.test",
+    tenantId: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "workspace-a",
+    roles: ["analyst"],
+    entitlements: {
+      workspaceIds: ["workspace-a"],
+      fundIds: ["fund-a"],
+      documentIds: ["22222222-2222-4222-8222-222222222222"],
+      sourceDocumentAccessAllowed: false,
+    },
+    authMethod: "oidc",
+    sessionId: "session-a",
+  };
+
+  await new PostgresPositionFinancialStatementRepository(db).list(identity,{ fundId: "fund-a", companyId: "company-a" });
+
+  assert.match(capturedSql,/from corvis_consolidated\.reconciliation_run rr/);
+  assert.match(capturedSql,/rr\.canonicalization_run_id=v\.canonicalization_run_id/);
+  assert.match(capturedSql,/rr\.document_id=v\.document_id/);
+  assert.match(capturedSql,/ps\.snapshot_id=rr\.snapshot_id/);
+  assert.match(capturedSql,/ps\.status='published'/);
+  assert.match(capturedSql,/newer\.version>ps\.version/);
+  assert.deepEqual(capturedParameters.slice(0,3),[
+    identity.tenantId,
+    JSON.stringify(["fund-a"]),
+    JSON.stringify(["22222222-2222-4222-8222-222222222222"]),
+  ]);
 });
