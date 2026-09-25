@@ -84,7 +84,8 @@ create index if not exists client_portfolio_fund_portfolio_idx
 create index if not exists client_portfolio_fund_fund_idx
   on corvis_facts.client_portfolio_fund_position (tenant_id,fund_id,portfolio_id);
 
-create or replace view corvis_serving.client_portfolios as
+create or replace view corvis_serving.client_portfolios
+with (security_invoker=true) as
 select tenant_id,workspace_id,portfolio_id,portfolio_key,display_name,base_currency,
        external_portfolio_id,status,valid_from,valid_to,created_at,updated_at
 from corvis_facts.client_portfolio
@@ -92,7 +93,8 @@ where status='active'
   and (valid_from is null or valid_from <= current_date)
   and (valid_to is null or valid_to >= current_date);
 
-create or replace view corvis_serving.client_portfolio_fund_positions as
+create or replace view corvis_serving.client_portfolio_fund_positions
+with (security_invoker=true) as
 select pf.tenant_id,p.workspace_id,pf.portfolio_fund_position_id,pf.portfolio_id,
        pf.position_key,pf.fund_id,pf.position_label,pf.external_position_id,
        pf.valid_from,pf.valid_to,pf.created_at,pf.updated_at
@@ -107,7 +109,8 @@ where (pf.valid_from is null or pf.valid_from <= current_date)
 -- are intentionally NOT collapsed: fund-specific ownership/position-size facts
 -- belong to each canonical holding and remain available through holding metrics.
 -- No operating metric is multiplied by ownership, LP interest or path weights.
-create or replace view corvis_serving.client_portfolio_holding_attribution as
+create or replace view corvis_serving.client_portfolio_holding_attribution
+with (security_invoker=true) as
 with recursive fund_path as (
   select
     pf.tenant_id,
