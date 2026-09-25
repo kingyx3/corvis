@@ -8,7 +8,7 @@
 // scan, preserving the documented scheduler contract.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { fetchIssueSnapshot } from "./github.ts";
+import { createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
 import { resolveRunMode } from "./schedule.ts";
 import { FileStateStore, GcsStateStore, type StateStore } from "./state.ts";
@@ -17,8 +17,10 @@ const { values } = parseArgs({
   options: {
     mode: { type: "string" },
     apply: { type: "boolean", default: false },
+    "apply-issues": { type: "boolean", default: false },
     evidence: { type: "string" },
     "mutation-budget": { type: "string", default: "20" },
+    "issue-mutation-budget": { type: "string", default: "5" },
     root: { type: "string", default: "." },
   },
 });
@@ -51,6 +53,14 @@ async function run() {
   const repo = repoFull?.split("/")[1];
   const issueSnapshot = owner && repo ? await fetchIssueSnapshot({ owner, repo, token }) : null;
 
+  // Issue reconciliation can only ever execute (rather than dry-run) with
+  // both an explicit --apply-issues opt-in and a real write-scoped token —
+  // the production Cloud Scheduler job today passes neither, so it stays
+  // read-only exactly as documented until that is a deliberate rollout step.
+  const issueWriter = values["apply-issues"] && token && owner && repo
+    ? createGitHubIssueWriter({ owner, repo, token })
+    : undefined;
+
   const report = await runControlLoop({
     root: values.root ?? ".",
     mode,
@@ -63,6 +73,9 @@ async function run() {
     issueSnapshotRequired: Boolean(token),
     applyMode: values.apply ? "execute" : "dry-run",
     mutationBudget: Number(values["mutation-budget"]) || 20,
+    issueApplyMode: issueWriter ? "execute" : "dry-run",
+    issueMutationBudget: Number(values["issue-mutation-budget"]) || 5,
+    issueWriter,
   });
 
   const serialized = JSON.stringify(report, null, 2);

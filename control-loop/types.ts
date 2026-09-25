@@ -1,3 +1,5 @@
+import type { ReconciliationResult } from "./issue-reconciliation.ts";
+
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Authority = "confluence" | "github";
 export type RemediationClass = "auto-fix" | "human-approval";
@@ -108,4 +110,5 @@ export interface RunReport {
   health: HealthState;
   closure: { allowed: boolean; reason: string | null };
   watermark: Watermark;
+  issueReconciliation: ReconciliationResult | null;
 }

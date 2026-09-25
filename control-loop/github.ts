@@ -1,4 +1,5 @@
 import type { IssueSnapshot, IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
+import type { IssueWriter } from "./issue-reconciliation.ts";
 
 const FINGERPRINT_LINE = /Finding fingerprint:\s*`([^`]+)`/;
 
@@ -61,4 +62,64 @@ export async function fetchIssueSnapshot(options: FetchIssuesOptions): Promise<I
     return null;
   }
   return { fetchedAt: new Date().toISOString(), issues };
+}
+
+export type GitHubIssueWriterOptions = {
+  owner: string;
+  repo: string;
+  /** A managed credential scoped to issue write on this repository only. Required — this writer mutates state. */
+  token: string;
+  fetchImpl?: typeof fetch;
+};
+
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    "content-type": "application/json",
+    "x-github-api-version": "2022-11-28",
+    "user-agent": "corvis-control-loop",
+    authorization: `Bearer ${token}`,
+  };
+}
+
+/**
+ * The write counterpart to `fetchIssueSnapshot`: creates, closes, reopens and
+ * comments on control-loop-labeled issues via the GitHub REST API. Kept as a
+ * thin, directly-testable adapter behind the `IssueWriter` port so the
+ * deterministic reconciliation logic in `issue-reconciliation.ts` never talks
+ * to the network itself.
+ */
+export function createGitHubIssueWriter(options: GitHubIssueWriterOptions): IssueWriter {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const base = `https://api.github.com/repos/${options.owner}/${options.repo}`;
+  const headers = githubHeaders(options.token);
+
+  return {
+    async create(input) {
+      const response = await fetchImpl(`${base}/issues`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: input.title, body: input.body, labels: input.labels }),
+      });
+      if (!response.ok) throw new Error(`github_issue_create_failed:${response.status}`);
+      const created = await response.json() as { number: number };
+      return { number: created.number };
+    },
+    async setState(issueNumber, state) {
+      const response = await fetchImpl(`${base}/issues/${issueNumber}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ state }),
+      });
+      if (!response.ok) throw new Error(`github_issue_set_state_failed:${response.status}`);
+    },
+    async comment(issueNumber, body) {
+      const response = await fetchImpl(`${base}/issues/${issueNumber}/comments`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ body }),
+      });
+      if (!response.ok) throw new Error(`github_issue_comment_failed:${response.status}`);
+    },
+  };
 }

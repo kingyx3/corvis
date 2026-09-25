@@ -8,6 +8,12 @@ import { scanDocumentationAuthority } from "./scanners/documentation-authority.t
 import { scanInternalLinks } from "./scanners/internal-links.ts";
 import { scanIssueHygiene, type IssueSnapshot } from "./scanners/issue-hygiene.ts";
 import { loadRepoSnapshot, selectScanScope } from "./scanners/repo-snapshot.ts";
+import {
+  applyIssueReconciliation,
+  planIssueReconciliation,
+  type IssueWriter,
+  type ReconciliationApplyMode,
+} from "./issue-reconciliation.ts";
 import type { StateStore } from "./state.ts";
 import type { Finding, RunMode, RunReport, RunStatus, ScannerStatus, Watermark } from "./types.ts";
 import { acquireLock, releaseLock } from "./lock.ts";
@@ -41,6 +47,16 @@ export type RunDependencies = {
   applyMode?: ApplyMode;
   mutationBudget?: number;
   applier?: EditApplier;
+  /**
+   * Issue reconciliation (create/reopen/close control-loop issues by
+   * fingerprint) defaults to dry-run and no writer, same as file-edit apply —
+   * safe to leave unset. Deliberately a separate mode/budget from
+   * `applyMode`/`mutationBudget`: mutating GitHub issues and mutating repo
+   * files are independent blast radii with independent rollout timing.
+   */
+  issueApplyMode?: ReconciliationApplyMode;
+  issueMutationBudget?: number;
+  issueWriter?: IssueWriter;
 };
 
 function scannerStatuses(issueHygiene: ScannerStatus): ScannerStatus[] {
@@ -112,6 +128,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       health,
       closure: { allowed: false, reason: "run_skipped_lock_contention" },
       watermark,
+      issueReconciliation: null,
     };
   }
 
@@ -125,6 +142,12 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     let filesScanned = 0;
     let scanFull = true;
     let scanReason = "full_scan";
+    // The non-hygiene findings (documentation-authority, internal-links,
+    // architecture-drift), which is exactly the "active" set issue
+    // reconciliation compares against tracked issues. Never includes the
+    // CL-ISSUE-*/CL-HEALTH-* findings hygiene/health produce, or
+    // reconciliation would try to open issues about its own bookkeeping.
+    let activeFindings: Finding[] = [];
 
     try {
       const snapshot = await loadRepoSnapshot(deps.root);
@@ -142,6 +165,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       const internalLinks = scanInternalLinks(scope.files, snapshot);
       const architectureDrift = scanArchitectureDrift(scope.files);
       const preHygiene = dedupeFindings(sortFindings([...docAuthority, ...internalLinks, ...architectureDrift]));
+      activeFindings = preHygiene;
 
       const hygiene = scanIssueHygiene({ snapshot: deps.issueSnapshot ?? null, findings: preHygiene, mode: deps.mode });
       findings = dedupeFindings(sortFindings([...preHygiene, ...hygiene.findings]));
@@ -174,6 +198,19 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
 
     const closure = closureDecision({ status, health, scanComplete: allScannersComplete, fullScan: scanFull });
 
+    // Reconciliation needs a real issue snapshot to compare against; without
+    // one (no GitHub token configured) there is nothing safe to reconcile.
+    const issueReconciliation = deps.issueSnapshot
+      ? await applyIssueReconciliation(
+        planIssueReconciliation({ findings: activeFindings, snapshot: deps.issueSnapshot, status, closureAllowed: closure.allowed }),
+        {
+          mode: deps.issueApplyMode ?? "dry-run",
+          budget: deps.issueMutationBudget ?? DEFAULT_MUTATION_BUDGET,
+          writer: deps.issueWriter,
+        },
+      )
+      : null;
+
     // Conditional stores only persist if no other run wrote the watermark since
     // this run read it (e.g. after this run's lease went stale), instead of
     // last-writer-wins.
@@ -197,6 +234,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       health,
       closure,
       watermark: nextWatermarkValue,
+      issueReconciliation,
     };
   } finally {
     await releaseLock(deps.stateStore, lockOwner);
