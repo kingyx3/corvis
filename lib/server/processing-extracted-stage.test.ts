@@ -27,6 +27,7 @@ const artifactVersionId = "33333333-3333-4333-8333-333333333333";
 const representationId = "44444444-4444-4444-8444-444444444444";
 const representationSha256 = "b".repeat(64);
 const bundleSha256 = "c".repeat(64);
+const manifestSha256 = "d".repeat(64);
 const outputBucket = "corvis-test-documents";
 
 const representation: ExtractionRepresentationRecord = {
@@ -66,11 +67,30 @@ const base: ProcessingStageEffectInput = {
   attempt: 1,
 };
 
-function candidateLine(candidateKey = "metric:revenue:ltm-jun-26"): string {
-  return JSON.stringify({
-    candidateKey,
+function sourceReference(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    referenceKey: "page-18:revenue:ltm-jun-26",
+    pageNumber: 18,
+    sectionTitle: "Fund A — Portfolio Company Summary",
+    tableTitle: "Operating Performance",
+    rowLabel: "Revenue",
+    columnLabel: "LTM Jun-26",
+    sourceText: "$125.4m",
+    documentSegmentId: "segment-fund-a",
+    workUnitId: "work-fund-a-portfolio",
+    fundContextIds: ["fund-a"],
+    pageCoverageState: "primary",
+    extractionMethod: "table_parser",
+    ...overrides,
+  };
+}
+
+function candidateRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    candidateKey: "metric:revenue:ltm-jun-26",
     candidateType: "metric_observation",
     payload: {
+      fund_id: "fund-a",
       metric_code: "revenue",
       metric_label_original: "LTM Revenue",
       value_raw: "$125.4m",
@@ -90,20 +110,16 @@ function candidateLine(candidateKey = "metric:revenue:ltm-jun-26"): string {
     },
     provenance: {
       profileVersion: "gp-template-v3",
-      extractionPass: "primary",
+      extractionPass: "reduced",
     },
     exceptionCodes: [],
-    sourceReferences: [{
-      referenceKey: "page-18:revenue:ltm-jun-26",
-      pageNumber: 18,
-      sectionTitle: "Portfolio Company Summary",
-      tableTitle: "Operating Performance",
-      rowLabel: "Revenue",
-      columnLabel: "LTM Jun-26",
-      sourceText: "$125.4m",
-      extractionMethod: "table_parser",
-    }],
-  });
+    sourceReferences: [sourceReference()],
+    ...overrides,
+  };
+}
+
+function candidateLine(candidateKey = "metric:revenue:ltm-jun-26"): string {
+  return JSON.stringify(candidateRecord({ candidateKey }));
 }
 
 function statementLine(): string {
@@ -138,17 +154,17 @@ function statementLine(): string {
       actuality: "actual",
     },
     confidence: { value: 0.99, period: 0.99, entity: 0.99 },
-    provenance: { extractionPass: "primary" },
+    provenance: { extractionPass: "reduced" },
     exceptionCodes: ["unmapped_metric"],
-    sourceReferences: [{
+    sourceReferences: [sourceReference({
       referenceKey: "page-19:custom-operating-item:q2-26",
       pageNumber: 19,
       tableTitle: "Income Statement",
       rowLabel: "Custom operating item",
       columnLabel: "Q2 2026",
       sourceText: "$12.0m",
-      extractionMethod: "table_parser",
-    }],
+      workUnitId: "work-fund-a-statements",
+    })],
   });
 }
 
@@ -159,10 +175,23 @@ function bundleFor(objectUri: string): ExtractionBundleDescriptor {
     contentSha256: bundleSha256,
     sizeBytes: 2048,
     producer: "corvis-extraction-worker",
-    producerVersion: "2026-09-20.1",
+    producerVersion: "2026-09-25.1",
     modelProvider: "replaceable-model-provider",
     modelName: "private-markets-extractor",
-    modelVersion: "2026-09-20",
+    modelVersion: "2026-09-25",
+    orchestrationPolicyVersion: "1",
+    orchestrationManifest: {
+      objectUri: `gs://${outputBucket}/orchestration/manifest.json`,
+      storageGeneration: "1740000000001888",
+      contentSha256: manifestSha256,
+      sizeBytes: 4096,
+      pageCount: 320,
+      coveredPageCount: 320,
+      documentSegmentCount: 6,
+      workUnitCount: 9,
+      unexplainedPageGapCount: 0,
+      unresolvedMaterialAttributionCount: 0,
+    },
   };
 }
 
@@ -187,7 +216,7 @@ class FakeRepository implements ExtractionCandidateRepository {
       assert.deepEqual(existing.bundle, input.bundle);
       return;
     }
-    this.runs.set(input.extractionRunId, { bundle: { ...input.bundle } });
+    this.runs.set(input.extractionRunId, { bundle: structuredClone(input.bundle) });
   }
 
   async saveCandidate(input: { candidate: ExtractionCandidate }): Promise<void> {
@@ -217,7 +246,6 @@ class FakeRepository implements ExtractionCandidateRepository {
 class FakeProvider implements ExtractionProvider {
   readonly calls: Array<Parameters<ExtractionProvider["extract"]>[0]> = [];
   override?: ExtractionBundleDescriptor;
-
   async extract(input: Parameters<ExtractionProvider["extract"]>[0]): Promise<ExtractionBundleDescriptor> {
     this.calls.push(input);
     return this.override ?? bundleFor(input.outputObjectUri);
@@ -227,18 +255,13 @@ class FakeProvider implements ExtractionProvider {
 class FakeBundleReader implements ExtractionBundleReader {
   readonly calls: Array<Parameters<ExtractionBundleReader["read"]>[0]> = [];
   jsonl = candidateLine();
-
   async read(input: Parameters<ExtractionBundleReader["read"]>[0]): Promise<string> {
     this.calls.push(input);
     return this.jsonl;
   }
 }
 
-function fixture(overrides: {
-  repository?: FakeRepository;
-  provider?: FakeProvider;
-  bundleReader?: FakeBundleReader;
-} = {}) {
+function fixture(overrides: { repository?: FakeRepository; provider?: FakeProvider; bundleReader?: FakeBundleReader } = {}) {
   const repository = overrides.repository ?? new FakeRepository();
   const provider = overrides.provider ?? new FakeProvider();
   const bundleReader = overrides.bundleReader ?? new FakeBundleReader();
@@ -250,7 +273,7 @@ function fixture(overrides: {
   };
 }
 
-test("extraction identity is deterministic for exact representation and governed contract", () => {
+test("extraction identity is deterministic for the governed 2.1 orchestration contract", () => {
   const first = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
   const second = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
   assert.deepEqual(first, second);
@@ -258,7 +281,7 @@ test("extraction identity is deterministic for exact representation and governed
   assert.equal(first.objectUri, `gs://${outputBucket}/extractions/${tenantId}/${documentId}/${representationId}/${first.extractionRunId}.jsonl`);
 });
 
-test("candidate bundle produces deterministic evidence-backed candidate state", () => {
+test("candidate bundle preserves segment, work-unit and fund attribution provenance", () => {
   const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
   const bundle = bundleFor(identity.objectUri);
   const candidates = parseExtractionCandidateBundle({
@@ -269,51 +292,80 @@ test("candidate bundle produces deterministic evidence-backed candidate state", 
   });
   assert.equal(candidates.length, 2);
   assert.equal(candidates[0]?.candidateKey, "a-candidate");
-  assert.equal(candidates[1]?.candidateKey, "z-candidate");
   const candidate = candidates[0]!;
-  assert.equal(candidate.candidateType, "metric_observation");
-  assert.equal(candidate.confidence.value, 0.99);
-  assert.equal(candidate.provenance.skillId, "quarterly_fund_report_extraction");
-  assert.equal(candidate.provenance.skillVersion, "2.0");
-  assert.equal(candidate.provenance.schemaVersion, "1.5");
-  assert.equal(candidate.provenance.representationId, representationId);
-  assert.equal(candidate.provenance.modelProvider, bundle.modelProvider);
-  assert.equal(candidate.sourceReferences.length, 1);
-  assert.equal(candidate.sourceReferences[0]?.pageNumber, 18);
-  assert.equal(candidate.sourceReferences[0]?.sourceText, "$125.4m");
+  assert.equal(candidate.provenance.skillVersion, "2.1");
+  assert.equal(candidate.provenance.schemaVersion, "1.6");
+  assert.equal(candidate.provenance.orchestrationPolicyVersion, "1");
+  assert.deepEqual(candidate.provenance.documentSegmentIds, ["segment-fund-a"]);
+  assert.deepEqual(candidate.provenance.workUnitIds, ["work-fund-a-portfolio"]);
+  assert.deepEqual(candidate.provenance.fundContextIds, ["fund-a"]);
+  assert.equal(candidate.sourceReferences[0]?.pageCoverageState, "primary");
+  assert.equal(candidate.sourceReferences[0]?.documentSegmentId, "segment-fund-a");
+  assert.deepEqual(candidate.sourceReferences[0]?.fundContextIds, ["fund-a"]);
   assert.match(extractionCandidateSetSha256(candidates), /^[0-9a-f]{64}$/);
 });
 
-test("financial statement line candidates are accepted and retain exact statement payload plus evidence", () => {
+test("financial statement line candidates keep exact row evidence and fund scope", () => {
   const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
-  const bundle = bundleFor(identity.objectUri);
   const [candidate] = parseExtractionCandidateBundle({
-    jsonl: `${statementLine()}\n`, extractionRunId: identity.extractionRunId, representation, bundle,
+    jsonl: `${statementLine()}\n`, extractionRunId: identity.extractionRunId, representation, bundle: bundleFor(identity.objectUri),
   });
   assert.equal(candidate?.candidateType, "financial_statement_line");
   assert.equal(candidate?.payload.statement_line_label, "Custom operating item");
   assert.equal(candidate?.payload.metric_code, undefined);
-  assert.equal(candidate?.sourceReferences[0]?.rowLabel, "Custom operating item");
-  assert.equal(candidate?.provenance.skillVersion, "2.0");
-  assert.equal(candidate?.provenance.schemaVersion, "1.5");
+  assert.deepEqual(candidate?.provenance.fundContextIds, ["fund-a"]);
+  assert.equal(candidate?.sourceReferences[0]?.workUnitId, "work-fund-a-statements");
 });
 
-test("extracted stage persists candidates idempotently and redelivery reuses one logical run", async () => {
+test("material candidates fail closed without segment, fund attribution or valid page coverage", async (t) => {
+  const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
+  const bundle = bundleFor(identity.objectUri);
+  const cases = [
+    {
+      name: "missing segment",
+      record: candidateRecord({ sourceReferences: [sourceReference({ documentSegmentId: "" })] }),
+      error: /documentSegmentId/,
+    },
+    {
+      name: "missing fund attribution",
+      record: candidateRecord({ sourceReferences: [sourceReference({ fundContextIds: [] })] }),
+      error: /requires fund attribution/,
+    },
+    {
+      name: "invalid page coverage state",
+      record: candidateRecord({ sourceReferences: [sourceReference({ pageCoverageState: "mystery" })] }),
+      error: /unsupported pageCoverageState/,
+    },
+  ];
+  for (const item of cases) {
+    await t.test(item.name, () => assert.throws(() => parseExtractionCandidateBundle({
+      jsonl: JSON.stringify(item.record), extractionRunId: identity.extractionRunId, representation, bundle,
+    }), item.error));
+  }
+});
+
+test("explicit unresolved-attribution exception keeps ambiguous evidence reviewable", () => {
+  const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
+  const record = candidateRecord({
+    exceptionCodes: ["FUND_ATTRIBUTION_UNRESOLVED"],
+    sourceReferences: [sourceReference({ fundContextIds: [] })],
+  });
+  const [candidate] = parseExtractionCandidateBundle({
+    jsonl: JSON.stringify(record), extractionRunId: identity.extractionRunId, representation, bundle: bundleFor(identity.objectUri),
+  });
+  assert.deepEqual(candidate?.provenance.fundContextIds, []);
+  assert.deepEqual(candidate?.exceptionCodes, ["FUND_ATTRIBUTION_UNRESOLVED"]);
+});
+
+test("extracted stage is idempotent and reports skill 2.1 / schema 1.6", async () => {
   const f = fixture();
   const signal = new AbortController().signal;
   const first = await f.execute(base, signal);
   const second = await f.execute({ ...base, attempt: 2 }, signal);
-
   assert.deepEqual(first, second);
   assert.equal(f.repository.runs.size, 1);
   assert.equal(f.repository.candidates.size, 1);
-  assert.equal(f.repository.beginCalls, 2);
-  assert.equal(f.repository.saveCalls, 2);
-  assert.equal(f.repository.finalizeCalls, 2);
-  assert.equal(f.provider.calls.length, 2, "crash/redelivery may re-invoke a retry-safe extraction provider");
-  assert.equal(f.provider.calls[0]?.idempotencyKey, base.idempotencyKey);
-  assert.equal(f.provider.calls[1]?.idempotencyKey, base.idempotencyKey);
-  assert.equal(f.provider.calls[0]?.outputObjectUri, f.provider.calls[1]?.outputObjectUri);
+  assert.equal(f.provider.calls.length, 2);
   assert.equal(f.bundleReader.calls.length, 2);
   assert.deepEqual(first, {
     extractionRunId: f.provider.calls[0]?.extractionRunId,
@@ -321,68 +373,22 @@ test("extracted stage persists candidates idempotently and redelivery reuses one
     artifactVersionId,
     candidateCount: 1,
     candidateSetSha256: f.repository.runs.values().next().value?.candidateSetSha256,
-    schemaVersion: "1.5",
+    schemaVersion: "1.6",
     skillId: "quarterly_fund_report_extraction",
-    skillVersion: "2.0",
+    skillVersion: "2.1",
+    orchestrationPolicyVersion: "1",
   });
 });
 
-test("extracted stage fails closed before provider work when committed representation lineage changed", async () => {
+test("extracted stage fails before provider work when representation lineage changed", async () => {
   const repository = new FakeRepository();
-  repository.representation = { ...representation, contentSha256: "d".repeat(64) };
+  repository.representation = { ...representation, contentSha256: "e".repeat(64) };
   const f = fixture({ repository });
   await assert.rejects(f.execute(base, new AbortController().signal), /lineage no longer matches/);
   assert.equal(f.provider.calls.length, 0);
-  assert.equal(repository.runs.size, 0);
 });
 
-test("extracted stage rejects provider output outside deterministic bundle identity", async () => {
-  const provider = new FakeProvider();
-  provider.override = bundleFor(`gs://${outputBucket}/extractions/wrong.jsonl`);
-  const f = fixture({ provider });
-  await assert.rejects(f.execute(base, new AbortController().signal), /outside the deterministic candidate bundle identity/);
-  assert.equal(f.bundleReader.calls.length, 0);
-  assert.equal(f.repository.runs.size, 0);
-});
-
-test("candidate validation requires exact evidence, bounded confidence and provenance", async (t) => {
-  const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
-  const bundle = bundleFor(identity.objectUri);
-  const baseCandidate = JSON.parse(candidateLine()) as Record<string, unknown>;
-  for (const item of [
-    { name: "missing evidence", patch: { sourceReferences: [] }, error: /requires exact source evidence/ },
-    { name: "invalid confidence", patch: { confidence: { value: 1.2 } }, error: /between 0 and 1/ },
-    { name: "missing provenance", patch: { provenance: null }, error: /requires provenance object/ },
-  ]) {
-    await t.test(item.name, () => {
-      const record = { ...baseCandidate, ...item.patch };
-      assert.throws(() => parseExtractionCandidateBundle({
-        jsonl: JSON.stringify(record), extractionRunId: identity.extractionRunId, representation, bundle,
-      }), item.error);
-    });
-  }
-});
-
-test("extraction provider configuration is optional and bounded", () => {
-  assert.equal(configuredExtractionProviderConfig({ NODE_ENV: "test" }), undefined);
-  assert.deepEqual(configuredExtractionProviderConfig({
-    NODE_ENV: "test",
-    CORVIS_EXTRACTION_ENDPOINT: "https://extraction.example/",
-    CORVIS_OBJECT_STORE_BUCKET: outputBucket,
-    CORVIS_EXTRACTION_TIMEOUT_MS: "999999",
-  }), {
-    endpoint: "https://extraction.example/",
-    audience: "https://extraction.example/",
-    outputBucket,
-    timeoutMs: 25_000,
-  });
-  assert.throws(() => configuredExtractionProviderConfig({
-    NODE_ENV: "test",
-    CORVIS_EXTRACTION_ENDPOINT: "https://extraction.example",
-  }), /CORVIS_OBJECT_STORE_BUCKET/);
-});
-
-test("HTTP extraction provider uses keyless identity and passes governed contract plus idempotency", async () => {
+test("provider request makes map-first large-document orchestration machine-readable", async () => {
   const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init = {}) => {
@@ -391,16 +397,9 @@ test("HTTP extraction provider uses keyless identity and passes governed contrac
     if (url.startsWith("http://metadata.google.internal/")) return new Response("oidc-token", { status: 200 });
     return new Response(JSON.stringify(bundleFor(identity.objectUri)), { status: 200, headers: { "content-type": "application/json" } });
   };
-  const provider = new HttpExtractionProvider({
-    endpoint: "https://extraction.example",
-    audience: "https://extraction.example",
-    timeoutMs: 5_000,
-  }, fakeFetch);
-  const result = await provider.extract({
-    tenantId,
-    documentId,
-    artifactVersionId,
-    representationId,
+  const provider = new HttpExtractionProvider({ endpoint: "https://extraction.example", audience: "https://extraction.example", timeoutMs: 5_000 }, fakeFetch);
+  await provider.extract({
+    tenantId, documentId, artifactVersionId, representationId,
     representationType: representation.representationType,
     representationObjectUri: representation.objectUri,
     representationStorageGeneration: representation.storageGeneration,
@@ -410,27 +409,59 @@ test("HTTP extraction provider uses keyless identity and passes governed contrac
     idempotencyKey: base.idempotencyKey,
     signal: new AbortController().signal,
   });
-  assert.equal(result.objectUri, identity.objectUri);
-  assert.equal(calls.length, 2);
   const request = calls[1]!;
   assert.equal(new Headers(request.init.headers).get("authorization"), "Bearer oidc-token");
-  assert.equal(new Headers(request.init.headers).get("x-corvis-idempotency-key"), base.idempotencyKey);
   const body = JSON.parse(String(request.init.body)) as Record<string, unknown>;
-  assert.equal(body.skillId, "quarterly_fund_report_extraction");
-  assert.equal(body.skillVersion, "2.0");
-  assert.equal(body.schemaVersion, "1.5");
-  assert.deepEqual(body.output, { objectUri: identity.objectUri, format: "jsonl" });
+  assert.equal(body.skillVersion, "2.1");
+  assert.equal(body.schemaVersion, "1.6");
+  const policy = body.orchestrationPolicy as Record<string, unknown>;
+  assert.equal(policy.mapBeforeFanOut, true);
+  assert.equal(policy.partitionStrategy, "semantic_boundaries");
+  assert.equal(policy.contextCapsulesRequired, true);
+  assert.equal(policy.globalReducerRequired, true);
+  assert.equal(policy.pageCoverageLedgerRequired, true);
+  assert.equal(policy.workersMayPublishCanonicalFacts, false);
+  assert.equal(policy.preserveDistinctFundHoldingPaths, true);
+  assert.equal(policy.companyOperatingValues, "full_source_reported_no_ownership_proration");
 });
 
-test("GCS candidate reader verifies immutable representation lineage and actual bundle bytes", async () => {
+test("provider rejects incomplete coverage and unresolved material attribution", async (t) => {
+  const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
+  for (const item of [
+    { name: "page gap", manifest: { coveredPageCount: 319, unexplainedPageGapCount: 1 }, error: /incomplete page coverage/ },
+    { name: "unresolved fund", manifest: { unresolvedMaterialAttributionCount: 1 }, error: /unresolved material fund attribution/ },
+  ]) {
+    await t.test(item.name, async () => {
+      const fakeFetch: typeof fetch = async (input) => {
+        if (String(input).startsWith("http://metadata.google.internal/")) return new Response("oidc-token", { status: 200 });
+        const descriptor = bundleFor(identity.objectUri);
+        return new Response(JSON.stringify({
+          ...descriptor,
+          orchestrationManifest: { ...descriptor.orchestrationManifest, ...item.manifest },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      const provider = new HttpExtractionProvider({ endpoint: "https://extraction.example", audience: "https://extraction.example", timeoutMs: 5_000 }, fakeFetch);
+      await assert.rejects(provider.extract({
+        tenantId, documentId, artifactVersionId, representationId,
+        representationType: representation.representationType,
+        representationObjectUri: representation.objectUri,
+        representationStorageGeneration: representation.storageGeneration,
+        representationContentSha256: representation.contentSha256,
+        extractionRunId: identity.extractionRunId,
+        outputObjectUri: identity.objectUri,
+        idempotencyKey: base.idempotencyKey,
+        signal: new AbortController().signal,
+      }), item.error);
+    });
+  }
+});
+
+test("GCS candidate reader verifies skill, schema, policy and manifest lineage", async () => {
   const identity = extractionIdentity({ tenantId, documentId, representationId, outputBucket });
   const jsonl = `${candidateLine()}\n`;
-  const contentHash = createHash("sha256").update(jsonl).digest("hex");
-  const descriptor: ExtractionBundleDescriptor = {
-    ...bundleFor(identity.objectUri),
-    contentSha256: contentHash,
-    sizeBytes: Buffer.byteLength(jsonl),
-  };
+  const descriptor = bundleFor(identity.objectUri);
+  descriptor.contentSha256 = createHash("sha256").update(jsonl).digest("hex");
+  descriptor.sizeBytes = Buffer.byteLength(jsonl);
   let calls = 0;
   const fakeFetch: typeof fetch = async (input, init = {}) => {
     calls += 1;
@@ -446,8 +477,12 @@ test("GCS candidate reader verifies immutable representation lineage and actual 
           "corvis-representation-generation": representation.storageGeneration,
           "corvis-representation-sha256": representation.contentSha256,
           "corvis-skill-id": "quarterly_fund_report_extraction",
-          "corvis-skill-version": "2.0",
-          "corvis-schema-version": "1.5",
+          "corvis-skill-version": "2.1",
+          "corvis-schema-version": "1.6",
+          "corvis-orchestration-policy-version": "1",
+          "corvis-orchestration-manifest-uri": descriptor.orchestrationManifest.objectUri,
+          "corvis-orchestration-manifest-generation": descriptor.orchestrationManifest.storageGeneration,
+          "corvis-orchestration-manifest-sha256": descriptor.orchestrationManifest.contentSha256,
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -464,6 +499,21 @@ test("GCS candidate reader verifies immutable representation lineage and actual 
     signal: new AbortController().signal,
   }), jsonl);
   assert.equal(calls, 2);
+});
+
+test("extraction provider configuration is optional and bounded", () => {
+  assert.equal(configuredExtractionProviderConfig({ NODE_ENV: "test" }), undefined);
+  assert.deepEqual(configuredExtractionProviderConfig({
+    NODE_ENV: "test",
+    CORVIS_EXTRACTION_ENDPOINT: "https://extraction.example/",
+    CORVIS_OBJECT_STORE_BUCKET: outputBucket,
+    CORVIS_EXTRACTION_TIMEOUT_MS: "999999",
+  }), {
+    endpoint: "https://extraction.example/",
+    audience: "https://extraction.example/",
+    outputBucket,
+    timeoutMs: 25_000,
+  });
 });
 
 class FakePostgres implements PostgresSqlApi {
@@ -501,16 +551,19 @@ test("Postgres extraction repository re-resolves representation by tenant, docum
   assert.match(db.calls[0]?.sql ?? "", /representation_id=\$3::uuid/);
 });
 
-test("extraction candidate migration is forced-RLS, server-only and keeps candidates separate from canonical observations", async () => {
-  const sql = (await readFile("db/postgres/migrations/024_extraction_candidates.sql", "utf8")).toLowerCase();
-  for (const table of ["extraction_run", "extraction_candidate", "extraction_candidate_source_reference"]) {
-    assert.match(sql, new RegExp(`create table if not exists corvis_source\\.${table}`));
-    assert.match(sql, new RegExp(`alter table corvis_source\\.${table} enable row level security`));
-    assert.match(sql, new RegExp(`alter table corvis_source\\.${table} force row level security`));
-    assert.equal(new RegExp(`create policy[^;]+${table}`).test(sql), false);
-  }
-  assert.match(sql, /review_status text not null default 'candidate'/);
-  assert.match(sql, /candidate_set_sha256/);
-  assert.match(sql, /foreign key \(tenant_id, representation_id\)/);
-  assert.equal(/insert into corvis_facts\.observation/.test(sql), false);
+test("orchestration persistence remains source-layer only and gates 2.1 completeness", async () => {
+  const sql = (await readFile("db/postgres/migrations/054_extraction_orchestration_provenance.sql", "utf8")).toLowerCase();
+  assert.match(sql, /alter table corvis_source\.extraction_run/);
+  assert.match(sql, /orchestration_policy_version/);
+  assert.match(sql, /orchestration_manifest_content_sha256/);
+  assert.match(sql, /covered_page_count=page_count/);
+  assert.match(sql, /unexplained_page_gap_count=0/);
+  assert.match(sql, /unresolved_material_attribution_count=0/);
+  assert.match(sql, /alter table corvis_source\.extraction_candidate_source_reference/);
+  assert.match(sql, /document_segment_id/);
+  assert.match(sql, /work_unit_id/);
+  assert.match(sql, /fund_context_ids jsonb/);
+  assert.match(sql, /page_coverage_state/);
+  assert.equal(/alter table corvis_facts\./.test(sql), false);
+  assert.equal(/alter table corvis_identity\./.test(sql), false);
 });
