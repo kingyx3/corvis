@@ -1,4 +1,11 @@
-import type { WorkspaceCapabilities, WorkspaceIdentity, WorkspacePort, SourceEvidence } from "@/core/workspace";
+import type {
+  DeactivateTenantAccessResult,
+  TenantAccessMember,
+  WorkspaceCapabilities,
+  WorkspaceIdentity,
+  WorkspacePort,
+  SourceEvidence,
+} from "@/core/workspace";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { WorkspaceSummary } from "@/core/workspace-summary";
 import type { CompanySectorAssignment, CompanySectorAssignmentOutcome, CompanySectorRecord } from "@/core/sector-taxonomy";
@@ -89,6 +96,11 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     workspaceSummary: () => request<WorkspaceSummary>("/api/v1/workspace-summary"),
     listCompanySectors: () => request<CompanySectorRecord[]>("/api/v1/company-sectors"),
     assignCompanySector: (command: CompanySectorAssignment) => request<CompanySectorAssignmentOutcome>("/api/v1/company-sectors", { method: "POST", body: JSON.stringify({ ...command, idempotencyKey: crypto.randomUUID() }) }),
+    listAccessMembers: () => request<TenantAccessMember[]>("/api/v1/access/members"),
+    deactivateAccessMember: (command) => request<DeactivateTenantAccessResult>("/api/v1/access/members/deactivate", {
+      method: "POST",
+      body: JSON.stringify(command),
+    }),
     listReconciliationExceptions: (snapshotId: string, snapshotVersion: number) => request<ReconciliationException[]>(
       `/api/v1/reconciliation-exceptions?snapshotId=${encodeURIComponent(snapshotId)}&snapshotVersion=${snapshotVersion}`,
     ),
