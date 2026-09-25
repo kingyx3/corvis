@@ -10,6 +10,7 @@
 .segmented button.active { background: var(--surface-strong, #f2f4f7); font-weight: 650; }
 .ruleNote { padding: 12px 14px; border: 1px solid var(--line, #e4e7ec); border-radius: 10px; background: var(--surface-subtle, #f9fafb); font-size: 13px; line-height: 1.45; }
 .ruleNote strong { margin-right: 4px; }
+.inlineError { padding: 10px 12px; border: 1px solid var(--danger-line, #fecdca); border-radius: 9px; background: var(--danger-surface, #fef3f2); color: var(--danger-text, #b42318); font-size: 13px; }
 .state { min-height: 180px; display: grid; place-content: center; gap: 6px; text-align: center; border: 1px dashed var(--line, #d0d5dd); border-radius: 12px; padding: 30px; color: var(--muted, #667085); }
 .state strong { color: inherit; }
 .context { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -24,9 +25,25 @@
 .table tbody th { white-space: normal; font-weight: 550; }
 .table tbody th span { display: block; }
 .table small { display: block; margin-top: 3px; color: var(--muted, #98a2b3); font-size: 10px; font-weight: 500; text-transform: none; }
+.valueButton { border: 0; padding: 2px 3px; margin: -2px -3px; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-variant-numeric: inherit; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.valueButton:hover { background: var(--surface-subtle, #f9fafb); }
+.valueButton:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.delta { font-weight: 650 !important; }
+.delta_up::before { content: "↑ "; }
+.delta_down::before { content: "↓ "; }
+.delta_flat::before { content: "→ "; }
+.trust { color: var(--muted, #667085) !important; }
 .table tr[data-role="subtotal"] th, .table tr[data-role="subtotal"] td,
 .table tr[data-role="total"] th, .table tr[data-role="total"] td { font-weight: 700; background: var(--surface-subtle, #fcfcfd); }
 .table tr[data-role="header"] th { font-weight: 700; color: var(--muted, #475467); }
 .table tbody tr:last-child th, .table tbody tr:last-child td { border-bottom: 0; }
 .footnote { margin: 0; color: var(--muted, #667085); font-size: 12px; line-height: 1.5; }
+.evidencePanel { display: grid; gap: 16px; }
+.evidencePanel h2 { margin: 4px 0 0; }
+.evidencePanel dl { display: grid; gap: 8px; margin: 0; }
+.evidencePanel dl div { display: grid; grid-template-columns: 130px minmax(0,1fr); gap: 12px; }
+.evidencePanel dt { color: var(--muted, #667085); font-size: 12px; }
+.evidencePanel dd { margin: 0; overflow-wrap: anywhere; }
+.evidencePanel blockquote { margin: 0; padding: 12px 14px; border-left: 3px solid var(--line, #d0d5dd); background: var(--surface-subtle, #f9fafb); white-space: pre-wrap; }
+.evidencePanel button { justify-self: start; }
 @media (max-width: 900px) { .heading { display: grid; } .controls { justify-content: flex-start; } .controls label, .controls select { width: 100%; max-width: none; } }
