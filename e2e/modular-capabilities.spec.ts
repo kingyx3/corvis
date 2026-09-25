@@ -11,8 +11,8 @@ test("fund analytics remains usable when portfolio attribution is disabled", asy
   await page.getByRole("button", { name: /portfolio analytics/i }).first().click();
   await expect(page.getByRole("heading", { name: /position financials/i })).toBeVisible();
   await expect(page.getByText(/portfolio attribution is not required/i)).toBeVisible();
-  await expect(page.getByLabel("Portfolio", { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Position", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("combobox", { name: /portfolio/i })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: /position/i })).toHaveCount(1);
   await page.waitForTimeout(100);
   expect(portfolioRequests).toHaveLength(0);
 });
