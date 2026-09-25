@@ -48,6 +48,11 @@ export type ServerConfig = {
   // Non-production compatibility only. Production internal calls use Google
   // workload OIDC instead of a shared secret.
   workerSecret?: string;
+  // Identifies the Corvis-operated internal tenant whose administrators may
+  // provision brand-new client tenants (see lib/server/tenant-provisioning.ts).
+  // Unset by default: cross-tenant tenant creation is disabled until an
+  // operator deliberately designates their internal operations tenant.
+  operationsTenantId?: string;
 };
 
 function truthy(value?: string) { return value === "1" || value === "true"; }
@@ -99,6 +104,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     exportDeliveryToken: env.CORVIS_EXPORT_DELIVERY_TOKEN,
     exportArtifactTtlSeconds,
     workerSecret: env.CORVIS_WORKER_SECRET,
+    operationsTenantId: env.CORVIS_OPERATIONS_TENANT_ID,
   };
 
   if (config.gcsChunkSizeBytes % (256 * 1024) !== 0) {

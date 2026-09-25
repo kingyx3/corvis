@@ -113,6 +113,31 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
   </section>;
 }
 
+/** Mirrors lib/server/tenant-provisioning.ts's TENANT_SLUG. */
+const TENANT_SLUG = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
+
+function TenantProvisioning({ onSuccess }: FormProps) {
+  const [tenantSlug, setTenantSlug] = useState("");
+  const [tenantDisplayName, setTenantDisplayName] = useState("");
+  const [workspaceSlug, setWorkspaceSlug] = useState("");
+  const [workspaceDisplayName, setWorkspaceDisplayName] = useState("");
+  const [reason, setReason] = useState("");
+  const body = { tenantSlug, tenantDisplayName, workspaceSlug, workspaceDisplayName, reason };
+  const valid = Boolean(
+    TENANT_SLUG.test(tenantSlug) && tenantDisplayName &&
+    TENANT_SLUG.test(workspaceSlug) && workspaceDisplayName && reason,
+  );
+  return <GovernedMutation title="Client tenant provisioning" description="Create a new client tenant and its first workspace, atomically. Available only to Corvis operations staff." endpoint="/api/v1/admin/tenants" body={body} valid={valid} onSuccess={onSuccess}>
+    <div className="form-grid">
+      <label className="form-field">Tenant slug<Text value={tenantSlug} onChange={(value) => setTenantSlug(value.toLowerCase())} placeholder="acme-capital"/><span className="field-hint">Lowercase letters, digits and hyphens.</span></label>
+      <label className="form-field">Tenant display name<Text value={tenantDisplayName} onChange={setTenantDisplayName} placeholder="Acme Capital Partners"/></label>
+      <label className="form-field">Initial workspace slug<Text value={workspaceSlug} onChange={(value) => setWorkspaceSlug(value.toLowerCase())} placeholder="primary"/></label>
+      <label className="form-field">Initial workspace display name<Text value={workspaceDisplayName} onChange={setWorkspaceDisplayName} placeholder="Primary Workspace"/></label>
+      <label className="form-field">Reason<Text value={reason} onChange={setReason}/></label>
+    </div>
+  </GovernedMutation>;
+}
+
 function IdentityLifecycle({ onSuccess }: FormProps) {
   const [operation, setOperation] = useState("sync");
   const [authMethod, setAuthMethod] = useState("oidc");
@@ -302,6 +327,7 @@ function Deletion({ onSuccess }: FormProps) {
 
 export function GovernanceForms({ onSuccess, featureFlags }: FormProps & { featureFlags: AdminFeatureFlag[] | null }) {
   return <div className="admin-grid wide">
+    <TenantProvisioning onSuccess={onSuccess}/>
     <IdentityLifecycle onSuccess={onSuccess}/>
     <Entitlement onSuccess={onSuccess}/>
     <DataRights onSuccess={onSuccess}/>
