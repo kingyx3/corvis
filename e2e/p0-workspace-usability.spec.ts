@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("overview makes attention state immediately visible", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /reporting overview · (all caught up|\d+ reporting periods? needs? attention)/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /reporting overview · (all caught up|\d+ (reporting periods?|items?) needs? attention)/i })).toBeVisible();
   await expect(page.getByRole("region", { name: /workspace metrics ordered for/i })).toBeVisible();
 
   const reviewNow = page.getByRole("button", { name: /review now/i });

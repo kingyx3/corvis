@@ -1,10 +1,11 @@
 import type { ActivityRecord, DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
+import type { PortfolioValueFact } from "../../core/workspace-summary.ts";
 
 export const documents: DocumentRecord[] = [
   { id: "doc-adv-viii-q2", name: "Advent International GPE VIII — Q2 2026.pdf", fund: "Advent International GPE VIII", period: "Q2 2026", type: "Quarterly report", pages: 124, size: "86.4 MB", status: "Published", uploaded: "18 Sep, 08:31", quality: "High", observations: 486 },
   { id: "doc-nordic-v-q2", name: "Nordic Capital Fund V — June 2026.pdf", fund: "Nordic Capital Fund V", period: "Q2 2026", type: "Quarterly report", pages: 89, size: "44.8 MB", status: "Review", uploaded: "18 Sep, 08:12", quality: "Medium", observations: 327 },
   { id: "doc-eqt-ix-soi", name: "EQT IX — Schedule of Investments.xlsx", fund: "EQT IX", period: "Q2 2026", type: "Schedule of investments", pages: 12, size: "3.2 MB", status: "Extracting", progress: 68, uploaded: "18 Sep, 07:58", quality: "Pending", observations: 0 },
-  { id: "doc-hg-genesis-q2", name: "Hg Genesis 9 — Investor Report Q2.pdf", fund: "Hg Genesis 9", period: "Q2 2026", type: "Investor report", pages: 151, size: "118.2 MB", status: "Queued", progress: 0, uploaded: "18 Sep, 07:54", quality: "Pending", observations: 0 },
+  { id: "doc-hg-genesis-q2", name: "Hg Genesis 9 — Investor Report Q2.pdf", fund: "Hg Genesis 9", period: "Q2 2026", type: "Investor report", pages: 151, size: "118.2 MB", status: "Queued", progress: 0, uploaded: "18 Sep, 07:54", quality: "Pending", observations: 0, processingState: "blocked" },
 ];
 
 // fund/company/holding ids match lib/server/position-financial-statements-demo.ts's
@@ -23,6 +24,27 @@ export const fundSnapshots: FundSnapshot[] = [
   { fund: "Nordic Capital Fund V", period: "Q2 2026", status: "Review", holdings: 22, facts: 327, changed: "43m ago" },
   { fund: "EQT IX", period: "Q1 2026", status: "Published", holdings: 41, facts: 532, changed: "12 Jun" },
   { fund: "Hg Genesis 9", period: "Q1 2026", status: "Published", holdings: 31, facts: 408, changed: "7 Jun" },
+];
+
+// Published NAV history behind the Overview value trend and exposure breakdown.
+// Only published fund periods appear (Nordic Capital Fund V's Q2 2026 period is
+// still in review, so it contributes nothing), matching the server rollup rule.
+// Snapshot ids for the current periods match customer-journey-store's seeded
+// ids (seed-snapshot-N, in fundSnapshots order); earlier periods are history.
+function navFact(snapshotId: string, fundId: string, fund: string, period: string, value: number): PortfolioValueFact {
+  return { snapshotId, fundId, fund, period, publishedAt: null, metricCode: "nav", currency: "USD", value, factCount: 1 };
+}
+export const portfolioValueFacts: PortfolioValueFact[] = [
+  navFact("history-adv-viii-q3-25", "fund-advent-viii", "Advent International GPE VIII", "Q3 2025", 1_812_000_000),
+  navFact("history-adv-viii-q4-25", "fund-advent-viii", "Advent International GPE VIII", "Q4 2025", 1_864_000_000),
+  navFact("history-adv-viii-q1-26", "fund-advent-viii", "Advent International GPE VIII", "Q1 2026", 1_903_000_000),
+  navFact("seed-snapshot-1", "fund-advent-viii", "Advent International GPE VIII", "Q2 2026", 1_958_000_000),
+  navFact("history-eqt-ix-q3-25", "fund-eqt-ix", "EQT IX", "Q3 2025", 1_214_000_000),
+  navFact("history-eqt-ix-q4-25", "fund-eqt-ix", "EQT IX", "Q4 2025", 1_236_000_000),
+  navFact("seed-snapshot-3", "fund-eqt-ix", "EQT IX", "Q1 2026", 1_271_000_000),
+  navFact("history-hg-genesis-9-q3-25", "fund-hg-genesis-9", "Hg Genesis 9", "Q3 2025", 684_000_000),
+  navFact("history-hg-genesis-9-q4-25", "fund-hg-genesis-9", "Hg Genesis 9", "Q4 2025", 702_000_000),
+  navFact("seed-snapshot-4", "fund-hg-genesis-9", "Hg Genesis 9", "Q1 2026", 719_000_000),
 ];
 
 export const recentActivity: ActivityRecord[] = [

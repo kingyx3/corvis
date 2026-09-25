@@ -95,6 +95,41 @@ export class PostgresWorkspaceRepository {
         and s.fund_id in (select jsonb_array_elements_text($2::jsonb))${where}
       ${tail}`, parameters);
   }
+
+  /**
+   * Portfolio-value rollup for the Overview (issue #175 A3/A4): for each
+   * snapshot whose *current* version is published, the summed nav/fair_value
+   * consolidated facts per metric and currency. Draft, blocked, withdrawn and
+   * superseded versions never contribute, and a conflicting-alternative fact
+   * (two different values at one semantic grain) is left out rather than
+   * double-counted.
+   */
+  portfolioValueFacts(identity: RequestIdentity): Promise<PostgresRow[]> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    if (fundIds.length === 0) return Promise.resolve([]);
+    return this.db.query(`with current_snapshot as (
+        select distinct on (s.snapshot_id)
+               s.tenant_id, s.snapshot_id, s.version, s.fund_id, s.report_period, s.status, s.fact_ids, s.published_at
+        from corvis_consolidated.fund_period_snapshot s
+        where s.tenant_id=$1::uuid
+          and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        order by s.snapshot_id, s.version desc
+      )
+      select cs.snapshot_id, cs.fund_id, coalesce(fund.canonical_name, cs.fund_id) as fund_name,
+             cs.report_period, cs.published_at, f.metric_code, f.value->>'currency' as currency,
+             sum((f.value->>'number')::numeric) as total_value, count(*)::integer as fact_count
+      from current_snapshot cs
+      cross join lateral unnest(cs.fact_ids) as published(fact_id)
+      join corvis_consolidated.consolidated_fact f
+        on f.tenant_id=cs.tenant_id and f.consolidated_fact_id=published.fact_id and f.fund_id=cs.fund_id
+      left join corvis_identity.fund fund on fund.global_fund_id=cs.fund_id
+      where cs.status='published'
+        and f.metric_code in ('nav','fair_value')
+        and jsonb_typeof(f.value->'number')='number'
+        and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
+      group by cs.snapshot_id, cs.fund_id, fund.canonical_name, cs.report_period, cs.published_at, f.metric_code, f.value->>'currency'
+      order by cs.fund_id, cs.report_period, cs.snapshot_id`, [identity.tenantId, jsonIds(fundIds)]);
+  }
 }
 
 export class PostgresReviewPublicationRepository {

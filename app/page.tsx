@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactK
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
 import type { Permission } from "@/core/enterprise";
 import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
+import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -38,6 +39,9 @@ export default function CorvisApp() {
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
   const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | null>(null);
+  // The Overview rollup degrades independently: without it Overview falls
+  // back to the snapshot-derived metrics instead of blocking the workspace.
+  const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [moduleErrors, setModuleErrors] = useState<ModuleErrors>({});
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -85,15 +89,19 @@ export default function CorvisApp() {
   // Background refresh after a mutation (publish, approval, upload, retry):
   // keep the current view mounted so its confirmations, filters and queue
   // position survive. Only the first load shows the full-page loading state.
+  const loadSummary = useCallback(() => workspacePort.workspaceSummary().catch(() => null), []);
   const refreshWorkspace = useCallback(async () => {
-    applyWorkspaceResults(await loadWorkspace());
-  }, [applyWorkspaceResults, loadWorkspace]);
+    const [results, nextSummary] = await Promise.all([loadWorkspace(), loadSummary()]);
+    applyWorkspaceResults(results);
+    setSummary(nextSummary);
+  }, [applyWorkspaceResults, loadSummary, loadWorkspace]);
 
   useEffect(() => {
     let active = true;
     void loadWorkspace().then((results) => { if (active) applyWorkspaceResults(results); });
+    void loadSummary().then((nextSummary) => { if (active) setSummary(nextSummary); });
     return () => { active = false; };
-  }, [applyWorkspaceResults, loadWorkspace]);
+  }, [applyWorkspaceResults, loadSummary, loadWorkspace]);
 
   const allowed = useCallback((permission: Permission) => capabilities?.permissions.includes(permission) === true, [capabilities]);
   const canReadDocuments = allowed("documents:read");
@@ -141,6 +149,25 @@ export default function CorvisApp() {
     setView("analytics");
   };
   const openSnapshot = (snapshot: FundSnapshot) => { if (!canReadObservations) return; setSelectedSnapshotId(snapshot.id); navigate("review"); };
+  // Drill-through from an Overview number, chart point or attention item: a
+  // snapshot id that is not in the current listing (an earlier published
+  // period) falls back to that fund's latest period in Data review.
+  const openSnapshotById = (snapshotId: string | undefined, fund?: string) => {
+    const snapshot = snapshots.find((item) => item.id && item.id === snapshotId)
+      ?? snapshots.filter((item) => item.fund === fund).sort((a, b) => comparePeriods(b.period, a.period))[0];
+    if (snapshot) openSnapshot(snapshot); else if (canReadObservations) navigate("review");
+  };
+  const openAttention = (target: AttentionTarget) => {
+    if (target.view === "documents") { openDocumentById(target.documentId); return; }
+    // The admin console is served from its own hostname (the customer runtime
+    // refuses /admin), so source-health items are informational here.
+    if (target.view === "admin") return;
+    if (!canReadObservations) return;
+    if (target.snapshotId) setSelectedSnapshotId(target.snapshotId);
+    setAnalyticsFocus(null);
+    setReviewFocus(target.observationId ? (current) => ({ observationId: target.observationId!, key: (current?.key ?? 0) + 1 }) : null);
+    setView("review");
+  };
   const openDocumentById = (documentId: string) => {
     if (!canReadDocuments) return;
     const document = docs.find((item) => item.id === documentId);
@@ -194,7 +221,7 @@ export default function CorvisApp() {
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{canSearch && <button className="global-search" aria-label="Search entitled workspace data" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search entitled workspace data</span><kbd aria-hidden="true">⌘K</kbd></button>}</div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {loading && <section className="page-heading" aria-busy="true"><div><p className="eyebrow">Workspace</p><h1>Loading trusted data…</h1><p className="lede">Fetching entitled documents, snapshots and observations.</p></div></section>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
-      {!loading && activeView === "overview" && <OverviewView snapshots={snapshots} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/>} 
+      {!loading && activeView === "overview" && <OverviewView snapshots={snapshots} summary={summary} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/>} 
       {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
       {!loading && activeView === "documents" && canReadDocuments && (moduleErrors.documents ? scopedUnavailable("Documents are temporarily unavailable", moduleErrors.documents) : <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc} canUpload={canUpload}/>)} 
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)} 

@@ -16,6 +16,10 @@ export type DocumentRecord = {
   uploaded: string;
   quality: DocumentQuality;
   observations: number;
+  /** Latest processing-job state (queued, running, blocked, failed, dead_letter, ...), when known. */
+  processingState?: string;
+  /** ISO timestamp of the latest processing-job update, when known. */
+  processingUpdatedAt?: string;
 };
 
 export type ObservationRecord = {
@@ -47,6 +51,8 @@ export type FundSnapshot = {
   facts: number;
   changed: string;
   blockingExceptions?: number;
+  /** ISO publication timestamp for a published version, when known. */
+  publishedAt?: string;
 };
 
 export type StatementPeriodicity = "reported" | "quarterly" | "annual";

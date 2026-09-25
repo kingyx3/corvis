@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "crypto";
-import { documents, fundSnapshots, observations } from "../../adapters/demo/catalog.ts";
+import { documents, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
+import type { PortfolioValueFact } from "../../core/workspace-summary.ts";
 import {
   assertRedistributionAllowed,
   type AuditEvent,
@@ -43,6 +44,8 @@ export interface PlatformPort {
   listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]>;
   listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]>;
   listReconciliationExceptions(identity: RequestIdentity, snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
+  /** Summed nav/fair_value facts of every entitled snapshot whose current version is published. */
+  portfolioValueFacts(identity: RequestIdentity): Promise<PortfolioValueFact[]>;
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
@@ -54,6 +57,12 @@ export interface PlatformPort {
 }
 
 function text(row: PostgresRow, key: string, fallback = ""): string { const value = row[key]; return value == null ? fallback : String(value); }
+/** Timestamps arrive from pg as Date objects; normalize them to ISO-8601 so clients can parse them. */
+function isoText(row: PostgresRow, key: string): string | undefined {
+  const value = row[key];
+  if (value == null || value === "") return undefined;
+  return value instanceof Date ? value.toISOString() : String(value);
+}
 function num(row: PostgresRow, key: string, fallback = 0): number { const value = Number(row[key]); return Number.isFinite(value) ? value : fallback; }
 function displaySize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -134,6 +143,7 @@ class DemoPlatform implements PlatformPort {
   async listObservations() { return observations; }
   async listSnapshots() { return fundSnapshots; }
   async listReconciliationExceptions() { return []; }
+  async portfolioValueFacts() { return portfolioValueFacts; }
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     void identity;
     return {
@@ -186,6 +196,7 @@ export class PostgresProductionPlatform implements PlatformPort {
       id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
       type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
       progress: text(row,"processing_state") === "running" ? 50 : undefined, uploaded: text(row,"created_at","—"), quality: quality(text(row,"quality","pending")), observations: num(row,"observation_count"),
+      processingState: text(row,"processing_state") || undefined, processingUpdatedAt: isoText(row,"processing_updated_at"),
     }));
   }
 
@@ -213,6 +224,7 @@ export class PostgresProductionPlatform implements PlatformPort {
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
       changed: text(row,"published_at") || text(row,"created_at"), blockingExceptions: num(row,"blocking_exception_count"),
+      publishedAt: isoText(row,"published_at"),
     }));
   }
 
@@ -248,6 +260,20 @@ export class PostgresProductionPlatform implements PlatformPort {
         createdAt: text(row,"created_at"),
         resolvedAt: text(row,"resolved_at") || undefined,
       };
+    });
+  }
+
+  async portfolioValueFacts(identity: RequestIdentity): Promise<PortfolioValueFact[]> {
+    const rows = await this.workspace.portfolioValueFacts(identity);
+    return rows.flatMap((row) => {
+      const metricCode = text(row,"metric_code");
+      const value = Number(row.total_value);
+      if ((metricCode !== "nav" && metricCode !== "fair_value") || !Number.isFinite(value)) return [];
+      return [{
+        snapshotId: text(row,"snapshot_id"), fundId: text(row,"fund_id"), fund: text(row,"fund_name",text(row,"fund_id")),
+        period: text(row,"report_period"), publishedAt: isoText(row,"published_at") ?? null, metricCode,
+        currency: text(row,"currency") || null, value, factCount: num(row,"fact_count"),
+      }];
     });
   }
 

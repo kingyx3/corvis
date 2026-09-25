@@ -1,6 +1,8 @@
 import type { Permission } from "@/core/enterprise";
 import type { WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
+import { portfolioValueFacts } from "@/adapters/demo/catalog";
+import { buildWorkspaceSummary } from "@/core/workspace-summary";
 
 // Matches the CORVIS_DEMO_MODE defaults in lib/server/request-context.ts, so
 // the client-side demo port and the server-side demo identity path agree.
@@ -64,6 +66,22 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async listSnapshots() {
       assertDemoModuleAvailable("snapshots");
       return demoCustomerJourneyStore.listSnapshots();
+    },
+    async workspaceSummary() {
+      assertDemoModuleAvailable("snapshots");
+      const snapshots = demoCustomerJourneyStore.listSnapshots();
+      // Mirror the server rule: only a snapshot whose current state is
+      // published contributes value; history rows have no live snapshot.
+      const unpublished = new Set(snapshots.filter((snapshot) => snapshot.status !== "Published").map((snapshot) => snapshot.id));
+      const role = demoRole();
+      return buildWorkspaceSummary({
+        snapshots,
+        observations: demoCustomerJourneyStore.listObservations(),
+        documents: demoCustomerJourneyStore.listDocuments(),
+        valueFacts: portfolioValueFacts.filter((fact) => !unpublished.has(fact.snapshotId)),
+        sources: role === "admin" ? [{ sourceConnectionId: "demo-source-sharepoint", connectionLabel: "GP data room (SharePoint)", status: "reauthorization_required", consecutiveFailures: 3, lastErrorClass: "auth_expired", lastSuccessAt: "2026-09-18" }] : undefined,
+        now: new Date(),
+      });
     },
     async listReconciliationExceptions() {
       return [];
