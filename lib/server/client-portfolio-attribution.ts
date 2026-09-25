@@ -76,7 +76,7 @@ export class PostgresClientPortfolioAttributionRepository {
     const fundIds = identity.entitlements.fundIds ?? [];
     if (fundIds.length === 0) return [];
     const parameters: PostgresPrimitive[] = [identity.tenantId,identity.workspaceId,jsonParameter(fundIds)];
-    const keyset = page ? sqlKeyset("p.portfolio_id::text",page,parameters) : { where: "", tail: "order by p.display_name,p.portfolio_id" };
+    const keyset = page ? sqlKeyset("p.portfolio_id::text",page,parameters) : { where: "", tail: "order by p.portfolio_id" };
     const rows = await this.db.query(`
       with allowed_fund as (
         select value as fund_id from jsonb_array_elements_text($3::jsonb)
@@ -120,7 +120,7 @@ export class PostgresClientPortfolioAttributionRepository {
       parameters.push(query.companyId);
       predicates.push(`a.target_type='company' and a.target_company_id=$${parameters.length}`);
     }
-    const keyset = page ? sqlKeyset("a.attribution_key",page,parameters) : { where: "", tail: "order by a.portfolio_id,a.root_fund_id,a.lookthrough_depth,a.holding_id,a.attribution_key" };
+    const keyset = page ? sqlKeyset("a.attribution_key",page,parameters) : { where: "", tail: "order by a.attribution_key" };
     const rows = await this.db.query(`
       select a.attribution_key,a.portfolio_id,a.portfolio_fund_position_id,a.root_fund_id,
              a.owning_fund_id,a.holding_id,a.target_type,a.target_company_id,a.target_fund_id,
