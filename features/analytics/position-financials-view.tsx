@@ -136,7 +136,7 @@ export function PositionFinancialsView() {
 
   return <section className={styles.page} aria-label="Position financial statements">
     <div className={styles.heading}>
-      <div><p className="eyebrow">Portfolio analytics</p><h1>Position financials</h1><p className="lede">Select a client portfolio, then compare each attributed fund position's complete source-reported income statement across published reporting periods.</p></div>
+      <div><p className="eyebrow">Portfolio analytics</p><h1>Position financials</h1><p className="lede">Select a client portfolio, then compare the complete source-reported income statement for each attributed fund position across published reporting periods.</p></div>
       <div className={styles.controls}>
         <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>
         <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
