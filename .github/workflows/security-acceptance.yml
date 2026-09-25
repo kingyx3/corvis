@@ -148,7 +148,7 @@ jobs:
         run: node .github/scripts/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: edge-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: security-acceptance-evidence.json
@@ -216,7 +216,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized Postgres RLS evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgres-rls-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: postgres-rls-security-acceptance-evidence.json
@@ -322,7 +322,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized control-loop evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: control-loop-runtime-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: control-loop-runtime-acceptance-evidence.json
