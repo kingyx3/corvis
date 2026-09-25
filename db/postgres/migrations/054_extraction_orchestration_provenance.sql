@@ -65,16 +65,27 @@ alter table corvis_source.extraction_run
         and schema_version='1.6'
       )
       or (
-        orchestration_policy_version='1'
+        orchestration_policy_version is not null
+        and orchestration_policy_version='1'
+        and orchestration_manifest_object_uri is not null
         and orchestration_manifest_object_uri like 'gs://%'
+        and orchestration_manifest_storage_generation is not null
         and nullif(btrim(orchestration_manifest_storage_generation),'') is not null
+        and orchestration_manifest_content_sha256 is not null
         and orchestration_manifest_content_sha256 ~ '^[0-9a-f]{64}$'
+        and orchestration_manifest_size_bytes is not null
         and orchestration_manifest_size_bytes >= 0
-        and page_count is not null and page_count >= 0
+        and page_count is not null
+        and page_count >= 0
+        and covered_page_count is not null
         and covered_page_count=page_count
+        and document_segment_count is not null
         and document_segment_count > 0
+        and work_unit_count is not null
         and work_unit_count >= 0
+        and unexplained_page_gap_count is not null
         and unexplained_page_gap_count=0
+        and unresolved_material_attribution_count is not null
         and unresolved_material_attribution_count=0
       )
     );
