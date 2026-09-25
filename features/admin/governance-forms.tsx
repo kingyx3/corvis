@@ -18,6 +18,14 @@ export type AdminFeatureFlag = {
   description?: string;
 };
 const lifecycleRoles = ["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"] as const;
+type LifecycleRole = (typeof lifecycleRoles)[number];
+const lifecycleRoleLabels: Record<LifecycleRole, string> = {
+  tenant_admin: "Organization Admin",
+  accountadmin: "Workspace Admin",
+  reviewer: "Review Analyst",
+  analyst: "Analyst",
+  viewer: "Viewer",
+};
 
 function hoursFromNow(hours: number) { return new Date(Date.now() + Math.max(1, hours) * 3_600_000).toISOString(); }
 function list(value: string) { return value.split(",").map((item) => item.trim()).filter(Boolean); }
@@ -116,14 +124,14 @@ function IdentityLifecycle({ onSuccess }: FormProps) {
   const [reason, setReason] = useState("");
   const body = { operation, authMethod, subject, userId, eventKey, memberships: operation === "disable" ? [] : [{ workspaceId, roleName }], reason };
   const valid = Boolean(subject && userId && eventKey && reason && (operation === "disable" || workspaceId));
-  return <GovernedMutation title="Identity lifecycle" description="Sync, disable or explicitly reactivate a human identity using the persisted lifecycle-role vocabulary." endpoint="/api/v1/admin/identity-lifecycle" body={body} valid={valid} onSuccess={onSuccess} destructive={operation === "disable"}>
+  return <GovernedMutation title="Identity lifecycle" description="Sync, disable or explicitly reactivate a human identity. Role labels are presentation-safe; the submitted command retains the stable lifecycle-role identifier." endpoint="/api/v1/admin/identity-lifecycle" body={body} valid={valid} onSuccess={onSuccess} destructive={operation === "disable"}>
     <div className="form-grid">
       <label className="form-field">Operation<Select value={operation} onChange={setOperation}><option value="sync">Sync</option><option value="disable">Disable</option><option value="reactivate">Reactivate</option></Select></label>
       <label className="form-field">Authentication<Select value={authMethod} onChange={setAuthMethod}><option value="oidc">OIDC</option><option value="saml">SAML</option></Select></label>
       <label className="form-field">Subject<Text value={subject} onChange={setSubject} placeholder="IdP subject"/></label>
       <label className="form-field">User ID<Text value={userId} onChange={setUserId} placeholder="UUID"/></label>
       <label className="form-field">Event key<Text value={eventKey} onChange={setEventKey} placeholder="change/event key"/></label>
-      {operation !== "disable" && <><label className="form-field">Workspace ID<Text value={workspaceId} onChange={setWorkspaceId} placeholder="UUID"/></label><label className="form-field">Role<Select value={roleName} onChange={setRoleName}>{lifecycleRoles.map((role) => <option key={role}>{role}</option>)}</Select></label></>}
+      {operation !== "disable" && <><label className="form-field">Workspace ID<Text value={workspaceId} onChange={setWorkspaceId} placeholder="UUID"/></label><label className="form-field">Role<Select value={roleName} onChange={setRoleName}>{lifecycleRoles.map((role) => <option key={role} value={role}>{lifecycleRoleLabels[role]}</option>)}</Select></label></>}
       <label className="form-field">Reason<Text value={reason} onChange={setReason}/></label>
     </div>
   </GovernedMutation>;
@@ -191,7 +199,7 @@ function SupportAccess({ onSuccess }: FormProps) {
   // default) and validUntil is computed from the chosen duration at preview.
   const body = () => operation === "revoke" ? { operation, supportGrantId: grantId, reason } : { operation, authMethod, subject, userId, workspaceId, roleName, purpose, approvalReference, validUntil: hoursFromNow(hours), reason };
   const valid = operation === "revoke" ? Boolean(grantId && reason) : Boolean(subject && userId && workspaceId && purpose && approvalReference && reason && hours > 0);
-  return <GovernedMutation title="Temporary support access" description="Grant a time-bounded existing lifecycle role with approval evidence, or revoke an active grant." endpoint="/api/v1/admin/support-access" body={body} valid={valid} onSuccess={onSuccess} destructive={operation === "revoke"}>
+  return <GovernedMutation title="Temporary support access" description="Grant a time-bounded existing lifecycle role with approval evidence, or revoke an active grant. Human-facing labels are translated to stable role identifiers in the command." endpoint="/api/v1/admin/support-access" body={body} valid={valid} onSuccess={onSuccess} destructive={operation === "revoke"}>
     <div className="form-grid">
       <label className="form-field">Operation<Select value={operation} onChange={setOperation}><option value="grant">Grant</option><option value="revoke">Revoke</option></Select></label>
       {operation === "revoke" ? <label className="form-field">Support grant ID<Text value={grantId} onChange={setGrantId}/></label> : <>
@@ -199,7 +207,7 @@ function SupportAccess({ onSuccess }: FormProps) {
         <label className="form-field">Subject<Text value={subject} onChange={setSubject}/></label>
         <label className="form-field">User ID<Text value={userId} onChange={setUserId}/></label>
         <label className="form-field">Workspace ID<Text value={workspaceId} onChange={setWorkspaceId}/></label>
-        <label className="form-field">Role<Select value={roleName} onChange={setRoleName}>{lifecycleRoles.map((role) => <option key={role}>{role}</option>)}</Select></label>
+        <label className="form-field">Role<Select value={roleName} onChange={setRoleName}>{lifecycleRoles.map((role) => <option key={role} value={role}>{lifecycleRoleLabels[role]}</option>)}</Select></label>
         <label className="form-field">Duration (hours, from when applied)<input className="input-control" type="number" min={1} max={24} value={hours} onChange={(event) => setHours(Number(event.target.value))}/></label>
         <label className="form-field">Purpose<Text value={purpose} onChange={setPurpose}/></label>
         <label className="form-field">Approval reference<Text value={approvalReference} onChange={setApprovalReference}/></label>
