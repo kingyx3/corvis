@@ -21,10 +21,21 @@ export type SourceEvidence = {
   excerpt?: string;
 };
 
+/**
+ * Product composition is orthogonal to authorization. Permissions/data rights
+ * answer what the caller may do with entitled data; feature capabilities
+ * answer which optional product modules this tenant has enabled. A capability
+ * never grants access to a fund/document/observation on its own.
+ */
+export type WorkspaceFeatures = {
+  portfolioAttribution: boolean;
+};
+
 export type WorkspaceCapabilities = {
   permissions: Permission[];
   sourceDocumentAccessAllowed: boolean;
   redistributionAllowed: boolean;
+  features: WorkspaceFeatures;
 };
 
 export interface WorkspacePort {
