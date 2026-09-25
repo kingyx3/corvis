@@ -1,5 +1,6 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/lib/server/feature-flags";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { positionFinancialStatements, type StatementPeriodicity } from "@/lib/server/position-financial-statements";
 
@@ -11,6 +12,10 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity,"observations:read");
     const url = new URL(request.url);
+    const portfolioId = url.searchParams.get("portfolioId") || undefined;
+    // Fund/holding financials are a standalone base capability. Only the
+    // optional portfolio-scoping path depends on the portfolio module.
+    if (portfolioId) await assertFeatureEnabled(identity,PORTFOLIO_ATTRIBUTION_FLAG,"customer_api");
     const requestedPeriodicity = url.searchParams.get("periodicity") ?? "reported";
     if (!PERIODICITIES.has(requestedPeriodicity as StatementPeriodicity)) {
       return json({ error: "periodicity must be reported, quarterly or annual", correlationId: id }, { status: 400 });
@@ -20,7 +25,7 @@ export async function GET(request: Request) {
       return json({ error: "limit must be an integer between 1 and 5000", correlationId: id }, { status: 400 });
     }
     const data = await positionFinancialStatements().list(identity,{
-      portfolioId: url.searchParams.get("portfolioId") || undefined,
+      portfolioId,
       fundId: url.searchParams.get("fundId") || undefined,
       holdingId: url.searchParams.get("holdingId") || undefined,
       companyId: url.searchParams.get("companyId") || undefined,
