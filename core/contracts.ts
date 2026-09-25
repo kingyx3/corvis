@@ -1,4 +1,4 @@
-export type View = "overview" | "documents" | "review" | "delivery" | "research";
+export type View = "overview" | "analytics" | "documents" | "review" | "delivery" | "research";
 
 export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
 export type DocumentQuality = "High" | "Medium" | "Pending";
@@ -44,6 +44,63 @@ export type FundSnapshot = {
   facts: number;
   changed: string;
   blockingExceptions?: number;
+};
+
+export type StatementPeriodicity = "reported" | "quarterly" | "annual";
+
+/**
+ * Long-form wire contract for one disclosed financial-statement row/value.
+ * It deliberately keeps source presentation fields alongside optional governed
+ * metric mapping so unusual or unmapped GP/company line items remain deliverable.
+ */
+export type PositionFinancialStatementRow = {
+  statementId: string;
+  documentId: string;
+  fundId: string;
+  holdingId: string;
+  companyId: string;
+  statementType: string;
+  statementKey: string;
+  sourceTitle: string | null;
+  reportPeriod: string;
+  lineId: string;
+  lineKey: string;
+  semanticLineKey: string;
+  sourceLabel: string;
+  metricCode: string | null;
+  lineRole: string;
+  parentLineKey: string | null;
+  displayOrder: number;
+  depth: number;
+  valueId: string | null;
+  valueRaw: string | null;
+  valueNumber: string | null;
+  valueString: string | null;
+  valueQualifier: string | null;
+  currency: string | null;
+  unit: string | null;
+  reportedMultiplier: string | null;
+  sourcePrecision: string | null;
+  valueNature: string | null;
+  periodType: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  asOfDate: string | null;
+  fiscalYear: number | null;
+  fiscalQuarter: number | null;
+  sourceDocumentPeriodEnd: string | null;
+  sourceColumnLabel: string | null;
+  actuality: string | null;
+  scenarioType: string | null;
+  sourceVersionStatus: string | null;
+  preliminary: boolean;
+  isRestatement: boolean;
+  isReReportedPriorPeriod: boolean;
+  isDerived: boolean;
+  derivationFormula: string | null;
+  sourceReferenceIds: string[];
+  sourcePage: number | null;
+  sourceSheet: string | null;
 };
 
 export type ActivityRecord = {
