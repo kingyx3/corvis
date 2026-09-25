@@ -8,11 +8,20 @@ function demoReadOnly(): boolean {
   return window.sessionStorage.getItem("corvis:demo:role") === "read_only";
 }
 
+// Optional product modules are independent from RBAC. Keep the portfolio
+// attribution module enabled by default in demo mode for existing journeys,
+// while allowing E2E to prove the fund-down experience works with it disabled.
+function demoPortfolioAttributionEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.sessionStorage.getItem("corvis:demo:feature:portfolio_attribution") !== "disabled";
+}
+
 export function createDemoWorkspacePort(): WorkspacePort {
   return {
     async capabilities() {
+      const features = { portfolioAttribution: demoPortfolioAttributionEnabled() };
       if (demoReadOnly()) {
-        return { permissions: ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false };
+        return { permissions: ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false, features };
       }
       return {
         permissions: [
@@ -27,6 +36,7 @@ export function createDemoWorkspacePort(): WorkspacePort {
         ],
         sourceDocumentAccessAllowed: true,
         redistributionAllowed: true,
+        features,
       };
     },
     async listDocuments() {
