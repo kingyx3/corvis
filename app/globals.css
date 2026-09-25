@@ -854,6 +854,149 @@ button.metric-card:hover {
   padding: 4px 0;
 }
 
+/* ---------- Overview: exposure, attention, freshness (#175) ---------- */
+.overview-charts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.chart-panel > .chart-empty {
+  padding: 18px 20px;
+}
+.freshness-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.freshness-note b {
+  color: var(--warning);
+}
+.attention-panel:focus-visible {
+  outline: 2px solid var(--focus, #2f6f4f);
+  outline-offset: 2px;
+}
+.attention-list,
+.exposure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attention-row,
+.exposure-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 20px;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.attention-row {
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+}
+.exposure-row {
+  grid-template-columns: minmax(0, 1fr) auto auto 40px 14px;
+}
+.attention-row.static {
+  cursor: default;
+}
+button.attention-row:hover,
+.exposure-row:hover {
+  background: var(--surface-hover);
+}
+.attention-row:focus-visible,
+.exposure-row:focus-visible {
+  outline-offset: -2px;
+}
+.exposure-row b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+.attention-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+}
+.attention-icon.severity-blocking {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.attention-icon.severity-high {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+.attention-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-body);
+  white-space: nowrap;
+}
+.status-stack {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.status-stale,
+.status-high {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+.status-stale .status-dot,
+.status-high .status-dot {
+  background: #bb8b2a;
+}
+.status-blocking {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.status-blocking .status-dot {
+  background: #c0503f;
+}
+@media (max-width: 900px) {
+  .overview-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .attention-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 12px 16px;
+  }
+  .attention-row .status-pill,
+  .attention-row .attention-action {
+    grid-column: 2;
+  }
+  .exposure-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 12px 16px;
+  }
+  .exposure-row .muted-time,
+  .exposure-row > svg {
+    display: none;
+  }
+}
+
 .sparkline {
   display: inline-flex;
   align-items: center;

@@ -11,8 +11,8 @@ function formatDefault(value: number): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
 }
 
-function StatusDot(props: DotProps & { payload?: TimeSeriesPoint }) {
-  const { cx, cy, payload } = props;
+function StatusDot(props: DotProps & { payload?: TimeSeriesPoint; onSelect?: (point: TimeSeriesPoint) => void }) {
+  const { cx, cy, payload, onSelect } = props;
   if (cx == null || cy == null || payload?.value == null) return null;
   const isPreliminary = payload.status === "preliminary";
   return (
@@ -24,6 +24,8 @@ function StatusDot(props: DotProps & { payload?: TimeSeriesPoint }) {
       stroke="var(--chart-series-1)"
       strokeWidth={isPreliminary ? 2 : 0}
       strokeDasharray={isPreliminary ? "2 1.5" : undefined}
+      style={onSelect ? { cursor: "pointer" } : undefined}
+      onClick={onSelect ? () => onSelect(payload) : undefined}
     />
   );
 }
@@ -56,6 +58,8 @@ export function TimeSeriesChart({
   data,
   valueFormatter = formatDefault,
   unit,
+  onSelectPoint,
+  selectLabel = "Open",
 }: {
   eyebrow?: string;
   title: string;
@@ -64,6 +68,9 @@ export function TimeSeriesChart({
   data: TimeSeriesPoint[];
   valueFormatter?: (value: number) => string;
   unit?: string;
+  /** Drill-through from a point (click) or its table row (keyboard) to the underlying evidence. */
+  onSelectPoint?: (point: TimeSeriesPoint) => void;
+  selectLabel?: string;
 }) {
   const hasPreliminary = data.some((point) => point.status === "preliminary");
   const plottable = data.filter((point) => point.value != null);
@@ -71,11 +78,13 @@ export function TimeSeriesChart({
     { key: "period", label: "Period" },
     { key: "value", label: unit ? `${name} (${unit})` : name, align: "end" },
     { key: "status", label: "Status" },
+    ...(onSelectPoint ? [{ key: "action", label: "Evidence" }] : []),
   ];
   const rows: ChartTableRow[] = data.map((point) => ({
     period: point.label,
     value: point.value == null ? "—" : valueFormatter(point.value),
     status: point.status ? point.status[0].toUpperCase() + point.status.slice(1) : "Final",
+    ...(onSelectPoint ? { action: <button type="button" className="text-button" onClick={() => onSelectPoint(point)} aria-label={`${selectLabel}: ${point.label}`}>{selectLabel}</button> } : {}),
   }));
 
   return (
@@ -100,7 +109,7 @@ export function TimeSeriesChart({
             <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: "var(--chart-axis)" }} tick={{ fontSize: 11 }} />
             <YAxis tickLine={false} axisLine={false} width={56} tick={{ fontSize: 11 }} tickFormatter={(value: number) => valueFormatter(value)} />
             <Tooltip content={<ChartTooltip valueFormatter={valueFormatter} />} />
-            <Line type="monotone" dataKey="value" name={name} stroke="var(--chart-series-1)" strokeWidth={2} dot={<StatusDot />} activeDot={{ r: 5 }} connectNulls />
+            <Line type="monotone" dataKey="value" name={name} stroke="var(--chart-series-1)" strokeWidth={2} dot={<StatusDot onSelect={onSelectPoint} />} activeDot={onSelectPoint ? { r: 5, cursor: "pointer", onClick: (_event: unknown, dot: unknown) => { const payload = (dot as { payload?: TimeSeriesPoint }).payload; if (payload) onSelectPoint(payload); } } : { r: 5 }} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       ) : (

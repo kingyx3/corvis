@@ -1,4 +1,5 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
+import type { WorkspaceSummary } from "@/core/workspace-summary";
 import type {
   Permission,
   ReconciliationException,
@@ -44,6 +45,8 @@ export interface WorkspacePort {
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;
+  /** Overview rollup: published value trend, exposure, unified attention and freshness. */
+  workspaceSummary(): Promise<WorkspaceSummary>;
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
   researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;

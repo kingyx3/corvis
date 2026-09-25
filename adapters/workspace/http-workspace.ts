@@ -1,5 +1,6 @@
 import type { WorkspaceCapabilities, WorkspacePort, SourceEvidence } from "@/core/workspace";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
+import type { WorkspaceSummary } from "@/core/workspace-summary";
 import type {
   ReconciliationException,
   ReconciliationResolutionCommand,
@@ -83,6 +84,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     listDocuments: () => request<DocumentRecord[]>("/api/v1/documents"),
     listObservations: () => request<ObservationRecord[]>("/api/v1/observations"),
     listSnapshots: () => request<FundSnapshot[]>("/api/v1/snapshots"),
+    workspaceSummary: () => request<WorkspaceSummary>("/api/v1/workspace-summary"),
     listReconciliationExceptions: (snapshotId: string, snapshotVersion: number) => request<ReconciliationException[]>(
       `/api/v1/reconciliation-exceptions?snapshotId=${encodeURIComponent(snapshotId)}&snapshotVersion=${snapshotVersion}`,
     ),
