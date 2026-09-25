@@ -4,6 +4,27 @@ export type Permission =
   | "observations:read" | "observations:review" | "snapshots:publish"
   | "research:query" | "exports:create" | "admin:manage";
 
+/**
+ * Canonical presentation labels for application roles.
+ *
+ * `reviewer` is retained as a stable machine identifier for backwards
+ * compatibility with persisted memberships and identity integrations. It must
+ * never be rendered to a user as "Reviewer"; the product persona is Review
+ * Analyst. Corvis-operated extraction/quality review is a separate Data
+ * Operations Reviewer function and is not represented by this tenant role.
+ */
+export const ROLE_DISPLAY_NAMES: Record<Role, string> = {
+  admin: "Administrator",
+  reviewer: "Review Analyst",
+  analyst: "Analyst",
+  api_client: "API Client",
+  read_only: "Viewer",
+};
+
+export function roleDisplayName(role: Role): string {
+  return ROLE_DISPLAY_NAMES[role];
+}
+
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   admin: ["documents:read","documents:write","sources:read","observations:read","observations:review","snapshots:publish","research:query","exports:create","admin:manage"],
   reviewer: ["documents:read","sources:read","observations:read","observations:review","research:query","exports:create"],
