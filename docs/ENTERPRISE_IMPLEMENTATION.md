@@ -2,7 +2,7 @@
 
 This document maps Confluence-owned business/enterprise requirements to executable repository components. GitHub owns the technical implementation details; Confluence owns business semantics, customer rights, control requirements and readiness decisions.
 
-See [`README.md`](README.md) for the technical-doc authority rule and [`MODULARITY.md`](MODULARITY.md) for module/failure-isolation requirements.
+See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.md`](MODULARITY.md) for module/failure-isolation requirements, and [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md) for the canonical distinction between the tenant/workspace **Review Analyst** persona and Corvis **Data Operations Reviewer** / **Resolver** functions. The persisted `reviewer` role key is a backwards-compatible machine identifier, not a human-facing label.
 
 ## Implemented runtime
 
@@ -39,14 +39,14 @@ Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 ### Review and publication
 
 - Extraction candidate review now has a dedicated forced-RLS Postgres domain: immutable policy requirements, append-only attributable decisions, and a derived exact-candidate-set review gate. Provider candidates and their evidence/confidence/provenance are not rewritten by review corrections.
-- `candidate_review_v1` requires attributable review for every candidate because governed straight-through approval has not been activated; critical governed metric candidates require two distinct reviewers and candidate exceptions require explicit resolution before canonicalization can proceed.
+- `candidate_review_v1` requires attributable review for every candidate because governed straight-through approval has not been activated; critical governed metric candidates require two distinct approvers and candidate exceptions require explicit resolution before canonicalization can proceed.
 - A correction begins a new review epoch, so earlier approvals cannot satisfy the corrected candidate. The reviewed processing stage parks in a durable `blocked` state rather than consuming operational retry/dead-letter attempts while waiting for human review.
-- Authorized candidate review commands use `POST /api/v1/extraction-review` with the existing review permission plus required idempotency key; accepted decisions are also written to the application audit trail.
+- Authorized candidate review commands use `POST /api/v1/extraction-review` with the existing review permission plus required idempotency key; accepted decisions are also written to the application audit trail. A tenant user exercising this permission is presented as a **Review Analyst**. A Corvis **Data Operations Reviewer** exercising equivalent tenant-scoped authority does so only through an explicit audited operational/support-access context; the actor provenance remains distinct even when the permission set is equivalent.
 - The database independently prevents a `reviewed → canonicalized` processing transition unless the exact finalized extraction candidate set has a ready zero-blocker review gate.
 - Existing canonical-observation review events, optimistic concurrency, correction history, critical-observation independent-review and publication-policy foundations remain downstream controls.
 - Publication gates block unresolved review/material exceptions/incomplete lineage according to current policy primitives.
 - Snapshot publication changes create durable outbox foundations.
-- Customer review UI now scopes review/publish state to the selected fund-period snapshot where snapshot-scoped observations are available. A dedicated extraction-candidate review UI remains separate product work; the governed API/persistence boundary exists now.
+- The customer workspace's **Review Analyst** UI now scopes review/publish state to the selected fund-period snapshot where snapshot-scoped observations are available. A dedicated extraction-candidate review UI remains separate product work; the governed API/persistence boundary exists now.
 - The exception/reconciliation workbench, complete four-eyes UX and provider-backed UAT workflow coverage remain in issue #6/#79.
 
 ### Customer journey and module isolation
@@ -81,7 +81,7 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 - The `extracted` production handler consumes only the exact committed representation lineage, calls a replaceable keyless extraction provider with a deterministic run/bundle identity, independently verifies the immutable GCS JSONL bundle and governed skill/schema metadata, validates evidence/confidence/provenance-backed candidates, and persists forced-RLS server-only extraction runs/candidates/source references idempotently in Postgres. The provider has no Postgres or canonical-write authority. It is composed only when `CORVIS_EXTRACTION_ENDPOINT` is supplied; otherwise the extracted stage remains fail-closed.
 - The `reviewed` production handler consumes only finalized `ready` extraction runs and exact predecessor candidate-set lineage. It records immutable policy requirements and evaluates append-only attributable review decisions. Pending human review is a durable `blocked` state, not a technical retry; a ready review gate re-queues the same deterministic reviewed-stage effect. A persistence trigger prevents the next canonicalization job until the exact candidate set has a zero-blocker ready gate.
 - Canonicalization/reconciliation/consolidation/publication handlers, operator dead-letter/replay/status completion and production-like UAT evidence remain tracked in issue #79; unimplemented stages intentionally fail closed.
-- Merging authenticated ingress, representation, extraction or review-stage code does **not** prove real Pub/Sub/Cloud Tasks IAM, representation/extraction providers, UAT GCS/Postgres bindings, reviewer operations or production-like recovery behavior. Those remain activation/evidence work.
+- Merging authenticated ingress, representation, extraction or review-stage code does **not** prove real Pub/Sub/Cloud Tasks IAM, representation/extraction providers, UAT GCS/Postgres bindings, Data Operations Reviewer operations or production-like recovery behavior. Those remain activation/evidence work.
 - `lib/server/telemetry.ts` provides structured telemetry hooks.
 - Export job/manifest/checksum and webhook-signing/replay foundations exist.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
@@ -124,4 +124,4 @@ Snowflake is specifically **not** a required application adapter at launch; any 
 
 ## Implementation is not activation
 
-Merging code does not prove an IdP, production GCS bucket, Postgres project/RLS policy, Cloudflare edge, malware scanner, representation/extraction provider, reviewer operating process, backup or operational control is operating correctly. [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) defines the live technical activation/evidence checks; Confluence retains the final business/control readiness gate.
+Merging code does not prove an IdP, production GCS bucket, Postgres project/RLS policy, Cloudflare edge, malware scanner, representation/extraction provider, Data Operations Reviewer operating process, backup or operational control is operating correctly. [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) defines the live technical activation/evidence checks; Confluence retains the final business/control readiness gate.

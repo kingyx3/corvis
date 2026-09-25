@@ -49,7 +49,7 @@ Worker session revocation uses a stable application session identifier derived f
 
 ## Lifecycle operating rule
 
-Each application service identity must have a named purpose, owner/reviewer recorded as `reviewed_by_subject`, a finite `valid_until`, and a finite `next_review_at` no later than expiry. Renewal is an explicit control-plane action; an expired grant or overdue review fails closed on the next authorization lookup.
+Each application service identity must have a named purpose, owner and **control reviewer** recorded as `reviewed_by_subject`, a finite `valid_until`, and a finite `next_review_at` no later than expiry. Here, control reviewer is a governance function and must not be confused with the tenant/workspace **Review Analyst** persona defined in [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md). Renewal is an explicit control-plane action; an expired grant or overdue review fails closed on the next authorization lookup.
 
 Disable the `identity_subject` and its `service_identity_grant` when the integration is retired, ownership changes without approved handover, or compromise is suspected. Revoke active sessions separately when immediate cut-off is required.
 

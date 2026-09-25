@@ -3,6 +3,8 @@
 Implementation tracker: GitHub issue #12. This document describes the
 executable quality gates in `e2e/` and what they do and do not prove.
 
+Human-facing role terminology follows [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md): the tenant/workspace review persona is **Review Analyst**; Corvis-operated extraction QA is **Data Operations Reviewer**.
+
 ## Accessibility
 
 `e2e/accessibility.spec.ts` runs [axe-core](https://github.com/dequelabs/axe-core)
@@ -17,7 +19,7 @@ The customer shell additionally asserts semantic landmarks, exactly one
 primary heading, keyboard-operable primary navigation, accessible names for
 focusable controls, and focus containment/restoration for modal workflows.
 The shared `components/ui/modal.tsx` uses the same focus-trap primitive as the
-upload dialog, so global search, reviewer correction/reconciliation dialogs,
+upload dialog, so global search, Review Analyst correction/reconciliation dialogs,
 and privileged admin confirmations all close on Escape, contain Tab focus and
 restore focus on close. The document-details drawer is also an accessible,
 focus-trapped modal surface.
@@ -68,7 +70,7 @@ including:
 - upload lifecycle and accessible modal behavior;
 - upload → review → publish → structured delivery;
 - persisted/recent export-history presentation;
-- structured reviewer correction instead of browser prompts;
+- structured Review Analyst correction instead of browser prompts;
 - bounded degraded-module behavior; and
 - Ask Corvis through the research adapter rather than hard-coded UI evidence.
 
