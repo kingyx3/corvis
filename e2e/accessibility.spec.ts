@@ -85,14 +85,14 @@ test("primary navigation is reachable and operable by keyboard alone", async ({ 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   const navButtons = page.getByRole("navigation", { name: /workspace sections/i }).getByRole("button");
-  await expect(navButtons).toHaveCount(5);
+  await expect(navButtons).toHaveCount(6);
   await navButtons.first().focus();
   const labels: string[] = [];
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 6; index += 1) {
     labels.push(((await page.evaluate(() => document.activeElement?.textContent ?? "")) || "").trim());
-    if (index < 4) await page.keyboard.press("Tab");
+    if (index < 5) await page.keyboard.press("Tab");
   }
-  expect(labels.map((item) => item.replace(/\d+$/, "").toLowerCase())).toEqual(["overview","documents","data review","data delivery","ask corvis"]);
+  expect(labels.map((item) => item.replace(/\d+$/, "").toLowerCase())).toEqual(["overview","portfolio analytics","documents","data review","data delivery","ask corvis"]);
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: /^ask corvis$/i })).toBeVisible();
   await expect(page.locator('nav [aria-current="page"]')).toHaveText(/ask corvis/i);
