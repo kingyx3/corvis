@@ -1,5 +1,6 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { WorkspaceSummary } from "@/core/workspace-summary";
+import type { CompanySectorAssignment, CompanySectorAssignmentOutcome, CompanySectorRecord } from "@/core/sector-taxonomy";
 import type {
   Permission,
   ReconciliationException,
@@ -55,6 +56,10 @@ export interface WorkspacePort {
   listSnapshots(): Promise<FundSnapshot[]>;
   /** Overview rollup: published value trend, exposure, unified attention and freshness. */
   workspaceSummary(): Promise<WorkspaceSummary>;
+  /** Entitled portfolio companies with their current governed sector (null when unclassified). */
+  listCompanySectors(): Promise<CompanySectorRecord[]>;
+  /** Reviewer command; expectedVersion is the record's `version` (0 when unclassified). */
+  assignCompanySector(command: CompanySectorAssignment): Promise<CompanySectorAssignmentOutcome>;
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
   researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;

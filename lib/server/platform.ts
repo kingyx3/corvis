@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
-import { documents, exposureDimensionFacts, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
+import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
+import { demoCompanySectorStore } from "../../adapters/demo/company-sector-store.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
 import type { ExposureDimension, ExposureDimensionFact, PortfolioValueFact } from "../../core/workspace-summary.ts";
 import {
@@ -146,7 +147,7 @@ class DemoPlatform implements PlatformPort {
   async listSnapshots() { return fundSnapshots; }
   async listReconciliationExceptions() { return []; }
   async portfolioValueFacts() { return portfolioValueFacts; }
-  async exposureDimensionFacts() { return exposureDimensionFacts; }
+  async exposureDimensionFacts() { return demoExposureDimensionFacts(demoCompanySectorStore().sectorByCompany()); }
   async review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome> {
     void identity;
     return {
@@ -288,7 +289,7 @@ export class PostgresProductionPlatform implements PlatformPort {
       if ((dimension !== "asset_type" && dimension !== "sector") || !Number.isFinite(value)) return [];
       return [{
         snapshotId: text(row,"snapshot_id"), fundId: text(row,"fund_id"), dimension: dimension as ExposureDimension,
-        subjectLevel: text(row,"subject_level") || null, category: text(row,"category") || null,
+        subjectLevel: text(row,"subject_level") || null, category: text(row,"category") || null, label: text(row,"label") || null,
         currency: text(row,"currency") || null, value, factCount: num(row,"fact_count"),
       }];
     });

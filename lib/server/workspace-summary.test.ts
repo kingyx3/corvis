@@ -81,6 +81,10 @@ test("the exposure-dimension rollup classifies published fair values by governed
   assert.match(sql, /from corvis_serving\.instruments i[\s\S]*i\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
   assert.match(sql, /count\(distinct i\.instrument_type\)=1 then min\(i\.instrument_type\) else '__mixed__'/);
   assert.match(sql, /lower\(pf\.breakdown_category\) in \('sector','industry'\)/);
+  // Governed sector: held company -> current classification; GP labels only through the governed aliases.
+  assert.match(sql, /left join corvis_serving\.company_sectors cs[\s\S]*cs\.company_id=case when pf\.subject_level='holding' and h\.target_type='company' then h\.target_company_id else held\.company_id end/);
+  assert.match(sql, /alias\.alias_normalized=corvis_semantic\.normalize_sector_label\(pf\.breakdown_value\)/);
+  assert.match(sql, /alias\.taxonomy_version='corvis_sector_v1'/);
   assert.match(sql, /pf\.subject_level='fund'/);
   assert.equal((await new PostgresProductionPlatform(new DimensionDb()).exposureDimensionFacts({ ...identity, entitlements: { ...identity.entitlements, fundIds: [] } })).length, 0);
 });

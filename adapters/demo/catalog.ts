@@ -1,4 +1,5 @@
 import type { ActivityRecord, DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
+import { sectorName } from "../../core/sector-taxonomy.ts";
 import type { ExposureDimensionFact, PortfolioValueFact } from "../../core/workspace-summary.ts";
 
 export const documents: DocumentRecord[] = [
@@ -47,26 +48,59 @@ export const portfolioValueFacts: PortfolioValueFact[] = [
   navFact("seed-snapshot-4", "fund-hg-genesis-9", "Hg Genesis 9", "Q1 2026", 719_000_000),
 ];
 
-// Classification of the latest published periods' fair values. Advent VIII
-// reports governed instrument types per holding and a GP sector breakdown;
-// EQT IX reports instrument types only; Hg Genesis 9 reports neither, so its
-// whole NAV is "not attributed" in both breakdowns. NAV beyond the classified
-// holdings (cash, fund-level net assets) is likewise not attributed, so every
-// breakdown still sums exactly to the exposure total.
-function dimensionFact(snapshotId: string, fundId: string, dimension: ExposureDimensionFact["dimension"], category: string | null, value: number): ExposureDimensionFact {
-  return { snapshotId, fundId, dimension, subjectLevel: dimension === "sector" ? "fund" : "holding", category, currency: "USD", value, factCount: 1 };
-}
-export const exposureDimensionFacts: ExposureDimensionFact[] = [
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "common_equity", 1_322_000_000),
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "preferred_equity", 318_000_000),
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "asset_type", "senior_debt", 154_000_000),
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Healthcare", 702_000_000),
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Technology", 611_000_000),
-  dimensionFact("seed-snapshot-1", "fund-advent-viii", "sector", "Industrials", 481_000_000),
-  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", "common_equity", 1_046_000_000),
-  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", "__mixed__", 139_000_000),
-  dimensionFact("seed-snapshot-3", "fund-eqt-ix", "asset_type", null, 41_000_000),
+// Published holding fair values behind the demo exposure breakdowns, for the
+// latest published period of each fund (snapshot ids as in portfolioValueFacts).
+// Advent VIII and EQT IX report holding-level fair values; Hg Genesis 9
+// reports only NAV, so its whole value is "not attributed" in both
+// breakdowns. NAV beyond the listed holdings (cash, fund-level net assets) is
+// likewise not attributed, so every breakdown sums exactly to the exposure total.
+export type DemoHoldingValue = {
+  snapshotId: string;
+  fundId: string;
+  holdingId: string;
+  companyId: string;
+  company: string;
+  /** Governed instrument type; "__mixed__" when the holding spans several; null when not recorded. */
+  instrumentType: string | null;
+  value: number;
+};
+export const demoHoldingValues: DemoHoldingValue[] = [
+  { snapshotId: "seed-snapshot-1", fundId: "fund-advent-viii", holdingId: "holding-abc-corp", companyId: "company-abc-corp", company: "ABC Corp", instrumentType: "common_equity", value: 702_000_000 },
+  { snapshotId: "seed-snapshot-1", fundId: "fund-advent-viii", holdingId: "holding-meridian-software", companyId: "company-meridian-software", company: "Meridian Software", instrumentType: "common_equity", value: 620_000_000 },
+  { snapshotId: "seed-snapshot-1", fundId: "fund-advent-viii", holdingId: "holding-atlas-industrial", companyId: "company-atlas-industrial", company: "Atlas Industrial", instrumentType: "preferred_equity", value: 318_000_000 },
+  { snapshotId: "seed-snapshot-1", fundId: "fund-advent-viii", holdingId: "holding-harbor-logistics", companyId: "company-harbor-logistics", company: "Harbor Logistics", instrumentType: "senior_debt", value: 154_000_000 },
+  { snapshotId: "seed-snapshot-3", fundId: "fund-eqt-ix", holdingId: "holding-project-sparrow", companyId: "company-project-sparrow", company: "Project Sparrow", instrumentType: "common_equity", value: 1_046_000_000 },
+  { snapshotId: "seed-snapshot-3", fundId: "fund-eqt-ix", holdingId: "holding-cobalt-networks", companyId: "company-cobalt-networks", company: "Cobalt Networks", instrumentType: "__mixed__", value: 139_000_000 },
+  { snapshotId: "seed-snapshot-3", fundId: "fund-eqt-ix", holdingId: "holding-northwind-foods", companyId: "company-northwind-foods", company: "Northwind Foods", instrumentType: null, value: 41_000_000 },
 ];
+
+/** Every demo portfolio company an entitled fund holds, including ones not yet in a published period. */
+export const demoPortfolioCompanies: Array<{ companyId: string; company: string; fundIds: string[] }> = [
+  ...demoHoldingValues.map((row) => ({ companyId: row.companyId, company: row.company, fundIds: [row.fundId] })),
+  { companyId: "company-northstar-health", company: "Northstar Health", fundIds: ["fund-nordic-v"] },
+];
+
+// Seed classifications: Project Sparrow, Northwind Foods and Northstar Health
+// are deliberately unclassified so the demo exercises the classify flow.
+export const demoCompanySectorSeed: Record<string, string> = {
+  "company-abc-corp": "healthcare",
+  "company-meridian-software": "technology",
+  "company-atlas-industrial": "industrials",
+  "company-harbor-logistics": "industrials",
+  "company-cobalt-networks": "communication_services",
+};
+
+/** Holding-level asset-type and sector facts, the way the Postgres rollup emits them. */
+export function demoExposureDimensionFacts(sectorByCompany: ReadonlyMap<string, string>): ExposureDimensionFact[] {
+  return demoHoldingValues.flatMap((row) => {
+    const sectorCode = sectorByCompany.get(row.companyId) ?? null;
+    const base = { snapshotId: row.snapshotId, fundId: row.fundId, subjectLevel: "holding", currency: "USD", value: row.value, factCount: 1 };
+    return [
+      { ...base, dimension: "asset_type" as const, category: row.instrumentType },
+      { ...base, dimension: "sector" as const, category: sectorCode, label: sectorCode ? sectorName(sectorCode) ?? null : null },
+    ];
+  });
+}
 
 export const recentActivity: ActivityRecord[] = [
   { title: "Advent VIII Q2 snapshot published", detail: "486 trusted observations · 37 holdings", time: "24m" },

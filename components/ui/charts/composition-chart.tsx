@@ -3,7 +3,7 @@
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { aggregateComposition, type CompositionInput } from "@/core/chart-data";
 import { ChartFigure, type ChartTableColumn, type ChartTableRow } from "./chart-figure";
-import { seriesColor } from "./chart-tokens";
+import { CHART_SERIES_OTHER_COLOR, CHART_SERIES_UNASSIGNED_COLOR, seriesColor } from "./chart-tokens";
 
 function formatDefault(value: number): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
@@ -21,6 +21,7 @@ export function CompositionChart({
   items,
   valueFormatter = formatDefault,
   unitLabel,
+  mutedKeys,
 }: {
   eyebrow?: string;
   title: string;
@@ -28,8 +29,24 @@ export function CompositionChart({
   items: CompositionInput[];
   valueFormatter?: (value: number) => string;
   unitLabel?: string;
+  /**
+   * Segments that are gaps in a classification rather than categories (e.g.
+   * "Unclassified", "Not attributed"). They take muted colours, sit after
+   * every real category, and never consume one of the categorical hues.
+   */
+  mutedKeys?: Readonly<Record<string, "other" | "unassigned">>;
 }) {
-  const { segments, total } = aggregateComposition(items);
+  const aggregated = aggregateComposition(items);
+  const total = aggregated.total;
+  const segments = mutedKeys
+    ? [...aggregated.segments.filter((segment) => !mutedKeys[segment.key]), ...aggregated.segments.filter((segment) => mutedKeys[segment.key])]
+    : aggregated.segments;
+  let hue = 0;
+  const colors = segments.map((segment) => {
+    const muted = mutedKeys?.[segment.key];
+    if (muted) return muted === "other" ? CHART_SERIES_OTHER_COLOR : CHART_SERIES_UNASSIGNED_COLOR;
+    return seriesColor(hue++, segment.key === "other");
+  });
   const row: Record<string, number | string> = { category: title };
   for (const segment of segments) row[segment.key] = segment.value;
 
@@ -57,7 +74,7 @@ export function CompositionChart({
         <ul className="chart-legend">
           {segments.map((segment, index) => (
             <li key={segment.key}>
-              <span className="chart-legend-swatch" aria-hidden="true" style={{ background: seriesColor(index, segment.key === "other") }} />
+              <span className="chart-legend-swatch" aria-hidden="true" style={{ background: colors[index] }} />
               <span>{segment.label}</span>
               <b>{segment.percent.toFixed(0)}%</b>
             </li>
@@ -88,7 +105,7 @@ export function CompositionChart({
               key={segment.key}
               dataKey={segment.key}
               stackId="composition"
-              fill={seriesColor(index, segment.key === "other")}
+              fill={colors[index]}
               stroke="var(--surface)"
               strokeWidth={2}
               radius={index === 0 ? [4, 0, 0, 4] : index === segments.length - 1 ? [0, 4, 4, 0] : 0}

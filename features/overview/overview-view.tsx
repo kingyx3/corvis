@@ -1,9 +1,11 @@
+import { useState, type ReactNode } from "react";
 import type { ActivityRecord, FundSnapshot, View } from "@/core/contracts";
 import type { AttentionItem, AttentionTarget, ExposureBreakdownRow, FundFreshness, WorkspaceSummary } from "@/core/workspace-summary";
 import { CompositionChart } from "@/components/ui/charts/composition-chart";
 import { TimeSeriesChart } from "@/components/ui/charts/time-series-chart";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
+import { SectorClassificationDialog } from "@/features/overview/sector-classification-dialog";
 
 const ATTENTION_ICON: Record<AttentionItem["kind"], IconName> = {
   blocking_exception: "alert",
@@ -44,6 +46,7 @@ export function OverviewView({
   onSnapshotSelect,
   onOpenSnapshotId,
   onOpenAttention,
+  onSummaryChanged,
   canUpload,
   canReadDocuments,
   canReadObservations,
@@ -59,6 +62,8 @@ export function OverviewView({
   onSnapshotSelect: (snapshot: FundSnapshot) => void;
   onOpenSnapshotId: (snapshotId: string | undefined, fund?: string) => void;
   onOpenAttention: (target: AttentionTarget) => void;
+  /** Re-fetch the rollup after a governed change that feeds it (a sector classification). */
+  onSummaryChanged?: () => void;
   canUpload: boolean;
   canReadDocuments: boolean;
   canReadObservations: boolean;
@@ -66,6 +71,7 @@ export function OverviewView({
   canReview: boolean;
   canAdmin: boolean;
 }) {
+  const [classifying, setClassifying] = useState(false);
   const published = snapshots.filter((snapshot) => snapshot.status === "Published").length;
   const review = snapshots.filter((snapshot) => snapshot.status === "Review").length;
   const factCount = snapshots.reduce((sum, snapshot) => sum + snapshot.facts, 0);
@@ -141,18 +147,19 @@ export function OverviewView({
     </div>
   </section>;
 
-  // The not-attributed remainder takes the chart's neutral "other" key so it
-  // never reads as one more real category.
-  const breakdownPanel = (rows: ExposureBreakdownRow[], eyebrow: string, title: string, description: string) => {
+  const classifyButton = canReview && <button type="button" className="secondary-button breakdown-action" onClick={() => setClassifying(true)}>Classify companies</button>;
+  const breakdownPanel = (rows: ExposureBreakdownRow[], eyebrow: string, title: string, description: string, action?: ReactNode) => {
     const notAttributed = rows.find((row) => row.kind === "not_attributed");
+    const unclassified = rows.find((row) => row.kind === "unclassified");
     return <div className="panel chart-panel">
-      <CompositionChart eyebrow={eyebrow} title={title} description={`${description} Rows sum exactly to the ${formatMoney(exposure?.total ?? 0)} exposure total${notAttributed ? `; ${formatMoney(notAttributed.value)} is not attributed to this dimension by any published fact` : ""}.`} items={rows.filter((row) => row.value > 0).map((row) => ({ key: row.kind === "not_attributed" ? "other" : row.key, label: row.label, value: row.value }))} valueFormatter={formatMoney} unitLabel={summary?.currency ? `Value (${summary.currency})` : "Value"} />
+      <CompositionChart eyebrow={eyebrow} title={title} description={`${description} Rows sum exactly to the ${formatMoney(exposure?.total ?? 0)} exposure total${notAttributed ? `; ${formatMoney(notAttributed.value)} is not attributed to this dimension by any published fact` : ""}.`} items={rows.filter((row) => row.value > 0).map((row) => ({ key: row.key, label: row.label, value: row.value }))} mutedKeys={Object.fromEntries(rows.filter((row) => row.kind !== "category").map((row) => [row.key, row.kind === "not_attributed" ? "other" as const : "unassigned" as const]))} valueFormatter={formatMoney} unitLabel={summary?.currency ? `Value (${summary.currency})` : "Value"} />
       {notAttributed && notAttributed.value < 0 && <p className="chart-description breakdown-note">Classified holdings exceed reported NAV by {formatMoney(-notAttributed.value)} (fund-level liabilities), shown as a negative not-attributed amount.</p>}
+      {action && <div className="breakdown-footer">{unclassified ? <p className="chart-description">{formatMoney(unclassified.value)} of holding value is in companies not yet classified.</p> : <p className="chart-description">Every reported holding is classified.</p>}{action}</div>}
     </div>;
   };
   const breakdownSection = exposure && (exposure.byAssetType.length > 0 || exposure.bySector.length > 0) && <section className="two-column overview-charts" aria-label="Exposure breakdowns">
     {exposure.byAssetType.length > 0 && breakdownPanel(exposure.byAssetType, "Allocation", "Exposure by asset type", "Published holding fair values classified by each holding's governed instrument type.")}
-    {exposure.bySector.length > 0 ? breakdownPanel(exposure.bySector, "Allocation", "Exposure by sector", "Sector breakdowns as reported by each GP; Corvis does not assign sectors itself.") : <div className="panel chart-panel"><figure className="chart-figure"><figcaption><p className="eyebrow">Allocation</p><h3>Exposure by sector</h3></figcaption><p className="chart-empty">No published fund reports a sector breakdown yet.</p></figure></div>}
+    {exposure.bySector.length > 0 ? breakdownPanel(exposure.bySector, "Allocation", "Exposure by sector", "Holding fair values by each company's governed Corvis sector; funds that only report a GP sector breakdown are mapped onto the same taxonomy.", classifyButton) : <div className="panel chart-panel"><figure className="chart-figure"><figcaption><p className="eyebrow">Allocation</p><h3>Exposure by sector</h3></figcaption><p className="chart-empty">No published holding sits in a sector-classified company yet.</p></figure>{classifyButton && <div className="breakdown-footer">{classifyButton}</div>}</div>}
   </section>;
 
   return <>
@@ -167,6 +174,7 @@ export function OverviewView({
     {reviewFirst || audience === "admin" ? <>{attentionSection}{exposureSection}{breakdownSection}</> : <>{exposureSection}{breakdownSection}{attentionSection}</>}
     {!exposure && holdingsItems.length > 0 && <section className="panel"><CompositionChart eyebrow="Exposure" title="Holdings by fund" description="How your entitled fund holdings break down across the current reporting cycle." items={holdingsItems} unitLabel="Holdings" /></section>}
     <section className="two-column"><div className="panel"><div className="panel-heading"><div><p className="eyebrow">Fund periods</p><h2>Current reporting cycle</h2></div>{canReadDocuments && <button className="text-button" onClick={() => onNavigate("documents")}>View documents <Icon name="arrow" size={15}/></button>}</div><div className="snapshot-list">{snapshots.length ? snapshots.map((item) => { const fresh = freshnessByFund.get(item.fund); const stale = item.status === "Published" && fresh?.stale === true && fresh.snapshotId === item.id; const detail = <><strong>{item.fund}</strong><span>{item.period} · {item.status === "Published" ? "Final" : "Preliminary"} · {item.holdings} holdings · {item.facts} facts</span></>; return canReadObservations ? <button className="snapshot-row" key={`${item.id || item.fund}-${item.period}`} onClick={() => onSnapshotSelect(item)} aria-label={`Open ${item.fund} ${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{item.changed}</span><Icon name="chevron" size={16}/></button> : <div className="snapshot-row" key={`${item.id || item.fund}-${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{item.changed}</span></div>; }) : <div className="empty-row"><strong>No snapshots yet</strong><span>{canUpload ? "Upload a source document to start a reporting cycle." : "No entitled fund-period snapshots are available."}</span></div>}</div></div><div className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">Activity</p><h2>What changed</h2></div></div><div className="activity-list">{activity.length ? activity.map((item, i) => <div className="activity-row" key={`${item.title}-${item.time}`}><span className={`activity-marker marker-${i % 4}`} aria-hidden="true"></span><div><strong>{item.title}</strong><span>{item.detail}</span></div><time>{item.time}</time></div>) : <div className="activity-row empty"><div><strong>No recent activity</strong><span>Production activity appears here when audit/read-model events are available.</span></div></div>}</div></div></section>
+    {classifying && <SectorClassificationDialog onClose={() => setClassifying(false)} onChanged={() => onSummaryChanged?.()} />}
     {canResearch && <button type="button" className="research-callout" onClick={() => onNavigate("research")}><span className="research-symbol" aria-hidden="true"><Icon name="spark" size={22}/></span><span className="research-callout-text"><span className="eyebrow">Ask Corvis</span><span className="research-callout-title">What changed in my portfolio this quarter?</span><span className="research-callout-detail">Query trusted fund data and source documents together, with evidence.</span></span><span className="research-arrow" aria-hidden="true"><Icon name="arrow"/></span></button>}
   </>;
 }
