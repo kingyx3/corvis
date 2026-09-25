@@ -24,6 +24,7 @@ test("client portfolio layer sits above funds and preserves canonical holdings",
   assert.match(sql,/enable row level security/);
   assert.match(sql,/force row level security/);
   assert.match(sql,/has_workspace_access/);
+  assert.equal((sql.match(/with \(security_invoker=true\)/g) ?? []).length,3);
 });
 
 test("portfolio serving intersects workspace membership with authoritative fund entitlements", async () => {
@@ -35,6 +36,8 @@ test("portfolio serving intersects workspace membership with authoritative fund 
   assert.match(source,/a\.owning_fund_id in \(select value from jsonb_array_elements_text\(\$3::jsonb\)\)/);
   assert.match(source,/a\.target_type<>'fund' or a\.target_fund_id in/);
   assert.match(source,/portfolio membership is an attribution dimension, never an authorization grant/);
+  assert.match(source,/sqlkeyset\("p\.portfolio_id::text"/);
+  assert.match(source,/sqlkeyset\("a\.attribution_key"/);
 });
 
 test("position financials can scope by portfolio without ownership-weighting statement values", async () => {
@@ -44,4 +47,14 @@ test("position financials can scope by portfolio without ownership-weighting sta
   assert.match(source,/pa\.holding_id::text=v\.holding_id/);
   assert.match(source,/pa\.owning_fund_id=v\.fund_id/);
   assert.equal(/value_number\s*\*/.test(source),false);
+});
+
+test("portfolio workspace routes are explicitly classified outside the stable external API contract", async () => {
+  const classification = JSON.parse(await readFile("openapi/v1-route-classification.json","utf8")) as { routes: Array<{ pattern: string; visibility: string; reason: string }> };
+  const portfolios = classification.routes.find((route) => route.pattern === "/portfolios");
+  const holdings = classification.routes.find((route) => route.pattern === "/portfolio-holdings");
+  assert.equal(portfolios?.visibility,"workspace_control");
+  assert.equal(holdings?.visibility,"workspace_control");
+  assert.match(portfolios?.reason ?? "",/attribution/);
+  assert.match(holdings?.reason ?? "",/never grants fund access|attribution/);
 });
