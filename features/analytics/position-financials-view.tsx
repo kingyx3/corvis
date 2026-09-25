@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PositionFinancialStatementRow, StatementPeriodicity } from "@/core/contracts";
-import { financialAsOf, financialDelta, financialTrustLabel } from "@/core/position-financial-trends";
+import { financialAsOf, financialDelta, financialTrustLabel, numericFinancialValue } from "@/core/position-financial-trends";
 import type { SourceEvidence } from "@/core/workspace";
+import { Sparkline } from "@/components/ui/charts/sparkline";
+import { TimeSeriesChart, type TimeSeriesStatus } from "@/components/ui/charts/time-series-chart";
 import { Modal } from "@/components/ui/modal";
 import { workspacePort } from "@/runtime/workspace-services";
 import styles from "./position-financials.module.css";
@@ -161,6 +163,15 @@ export function PositionFinancialsView({
     return [...map.values()].sort((a,b) => a.order - b.order || a.label.localeCompare(b.label));
   },[selectedRows]);
 
+  const featuredLine = useMemo(() => lines.find((line) => line.rows.some((row) => row.valueId != null)),[lines]);
+  const trendPoints = useMemo(() => {
+    if (!featuredLine) return [];
+    return periods.map((period) => {
+      const row = featuredLine.rows.filter((candidate) => candidate.valueId != null && periodKey(candidate) === period.key).reduce<PositionFinancialStatementRow | undefined>((best,candidate) => best ? latest(best,candidate) : candidate,undefined);
+      return { period: period.key, label: period.label, value: numericFinancialValue(row), status: (row?.preliminary ? "preliminary" : row?.isRestatement ? "restated" : row?.isDerived ? "derived" : "final") as TimeSeriesStatus };
+    });
+  },[featuredLine,periods]);
+
   const chosen = positions.find((position) => position.key === effectiveSelectedPosition);
   const chosenPortfolio = portfolioAttributionEnabled ? portfolios.find((portfolio) => portfolio.id === selectedPortfolio) : undefined;
   const valueFor = (line: LineGroup, period: PeriodColumn): PositionFinancialStatementRow | undefined => {
@@ -215,7 +226,8 @@ export function PositionFinancialsView({
     {!loading && error && <div className={styles.state} role="alert"><strong>Financial statements unavailable</strong><span>{error}</span></div>}
     {!loading && !error && !rows.length && <div className={styles.state}><strong>No published position income statements yet</strong><span>Once reviewed statement-line candidates are included in a published fund period, they will appear here without requiring a fixed chart of accounts.</span></div>}
     {!loading && !error && rows.length > 0 && chosen && <>
-      <div className={styles.context}>{chosenPortfolio && <span><strong>Portfolio</strong>{chosenPortfolio.displayName}</span>}<span><strong>Company</strong>{chosen.companyId}</span><span><strong>Holding</strong>{chosen.holdingId}</span><span><strong>Fund</strong>{chosen.fundId}</span><span><strong>Periods</strong>{periods.length}</span></div>
+      <div className={styles.context}>{chosenPortfolio && <span><strong>Portfolio</strong>{chosenPortfolio.displayName}</span>}<span><strong>Company</strong>{chosen.companyId}</span><span><strong>Holding</strong>{chosen.holdingId}</span><span><strong>Fund</strong>{chosen.fundId}</span><span><strong>Periods</strong>{periods.length}</span>{featuredLine && <span><strong>{featuredLine.label} trend</strong><Sparkline label={`${featuredLine.label} for ${chosen.companyId}`} points={trendPoints} /></span>}</div>
+      {featuredLine && <section className="panel"><TimeSeriesChart eyebrow="Trend" title={`${featuredLine.label} across periods`} description={`${chosen.companyId}'s reported ${featuredLine.label.toLowerCase()} for each published period, most recent last.`} name={featuredLine.label} data={trendPoints} /></section>}
       <div className={styles.tableWrap} role="region" aria-label="Position financials table">
         <table className={styles.table}>
           <thead><tr><th className={styles.lineHeader}>Income statement</th>{periods.map((period) => <th key={period.key}>{period.label}<small>As of {period.end}</small></th>)}</tr></thead>
