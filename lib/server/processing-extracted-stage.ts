@@ -4,9 +4,10 @@ import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const EXTRACTION_CONTRACT_VERSION = "1";
-const EXTRACTION_SCHEMA_VERSION = "1.5";
+const EXTRACTION_SCHEMA_VERSION = "1.6";
 const EXTRACTION_SKILL_ID = "quarterly_fund_report_extraction";
-const EXTRACTION_SKILL_VERSION = "2.0";
+const EXTRACTION_SKILL_VERSION = "2.1";
+const EXTRACTION_ORCHESTRATION_POLICY_VERSION = "1";
 const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
 const METADATA_TIMEOUT_MS = 5_000;
 const PROVIDER_RESPONSE_LIMIT_BYTES = 64 * 1024;
@@ -29,6 +30,16 @@ const EXTRACTION_METHODS = new Set([
   "vision",
   "spreadsheet_parser",
 ]);
+const PAGE_COVERAGE_STATES = new Set(["primary", "overlap_shared", "excluded", "exception"]);
+const FUND_ATTRIBUTION_TYPES = new Set([
+  "fund",
+  "company",
+  "holding",
+  "instrument",
+  "metric_observation",
+  "financial_statement_line",
+]);
+const FUND_ATTRIBUTION_EXCEPTION = "FUND_ATTRIBUTION_UNRESOLVED";
 
 export type ExtractionRepresentationRecord = {
   representationId: string;
@@ -44,6 +55,19 @@ export type ExtractionRepresentationRecord = {
   status: string;
 };
 
+export type ExtractionOrchestrationManifest = {
+  objectUri: string;
+  storageGeneration: string;
+  contentSha256: string;
+  sizeBytes: number;
+  pageCount: number;
+  coveredPageCount: number;
+  documentSegmentCount: number;
+  workUnitCount: number;
+  unexplainedPageGapCount: number;
+  unresolvedMaterialAttributionCount: number;
+};
+
 export type ExtractionBundleDescriptor = {
   objectUri: string;
   storageGeneration: string;
@@ -54,6 +78,8 @@ export type ExtractionBundleDescriptor = {
   modelProvider: string;
   modelName: string;
   modelVersion: string;
+  orchestrationPolicyVersion: string;
+  orchestrationManifest: ExtractionOrchestrationManifest;
 };
 
 export type ExtractionSourceReference = {
@@ -68,6 +94,10 @@ export type ExtractionSourceReference = {
   cellOrRange?: string;
   footnoteMarker?: string;
   sourceText?: string;
+  documentSegmentId: string;
+  workUnitId?: string;
+  fundContextIds: string[];
+  pageCoverageState: string;
   extractionMethod: string;
   boundingBox?: Record<string, unknown>;
 };
@@ -201,6 +231,12 @@ function requiredPositiveInteger(value: unknown, field: string): number {
   return parsed;
 }
 
+function stringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`extracted stage requires ${field} array`);
+  const normalized = value.map((entry) => requiredText(entry, field));
+  return [...new Set(normalized)].sort();
+}
+
 function assertNotAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
@@ -258,6 +294,7 @@ export function extractionIdentity(input: {
     EXTRACTION_SCHEMA_VERSION,
     EXTRACTION_SKILL_ID,
     EXTRACTION_SKILL_VERSION,
+    EXTRACTION_ORCHESTRATION_POLICY_VERSION,
     input.tenantId,
     input.documentId,
     input.representationId,
@@ -318,20 +355,28 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
     extractionRunId: string;
     bundle: ExtractionBundleDescriptor;
   }): Promise<void> {
+    const manifest = input.bundle.orchestrationManifest;
     const parameters: PostgresPrimitive[] = [
       input.tenantId, input.extractionRunId, input.documentId, input.artifactVersionId,
       input.representationId, EXTRACTION_CONTRACT_VERSION, EXTRACTION_SCHEMA_VERSION,
       EXTRACTION_SKILL_ID, EXTRACTION_SKILL_VERSION, input.bundle.objectUri,
       input.bundle.storageGeneration, input.bundle.contentSha256.toLowerCase(), input.bundle.sizeBytes,
       input.bundle.producer, input.bundle.producerVersion, input.bundle.modelProvider,
-      input.bundle.modelName, input.bundle.modelVersion,
+      input.bundle.modelName, input.bundle.modelVersion, input.bundle.orchestrationPolicyVersion,
+      manifest.objectUri, manifest.storageGeneration, manifest.contentSha256.toLowerCase(), manifest.sizeBytes,
+      manifest.pageCount, manifest.coveredPageCount, manifest.documentSegmentCount, manifest.workUnitCount,
+      manifest.unexplainedPageGapCount, manifest.unresolvedMaterialAttributionCount,
     ];
     await this.db.query(`insert into corvis_source.extraction_run (
         tenant_id,extraction_run_id,document_id,document_artifact_version_id,representation_id,
         extraction_contract_version,schema_version,skill_id,skill_version,bundle_object_uri,
         bundle_storage_generation,bundle_content_sha256,bundle_size_bytes,producer,producer_version,
-        model_provider,model_name,model_version,status
-      ) values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'writing')
+        model_provider,model_name,model_version,orchestration_policy_version,
+        orchestration_manifest_object_uri,orchestration_manifest_storage_generation,
+        orchestration_manifest_content_sha256,orchestration_manifest_size_bytes,page_count,covered_page_count,
+        document_segment_count,work_unit_count,unexplained_page_gap_count,unresolved_material_attribution_count,status
+      ) values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+        $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,'writing')
       on conflict (tenant_id,extraction_run_id) do nothing`, parameters);
     const rows = await this.db.query(`select * from corvis_source.extraction_run
       where tenant_id=$1::uuid and extraction_run_id=$2::uuid limit 1`, [input.tenantId, input.extractionRunId]);
@@ -343,7 +388,12 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
       text(row, "skill_version"), text(row, "bundle_object_uri"), text(row, "bundle_storage_generation"),
       text(row, "bundle_content_sha256").toLowerCase(), Number(row.bundle_size_bytes ?? -1),
       text(row, "producer"), text(row, "producer_version"), text(row, "model_provider"),
-      text(row, "model_name"), text(row, "model_version"),
+      text(row, "model_name"), text(row, "model_version"), text(row, "orchestration_policy_version"),
+      text(row, "orchestration_manifest_object_uri"), text(row, "orchestration_manifest_storage_generation"),
+      text(row, "orchestration_manifest_content_sha256").toLowerCase(), Number(row.orchestration_manifest_size_bytes ?? -1),
+      Number(row.page_count ?? -1), Number(row.covered_page_count ?? -1), Number(row.document_segment_count ?? -1),
+      Number(row.work_unit_count ?? -1), Number(row.unexplained_page_gap_count ?? -1),
+      Number(row.unresolved_material_attribution_count ?? -1),
     ];
     const expected = [
       input.documentId, input.artifactVersionId, input.representationId,
@@ -351,7 +401,10 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
       EXTRACTION_SKILL_VERSION, input.bundle.objectUri, input.bundle.storageGeneration,
       input.bundle.contentSha256.toLowerCase(), input.bundle.sizeBytes,
       input.bundle.producer, input.bundle.producerVersion, input.bundle.modelProvider,
-      input.bundle.modelName, input.bundle.modelVersion,
+      input.bundle.modelName, input.bundle.modelVersion, input.bundle.orchestrationPolicyVersion,
+      manifest.objectUri, manifest.storageGeneration, manifest.contentSha256.toLowerCase(), manifest.sizeBytes,
+      manifest.pageCount, manifest.coveredPageCount, manifest.documentSegmentCount, manifest.workUnitCount,
+      manifest.unexplainedPageGapCount, manifest.unresolvedMaterialAttributionCount,
     ];
     if (stable(actual) !== stable(expected)) throw new Error("existing extraction run conflicts with immutable extraction lineage");
   }
@@ -420,18 +473,21 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
     await this.db.query(`insert into corvis_source.extraction_candidate_source_reference (
         tenant_id,extraction_run_id,candidate_id,source_reference_id,reference_key,document_id,representation_id,
         page_number,sheet_name,section_title,table_title,row_label,column_label,cell_or_range,footnote_marker,
-        source_text,extraction_method,bounding_box
-      ) values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
+        source_text,document_segment_id,work_unit_id,fund_context_ids,page_coverage_state,extraction_method,bounding_box
+      ) values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+        $17,$18,$19::jsonb,$20,$21,$22::jsonb)
       on conflict (tenant_id,extraction_run_id,source_reference_id) do nothing`, [
       input.tenantId, input.extractionRunId, input.candidate.candidateId, reference.sourceReferenceId,
       reference.referenceKey, input.documentId, input.representationId, reference.pageNumber ?? null,
       reference.sheetName ?? null, reference.sectionTitle ?? null, reference.tableTitle ?? null,
       reference.rowLabel ?? null, reference.columnLabel ?? null, reference.cellOrRange ?? null,
-      reference.footnoteMarker ?? null, reference.sourceText ?? null, reference.extractionMethod,
-      reference.boundingBox ? JSON.stringify(reference.boundingBox) : null,
+      reference.footnoteMarker ?? null, reference.sourceText ?? null, reference.documentSegmentId,
+      reference.workUnitId ?? null, JSON.stringify(reference.fundContextIds), reference.pageCoverageState,
+      reference.extractionMethod, reference.boundingBox ? JSON.stringify(reference.boundingBox) : null,
     ]);
     const rows = await this.db.query(`select reference_key,page_number,sheet_name,section_title,table_title,
-        row_label,column_label,cell_or_range,footnote_marker,source_text,extraction_method,bounding_box
+        row_label,column_label,cell_or_range,footnote_marker,source_text,document_segment_id,work_unit_id,
+        fund_context_ids,page_coverage_state,extraction_method,bounding_box
       from corvis_source.extraction_candidate_source_reference
       where tenant_id=$1::uuid and extraction_run_id=$2::uuid and source_reference_id=$3::uuid limit 1`, [
       input.tenantId, input.extractionRunId, reference.sourceReferenceId,
@@ -449,6 +505,10 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
       cellOrRange: optionalText(row.cell_or_range, "persisted cell range"),
       footnoteMarker: optionalText(row.footnote_marker, "persisted footnote marker"),
       sourceText: optionalText(row.source_text, "persisted source text"),
+      documentSegmentId: text(row, "document_segment_id"),
+      workUnitId: optionalText(row.work_unit_id, "persisted work unit id"),
+      fundContextIds: parseJson(row, "fund_context_ids"),
+      pageCoverageState: text(row, "page_coverage_state"),
       extractionMethod: text(row, "extraction_method"),
       boundingBox: parseJson(row, "bounding_box") ?? undefined,
     };
@@ -463,6 +523,10 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
       cellOrRange: reference.cellOrRange,
       footnoteMarker: reference.footnoteMarker,
       sourceText: reference.sourceText,
+      documentSegmentId: reference.documentSegmentId,
+      workUnitId: reference.workUnitId,
+      fundContextIds: reference.fundContextIds,
+      pageCoverageState: reference.pageCoverageState,
       extractionMethod: reference.extractionMethod,
       boundingBox: reference.boundingBox,
     };
@@ -485,6 +549,8 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
     const rows = await this.db.query(`update corvis_source.extraction_run
       set status='ready',candidate_count=$3,candidate_set_sha256=$4,completed_at=coalesce(completed_at,now())
       where tenant_id=$1::uuid and extraction_run_id=$2::uuid
+        and unexplained_page_gap_count=0 and unresolved_material_attribution_count=0
+        and page_count=covered_page_count
         and (status='writing' or (status='ready' and candidate_count=$3 and candidate_set_sha256=$4))
       returning status,candidate_count,candidate_set_sha256`, [
       input.tenantId, input.extractionRunId, input.candidateCount, input.candidateSetSha256,
@@ -493,7 +559,7 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
     if (!row || text(row, "status") !== "ready"
       || Number(row.candidate_count ?? -1) !== input.candidateCount
       || text(row, "candidate_set_sha256") !== input.candidateSetSha256) {
-      throw new Error("existing extraction run conflicts with finalized candidate set");
+      throw new Error("existing extraction run conflicts with finalized candidate set or incomplete orchestration coverage");
     }
   }
 }
@@ -537,6 +603,30 @@ async function googleIdentityToken(fetchImpl: typeof fetch, audience: string, si
   return token;
 }
 
+function orchestrationManifest(value: unknown): ExtractionOrchestrationManifest {
+  const record = object(value);
+  if (!record) throw new Error("extraction provider requires orchestrationManifest object");
+  const contentSha256 = requiredText(record.contentSha256, "orchestrationManifest.contentSha256").toLowerCase();
+  if (!SHA256.test(contentSha256)) throw new Error("extraction provider returned invalid orchestration manifest SHA-256");
+  const manifest: ExtractionOrchestrationManifest = {
+    objectUri: requiredText(record.objectUri, "orchestrationManifest.objectUri"),
+    storageGeneration: requiredText(record.storageGeneration, "orchestrationManifest.storageGeneration"),
+    contentSha256,
+    sizeBytes: requiredNonNegativeInteger(record.sizeBytes, "orchestrationManifest.sizeBytes"),
+    pageCount: requiredNonNegativeInteger(record.pageCount, "orchestrationManifest.pageCount"),
+    coveredPageCount: requiredNonNegativeInteger(record.coveredPageCount, "orchestrationManifest.coveredPageCount"),
+    documentSegmentCount: requiredPositiveInteger(record.documentSegmentCount, "orchestrationManifest.documentSegmentCount"),
+    workUnitCount: requiredNonNegativeInteger(record.workUnitCount, "orchestrationManifest.workUnitCount"),
+    unexplainedPageGapCount: requiredNonNegativeInteger(record.unexplainedPageGapCount, "orchestrationManifest.unexplainedPageGapCount"),
+    unresolvedMaterialAttributionCount: requiredNonNegativeInteger(record.unresolvedMaterialAttributionCount, "orchestrationManifest.unresolvedMaterialAttributionCount"),
+  };
+  if (!manifest.objectUri.startsWith("gs://")) throw new Error("orchestration manifest is not authoritative GCS evidence");
+  if (manifest.coveredPageCount !== manifest.pageCount) throw new Error("extraction provider returned incomplete page coverage");
+  if (manifest.unexplainedPageGapCount !== 0) throw new Error("extraction provider returned unexplained page gaps");
+  if (manifest.unresolvedMaterialAttributionCount !== 0) throw new Error("extraction provider returned unresolved material fund attribution");
+  return manifest;
+}
+
 export class HttpExtractionProvider implements ExtractionProvider {
   private readonly config: Pick<ExtractionProviderConfig, "endpoint" | "audience" | "timeoutMs">;
   private readonly fetchImpl: typeof fetch;
@@ -560,6 +650,20 @@ export class HttpExtractionProvider implements ExtractionProvider {
         schemaVersion: EXTRACTION_SCHEMA_VERSION,
         skillId: EXTRACTION_SKILL_ID,
         skillVersion: EXTRACTION_SKILL_VERSION,
+        orchestrationPolicy: {
+          version: EXTRACTION_ORCHESTRATION_POLICY_VERSION,
+          physicalDocumentIsNotFundScope: true,
+          mapBeforeFanOut: true,
+          partitionStrategy: "semantic_boundaries",
+          boundedBoundaryOverlap: true,
+          contextCapsulesRequired: true,
+          globalReducerRequired: true,
+          pageCoverageLedgerRequired: true,
+          workersMayPublishCanonicalFacts: false,
+          fundAttributionRequired: true,
+          preserveDistinctFundHoldingPaths: true,
+          companyOperatingValues: "full_source_reported_no_ownership_proration",
+        },
         extractionRunId: input.extractionRunId,
         tenantId: input.tenantId,
         documentId: input.documentId,
@@ -590,6 +694,10 @@ export class HttpExtractionProvider implements ExtractionProvider {
     }
     const contentSha256 = requiredText(body.contentSha256, "provider contentSha256").toLowerCase();
     if (!SHA256.test(contentSha256)) throw new Error("extraction provider returned invalid content SHA-256");
+    const orchestrationPolicyVersion = requiredText(body.orchestrationPolicyVersion, "provider orchestrationPolicyVersion");
+    if (orchestrationPolicyVersion !== EXTRACTION_ORCHESTRATION_POLICY_VERSION) {
+      throw new Error("extraction provider returned unsupported orchestration policy version");
+    }
     return {
       objectUri: requiredText(body.objectUri, "provider objectUri"),
       storageGeneration: requiredText(body.storageGeneration, "provider storageGeneration"),
@@ -600,6 +708,8 @@ export class HttpExtractionProvider implements ExtractionProvider {
       modelProvider: requiredText(body.modelProvider, "provider modelProvider"),
       modelName: requiredText(body.modelName, "provider modelName"),
       modelVersion: requiredText(body.modelVersion, "provider modelVersion"),
+      orchestrationPolicyVersion,
+      orchestrationManifest: orchestrationManifest(body.orchestrationManifest),
     };
   }
 }
@@ -630,7 +740,7 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     const response = await boundedFetch(this.fetchImpl,
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
       { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP extraction GCS token request");
-    if (!response.ok) throw new Error(`GCP extraction GCS token request failed (${response.status})`);
+    if (!response.ok) throw new Error(`GCP extraction GCS token response failed (${response.status})`);
     const body = await response.json() as { access_token?: string; expires_in?: number };
     if (!body.access_token) throw new Error("GCP extraction GCS token response was empty");
     this.cachedToken = { value: body.access_token, expiresAt: Date.now() + Math.max(60, body.expires_in ?? 300) * 1000 };
@@ -652,6 +762,7 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     if (!metadataResponse.ok) throw new Error(`GCS extraction metadata read failed (${metadataResponse.status})`);
     const metadata = await metadataResponse.json() as { generation?: string; size?: string; metadata?: Record<string, string> };
     const custom = metadata.metadata ?? {};
+    const manifest = input.descriptor.orchestrationManifest;
     if (metadata.generation !== input.descriptor.storageGeneration) throw new Error("extraction bundle GCS generation mismatch");
     if (Number(metadata.size) !== input.descriptor.sizeBytes) throw new Error("extraction bundle GCS size mismatch");
     if (custom["corvis-content-sha256"]?.toLowerCase() !== input.descriptor.contentSha256.toLowerCase()) throw new Error("extraction bundle GCS content hash mismatch");
@@ -661,6 +772,10 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     if (custom["corvis-representation-sha256"]?.toLowerCase() !== input.representationContentSha256.toLowerCase()) throw new Error("extraction bundle GCS representation hash mismatch");
     if (custom["corvis-skill-id"] !== EXTRACTION_SKILL_ID || custom["corvis-skill-version"] !== EXTRACTION_SKILL_VERSION) throw new Error("extraction bundle GCS skill contract mismatch");
     if (custom["corvis-schema-version"] !== EXTRACTION_SCHEMA_VERSION) throw new Error("extraction bundle GCS schema contract mismatch");
+    if (custom["corvis-orchestration-policy-version"] !== input.descriptor.orchestrationPolicyVersion) throw new Error("extraction bundle GCS orchestration policy mismatch");
+    if (custom["corvis-orchestration-manifest-uri"] !== manifest.objectUri) throw new Error("extraction bundle GCS orchestration manifest URI mismatch");
+    if (custom["corvis-orchestration-manifest-generation"] !== manifest.storageGeneration) throw new Error("extraction bundle GCS orchestration manifest generation mismatch");
+    if (custom["corvis-orchestration-manifest-sha256"]?.toLowerCase() !== manifest.contentSha256.toLowerCase()) throw new Error("extraction bundle GCS orchestration manifest hash mismatch");
 
     const mediaUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(parsed.bucket)}/o/${encodeURIComponent(parsed.key)}`);
     mediaUrl.searchParams.set("alt", "media");
@@ -710,6 +825,8 @@ function sourceReference(value: unknown, candidateId: string): ExtractionSourceR
   if (pageNumber === undefined && !sheetName) throw new Error("extraction candidate source reference requires pageNumber or sheetName");
   const extractionMethod = requiredText(record.extractionMethod, "source reference extractionMethod");
   if (!EXTRACTION_METHODS.has(extractionMethod)) throw new Error("extraction candidate source reference uses unsupported extractionMethod");
+  const pageCoverageState = requiredText(record.pageCoverageState, "source reference pageCoverageState");
+  if (!PAGE_COVERAGE_STATES.has(pageCoverageState)) throw new Error("extraction candidate source reference uses unsupported pageCoverageState");
   const boundingBox = record.boundingBox == null ? undefined : object(record.boundingBox);
   if (record.boundingBox != null && !boundingBox) throw new Error("extraction candidate source reference boundingBox must be an object");
   return {
@@ -724,6 +841,10 @@ function sourceReference(value: unknown, candidateId: string): ExtractionSourceR
     cellOrRange: optionalText(record.cellOrRange, "source reference cellOrRange"),
     footnoteMarker: optionalText(record.footnoteMarker, "source reference footnoteMarker"),
     sourceText: optionalText(record.sourceText, "source reference sourceText"),
+    documentSegmentId: requiredText(record.documentSegmentId, "source reference documentSegmentId"),
+    workUnitId: optionalText(record.workUnitId, "source reference workUnitId"),
+    fundContextIds: stringArray(record.fundContextIds, "source reference fundContextIds"),
+    pageCoverageState,
     extractionMethod,
     boundingBox,
   };
@@ -735,6 +856,9 @@ export function parseExtractionCandidateBundle(input: {
   representation: ExtractionRepresentationRecord;
   bundle: ExtractionBundleDescriptor;
 }): ExtractionCandidate[] {
+  if (input.bundle.orchestrationPolicyVersion !== EXTRACTION_ORCHESTRATION_POLICY_VERSION) {
+    throw new Error("extraction candidate bundle uses unsupported orchestration policy version");
+  }
   const candidates: ExtractionCandidate[] = [];
   const keys = new Set<string>();
   for (const [index, rawLine] of input.jsonl.split(/\r?\n/).entries()) {
@@ -761,8 +885,15 @@ export function parseExtractionCandidateBundle(input: {
     if (!Array.isArray(record.sourceReferences) || record.sourceReferences.length === 0) {
       throw new Error(`extraction candidate ${candidateKey} requires exact source evidence`);
     }
+    const codes = exceptionCodes(record.exceptionCodes);
     const candidateId = deterministicUuid(`corvis-extraction-candidate:${input.extractionRunId}:${candidateKey}`);
     const sourceReferences = record.sourceReferences.map((entry) => sourceReference(entry, candidateId));
+    const fundContextIds = [...new Set(sourceReferences.flatMap((reference) => reference.fundContextIds))].sort();
+    if (FUND_ATTRIBUTION_TYPES.has(candidateType) && fundContextIds.length === 0 && !codes.includes(FUND_ATTRIBUTION_EXCEPTION)) {
+      throw new Error(`extraction candidate ${candidateKey} requires fund attribution or ${FUND_ATTRIBUTION_EXCEPTION}`);
+    }
+    const documentSegmentIds = [...new Set(sourceReferences.map((reference) => reference.documentSegmentId))].sort();
+    const workUnitIds = [...new Set(sourceReferences.flatMap((reference) => reference.workUnitId ? [reference.workUnitId] : []))].sort();
     candidates.push({
       candidateId,
       candidateKey,
@@ -775,17 +906,23 @@ export function parseExtractionCandidateBundle(input: {
         skillId: EXTRACTION_SKILL_ID,
         skillVersion: EXTRACTION_SKILL_VERSION,
         extractionContractVersion: EXTRACTION_CONTRACT_VERSION,
+        orchestrationPolicyVersion: EXTRACTION_ORCHESTRATION_POLICY_VERSION,
         extractionRunId: input.extractionRunId,
         representationId: input.representation.representationId,
         representationGeneration: input.representation.storageGeneration,
         representationContentSha256: input.representation.contentSha256,
+        documentSegmentIds,
+        workUnitIds,
+        fundContextIds,
         producer: input.bundle.producer,
         producerVersion: input.bundle.producerVersion,
         modelProvider: input.bundle.modelProvider,
         modelName: input.bundle.modelName,
         modelVersion: input.bundle.modelVersion,
+        orchestrationManifestObjectUri: input.bundle.orchestrationManifest.objectUri,
+        orchestrationManifestContentSha256: input.bundle.orchestrationManifest.contentSha256,
       },
-      exceptionCodes: exceptionCodes(record.exceptionCodes),
+      exceptionCodes: codes,
       sourceReferences,
     });
   }
@@ -885,6 +1022,7 @@ export function createExtractedDocumentStageHandler(input: {
       schemaVersion: EXTRACTION_SCHEMA_VERSION,
       skillId: EXTRACTION_SKILL_ID,
       skillVersion: EXTRACTION_SKILL_VERSION,
+      orchestrationPolicyVersion: EXTRACTION_ORCHESTRATION_POLICY_VERSION,
     };
   };
 }
