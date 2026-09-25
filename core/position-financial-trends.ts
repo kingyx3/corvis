@@ -1,4 +1,4 @@
-import type { PositionFinancialStatementRow } from "@/core/contracts";
+import type { PositionFinancialStatementRow } from "./contracts.ts";
 
 export type FinancialDelta = {
   absolute: number;
