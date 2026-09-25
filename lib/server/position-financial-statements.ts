@@ -191,7 +191,27 @@ export class PostgresPositionFinancialStatementRepository {
       "v.tenant_id=$1::uuid",
       "v.fund_id in (select jsonb_array_elements_text($2::jsonb))",
       "v.document_id::text in (select jsonb_array_elements_text($3::jsonb))",
-      "exists (select 1 from corvis_consolidated.fund_period_snapshot ps where ps.tenant_id=v.tenant_id and ps.fund_id=v.fund_id and ps.report_period=v.report_period and ps.status='published' and not exists (select 1 from corvis_consolidated.fund_period_snapshot newer where newer.tenant_id=ps.tenant_id and newer.snapshot_id=ps.snapshot_id and newer.version>ps.version))",
+      `exists (
+        select 1
+        from corvis_consolidated.reconciliation_run rr
+        join corvis_consolidated.fund_period_snapshot ps
+          on ps.tenant_id=rr.tenant_id
+         and ps.snapshot_id=rr.snapshot_id
+         and ps.version>=rr.snapshot_version
+        where rr.tenant_id=v.tenant_id
+          and rr.canonicalization_run_id=v.canonicalization_run_id
+          and rr.document_id=v.document_id
+          and rr.fund_id=v.fund_id
+          and rr.report_period=v.report_period
+          and rr.status='ready'
+          and ps.status='published'
+          and not exists (
+            select 1 from corvis_consolidated.fund_period_snapshot newer
+            where newer.tenant_id=ps.tenant_id
+              and newer.snapshot_id=ps.snapshot_id
+              and newer.version>ps.version
+          )
+      )`,
     ];
     const add = (column: string, value: string | undefined) => {
       if (!value) return;
