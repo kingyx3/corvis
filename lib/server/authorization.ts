@@ -13,6 +13,9 @@ export type MembershipAuthorization = {
   internalAnalyticsAllowed: boolean;
   modelTrainingAllowed: boolean;
   redistributionAllowed: boolean;
+  /** Display chrome only — see RequestIdentity.tenantDisplayName/workspaceDisplayName. */
+  tenantDisplayName?: string;
+  workspaceDisplayName?: string;
   /**
    * Whether the subject holds an active `tenant_admin` membership anywhere
    * in the tenant (not only the requested workspace). `tenant_admin` and
@@ -52,6 +55,10 @@ function text(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+function optionalText(value: unknown): string | undefined {
+  return value == null ? undefined : String(value);
+}
+
 function truthy(value: unknown): boolean {
   return value === true || value === "true" || value === 1 || value === "1";
 }
@@ -66,6 +73,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
   async resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null> {
     if (principal.authMethod === "demo") return null;
     const rows = await this.db.query(`select m.workspace_id::text as workspace_id, m.role_name,
+        t.display_name as tenant_display_name, w.display_name as workspace_display_name,
         e.resource_type, e.resource_id, e.permission as resource_permission,
         coalesce((select bool_and(dr.client_visible)
           from corvis_control.data_rights dr
@@ -192,6 +200,8 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       modelTrainingAllowed: requestedWorkspaceRows.some((row) => truthy(row.model_training_allowed)),
       redistributionAllowed: requestedWorkspaceRows.some((row) => truthy(row.redistribution_allowed)),
       isTenantAdmin,
+      tenantDisplayName: optionalText(requestedWorkspaceRows[0]?.tenant_display_name),
+      workspaceDisplayName: optionalText(requestedWorkspaceRows[0]?.workspace_display_name),
     };
   }
 }

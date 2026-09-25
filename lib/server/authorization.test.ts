@@ -38,7 +38,7 @@ const principal = {
 test("authoritative membership and data rights map roles, resources, source access and workspace rights", async () => {
   const rights = { resource_client_visible: true, internal_analytics_allowed: true, model_training_allowed: false, redistribution_allowed: true };
   const db = new FakeDb([
-    { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "fund", resource_id: "fund-a", resource_permission: "read" },
+    { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", tenant_display_name: "Meridian Capital Partners", workspace_display_name: "Primary Workspace", resource_type: "fund", resource_id: "fund-a", resource_permission: "read" },
     { ...rights, workspace_id: principal.workspaceId, role_name: "viewer", resource_type: "document", resource_id: "doc-a", resource_permission: "read", resource_source_access: true },
     { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-no-source", resource_permission: "read", resource_source_access: false },
     { ...rights, workspace_id: principal.workspaceId, role_name: "reviewer", resource_type: "document", resource_id: "doc-write-only", resource_permission: "review", resource_source_access: true },
@@ -55,7 +55,11 @@ test("authoritative membership and data rights map roles, resources, source acce
   assert.equal(result?.internalAnalyticsAllowed, true);
   assert.equal(result?.modelTrainingAllowed, false);
   assert.equal(result?.redistributionAllowed, true);
+  assert.equal(result?.tenantDisplayName, "Meridian Capital Partners");
+  assert.equal(result?.workspaceDisplayName, "Primary Workspace");
   assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
+  assert.match(db.lastSql, /t\.display_name as tenant_display_name/);
+  assert.match(db.lastSql, /w\.display_name as workspace_display_name/);
   // Entitlement rows are joined only for the requested workspace.
   assert.match(db.lastSql, /left join corvis_control\.resource_entitlement e[\s\S]*and m\.workspace_id::text=\$5[\s\S]*where s\.tenant_id/);
   assert.match(db.lastSql, /s\.tenant_id=\$1::uuid/);
@@ -74,6 +78,13 @@ test("authoritative membership and data rights map roles, resources, source acce
   assert.match(db.lastSql, /m\.status='active'/);
   assert.match(db.lastSql, /m\.valid_until is null or m\.valid_until > now\(\)/);
   assert.match(db.lastSql, /e\.valid_until is null or e\.valid_until > now\(\)/);
+});
+
+test("tenant/workspace display names are undefined, not an empty string, when the row carries none", async () => {
+  const db = new FakeDb([{ workspace_id: principal.workspaceId, role_name: "analyst" }]);
+  const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.equal(result?.tenantDisplayName, undefined);
+  assert.equal(result?.workspaceDisplayName, undefined);
 });
 
 test("missing or denied current data rights fail closed even when a resource entitlement exists", async () => {

@@ -15,6 +15,18 @@ test("customer can navigate trusted workspace surfaces", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /ask corvis/i })).toBeVisible();
 });
 
+test("the sidebar shows the real workspace/tenant identity, not the static placeholder", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
+  const workspaceSection = page.locator(".sidebar-section", { has: page.getByText("WORKSPACE") });
+  await expect(workspaceSection.getByText("Current workspace")).toHaveCount(0);
+  await expect(workspaceSection.getByText("Tenant-scoped")).toHaveCount(0);
+  await expect(workspaceSection.getByText("Primary Workspace")).toBeVisible();
+  await expect(workspaceSection.getByText("Meridian Capital Partners")).toBeVisible();
+  // The avatar-style initial derives from the real name, not a hardcoded letter.
+  await expect(workspaceSection.locator(".workspace-dot")).toHaveText("P");
+});
+
 test("global workspace search is actionable", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /search entitled workspace data/i }).click();
