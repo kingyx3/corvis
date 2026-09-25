@@ -318,7 +318,7 @@ jobs:
 
       - name: Upload migration evidence
         if: always() && inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}
           path: migration-evidence.json
