@@ -20,6 +20,7 @@ export async function GET(request: Request) {
       return json({ error: "limit must be an integer between 1 and 5000", correlationId: id }, { status: 400 });
     }
     const data = await positionFinancialStatements().list(identity,{
+      portfolioId: url.searchParams.get("portfolioId") || undefined,
       fundId: url.searchParams.get("fundId") || undefined,
       holdingId: url.searchParams.get("holdingId") || undefined,
       companyId: url.searchParams.get("companyId") || undefined,
