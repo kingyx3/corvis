@@ -208,7 +208,16 @@ export type SnapshotPublication = {
   reason?: string;
 };
 
-export type SourceCitation = { sourceReferenceId: string; documentId: string; page?: number; label: string };
+export type SourceCitation = {
+  sourceReferenceId: string;
+  documentId: string;
+  page?: number;
+  label: string;
+  /** The reviewed observation this citation's source document produced, when the two are linked. */
+  observationId?: string;
+  /** True when this citation's source document is part of a currently open reconciliation exception. */
+  hasOpenReconciliation?: boolean;
+};
 export type SemanticComputedResult = {
   semanticQueryId: string;
   status: "executed" | "unresolved" | "unsupported";
