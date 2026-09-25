@@ -39,11 +39,6 @@ export type ServerConfig = {
   rateLimitRequestsPerMinute: number;
   dataLifecycleEndpoint?: string;
   dataLifecycleToken?: string;
-  // Deprecated compatibility fields. Physical exports are rendered by the
-  // existing delivery worker and stored in private GCS; no standalone export
-  // service is required for the production path.
-  exportDeliveryEndpoint?: string;
-  exportDeliveryToken?: string;
   exportArtifactTtlSeconds: number;
   // Non-production compatibility only. Production internal calls use Google
   // workload OIDC instead of a shared secret.
@@ -100,8 +95,6 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     rateLimitRequestsPerMinute: positiveInteger(env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE) ?? 600,
     dataLifecycleEndpoint: env.CORVIS_DATA_LIFECYCLE_ENDPOINT,
     dataLifecycleToken: env.CORVIS_DATA_LIFECYCLE_TOKEN,
-    exportDeliveryEndpoint: env.CORVIS_EXPORT_DELIVERY_ENDPOINT,
-    exportDeliveryToken: env.CORVIS_EXPORT_DELIVERY_TOKEN,
     exportArtifactTtlSeconds,
     workerSecret: env.CORVIS_WORKER_SECRET,
     operationsTenantId: env.CORVIS_OPERATIONS_TENANT_ID,
