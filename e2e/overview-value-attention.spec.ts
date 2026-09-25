@@ -54,3 +54,13 @@ test("administrators additionally see unhealthy sources on the attention surface
   await page.goto("/");
   await expect(page.getByRole("region", { name: /most urgent first/i }).getByText(/source connection/i)).toBeVisible();
 });
+
+test("exposure breaks down by governed asset type and GP-reported sector, reconciling to the total", async ({ page }) => {
+  await page.goto("/");
+  const breakdowns = page.getByRole("region", { name: /exposure breakdowns/i });
+  await expect(breakdowns.getByRole("heading", { name: /exposure by asset type/i })).toBeVisible();
+  await expect(breakdowns.getByRole("heading", { name: /exposure by sector/i })).toBeVisible();
+  await expect(breakdowns.getByText(/common equity/i).first()).toBeVisible();
+  await expect(breakdowns.getByText(/healthcare/i).first()).toBeVisible();
+  await expect(breakdowns.getByText(/rows sum exactly to the .* exposure total/i).first()).toBeVisible();
+});

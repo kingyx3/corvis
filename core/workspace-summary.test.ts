@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "./contracts.ts";
-import { buildWorkspaceSummary, comparePeriods, periodEndDate, STALE_AFTER_DAYS, type PortfolioValueFact } from "./workspace-summary.ts";
+import { buildWorkspaceSummary, comparePeriods, MIXED_INSTRUMENT_TYPES, periodEndDate, STALE_AFTER_DAYS, type ExposureDimensionFact, type PortfolioValueFact } from "./workspace-summary.ts";
 
 const now = new Date("2026-09-25T12:00:00Z");
 
@@ -77,7 +77,7 @@ test("no published value yields an empty trend and exposure rather than invented
   const summary = buildWorkspaceSummary(empty);
   assert.equal(summary.currency, null);
   assert.deepEqual(summary.valueTrend, []);
-  assert.deepEqual(summary.exposure, { total: 0, items: [], excludedFundPeriods: 0 });
+  assert.deepEqual(summary.exposure, { total: 0, items: [], excludedFundPeriods: 0, byAssetType: [], bySector: [] });
   assert.equal(summary.attention.counts.total, 0);
 });
 
@@ -132,4 +132,68 @@ test("freshness reports as-of, preliminary periods and a staleness flag past the
     ["Fund C", null, null, true, 1],
   ]);
   assert.equal(summary.freshness.staleFunds, 2);
+});
+
+test("only the most aggregate subject level counts, so fund fair value is not added to its holdings", () => {
+  const summary = buildWorkspaceSummary({ ...empty, valueFacts: [
+    fact({ metricCode: "fair_value", subjectLevel: "fund", value: 300 }),
+    fact({ metricCode: "fair_value", subjectLevel: "holding", value: 290, factCount: 5 }),
+    fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", metricCode: "fair_value", subjectLevel: "instrument", value: 40 }),
+    fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", metricCode: "fair_value", subjectLevel: "holding", value: 45 }),
+  ] });
+  assert.deepEqual(summary.exposure.items.map((item) => [item.fund, item.value]), [["Fund A", 300], ["Fund B", 45]]);
+});
+
+function dimension(overrides: Partial<ExposureDimensionFact>): ExposureDimensionFact {
+  return { snapshotId: "s1", fundId: "fund-a", dimension: "asset_type", subjectLevel: "holding", category: "common_equity", currency: "USD", value: 10, factCount: 1, ...overrides };
+}
+
+test("asset-type and sector breakdowns reconcile exactly to the exposure total", () => {
+  const summary = buildWorkspaceSummary({ ...empty,
+    valueFacts: [
+      fact({ value: 100 }),
+      fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", value: 50 }),
+      fact({ snapshotId: "c1", fundId: "fund-c", fund: "Fund C", value: 20 }),
+    ],
+    dimensionFacts: [
+      dimension({ category: "common_equity", value: 60 }),
+      dimension({ category: "senior_debt", value: 25 }),
+      dimension({ snapshotId: "b1", fundId: "fund-b", category: "common_equity", value: 30 }),
+      dimension({ snapshotId: "b1", fundId: "fund-b", category: MIXED_INSTRUMENT_TYPES, value: 12 }),
+      dimension({ snapshotId: "b1", fundId: "fund-b", category: null, value: 8 }),
+      // Instrument-level rows for a snapshot that also reports holding level are ignored.
+      dimension({ snapshotId: "b1", fundId: "fund-b", subjectLevel: "instrument", category: "warrant", value: 999 }),
+      // A different currency never enters the USD breakdown.
+      dimension({ category: "common_equity", currency: "EUR", value: 7 }),
+      dimension({ dimension: "sector", subjectLevel: "fund", category: "Healthcare", value: 70 }),
+      dimension({ dimension: "sector", subjectLevel: "fund", category: "healthcare", snapshotId: "b1", fundId: "fund-b", value: 10 }),
+    ],
+  });
+  const total = summary.exposure.total;
+  assert.equal(total, 170);
+  const sum = (rows: Array<{ value: number }>) => rows.reduce((acc, row) => acc + row.value, 0);
+
+  assert.deepEqual(summary.exposure.byAssetType.map((row) => [row.label, row.value, row.kind, row.fundCount]), [
+    ["Common equity", 90, "category", 2],
+    ["Senior debt", 25, "category", 1],
+    ["Mixed instruments", 12, "category", 1],
+    ["Unclassified", 8, "unclassified", 1],
+    // Fund A's NAV beyond classified holdings (15) plus all of Fund C (20).
+    ["Not attributed", 35, "not_attributed", 2],
+  ]);
+  assert.equal(sum(summary.exposure.byAssetType), total);
+
+  // Sector labels group case-insensitively; everything else is not attributed.
+  assert.deepEqual(summary.exposure.bySector.map((row) => [row.label, row.value]), [["Healthcare", 80], ["Not attributed", 90]]);
+  assert.equal(sum(summary.exposure.bySector), total);
+});
+
+test("a breakdown is omitted when no fund reports any classification, and may carry negative residual", () => {
+  const none = buildWorkspaceSummary({ ...empty, valueFacts: [fact({ value: 100 })], dimensionFacts: [dimension({ category: null, value: 40 })] });
+  assert.deepEqual(none.exposure.byAssetType, []);
+  assert.deepEqual(none.exposure.bySector, []);
+
+  // Classified holdings above NAV (fund-level leverage) leave a negative residual that still reconciles.
+  const levered = buildWorkspaceSummary({ ...empty, valueFacts: [fact({ value: 100 })], dimensionFacts: [dimension({ value: 130 })] });
+  assert.deepEqual(levered.exposure.byAssetType.map((row) => [row.label, row.value]), [["Common equity", 130], ["Not attributed", -30]]);
 });
