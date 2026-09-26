@@ -22,7 +22,7 @@ test("support acknowledgement threshold covers privilege and duration",()=>{
 });
 
 test("migration persists notification, acknowledgement and SCIM state behind server-only RLS",async()=>{
-  const sql=(await readFile("db/postgres/migrations/059_tenant_admin_self_service.sql","utf8")).toLowerCase();
+  const sql=(await readFile("db/postgres/migrations/060_tenant_admin_self_service.sql","utf8")).toLowerCase();
   for(const relation of ["tenant_access_notification","tenant_scim_configuration","tenant_scim_identity"])assert.match(sql,new RegExp(`create table if not exists corvis_control\\.${relation}`));
   assert.match(sql,/pending_ack/);assert.match(sql,/acknowledged_by_subject/);assert.match(sql,/force row level security/);assert.doesNotMatch(sql,/create policy/);
 });
