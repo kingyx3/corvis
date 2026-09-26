@@ -152,6 +152,25 @@ test("POST /admin/webhooks/subscriptions rejects a JSON null or array body with 
   }
 });
 
+test("POST /exports rejects a malformed scope with 400 instead of silently ignoring it", async () => {
+  for (const scope of [{}, { snapshotId: 42 }, { snapshotId: "" }, "snap-a"]) {
+    const valid = request("csv");
+    const response = await exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body: JSON.stringify({ format: "csv", scope }) }));
+    assert.equal(response.status, 400, JSON.stringify(scope));
+    const payload = await response.json() as { error: string };
+    assert.equal(payload.error, "invalid_export_scope", JSON.stringify(scope));
+  }
+});
+
+test("POST /exports with a well-formed scope but no fund entitlement fails closed with 403, never silently exporting every entitled snapshot", async () => {
+  // The demo identity path this suite uses never carries fundIds, so a scoped
+  // request can never resolve to the requested snapshot here — exactly the
+  // fail-closed behavior a real caller without that entitlement would hit.
+  const valid = request("csv");
+  const response = await exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body: JSON.stringify({ format: "csv", scope: { snapshotId: "22222222-2222-2222-2222-222222222222" } }) }));
+  assert.equal(response.status, 403);
+});
+
 test("POST /exports never lets one tenant's Idempotency-Key replay satisfy another tenant's request", async () => {
   const key = "shared-key-across-tenants";
   const tenantA = await exportsPost(request("csv", { idempotencyKey: key, tenant: "tenant-idem-x" }));

@@ -102,7 +102,7 @@ export interface WorkspacePort {
   workspaceSummary(): Promise<WorkspaceSummary>;
   /** Entitled portfolio companies with their current governed sector (null when unclassified). */
   listCompanySectors(): Promise<CompanySectorRecord[]>;
-  /** Reviewer command; expectedVersion is the record's `version` (0 when unclassified). */
+  /** Review Analyst command; expectedVersion is the record's `version` (0 when unclassified). */
   assignCompanySector(command: CompanySectorAssignment): Promise<CompanySectorAssignmentOutcome>;
   /** Tenant-admin-only access inventory for governed offboarding. */
   listAccessMembers(): Promise<TenantAccessMember[]>;

@@ -41,8 +41,6 @@ The canonical deployment environments are:
 - `uat` — production-like user acceptance / pre-production environment using synthetic or sanitized data.
 - `prod` — production customer environment.
 
-`staging` is deprecated as an environment name. Existing references should migrate to `uat` when touched.
-
 ## Change discipline
 
 Technical changes that affect a Confluence-owned business requirement must link the governing Confluence page or issue. Changes that are purely implementation detail may be completed entirely in GitHub.

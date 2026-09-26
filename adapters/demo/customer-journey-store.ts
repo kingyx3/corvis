@@ -175,19 +175,23 @@ class DemoCustomerJourneyStore {
     return { answer: `Demo response for: ${question}`, citations, semanticQueryIds: [], uncertainty: "Demo mode" };
   }
 
-  createExport(format: ExportManifest["format"]): ExportManifest {
+  createExport(format: ExportManifest["format"], snapshotId?: string): ExportManifest {
     const published = this.snapshots.filter((item) => item.status === "Published" && item.id);
+    const scoped = snapshotId ? published.filter((item) => item.id === snapshotId) : published;
+    // Mirrors the server: a scoped export (e.g. "export this view" from Review)
+    // must resolve to exactly the requested, already-entitled snapshot.
+    if (snapshotId && scoped.length === 0) throw new Error("export_snapshot_not_found");
     const manifestBase = {
       exportId: `export_${crypto.randomUUID().slice(0, 8)}`,
       tenantId: "demo-tenant",
       generatedAt: new Date().toISOString(),
       schemaVersion: "v1",
       taxonomyVersion: "v1",
-      snapshotIds: published.map((item) => item.id as string),
+      snapshotIds: scoped.map((item) => item.id as string),
       format,
       rowCounts: {
-        observations: this.observations.filter((row) => row.state === "Approved").length,
-        snapshots: published.length,
+        observations: this.observations.filter((row) => row.state === "Approved" && (!snapshotId || row.snapshotId === snapshotId)).length,
+        snapshots: scoped.length,
       },
     };
     return { ...manifestBase, checksumSha256: checksum(manifestBase) };

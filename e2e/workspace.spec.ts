@@ -105,7 +105,7 @@ test("a read-only identity only sees the workflows its capabilities allow", asyn
   await nav.getByRole("button", { name: /^data review$/i }).click();
   await expect(page.getByRole("heading", { name: /^data review$/i })).toBeVisible();
   await expect(page.getByText(/read-only trusted data/i)).toBeVisible();
-  await expect(page.getByRole("button", { name: /export csv/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /export this snapshot/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /publish snapshot/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
   const table = page.getByRole("region", { name: /data review observations table/i });

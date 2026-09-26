@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
+import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
 import { StatusPill } from "@/components/ui/status-pill";
-import { toCsv } from "@/lib/csv";
 
 function actionLabel(action: ReconciliationResolutionAction): string {
   if (action === "select_source") return "Select authoritative source";
@@ -162,13 +162,19 @@ export function ReviewView({
     document.querySelector(`[data-observation-id="${CSS.escape(scrollTarget.observationId)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [scrollTarget]);
 
-  const exportCsv = () => {
-    const header = ["Company","Metric","Value","Period","Source","Confidence","State"];
-    const csvRows = scopedRows.map((row) => [row.company,row.metric,row.value,row.period,row.source,`${row.confidence}%`,row.state]);
-    const csv = toCsv([header, ...csvRows]);
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = "corvis-reviewed-observations.csv"; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Routes through the same governed deliveryPort pipeline (manifest, checksum,
+  // audit trail) Data delivery uses, scoped to this one snapshot, instead of an
+  // ungoverned client-side CSV blob (#177 D3). Async by design: the export is
+  // rendered by the same worker Data delivery's exports are, so it's requested
+  // here and downloaded from Data delivery once ready, not handed back inline.
+  const requestExport = async () => {
+    if (!snapshot?.id) return;
+    setBusy("export"); setMessage(null);
+    try {
+      await deliveryPort.createExport("csv", { snapshotId: snapshot.id });
+      setMessage({ text: "Export requested for this snapshot. Download it from Data delivery once it's ready.", tone: "success" });
+    } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Export request failed", tone: "error" }); }
+    finally { setBusy(null); }
   };
 
   const applyDecision = async (row: ObservationRecord, decision: "approve" | "reject" | "correct", correctedValue?: string, reasonCode?: string) => {
@@ -243,7 +249,7 @@ export function ReviewView({
   };
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && <button className="secondary-button" onClick={exportCsv}><Icon name="download"/>Export CSV</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
+    <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && snapshot?.id && <button className="secondary-button" disabled={!alreadyPublished || busy === "export"} title={alreadyPublished ? undefined : "Publish this snapshot first: the governed export pipeline only exports published, audited data"} onClick={() => void requestExport()}><Icon name="download"/>{busy === "export" ? "Requesting export…" : "Export this snapshot"}</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
     {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note tone-warning" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} {needsReview === 1 ? "observation needs" : "observations need"} review and {blockingExceptions} reconciliation {blockingExceptions === 1 ? "exception remains" : "exceptions remain"} open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
     {message && <div className={`lineage-note ${message.tone === "error" ? "tone-danger" : "tone-success"}`} role={message.tone === "error" ? "alert" : "status"}><Icon name={message.tone === "error" ? "alert" : "shield"}/><div><strong>{message.tone === "error" ? "Workflow action failed" : "Workflow status"}</strong><span>{message.text}</span></div></div>}
