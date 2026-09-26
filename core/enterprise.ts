@@ -44,6 +44,13 @@ export type Entitlements = {
   redistributionAllowed?: boolean;
 };
 
+/** Chrome-only per-workspace summary (e.g. an account/workspace switcher) — never for access decisions. */
+export type WorkspaceMembershipSummary = {
+  workspaceId: string;
+  workspaceDisplayName?: string;
+  roles: Role[];
+};
+
 export type RequestIdentity = {
   subject: string;
   tenantId: string;
@@ -70,6 +77,15 @@ export type RequestIdentity = {
    */
   tenantDisplayName?: string;
   workspaceDisplayName?: string;
+  /**
+   * Every workspace the subject actively belongs to in this tenant (chrome
+   * only, e.g. an account/workspace switcher — never for access decisions;
+   * `entitlements.workspaceIds` remains the authoritative access-control
+   * list). Populated only where the identity path resolves membership across
+   * the whole tenant (the authoritative lookup, and demo mode, where it is a
+   * single-item list); undefined elsewhere.
+   */
+  workspaceMemberships?: WorkspaceMembershipSummary[];
 };
 
 export function hasPermission(identity: RequestIdentity, permission: Permission): boolean {

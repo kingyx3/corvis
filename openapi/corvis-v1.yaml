@@ -28,6 +28,23 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/WorkspaceCapabilities' }
                   correlationId: { type: string }
+  /my-workspaces:
+    get:
+      operationId: listMyWorkspaces
+      description: Chrome-only listing of every workspace the signed-in identity actively belongs to in this tenant (e.g. for an account/workspace switcher). Never used for access decisions; entitlement/authorization stays scoped to the requested session's workspace.
+      responses:
+        '200':
+          description: The caller's active workspace memberships
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkspaceMembership' }
+                  correlationId: { type: string }
   /documents:
     get:
       operationId: listDocuments
@@ -486,6 +503,17 @@ components:
             enum: ['documents:read', 'documents:write', 'sources:read', 'observations:read', 'observations:review', 'snapshots:publish', 'research:query', 'exports:create', 'admin:manage']
         sourceDocumentAccessAllowed: { type: boolean }
         redistributionAllowed: { type: boolean }
+    WorkspaceMembership:
+      type: object
+      required: [workspaceId, roles]
+      properties:
+        workspaceId: { type: string }
+        workspaceDisplayName: { type: string }
+        roles:
+          type: array
+          items:
+            type: string
+            enum: ['admin', 'reviewer', 'analyst', 'api_client', 'read_only']
     ExportManifest:
       type: object
       required: [exportId, tenantId, generatedAt, schemaVersion, taxonomyVersion, snapshotIds, format, rowCounts, checksumSha256]
