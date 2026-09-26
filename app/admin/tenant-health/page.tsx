@@ -1,0 +1,12 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { workspaceContextHeaders } from "@/lib/workspace-context";
+
+type Health={tenantId:string;tenantName:string;workspaceCount:number;tenantAdminCount:number;activeSupportGrants:number;pendingSupportAcknowledgements:number;pendingInvitations:number};
+
+export default function TenantHealthPage(){
+  const [rows,setRows]=useState<Health[]>([]);const [error,setError]=useState("");const [loading,setLoading]=useState(true);
+  useEffect(()=>{let active=true;const base=process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/,"")??"";void fetch(`${base}/api/v1/admin/tenant-health`,{credentials:"include",cache:"no-store",headers:workspaceContextHeaders()}).then(async(response)=>{const body=await response.json() as {data?:Health[];error?:string};if(!response.ok)throw new Error(body.error??"Tenant health unavailable");if(active)setRows(body.data??[]);}).catch((caught)=>{if(active)setError(caught instanceof Error?caught.message:"Tenant health unavailable");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
+  return <main id="main-content"><div className="admin-shell"><section className="page-heading"><div><p className="eyebrow">Corvis operations</p><h1>Tenant health</h1><p className="lede">Cross-tenant operational posture: workspaces, organization administrators, pending invitations and break-glass support access.</p></div><a className="secondary-button" href="/admin">Back to admin</a></section>{error&&<div className="lineage-note tone-danger" role="alert">{error}</div>}<section className="panel"><div className="table-card" tabIndex={0} role="region" aria-label="Tenant health"><table className="data-table"><thead><tr><th>Tenant</th><th>Workspaces</th><th>Org admins</th><th>Active support</th><th>Pending support ack</th><th>Pending invites</th></tr></thead><tbody>{loading?<tr><td colSpan={6} className="empty-cell">Loading tenant health…</td></tr>:rows.length?rows.map((row)=><tr key={row.tenantId}><td><strong>{row.tenantName}</strong><span className="table-secondary">{row.tenantId}</span></td><td>{row.workspaceCount}</td><td>{row.tenantAdminCount}</td><td>{row.activeSupportGrants}</td><td>{row.pendingSupportAcknowledgements}</td><td>{row.pendingInvitations}</td></tr>):<tr><td colSpan={6} className="empty-cell">No tenants found.</td></tr>}</tbody></table></div></section></div></main>;
+}

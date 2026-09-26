@@ -1,0 +1,8 @@
+import { correlationId } from "@/lib/server/http";
+import { getServerConfig } from "@/lib/server/config";
+import { postgres, withTransaction } from "@/lib/server/postgres";
+import { authenticateScim, createScimUser, listScimUsers, scimErrorResponse, ScimError } from "@/lib/server/scim";
+
+export async function GET(request:Request){try{const db=postgres(getServerConfig().postgresDsn);const config=await authenticateScim(request,db);const url=new URL(request.url);const base=`${url.origin}/api/v1/scim/v2/Users`;const resources=await listScimUsers(config,base,url.searchParams.get("filter"),db);return Response.json({schemas:["urn:ietf:params:scim:api:messages:2.0:ListResponse"],totalResults:resources.length,startIndex:1,itemsPerPage:resources.length,Resources:resources},{headers:{"cache-control":"no-store"}});}catch(error){return scimErrorResponse(error);}}
+
+export async function POST(request:Request){try{const db=postgres(getServerConfig().postgresDsn);const config=await authenticateScim(request,db);let input:Record<string,unknown>;try{const value=await request.json();if(!value||typeof value!=="object"||Array.isArray(value))throw new Error();input=value as Record<string,unknown>;}catch{throw new ScimError(400,"invalidSyntax","SCIM JSON object required");}const base=`${new URL(request.url).origin}/api/v1/scim/v2/Users`;const resource=await withTransaction(db,(tx)=>createScimUser(config,input,base,correlationId(request),tx));return Response.json({schemas:["urn:ietf:params:scim:schemas:core:2.0:User"],...resource},{status:201,headers:{location:resource.meta.location,"cache-control":"no-store"}});}catch(error){return scimErrorResponse(error);}}
