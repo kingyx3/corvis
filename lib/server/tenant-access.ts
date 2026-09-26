@@ -5,7 +5,6 @@ import type {
   TenantAccessEntitlement,
   TenantAccessMember,
   TenantAccessMembership,
-  TenantAccessSubject,
 } from "../../core/workspace.ts";
 import { getServerConfig } from "./config.ts";
 import {
@@ -168,7 +167,7 @@ export async function deactivateTenantAccessMember(
   const subject = text(rows[0], "subject");
   if (!authMethod || !subject) throw new TenantAccessError("member_not_found", 404);
 
-  const result = await lifecycle.apply({
+  return lifecycle.apply({
     tenantId: identity.tenantId,
     eventKey: dependencies.eventKey ?? `tenant-admin-deactivate:${userId}:${randomUUID()}`,
     actorSubject: identity.subject,
@@ -181,5 +180,4 @@ export async function deactivateTenantAccessMember(
     memberships: [],
     reason,
   });
-  return result;
 }
