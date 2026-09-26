@@ -8,7 +8,9 @@ export function createDemoDeliveryPort(): DeliveryPort {
     async createExport(format, request?: ExportRequest) {
       assertDemoModuleAvailable("delivery");
       const options = normalizeExportRequest(request);
-      const manifest = await demoCustomerJourneyStore.createExport(format, options.scope?.snapshotId, options.source);
+      if (options.scope && "positionFinancials" in options.scope) throw new Error("Position Financials governed exports require the production delivery pipeline");
+      const snapshotId = options.scope && "snapshotId" in options.scope ? options.scope.snapshotId : undefined;
+      const manifest = await demoCustomerJourneyStore.createExport(format, snapshotId, options.source);
       history.unshift({
         exportId: manifest.exportId,
         format: manifest.format,
