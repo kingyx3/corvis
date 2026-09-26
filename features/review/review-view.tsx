@@ -106,7 +106,7 @@ function awaitingSecondApproval(row: ObservationRecord): boolean {
 }
 function dualControlLabel(row: ObservationRecord): string | undefined {
   if (row.riskTier !== "critical") return undefined;
-  if (awaitingSecondApproval(row)) return "1st approval recorded — 2nd required";
+  if (awaitingSecondApproval(row)) return "1st approval recorded, 2nd required";
   if (row.state === "Needs review") return "Dual control required";
   return undefined;
 }
