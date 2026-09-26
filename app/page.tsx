@@ -149,7 +149,7 @@ export default function CorvisApp() {
   const navigate = (next: View) => { setReviewFocus(null); setAnalyticsFocus(null); setView(next); };
   const viewPositionFinancials = (row: ObservationRecord) => {
     if (!row.companyId) return;
-    setAnalyticsFocus((current) => ({ companyId: row.companyId!, fundId: row.fundId, holdingId: row.holdingId, key: (current?.key ?? 0) + 1 }));
+    setAnalyticsFocus((current) => ({ companyId: row.companyId!, fundId: row.fundId, holdingId: row.holdingId, period: row.period, key: (current?.key ?? 0) + 1 }));
     setView("analytics");
   };
   const openSnapshot = (snapshot: FundSnapshot) => { if (!canReadObservations) return; setSelectedSnapshotId(snapshot.id); navigate("review"); };
