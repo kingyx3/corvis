@@ -194,7 +194,7 @@ export function ResearchView({ suggestions, canReadSources, onOpenReviewObservat
 
     <div className="research-layout">
       <div className="conversation-panel">
-        <div className="conversation-scroll" ref={scrollRef}>
+        <div className="conversation-scroll" ref={scrollRef} tabIndex={0} role="region" aria-label="Ask Corvis conversation">
           {turns.map((turn) => <div className="conversation-turn" key={turn.id}>
             <div className="user-question"><div className="avatar user-avatar" aria-hidden="true">U</div><div><span>You</span><p>{turn.question}</p></div></div>
             <div className="assistant-answer" aria-live="polite" aria-busy={turn.loading}><div className="avatar corvis-avatar" aria-hidden="true">C</div><div className="answer-body">
