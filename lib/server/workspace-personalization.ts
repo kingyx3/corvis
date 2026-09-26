@@ -40,10 +40,11 @@ function allowedFunds(identity: RequestIdentity): Set<string> { return new Set(i
  */
 export async function getWorkspacePersonalization(
   identity: RequestIdentity,
-  db: PostgresSqlApi = dbDefault(),
+  db?: PostgresSqlApi,
 ): Promise<WorkspacePersonalization> {
   if (getServerConfig().demoMode || identity.authMethod === "demo") return { pinnedFundIds: [], lastSeenAt: null };
-  const rows = await db.query(`select pinned_fund_ids,last_seen_at
+  const database = db ?? dbDefault();
+  const rows = await database.query(`select pinned_fund_ids,last_seen_at
       from corvis_control.workspace_user_preference
       where tenant_id=$1::uuid and workspace_id=$2::uuid and auth_method=$3 and subject=$4
       limit 1`, [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject]);
@@ -73,10 +74,11 @@ export function normalizePinnedFundIds(identity: RequestIdentity, value: unknown
 export async function updatePinnedFunds(
   identity: RequestIdentity,
   pinnedFundIds: string[],
-  db: PostgresSqlApi = dbDefault(),
+  db?: PostgresSqlApi,
 ): Promise<WorkspacePersonalization> {
   if (getServerConfig().demoMode || identity.authMethod === "demo") return { pinnedFundIds, lastSeenAt: null };
-  const rows = await db.query(`insert into corvis_control.workspace_user_preference
+  const database = db ?? dbDefault();
+  const rows = await database.query(`insert into corvis_control.workspace_user_preference
       (tenant_id,workspace_id,auth_method,subject,pinned_fund_ids,created_at,updated_at)
     values ($1::uuid,$2::uuid,$3,$4,$5::text[],now(),now())
     on conflict (tenant_id,workspace_id,auth_method,subject) do update
@@ -94,10 +96,11 @@ export async function updatePinnedFunds(
 export async function markWorkspaceVisited(
   identity: RequestIdentity,
   seenAt: Date,
-  db: PostgresSqlApi = dbDefault(),
+  db?: PostgresSqlApi,
 ): Promise<string | null> {
   if (getServerConfig().demoMode || identity.authMethod === "demo") return seenAt.toISOString();
-  const rows = await db.query(`insert into corvis_control.workspace_user_preference
+  const database = db ?? dbDefault();
+  const rows = await database.query(`insert into corvis_control.workspace_user_preference
       (tenant_id,workspace_id,auth_method,subject,last_seen_at,created_at,updated_at)
     values ($1::uuid,$2::uuid,$3,$4,$5::timestamptz,now(),now())
     on conflict (tenant_id,workspace_id,auth_method,subject) do update

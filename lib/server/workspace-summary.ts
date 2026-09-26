@@ -54,11 +54,15 @@ function sourceHealthStatus(status: string, failures: number): DashboardSourceHe
  * the caller is currently entitled to, so revoked fund access cannot leak a
  * historical source/fund relationship through Overview.
  */
-async function workspaceSourceHealth(identity: RequestIdentity, db: PostgresSqlApi = dbDefault()): Promise<DashboardSourceHealth[]> {
+async function workspaceSourceHealth(identity: RequestIdentity, db?: PostgresSqlApi): Promise<DashboardSourceHealth[]> {
   if (getServerConfig().demoMode || identity.authMethod === "demo") return [];
   const fundIds = identity.entitlements.fundIds ?? [];
   if (fundIds.length === 0) return [];
-  const rows = await db.query(`select c.source_connection_id,c.connection_label,c.status,c.consecutive_failures,c.last_success_at,
+  // db is a lazy default: constructing it eagerly (as a default parameter
+  // expression) would call postgres() and throw before the demo-mode/no-
+  // entitlement early returns above ever get a chance to run.
+  const database = db ?? dbDefault();
+  const rows = await database.query(`select c.source_connection_id,c.connection_label,c.status,c.consecutive_failures,c.last_success_at,
       array_remove(array_agg(distinct o.fund_id),null) as fund_ids
     from corvis_source.source_connection c
     join corvis_source.acquired_document a
@@ -87,12 +91,13 @@ async function workspaceSourceHealth(identity: RequestIdentity, db: PostgresSqlA
   }).filter((row) => row.sourceConnectionId);
 }
 
-async function workspaceExceptionEvents(identity: RequestIdentity, since: string | null, db: PostgresSqlApi = dbDefault()): Promise<ExceptionDigestEvent[]> {
+async function workspaceExceptionEvents(identity: RequestIdentity, since: string | null, db?: PostgresSqlApi): Promise<ExceptionDigestEvent[]> {
   if (!since || getServerConfig().demoMode || identity.authMethod === "demo") return [];
   const fundIds = identity.entitlements.fundIds ?? [];
   if (fundIds.length === 0) return [];
+  const database = db ?? dbDefault();
   const encodedFunds = postgresTextArrayLiteral(fundIds);
-  const rows = await db.query(`
+  const rows = await database.query(`
     select e.exception_id::text as event_id,'exception_opened' as event_kind,e.fund_id,e.report_period,e.summary,e.created_at
     from corvis_consolidated.reconciliation_exception e
     where e.tenant_id=$1::uuid and e.fund_id=any($2::text[]) and e.created_at > $3::timestamptz

@@ -69,31 +69,36 @@ export function DashboardDepthSections({
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const formatMoney = moneyFormatter(dashboard?.currency ?? null);
 
-  useEffect(() => {
-    if (!dashboard) return;
+  // Re-derive pinned/compare fund selection whenever a *new* dashboard snapshot
+  // arrives, without calling setState from inside an effect body (which causes
+  // cascading renders). Adjusting state during render, guarded by the snapshot's
+  // own generatedAt, is React's documented alternative to a sync effect here.
+  const [syncedGeneratedAt, setSyncedGeneratedAt] = useState(dashboard?.generatedAt);
+  if (dashboard && dashboard.generatedAt !== syncedGeneratedAt) {
+    setSyncedGeneratedAt(dashboard.generatedAt);
     setPinnedFundIds(dashboard.personalization.pinnedFundIds);
-    setCompareFundIds((current) => {
-      const entitled = new Set(dashboard.fundTrends.map((series) => series.fundId));
-      const stillValid = current.filter((fundId) => entitled.has(fundId));
-      if (stillValid.length >= 2) return stillValid;
+    const entitled = new Set(dashboard.fundTrends.map((series) => series.fundId));
+    const stillValid = compareFundIds.filter((fundId) => entitled.has(fundId));
+    if (stillValid.length < 2) {
       const preferred = dashboard.personalization.pinnedFundIds.filter((fundId) => entitled.has(fundId));
       const fallback = dashboard.fundTrends.map((series) => series.fundId);
-      return [...new Set([...preferred, ...fallback])].slice(0, Math.min(2, fallback.length));
-    });
-  }, [dashboard?.generatedAt]);
+      setCompareFundIds([...new Set([...preferred, ...fallback])].slice(0, Math.min(2, fallback.length)));
+    }
+  }
 
   // Advance the visit cursor only after the summary has mounted successfully.
+  const generatedAt = dashboard?.generatedAt;
   useEffect(() => {
-    if (!dashboard) return;
+    if (!generatedAt) return;
     const controller = new AbortController();
     void fetch("/api/v1/workspace-preferences", {
       method: "POST",
       signal: controller.signal,
       headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ seenAt: dashboard.generatedAt }),
+      body: JSON.stringify({ seenAt: generatedAt }),
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [dashboard?.generatedAt]);
+  }, [generatedAt]);
 
   const exactRows = useMemo(() => {
     if (!drill) return [];

@@ -1,5 +1,5 @@
 -- Corvis customer workspace personalization and visit cursor v1
--- Depends on migrations 001-057.
+-- Depends on migrations 001-058.
 --
 -- This table is server-managed. It stores only UX preferences and the last
 -- acknowledged Overview visit cursor; authorization continues to come from
