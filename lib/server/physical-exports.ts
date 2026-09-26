@@ -73,7 +73,10 @@ async function positionFinancialSnapshots(
           and pa.owning_fund_id in (select jsonb_array_elements_text($2::jsonb))
       )`;
   }
-  return store.query(`select distinct ps.snapshot_id,ps.schema_version,ps.taxonomy_version,ps.fund_id
+  return store.query(`select distinct ps.snapshot_id,ps.schema_version,ps.taxonomy_version,ps.fund_id,ps.version,
+    (select count(*)::integer from corvis_consolidated.reconciliation_exception e
+      where e.tenant_id=ps.tenant_id and e.snapshot_id=ps.snapshot_id and e.snapshot_version=ps.version and e.status='open'
+    ) as blocking_exception_count
     from corvis_serving.position_financial_statement_values v
     join corvis_consolidated.reconciliation_run rr
       on rr.tenant_id=v.tenant_id
@@ -132,7 +135,7 @@ export async function createPhysicalExport(
     positionRowCount = rows.length;
     snapshots = await positionFinancialSnapshots(identity, positionScope, store);
   } else {
-    snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id
+    snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id,version,blocking_exception_count
       from corvis_serving.fund_period_snapshots
       where tenant_id=$1 and status='published'
         and fund_id in (select jsonb_array_elements_text($2::jsonb))
@@ -162,6 +165,13 @@ export async function createPhysicalExport(
   const rowCounts: Record<string, number> = positionScope
     ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }
     : { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length };
+  const snapshotState = snapshots
+    .filter((row) => row.version != null)
+    .map((row) => ({
+      snapshotId: text(row, "snapshot_id"),
+      version: Number(row.version),
+      openExceptionCount: Number(row.blocking_exception_count ?? 0),
+    }));
   const base = {
     exportId,
     tenantId: identity.tenantId,
@@ -174,6 +184,7 @@ export async function createPhysicalExport(
     source,
     ...(scope ? { scope } : {}),
     ...(scopeLabel ? { scopeLabel } : {}),
+    ...(snapshotState.length ? { snapshotState } : {}),
   };
   const manifest: DeliveryManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
 
