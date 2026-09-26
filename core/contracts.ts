@@ -39,6 +39,10 @@ export type ObservationRecord = {
   state: "Approved" | "Needs review" | "Rejected";
   delta: string;
   version?: number;
+  /** Governed risk classification driving dual-control review (#182 D6), when known. */
+  riskTier?: string;
+  /** Count of distinct reviewers who have recorded an "approve" decision across this observation's history. */
+  approvedReviewerCount?: number;
 };
 
 export type FundSnapshot = {
