@@ -262,4 +262,6 @@ export type ResearchStreamEvent =
 export type ExportManifest = {
   exportId: string; tenantId: string; generatedAt: string; schemaVersion: string; taxonomyVersion: string;
   snapshotIds: string[]; format: "parquet" | "csv" | "xlsx"; rowCounts: Record<string, number>; checksumSha256: string;
+  /** Which product surface requested this export; optional only because exports created before this field existed lack it. */
+  source?: "delivery" | "review";
 };

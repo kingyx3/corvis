@@ -263,7 +263,7 @@ paths:
         '403': { description: Missing exports:create permission or redistribution rights }
     post:
       operationId: createExport
-      description: Creates a governed export job. Without `scope`, the export covers every currently entitled published snapshot (as before). With `scope.snapshotId`, the export is restricted to that one already-entitled published snapshot (e.g. "export this view" from Review) — the caller must already be entitled to it.
+      description: Creates a governed export job. Without `scope`, the export covers every currently entitled published snapshot (as before). With `scope.snapshotId`, the export is restricted to that one already-entitled published snapshot (e.g. "export this view" from Review) — the caller must already be entitled to it. `source` records which product surface requested the export, for delivery-history display; it defaults to `delivery` when omitted.
       requestBody:
         required: true
         content:
@@ -278,9 +278,10 @@ paths:
                   required: [snapshotId]
                   properties:
                     snapshotId: { type: string, format: uuid }
+                source: { type: string, enum: [delivery, review], default: delivery }
       responses:
         '202': { description: Export job accepted }
-        '400': { description: Invalid format or scope }
+        '400': { description: Invalid format, scope or source }
         '403': { description: The requested scope is not one of the caller's currently entitled published snapshots }
   /exports/{exportId}:
     get:
@@ -535,6 +536,7 @@ components:
         format: { type: string, enum: [parquet, csv, xlsx] }
         rowCounts: { type: object, additionalProperties: { type: integer } }
         checksumSha256: { type: string }
+        source: { type: string, enum: [delivery, review], description: 'Which product surface requested this export. Absent on exports created before this field existed.' }
     ExportStatus:
       type: object
       required: [exportId, format, state, createdAt, manifest, downloadAvailable]
