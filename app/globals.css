@@ -2174,6 +2174,10 @@ button.snapshot-row:focus-visible {
   font-size: 12px;
   color: var(--text-muted);
 }
+/* Beats the muted-color rule above for a status pill nested in the same label div. */
+.evidence-card .status-pill.status-review {
+  color: var(--warning);
+}
 .evidence-card > span {
   display: block;
   font-size: 12px;

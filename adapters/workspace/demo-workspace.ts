@@ -56,6 +56,12 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async whoAmI(): Promise<WorkspaceIdentity> {
       return { subject: "demo-user", tenantDisplayName: DEMO_TENANT_DISPLAY_NAME, workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME };
     },
+    async listMyWorkspaces() {
+      // Demo mode has exactly one simulated workspace today; a real switcher
+      // needs a second one wired through this same port before it means anything.
+      const role = demoRole();
+      return [{ workspaceId: "demo-workspace", workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME, roles: [role ?? "analyst"] }];
+    },
     async listDocuments() {
       assertDemoModuleAvailable("documents");
       return demoCustomerJourneyStore.listDocuments();

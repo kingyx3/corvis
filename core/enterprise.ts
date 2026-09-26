@@ -44,6 +44,13 @@ export type Entitlements = {
   redistributionAllowed?: boolean;
 };
 
+/** Chrome-only per-workspace summary (e.g. an account/workspace switcher) — never for access decisions. */
+export type WorkspaceMembershipSummary = {
+  workspaceId: string;
+  workspaceDisplayName?: string;
+  roles: Role[];
+};
+
 export type RequestIdentity = {
   subject: string;
   tenantId: string;
@@ -70,6 +77,15 @@ export type RequestIdentity = {
    */
   tenantDisplayName?: string;
   workspaceDisplayName?: string;
+  /**
+   * Every workspace the subject actively belongs to in this tenant (chrome
+   * only, e.g. an account/workspace switcher — never for access decisions;
+   * `entitlements.workspaceIds` remains the authoritative access-control
+   * list). Populated only where the identity path resolves membership across
+   * the whole tenant (the authoritative lookup, and demo mode, where it is a
+   * single-item list); undefined elsewhere.
+   */
+  workspaceMemberships?: WorkspaceMembershipSummary[];
 };
 
 export function hasPermission(identity: RequestIdentity, permission: Permission): boolean {
@@ -208,7 +224,16 @@ export type SnapshotPublication = {
   reason?: string;
 };
 
-export type SourceCitation = { sourceReferenceId: string; documentId: string; page?: number; label: string };
+export type SourceCitation = {
+  sourceReferenceId: string;
+  documentId: string;
+  page?: number;
+  label: string;
+  /** The reviewed observation this citation's source document produced, when the two are linked. */
+  observationId?: string;
+  /** True when this citation's source document is part of a currently open reconciliation exception. */
+  hasOpenReconciliation?: boolean;
+};
 export type SemanticComputedResult = {
   semanticQueryId: string;
   status: "executed" | "unresolved" | "unsupported";

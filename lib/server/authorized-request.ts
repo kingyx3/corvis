@@ -66,7 +66,16 @@ export async function resolveAuthorizedRequestIdentity(
   // application admin as tenant admin; production-like requests always use the
   // authoritative raw-role signal below.
   if (!requireAuthoritative || authenticated.authMethod === "demo") {
-    const identity: RequestIdentity = { ...authenticated, isTenantAdmin: authenticated.roles.includes("admin") };
+    const identity: RequestIdentity = {
+      ...authenticated,
+      isTenantAdmin: authenticated.roles.includes("admin"),
+      // Demo mode has no concept of multiple workspaces (see workspaceDisplayName
+      // above); a non-demo, non-authoritative identity doesn't know its display
+      // name either, so there is nothing honest to report here.
+      workspaceMemberships: authenticated.authMethod === "demo"
+        ? [{ workspaceId: authenticated.workspaceId, workspaceDisplayName: authenticated.workspaceDisplayName, roles: authenticated.roles }]
+        : undefined,
+    };
     assertTenantAdminRequestScope(request, identity);
     return identity;
   }
@@ -87,6 +96,7 @@ export async function resolveAuthorizedRequestIdentity(
     isTenantAdmin: authorized.isTenantAdmin,
     tenantDisplayName: authorized.tenantDisplayName,
     workspaceDisplayName: authorized.workspaceDisplayName,
+    workspaceMemberships: authorized.memberships,
     entitlements: {
       workspaceIds: authorized.workspaceIds,
       fundIds: authorized.fundIds,

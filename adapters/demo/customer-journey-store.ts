@@ -159,7 +159,20 @@ class DemoCustomerJourneyStore {
   }
 
   research(question: string): ResearchAnswer {
-    return { answer: `Demo response for: ${question}`, citations: [], semanticQueryIds: [], uncertainty: "Demo mode" };
+    // Illustrates the citation -> reviewed-observation link and open-reconciliation
+    // flag (D2, #177): production resolves both from the entitled Postgres data,
+    // demo mode just cites the first seed observation so the drill-through is
+    // genuinely exercisable end to end.
+    const cited = this.observations[0];
+    const citations = cited ? [{
+      sourceReferenceId: cited.sourceReferenceId ?? "demo-source-1",
+      documentId: "demo-document",
+      page: 12,
+      label: `${cited.company} · ${cited.metric}`,
+      observationId: cited.id,
+      hasOpenReconciliation: true,
+    }] : [];
+    return { answer: `Demo response for: ${question}`, citations, semanticQueryIds: [], uncertainty: "Demo mode" };
   }
 
   createExport(format: ExportManifest["format"]): ExportManifest {

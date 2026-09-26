@@ -42,6 +42,7 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
   const identityOnlyRoutes = new Set([
     "app/api/v1/me/route.ts",
     "app/api/v1/capabilities/route.ts",
+    "app/api/v1/my-workspaces/route.ts",
   ]);
 
   for (const file of files) {
@@ -126,6 +127,22 @@ test("all API routes remain covered by the central browser CSRF/CORS boundary wh
   assert.match(proxy, /pathname\.startsWith\(["']\/api\/["']\)[\s\S]*checkBrowserRequest\(request\)/);
   assert.match(proxy, /cache-control["']?,\s*["']no-store["']/i);
   assert.match(proxy, /Origin, Sec-Fetch-Site/);
+});
+
+test("the proxy issues a fresh per-request CSP nonce to both the request and the response in production", async () => {
+  const proxy = await source("proxy.ts");
+  assert.match(proxy, /generateNonce\(\)/, "each request must get its own nonce, not a shared/module-level one");
+  assert.match(proxy, /requestHeaders\.set\(["']x-nonce["'],\s*nonce\)/, "the nonce must reach Server Components via a request header");
+  assert.match(proxy, /requestHeaders\.set\(["']content-security-policy["'],\s*contentSecurityPolicy\)/, "Next.js extracts the nonce from the CSP header on the request, not just the response");
+  assert.match(proxy, /NextResponse\.next\(\{\s*request:\s*\{\s*headers:\s*requestHeaders\s*\}\s*\}\)/, "the mutated request headers must actually be forwarded downstream");
+  assert.match(proxy, /response\.headers\.set\(["']Content-Security-Policy["'],\s*contentSecurityPolicy\)/, "the browser must also receive the CSP header on the response");
+
+  const csp = await source("lib/server/content-security-policy.ts");
+  assert.match(csp, /script-src[^`]*'nonce-\$\{nonce\}'[^`]*'strict-dynamic'/, "script-src must be nonce/strict-dynamic based, not host-allowlist based");
+  assert.equal(/script-src[^`]*unsafe-inline/.test(csp), false, "script-src must not fall back to unsafe-inline");
+
+  const layout = await source("app/layout.tsx");
+  assert.match(layout, /connection\(\)/, "the root layout must force dynamic rendering so every request gets its own nonce");
 });
 
 test("outbound webhook delivery is replay-safe and bounded", async () => {

@@ -30,11 +30,13 @@ class FakeDb implements PostgresSqlApi {
     source_reference_id: "00000000-0000-0000-0000-000000000002",
     version: 1,
   }];
+  citationLinkRows: PostgresRow[] = [];
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ kind: "query", sql, parameters });
     if (sql.includes("bool_or(o.value_number is not null)")) return this.candidates;
     if (sql.includes("with scoped as")) return this.factRows;
+    if (sql.includes("from corvis_facts.observation_source_reference")) return this.citationLinkRows;
     if (sql.includes("from corvis_control.feature_flag where")) {
       return this.hybridSearchEnabled ? [{
         flag_key: "retrieval.hybrid_search",
@@ -189,6 +191,83 @@ test("source retrieval receives only the authoritative document subset and the g
     const filters = (searchBody as { filters: { documentIds: string[]; fundIds: string[] } }).filters;
     assert.deepEqual(filters.documentIds, sourceScoped.entitlements.sourceDocumentIds);
     assert.deepEqual(filters.fundIds, ["fund-a"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
+    else process.env.CORVIS_AI_ENDPOINT = originalAi;
+    if (originalSearch === undefined) delete process.env.CORVIS_SEARCH_ENDPOINT;
+    else process.env.CORVIS_SEARCH_ENDPOINT = originalSearch;
+  }
+});
+
+test("citations link to their reviewed observation and flag an open reconciliation exception (D2, #177)", async () => {
+  const db = new FakeDb();
+  const sourceReferenceId = "00000000-0000-0000-0000-000000000201";
+  const observationId = "00000000-0000-0000-0000-000000000301";
+  db.citationLinkRows = [{ source_reference_id: sourceReferenceId, observation_id: observationId, has_open_reconciliation: true }];
+  const originalAi = process.env.CORVIS_AI_ENDPOINT;
+  const originalSearch = process.env.CORVIS_SEARCH_ENDPOINT;
+  process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
+  process.env.CORVIS_SEARCH_ENDPOINT = "https://search.example.test";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    if (String(input) === "https://search.example.test/search") {
+      return new Response(JSON.stringify({ hits: [
+        { sourceReferenceId, documentId: "00000000-0000-0000-0000-000000000101", text: "Allowed evidence" },
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ answer: "Revenue was 100." }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const sourceScoped: RequestIdentity = {
+      ...identity,
+      entitlements: { ...identity.entitlements, sourceDocumentAccessAllowed: true, sourceDocumentIds: ["00000000-0000-0000-0000-000000000101"] },
+    };
+    const result = await new PermissionedResearchService(db).answer(sourceScoped, "Show fund-a revenue source evidence");
+    assert.equal(result.citations.length, 1);
+    assert.equal(result.citations[0]?.observationId, observationId);
+    assert.equal(result.citations[0]?.hasOpenReconciliation, true);
+    const linkCall = db.calls.find((call) => call.kind === "query" && call.sql.includes("from corvis_facts.observation_source_reference"));
+    assert.ok(linkCall);
+    assert.equal(linkCall?.parameters[0], sourceScoped.tenantId);
+    assert.deepEqual(JSON.parse(String(linkCall?.parameters[1])), [sourceReferenceId]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;
+    else process.env.CORVIS_AI_ENDPOINT = originalAi;
+    if (originalSearch === undefined) delete process.env.CORVIS_SEARCH_ENDPOINT;
+    else process.env.CORVIS_SEARCH_ENDPOINT = originalSearch;
+  }
+});
+
+test("a citation whose source reference resolves to nothing, or isn't even a UUID, is returned unlinked rather than failing the answer", async () => {
+  const db = new FakeDb();
+  db.citationLinkRows = [];
+  const originalAi = process.env.CORVIS_AI_ENDPOINT;
+  const originalSearch = process.env.CORVIS_SEARCH_ENDPOINT;
+  process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
+  process.env.CORVIS_SEARCH_ENDPOINT = "https://search.example.test";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    if (String(input) === "https://search.example.test/search") {
+      return new Response(JSON.stringify({ hits: [
+        { sourceReferenceId: "not-a-uuid", documentId: "00000000-0000-0000-0000-000000000101", text: "Evidence" },
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ answer: "Revenue was 100." }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const sourceScoped: RequestIdentity = {
+      ...identity,
+      entitlements: { ...identity.entitlements, sourceDocumentAccessAllowed: true, sourceDocumentIds: ["00000000-0000-0000-0000-000000000101"] },
+    };
+    const result = await new PermissionedResearchService(db).answer(sourceScoped, "Show fund-a revenue source evidence");
+    assert.equal(result.citations.length, 1);
+    assert.equal(result.citations[0]?.observationId, undefined);
+    assert.equal(result.citations[0]?.hasOpenReconciliation, undefined);
+    assert.ok(!db.calls.some((call) => call.kind === "query" && call.sql.includes("from corvis_facts.observation_source_reference")));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalAi === undefined) delete process.env.CORVIS_AI_ENDPOINT;

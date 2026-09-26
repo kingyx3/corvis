@@ -71,6 +71,10 @@ test("authoritative Postgres roles, resource grants and data rights override sig
         isTenantAdmin: false,
         tenantDisplayName: "Meridian Capital Partners",
         workspaceDisplayName: "Primary Workspace",
+        memberships: [
+          { workspaceId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", workspaceDisplayName: "Primary Workspace", roles: ["read_only"] },
+          { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: "Secondary Workspace", roles: ["analyst"] },
+        ],
       };
     },
   };
@@ -95,6 +99,10 @@ test("authoritative Postgres roles, resource grants and data rights override sig
     assert.equal(identity.entitlements.modelTrainingAllowed, false);
     assert.equal(identity.entitlements.redistributionAllowed, false);
     assert.equal(resolvedPrincipal?.sessionId, "session-1");
+    assert.deepEqual(identity.workspaceMemberships, [
+      { workspaceId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", workspaceDisplayName: "Primary Workspace", roles: ["read_only"] },
+      { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: "Secondary Workspace", roles: ["analyst"] },
+    ]);
   });
 });
 
@@ -111,6 +119,7 @@ test("explicit empty Postgres resource/data-right grants do not fall back to sig
         modelTrainingAllowed: false,
         redistributionAllowed: false,
         isTenantAdmin: false,
+        memberships: [{ workspaceId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", roles: ["analyst"] }],
       };
     },
   };
