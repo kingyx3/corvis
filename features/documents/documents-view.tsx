@@ -30,7 +30,7 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
       .then(async (response) => response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)))
       .then((payload) => setLifecycles(payload.data ?? []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setLifecycles([]); });
-    void fetch("/api/v1/source-activity", { signal: controller.signal, credentials: "same-origin" })
+    void fetch("/api/v1/source-connections/activity", { signal: controller.signal, credentials: "same-origin" })
       .then(async (response) => response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)))
       .then((payload) => setSourceActivity(payload.data ?? []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setSourceActivity([]); });
