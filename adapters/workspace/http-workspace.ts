@@ -18,6 +18,7 @@ import type {
   ReviewDecision,
   ReviewOutcome,
   SnapshotPublication,
+  WorkspaceMembershipSummary,
 } from "@/core/enterprise";
 
 type Envelope<T> = { data: T; correlationId: string };
@@ -90,6 +91,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   return {
     capabilities: () => request<WorkspaceCapabilities>("/api/v1/capabilities"),
     whoAmI: () => request<WorkspaceIdentity>("/api/v1/me"),
+    listMyWorkspaces: () => request<WorkspaceMembershipSummary[]>("/api/v1/my-workspaces"),
     listDocuments: () => request<DocumentRecord[]>("/api/v1/documents"),
     listObservations: () => request<ObservationRecord[]>("/api/v1/observations"),
     listSnapshots: () => request<FundSnapshot[]>("/api/v1/snapshots"),

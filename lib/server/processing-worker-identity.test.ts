@@ -30,6 +30,7 @@ function membershipRepository(entries: Record<string, string[]>): MembershipAuth
         modelTrainingAllowed: false,
         redistributionAllowed: false,
         isTenantAdmin: false,
+        memberships: [{ workspaceId: principal.workspaceId, roles: ["api_client"] }],
       };
     },
   };

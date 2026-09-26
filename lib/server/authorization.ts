@@ -1,4 +1,4 @@
-import type { RequestIdentity, Role } from "../../core/enterprise.ts";
+import type { RequestIdentity, Role, WorkspaceMembershipSummary } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
@@ -24,6 +24,8 @@ export type MembershipAuthorization = {
    * apply_identity_lifecycle / apply_support_access_admin, migration 048).
    */
   isTenantAdmin: boolean;
+  /** Every active workspace the subject belongs to in this tenant, not just the requested one. */
+  memberships: WorkspaceMembershipSummary[];
 };
 
 export type SessionRevocation = {
@@ -182,6 +184,22 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       .map((row) => text(row.resource_id))
       .filter(Boolean))];
 
+    // Unlike requestedWorkspaceRows, `rows` already covers every workspace this
+    // subject belongs to (only the resource_entitlement join above is scoped to
+    // the requested workspace), so this is chrome data (e.g. a workspace
+    // switcher) for the whole tenant membership, computed from the same query
+    // rather than a second round trip.
+    const memberships: WorkspaceMembershipSummary[] = workspaceIds.map((id) => {
+      const membershipRows = rows.filter((row) => text(row.workspace_id) === id);
+      return {
+        workspaceId: id,
+        workspaceDisplayName: optionalText(membershipRows[0]?.workspace_display_name),
+        roles: [...new Set(membershipRows
+          .map((row) => ROLE_MAP[text(row.role_name)])
+          .filter((role): role is Role => role !== undefined))],
+      };
+    });
+
     const sourceDocumentIds = [...new Set(requestedWorkspaceRows
       .filter((row) => text(row.resource_type) === "document"
         && text(row.resource_permission) === "read"
@@ -200,6 +218,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       modelTrainingAllowed: requestedWorkspaceRows.some((row) => truthy(row.model_training_allowed)),
       redistributionAllowed: requestedWorkspaceRows.some((row) => truthy(row.redistribution_allowed)),
       isTenantAdmin,
+      memberships,
       tenantDisplayName: optionalText(requestedWorkspaceRows[0]?.tenant_display_name),
       workspaceDisplayName: optionalText(requestedWorkspaceRows[0]?.workspace_display_name),
     };
