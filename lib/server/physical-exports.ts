@@ -159,7 +159,7 @@ export async function createPhysicalExport(
   const scopeLabel = positionScope
     ? `Position financials · ${positionScope.positionFinancials.companyId} · ${positionScope.positionFinancials.periodicity}${positionScope.positionFinancials.portfolioId ? ` · portfolio ${positionScope.positionFinancials.portfolioId}` : ""}`
     : snapshotScope ? `Snapshot ${snapshotScope.snapshotId}` : undefined;
-  const rowCounts = positionScope
+  const rowCounts: Record<string, number> = positionScope
     ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }
     : { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length };
   const base = {
