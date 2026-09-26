@@ -40,7 +40,21 @@ export function AccessAdminView() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    let active = true;
+    void workspacePort.listAccessMembers()
+      .then((items) => {
+        if (!active) return;
+        setMembers(items);
+        setError(null);
+      })
+      .catch((caught: unknown) => {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : "Access inventory could not be loaded");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const openDeactivate = (member: TenantAccessMember) => {
     if (member.isCurrentUser) return;
