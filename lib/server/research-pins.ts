@@ -1,6 +1,6 @@
 import type { RequestIdentity, ResearchAnswer, ResearchPin } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export class ResearchPinError extends Error {
   readonly code: string;
@@ -69,20 +69,29 @@ export async function pinResearchAnswer(
     return { pinId: crypto.randomUUID(), question, answer: input.answer, askedAt, pinnedAt: new Date().toISOString() };
   }
   const database = db ?? dbDefault();
-  const countRows = await database.query(
-    `select count(*)::int as count from corvis_control.research_answer_pin
-      where tenant_id=$1::uuid and workspace_id=$2::uuid and auth_method=$3 and subject=$4`,
-    [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject],
-  );
-  if (Number(countRows[0]?.count ?? 0) >= MAX_PINS) throw new ResearchPinError("pin_limit_reached", 409);
-  const rows = await database.query(
-    `insert into corvis_control.research_answer_pin
-        (tenant_id,workspace_id,auth_method,subject,question,answer,asked_at,pinned_at)
-      values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7::timestamptz,now())
-      returning pin_id,question,answer,asked_at,pinned_at`,
-    [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject, question, JSON.stringify(input.answer), askedAt],
-  );
-  return toPin(rows[0]!);
+  // The count-then-insert below must not observe another concurrent pin from
+  // the same subject: an advisory lock scoped to (tenant, workspace, auth
+  // method, subject) serializes concurrent requests so two racing inserts
+  // can't both pass the MAX_PINS check and push the subject over the cap.
+  return withTransaction(database, async (tx) => {
+    await tx.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `${identity.tenantId}:${identity.workspaceId}:${identity.authMethod}:${identity.subject}`,
+    ]);
+    const countRows = await tx.query(
+      `select count(*)::int as count from corvis_control.research_answer_pin
+        where tenant_id=$1::uuid and workspace_id=$2::uuid and auth_method=$3 and subject=$4`,
+      [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject],
+    );
+    if (Number(countRows[0]?.count ?? 0) >= MAX_PINS) throw new ResearchPinError("pin_limit_reached", 409);
+    const rows = await tx.query(
+      `insert into corvis_control.research_answer_pin
+          (tenant_id,workspace_id,auth_method,subject,question,answer,asked_at,pinned_at)
+        values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7::timestamptz,now())
+        returning pin_id,question,answer,asked_at,pinned_at`,
+      [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject, question, JSON.stringify(input.answer), askedAt],
+    );
+    return toPin(rows[0]!);
+  });
 }
 
 export async function unpinResearchAnswer(identity: RequestIdentity, pinId: string, db?: PostgresSqlApi): Promise<void> {

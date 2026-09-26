@@ -3,7 +3,7 @@ import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.
 import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
-import { createTenantInvitation, INVITATION_TTL_DAYS, normalizeTenantInvitation, type TenantInvitation } from "./tenant-invitations.ts";
+import { INVITATION_TTL_DAYS, type TenantInvitation } from "./tenant-invitations.ts";
 
 export const SUPPORT_ACK_THRESHOLD_HOURS = 4;
 export const ROLE_EXPLANATIONS: Record<string, string> = {
@@ -148,11 +148,4 @@ export function parseBulkInviteCsv(csv:string): { rows:BulkInviteRow[]; errors:A
   const rows:BulkInviteRow[]=[]; const errors:Array<{row:number;error:string}>=[];
   for(let i=1;i<lines.length;i++){const rowNumber=i+1;try{const values=parseCsvLine(lines[i]);const email=(values[emailIndex]??"").trim().toLowerCase(),roleName=(values[roleIndex]??"").trim(),workspaceId=(values[workspaceIndex]??"").trim(),name=nameIndex>=0?(values[nameIndex]??"").trim():"",reason=reasonIndex>=0?(values[reasonIndex]??"").trim():"Bulk enterprise onboarding";if(!EMAIL.test(email)||!BULK_ROLES.has(roleName)||!UUID.test(workspaceId)||reason.length<3||reason.length>1000){errors.push({row:rowNumber,error:"Invalid email, role, workspaceId, or reason"});continue;}rows.push({row:rowNumber,name,email,roleName,workspaceId,reason});}catch{errors.push({row:rowNumber,error:"Invalid CSV row"});}}
   return {rows,errors};
-}
-
-export async function bulkInvite(identity: RequestIdentity,csv:string,correlationId:string,dbFactory:()=>PostgresSqlApi):Promise<{created:Array<{row:number;invitation:TenantInvitation;token:string}>;errors:Array<{row:number;error:string}>}> {
-  requireTenantAdmin(identity); if(csv.length>1_000_000) throw new Error("csv_too_large"); const parsed=parseBulkInviteCsv(csv); const created:Array<{row:number;invitation:TenantInvitation;token:string}>=[]; const errors=[...parsed.errors];
-  if(parsed.rows.length>500) return {created:[],errors:[...errors,{row:0,error:"Bulk import is limited to 500 valid rows"}]};
-  for(const row of parsed.rows){ const command=normalizeTenantInvitation({tenantId:identity.tenantId,workspaceId:row.workspaceId,email:row.email,roleName:row.roleName,reason:row.reason,confirmTenantAdmin:row.roleName==="tenant_admin"}); if(!command){errors.push({row:row.row,error:"Invalid invitation"});continue;} try{const result=await createTenantInvitation(identity,command,`${correlationId}:${row.row}`,dbFactory());created.push({row:row.row,...result});}catch(error){errors.push({row:row.row,error:error instanceof Error?error.message:"Invitation failed"});} }
-  return {created,errors};
 }

@@ -53,21 +53,31 @@ test("pinResearchAnswer rejects an empty question and stores the exact answer pa
   const db = new FakeDb();
   await assert.rejects(() => pinResearchAnswer(identity, { question: "   ", answer, askedAt: "2026-09-20T00:00:00Z" }, db), (error: unknown) => error instanceof ResearchPinError && error.code === "invalid_question");
 
-  db.queryQueue = [[{ count: 0 }], [{ pin_id: "pin-2", question: "What changed?", answer, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") }]];
+  db.queryQueue = [[], [{ count: 0 }], [{ pin_id: "pin-2", question: "What changed?", answer, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") }]];
   const pin = await pinResearchAnswer(identity, { question: "What changed?", answer, askedAt: "2026-09-20T00:00:00Z" }, db);
   assert.deepEqual(pin, { pinId: "pin-2", question: "What changed?", answer, askedAt: "2026-09-20T00:00:00.000Z", pinnedAt: "2026-09-22T00:00:00.000Z" });
-  const insertCall = db.calls[1]!;
+  assert.match(db.calls[0]!.sql, /pg_advisory_xact_lock/);
+  const insertCall = db.calls[2]!;
   assert.match(insertCall.sql, /insert into corvis_control\.research_answer_pin/);
   assert.equal(insertCall.parameters[5], JSON.stringify(answer));
 });
 
 test("pinResearchAnswer fails closed once the per-subject pin limit is reached", async () => {
   const db = new FakeDb();
-  db.queryQueue = [[{ count: 50 }]];
+  db.queryQueue = [[], [{ count: 50 }]];
   await assert.rejects(
     () => pinResearchAnswer(identity, { question: "What changed?", answer, askedAt: "2026-09-20T00:00:00Z" }, db),
     (error: unknown) => error instanceof ResearchPinError && error.code === "pin_limit_reached" && error.status === 409,
   );
+});
+
+test("pinResearchAnswer serializes concurrent pin attempts from the same subject with an advisory lock", async () => {
+  const db = new FakeDb();
+  db.queryQueue = [[], [{ count: 0 }], [{ pin_id: "pin-3", question: "What changed?", answer, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") }]];
+  await pinResearchAnswer(identity, { question: "What changed?", answer, askedAt: "2026-09-20T00:00:00Z" }, db);
+  const lockCall = db.calls[0]!;
+  assert.match(lockCall.sql, /select pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)/);
+  assert.equal(lockCall.parameters[0], `${identity.tenantId}:${identity.workspaceId}:${identity.authMethod}:${identity.subject}`);
 });
 
 test("unpinResearchAnswer scopes the delete to the caller and fails closed when nothing matched", async () => {
