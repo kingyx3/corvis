@@ -259,6 +259,19 @@ export type ResearchStreamEvent =
   | { type: "result"; data: ResearchAnswer }
   | { type: "error"; code: "research_timeout" | "research_cancelled" | "research_provider_error" | "research_failed" };
 
+/**
+ * A saved/pinned Ask Corvis answer (#182 D7). `askedAt` is the as-of moment
+ * the answer was originally generated; reopening a pin always redisplays
+ * this stored payload rather than silently re-running the question.
+ */
+export type ResearchPin = {
+  pinId: string;
+  question: string;
+  answer: ResearchAnswer;
+  askedAt: string;
+  pinnedAt: string;
+};
+
 export type ExportManifest = {
   exportId: string; tenantId: string; generatedAt: string; schemaVersion: string; taxonomyVersion: string;
   snapshotIds: string[]; format: "parquet" | "csv" | "xlsx"; rowCounts: Record<string, number>; checksumSha256: string;

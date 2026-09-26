@@ -207,6 +207,41 @@ paths:
           description: Newline-delimited JSON stream of progress/result/error events
           content:
             application/x-ndjson: { schema: { type: string } }
+  /research/pins:
+    get:
+      operationId: listResearchPins
+      description: Lists this caller's saved Ask Corvis answers (#182 D7), newest first. Requires research:query.
+      responses:
+        '200': { description: Saved Ask Corvis answers }
+    post:
+      operationId: pinResearchAnswer
+      description: Saves the exact Ask Corvis answer already returned by /research or /research/stream for later reference; the server never re-runs the question. Requires research:query.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question, answer, askedAt]
+              properties:
+                question: { type: string, minLength: 1, maxLength: 2000 }
+                answer: { type: object }
+                askedAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Saved answer created }
+        '409': { description: Per-subject saved-answer limit reached }
+  /research/pins/{pinId}:
+    delete:
+      operationId: unpinResearchAnswer
+      description: Removes a previously saved Ask Corvis answer. Requires research:query and ownership of the pin.
+      parameters:
+        - name: pinId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Saved answer removed }
+        '404': { description: No matching saved answer for this caller }
   /source-references/{sourceReferenceId}:
     get:
       operationId: getSourceReference

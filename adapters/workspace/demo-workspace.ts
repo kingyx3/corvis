@@ -1,5 +1,5 @@
 import { workspaceContext } from "../../lib/workspace-context.ts";
-import type { Permission } from "@/core/enterprise";
+import type { Permission, ResearchPin } from "@/core/enterprise";
 import type { TenantAccessMember, WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 import { demoExposureDimensionFacts, portfolioValueFacts } from "@/adapters/demo/catalog";
@@ -31,6 +31,7 @@ function demoPortfolioAttributionEnabled(): boolean {
 }
 
 export function createDemoWorkspacePort(): WorkspacePort {
+  let researchPins: ResearchPin[] = [];
   let accessMembers: TenantAccessMember[] = [
     {
       userId: "00000000-0000-4000-8000-000000000001",
@@ -196,6 +197,18 @@ export function createDemoWorkspacePort(): WorkspacePort {
       signal?.throwIfAborted();
       onEvent({ type: "result", data });
       return data;
+    },
+    async listResearchPins() {
+      return secondaryWorkspace() ? [] : [...researchPins].sort((a, b) => b.pinnedAt.localeCompare(a.pinnedAt));
+    },
+    async pinResearchAnswer(command) {
+      assertDemoModuleAvailable("research");
+      const pin: ResearchPin = { pinId: crypto.randomUUID(), question: command.question, answer: command.answer, askedAt: command.askedAt, pinnedAt: new Date().toISOString() };
+      researchPins = [pin, ...researchPins].slice(0, 50);
+      return pin;
+    },
+    async unpinResearchAnswer(pinId) {
+      researchPins = researchPins.filter((pin) => pin.pinId !== pinId);
     },
     async sourceEvidence(sourceReferenceId) {
       return demoCustomerJourneyStore.sourceEvidence(sourceReferenceId);

@@ -22,6 +22,7 @@ import { DeliveryView } from "@/features/delivery/delivery-view";
 import { ResearchView } from "@/features/research/research-view";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { AccessAdminView } from "@/features/access/access-admin-view";
+import { FundPeriodStatusChip, type FundPeriodStatus } from "@/components/ui/fund-period-status-chip";
 
 type ReadModule = "capabilities" | "documents" | "snapshots" | "observations";
 type ModuleErrors = Partial<Record<ReadModule, string>>;
@@ -115,6 +116,20 @@ export default function CorvisApp() {
 
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.id && snapshot.id === selectedSnapshotId) ?? snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
+  // D14: a persistent cross-view chip showing the active fund-period's own
+  // blocking review/exception counts, derived from the same attention items
+  // Overview already surfaces — never a separate source of truth.
+  const fundPeriodStatus = useMemo<FundPeriodStatus | null>(() => {
+    if (!canReadObservations || !reviewSnapshot?.id || !summary) return null;
+    let blockingExceptions = 0;
+    let needsReview = 0;
+    for (const item of summary.attention.items) {
+      if (item.target.view !== "review" || item.target.snapshotId !== reviewSnapshot.id) continue;
+      if (item.kind === "blocking_exception") blockingExceptions += item.count;
+      else if (item.kind === "needs_review") needsReview += item.count;
+    }
+    return { fund: reviewSnapshot.fund, period: reviewSnapshot.period, blockingExceptions, needsReview };
+  }, [canReadObservations, reviewSnapshot, summary]);
   const degradedModules = Object.keys(moduleErrors) as ReadModule[];
   const nav = useMemo(() => [
     { id: "overview" as View, label: "Overview", icon: "home" as IconName, visible: true },
@@ -224,7 +239,7 @@ export default function CorvisApp() {
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}</nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div></div></aside>
-    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions"><button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
+    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
       {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void loadSummary().then(setSummary)}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void loadSummary().then(setSummary)} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" && identity?.workspaceId !== "demo-secondary" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}

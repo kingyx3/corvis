@@ -7,6 +7,7 @@ import type {
   ReconciliationResolutionCommand,
   ReconciliationResolutionOutcome,
   ResearchAnswer,
+  ResearchPin,
   ResearchStreamEvent,
   ReviewDecision,
   ReviewOutcome,
@@ -147,6 +148,11 @@ export interface WorkspacePort {
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
   researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;
+  /** Saved Ask Corvis answers for later reference (#182 D7), newest first. */
+  listResearchPins(): Promise<ResearchPin[]>;
+  /** Stores the exact answer already returned; the server never re-runs the question. */
+  pinResearchAnswer(command: { question: string; answer: ResearchAnswer; askedAt: string }): Promise<ResearchPin>;
+  unpinResearchAnswer(pinId: string): Promise<void>;
   sourceEvidence(sourceReferenceId: string): Promise<SourceEvidence>;
   review(command: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
