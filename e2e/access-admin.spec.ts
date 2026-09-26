@@ -35,7 +35,8 @@ test("Organization Admin can prepare a workspace invite and must explicitly conf
 
   await expect(page.getByRole("heading", { name: /invite a workspace member/i })).toBeVisible();
   await expect(page.getByLabel("Recipient email")).toBeVisible();
-  await expect(page.getByLabel("Workspace")).toHaveValue("demo-workspace");
+  const invitePanel = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: /invite a workspace member/i }) });
+  await expect(invitePanel.getByLabel("Workspace")).toHaveValue("demo-workspace");
   await page.getByLabel("Recipient email").fill("new.member@example.test");
   await page.getByLabel("Reason").fill("New finance team member");
   await expect(page.getByRole("button", { name: "Create invitation" })).toBeEnabled();
