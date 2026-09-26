@@ -1,5 +1,5 @@
 import type { Permission } from "@/core/enterprise";
-import type { WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
+import type { TenantAccessMember, WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 import { demoExposureDimensionFacts, portfolioValueFacts } from "@/adapters/demo/catalog";
 import { demoCompanySectorStore } from "@/adapters/demo/company-sector-store";
@@ -28,6 +28,29 @@ function demoPortfolioAttributionEnabled(): boolean {
 }
 
 export function createDemoWorkspacePort(): WorkspacePort {
+  let accessMembers: TenantAccessMember[] = [
+    {
+      userId: "00000000-0000-4000-8000-000000000001",
+      subjects: [{ authMethod: "oidc", subject: "demo-user" }],
+      memberships: [{ workspaceId: "00000000-0000-4000-8000-000000000101", workspaceName: DEMO_WORKSPACE_DISPLAY_NAME, roleName: "tenant_admin" }],
+      entitlements: [],
+      isCurrentUser: true,
+    },
+    {
+      userId: "00000000-0000-4000-8000-000000000002",
+      subjects: [{ authMethod: "oidc", subject: "jordan.lee@example.test" }],
+      memberships: [
+        { workspaceId: "00000000-0000-4000-8000-000000000101", workspaceName: DEMO_WORKSPACE_DISPLAY_NAME, roleName: "analyst" },
+        { workspaceId: "00000000-0000-4000-8000-000000000102", workspaceName: "Secondary Workspace", roleName: "viewer" },
+      ],
+      entitlements: [
+        { workspaceId: "00000000-0000-4000-8000-000000000101", workspaceName: DEMO_WORKSPACE_DISPLAY_NAME, resourceType: "fund", resourceId: "fund-demo-1", permission: "read" },
+        { workspaceId: "00000000-0000-4000-8000-000000000102", workspaceName: "Secondary Workspace", resourceType: "document", resourceId: "document-demo-2", permission: "read" },
+      ],
+      isCurrentUser: false,
+    },
+  ];
+
   return {
     async capabilities() {
       const features = { portfolioAttribution: demoPortfolioAttributionEnabled() };
@@ -54,7 +77,12 @@ export function createDemoWorkspacePort(): WorkspacePort {
       };
     },
     async whoAmI(): Promise<WorkspaceIdentity> {
-      return { subject: "demo-user", tenantDisplayName: DEMO_TENANT_DISPLAY_NAME, workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME };
+      return {
+        subject: "demo-user",
+        tenantDisplayName: DEMO_TENANT_DISPLAY_NAME,
+        workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME,
+        tenantAdmin: demoRole() === "admin",
+      };
     },
     async listMyWorkspaces() {
       // Demo mode has exactly one simulated workspace today; a real switcher
@@ -98,6 +126,33 @@ export function createDemoWorkspacePort(): WorkspacePort {
       const result = demoCompanySectorStore().assign("demo|reviewer", command);
       if ("refused" in result) throw new Error(result.refused);
       return { accepted: true as const, companyId: command.companyId, sectorCode: command.sectorCode, newVersion: result.newVersion };
+    },
+    async listAccessMembers() {
+      if (demoRole() !== "admin") throw new Error("tenant_admin_required");
+      return accessMembers.map((member) => ({
+        ...member,
+        subjects: member.subjects.map((entry) => ({ ...entry })),
+        memberships: member.memberships.map((entry) => ({ ...entry })),
+        entitlements: member.entitlements.map((entry) => ({ ...entry })),
+      }));
+    },
+    async deactivateAccessMember(command) {
+      if (demoRole() !== "admin") throw new Error("tenant_admin_required");
+      const member = accessMembers.find((entry) => entry.userId === command.userId);
+      if (!member) throw new Error("member_not_found");
+      if (member.isCurrentUser) throw new Error("cannot_deactivate_current_user");
+      accessMembers = accessMembers.filter((entry) => entry.userId !== command.userId);
+      return {
+        eventKey: `demo-deactivate-${crypto.randomUUID()}`,
+        operation: "disable" as const,
+        subject: member.subjects[0]?.subject ?? command.userId,
+        userId: command.userId,
+        activeMemberships: 0,
+        revokedMemberships: member.memberships.length,
+        expiredEntitlements: member.entitlements.length,
+        disabledSubjects: member.subjects.length,
+        disabledServiceGrants: 0,
+      };
     },
     async listReconciliationExceptions() {
       return [];

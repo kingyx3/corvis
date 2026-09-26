@@ -47,6 +47,47 @@ export type WorkspaceIdentity = {
   subject: string;
   tenantDisplayName?: string;
   workspaceDisplayName?: string;
+  /** Presentation hint only. Every tenant-admin command re-checks server-side authorization. */
+  tenantAdmin?: boolean;
+};
+
+export type TenantAccessSubject = {
+  authMethod: "oidc" | "saml";
+  subject: string;
+};
+
+export type TenantAccessMembership = {
+  workspaceId: string;
+  workspaceName: string;
+  roleName: string;
+};
+
+export type TenantAccessEntitlement = {
+  workspaceId: string;
+  workspaceName: string;
+  resourceType: string;
+  resourceId: string;
+  permission: string;
+};
+
+export type TenantAccessMember = {
+  userId: string;
+  subjects: TenantAccessSubject[];
+  memberships: TenantAccessMembership[];
+  entitlements: TenantAccessEntitlement[];
+  isCurrentUser: boolean;
+};
+
+export type DeactivateTenantAccessResult = {
+  eventKey: string;
+  operation: "sync" | "disable";
+  subject: string;
+  userId: string;
+  activeMemberships: number;
+  revokedMemberships: number;
+  expiredEntitlements: number;
+  disabledSubjects: number;
+  disabledServiceGrants: number;
 };
 
 export interface WorkspacePort {
@@ -63,6 +104,10 @@ export interface WorkspacePort {
   listCompanySectors(): Promise<CompanySectorRecord[]>;
   /** Review Analyst command; expectedVersion is the record's `version` (0 when unclassified). */
   assignCompanySector(command: CompanySectorAssignment): Promise<CompanySectorAssignmentOutcome>;
+  /** Tenant-admin-only access inventory for governed offboarding. */
+  listAccessMembers(): Promise<TenantAccessMember[]>;
+  /** Tenant-admin-only C14 command; server authorization is authoritative. */
+  deactivateAccessMember(command: { userId: string; reason: string }): Promise<DeactivateTenantAccessResult>;
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
   researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;

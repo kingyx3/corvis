@@ -1,5 +1,6 @@
 function isPrivilegedApi(pathname) {
   if (pathname === "/api/v1/admin" || pathname.startsWith("/api/v1/admin/")) return true;
+  if (pathname === "/api/v1/access" || pathname.startsWith("/api/v1/access/")) return true;
   if (pathname === "/api/v1/source-connections" || pathname.startsWith("/api/v1/source-connections/")) return true;
   return /^\/api\/v1\/jobs\/[^/]+\/(?:retry|recover)$/.test(pathname);
 }

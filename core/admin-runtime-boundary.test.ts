@@ -20,6 +20,7 @@ async function routeFiles(root: string): Promise<string[]> {
 
 function isEdgeAllowlistedAdminRoute(filePath: string): boolean {
   if (filePath.startsWith("app/api/v1/admin/")) return true;
+  if (filePath.startsWith("app/api/v1/access/")) return true;
   if (filePath.startsWith("app/api/v1/source-connections/")) return true;
   return /^app\/api\/v1\/jobs\/\[jobid\]\/(?:retry|recover)\/route\.ts$/i.test(filePath);
 }
@@ -32,6 +33,7 @@ test("admin edge exposes only audited privileged API route families", async () =
   const worker = await read("infra/terraform/modules/cloudflare-admin-edge/admin-proxy.mjs");
 
   assert.match(worker, /\/api\/v1\/admin/);
+  assert.match(worker, /\/api\/v1\/access/);
   assert.match(worker, /\/api\/v1\/source-connections/);
   assert.match(worker, /retry\|recover/);
   assert.match(worker, /apirequest && !isprivilegedapi/);

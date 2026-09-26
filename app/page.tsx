@@ -17,6 +17,7 @@ import { DocumentDrawer } from "@/features/documents/document-drawer";
 import { ReviewView, type ReviewFocusRequest } from "@/features/review/review-view";
 import { DeliveryView } from "@/features/delivery/delivery-view";
 import { ResearchView } from "@/features/research/research-view";
+import { AccessAdminView } from "@/features/access/access-admin-view";
 
 type ReadModule = "capabilities" | "documents" | "snapshots" | "observations";
 type ModuleErrors = Partial<Record<ReadModule, string>>;
@@ -135,7 +136,8 @@ export default function CorvisApp() {
     { id: "review" as View, label: "Data review", icon: "table" as IconName, badge: observations.filter((row) => row.state === "Needs review").length, visible: canReadObservations },
     { id: "delivery" as View, label: "Data delivery", icon: "download" as IconName, visible: canExport },
     { id: "research" as View, label: "Ask Corvis", icon: "spark" as IconName, visible: canResearch },
-  ].filter((item) => item.visible), [canExport, canReadDocuments, canReadObservations, canResearch, docs, observations]);
+    { id: "access" as View, label: "Access administration", icon: "shield" as IconName, visible: canAdmin && identity?.tenantAdmin === true },
+  ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, docs, identity?.tenantAdmin, observations]);
   // A view that stops being allowed (e.g. capabilities changed on refresh)
   // falls back to the overview instead of rendering an empty workspace.
   const activeView: View = nav.some((item) => item.id === view) ? view : "overview";
@@ -235,6 +237,7 @@ export default function CorvisApp() {
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)} 
       {!loading && activeView === "delivery" && canExport && <DeliveryView publishedSnapshots={publishedSnapshots}/>} 
       {!loading && activeView === "research" && canResearch && <ResearchView suggestions={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? researchSuggestions : []} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
+      {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
     </div></main>
     {searchOpen && canSearch && <Modal label="Global workspace search" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={searchResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={searchResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search funds, companies, documents or metrics" aria-label="Search workspace"/><kbd>Esc</kbd></label><div className="search-palette-results">{!searchQuery.trim() && <p className="search-palette-empty">Type to search documents, fund periods and observations you are entitled to.</p>}{searchQuery.trim() && searchResults.length === 0 && <p role="status" className="search-palette-empty">No entitled workspace results match “{searchQuery}”.</p>}{searchResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Search results">{searchResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => chooseSearchResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
     {uploadOpen && canUpload && <UploadModal onClose={() => { setUploadOpen(false); navigate("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>} 

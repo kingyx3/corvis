@@ -1,4 +1,4 @@
-export type View = "overview" | "analytics" | "documents" | "review" | "delivery" | "research";
+export type View = "overview" | "analytics" | "documents" | "review" | "delivery" | "research" | "access";
 
 export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
 export type DocumentQuality = "High" | "Medium" | "Pending";
