@@ -44,6 +44,7 @@ const validBody = {
   tenantDisplayName: "Acme Capital Partners",
   workspaceSlug: "primary",
   workspaceDisplayName: "Primary Workspace",
+  initialAdminEmail: "first.admin@example.test",
   reason: "Signed MSA 2026-09-25, provisioning first workspace",
 };
 
@@ -79,6 +80,7 @@ for (const [field, value] of [
   ["tenantDisplayName", ""],
   ["workspaceSlug", "-leading-hyphen"],
   ["workspaceDisplayName", ""],
+  ["initialAdminEmail", "not-an-email"],
   ["reason", ""],
   ["reason", "  "],
 ]) {

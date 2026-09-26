@@ -90,6 +90,32 @@ export type DeactivateTenantAccessResult = {
   disabledServiceGrants: number;
 };
 
+export type TenantInvitation = {
+  invitationId: string;
+  tenantId: string;
+  workspaceId: string;
+  workspaceName: string;
+  email: string;
+  roleName: "tenant_admin" | "workspace_admin" | "reviewer" | "analyst" | "viewer";
+  status: "pending" | "accepted" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type TenantInvitationCreated = {
+  invitation: TenantInvitation;
+  /** One-time bearer secret. The API never returns it from list/read operations. */
+  token: string;
+};
+
+export type AcceptedTenantInvitation = {
+  invitationId: string;
+  tenantId: string;
+  workspaceId: string;
+  userId: string;
+  roleName: TenantInvitation["roleName"];
+};
+
 export interface WorkspacePort {
   capabilities(): Promise<WorkspaceCapabilities>;
   whoAmI(): Promise<WorkspaceIdentity>;
@@ -108,6 +134,9 @@ export interface WorkspacePort {
   listAccessMembers(): Promise<TenantAccessMember[]>;
   /** Tenant-admin-only C14 command; server authorization is authoritative. */
   deactivateAccessMember(command: { userId: string; reason: string }): Promise<DeactivateTenantAccessResult>;
+  /** Issue an expiring, single-use, tenant-scoped invitation. */
+  createAccessInvitation(command: { workspaceId: string; email: string; roleName: TenantInvitation["roleName"]; reason: string; confirmTenantAdmin: boolean }): Promise<TenantInvitationCreated>;
+  listAccessInvitations(): Promise<TenantInvitation[]>;
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): Promise<ReconciliationException[]>;
   research(question: string, signal?: AbortSignal): Promise<ResearchAnswer>;
   researchStream(question: string, onEvent: (event: ResearchStreamEvent) => void, signal?: AbortSignal): Promise<ResearchAnswer>;

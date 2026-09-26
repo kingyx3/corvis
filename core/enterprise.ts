@@ -53,6 +53,9 @@ export type WorkspaceMembershipSummary = {
 
 export type RequestIdentity = {
   subject: string;
+  /** Present only when supplied by a verified OIDC claim or trusted signed identity assertion. */
+  authenticatedEmail?: string;
+  emailVerified?: boolean;
   tenantId: string;
   workspaceId: string;
   roles: Role[];

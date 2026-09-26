@@ -44,10 +44,20 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
     "app/api/v1/capabilities/route.ts",
     "app/api/v1/my-workspaces/route.ts",
   ]);
+  const preMembershipIdentityRoutes = new Set([
+    "app/api/v1/invitations/accept/route.ts",
+  ]);
 
   for (const file of files) {
     const text = await source(file);
     if (publicRoutes.has(file)) continue;
+
+    if (preMembershipIdentityRoutes.has(file)) {
+      assert.match(text, /resolveRequestIdentity\(request\)/, `${file} must cryptographically authenticate the invitee before membership exists`);
+      assert.match(text, /identity\.emailVerified/, `${file} must require the identity provider's verified email claim`);
+      assert.match(text, /acceptTenantInvitation\(/, `${file} must let the token, not a client tenant selector, determine the granted membership`);
+      continue;
+    }
 
     assert.match(text, /resolveAuthorizedRequestIdentity\(request\)/, `${file} must resolve authoritative request authorization`);
     if (!identityOnlyRoutes.has(file)) {
@@ -59,6 +69,7 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
 test("privileged and evidence routes preserve their specific authorization boundaries", async () => {
   const expectations: Array<[string, string]> = [
     ["app/api/v1/admin/control-evidence/route.ts", "admin:manage"],
+    ["app/api/v1/admin/tenants/invitations/route.ts", "admin:manage"],
     ["app/api/v1/admin/deletion-requests/route.ts", "admin:manage"],
     ["app/api/v1/admin/deletion-requests/[requestId]/execute/route.ts", "admin:manage"],
     ["app/api/v1/admin/feature-flags/route.ts", "admin:manage"],
@@ -78,6 +89,7 @@ test("privileged and evidence routes preserve their specific authorization bound
     ["app/api/v1/source-connections/[sourceConnectionId]/route.ts", "admin:manage"],
     ["app/api/v1/source-connections/[sourceConnectionId]/test/route.ts", "admin:manage"],
     ["app/api/v1/source-connections/[sourceConnectionId]/reauthorize/route.ts", "admin:manage"],
+    ["app/api/v1/access/invitations/route.ts", "admin:manage"],
     ["app/api/v1/source-references/[sourceReferenceId]/route.ts", "sources:read"],
     ["app/api/v1/uploads/initiate/route.ts", "documents:write"],
     ["app/api/v1/uploads/[uploadId]/route.ts", "documents:write"],

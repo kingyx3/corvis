@@ -154,6 +154,12 @@ export function createDemoWorkspacePort(): WorkspacePort {
         disabledServiceGrants: 0,
       };
     },
+    async createAccessInvitation() {
+      throw new Error("tenant_invitations_unavailable_in_demo");
+    },
+    async listAccessInvitations() {
+      return [];
+    },
     async listReconciliationExceptions() {
       return [];
     },
