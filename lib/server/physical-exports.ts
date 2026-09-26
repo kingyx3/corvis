@@ -4,6 +4,8 @@ import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type ExportFormat = ExportManifest["format"];
+/** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
+export type ExportScope = { snapshotId: string };
 type DeliveryManifest = ExportManifest & {
   artifact?: {
     contentType?: string;
@@ -44,24 +46,32 @@ function covers(current: readonly string[] | undefined, required: readonly strin
 export async function createPhysicalExport(
   identity: RequestIdentity,
   format: ExportFormat,
+  scope?: ExportScope,
   store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
 ): Promise<ExportManifest> {
   assertRedistributionAllowed(identity);
   const fundIds = identity.entitlements.fundIds ?? [];
   const documentIds = identity.entitlements.documentIds ?? [];
-  const snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version
+  const snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id
     from corvis_serving.fund_period_snapshots
     where tenant_id=$1 and status='published'
       and fund_id in (select jsonb_array_elements_text($2::jsonb))
-    order by published_at desc`, [identity.tenantId, jsonIds(fundIds)]);
-  const counts = fundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
+      ${scope ? "and snapshot_id::text=$3" : ""}
+    order by published_at desc`,
+  scope ? [identity.tenantId, jsonIds(fundIds), scope.snapshotId] : [identity.tenantId, jsonIds(fundIds)]);
+  // A scoped export (e.g. "export this view" from Review) must resolve to
+  // exactly the requested, already-entitled snapshot; fail closed rather than
+  // silently falling back to every entitled snapshot.
+  if (scope && snapshots.length === 0) throw new AuthorizationError("exports:scope");
+  const scopedFundIds = scope ? [...new Set(snapshots.map((row) => text(row, "fund_id")))] : fundIds;
+  const counts = scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
     from corvis_serving.observations o
     join corvis_source.source_reference r
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
     where o.tenant_id=$1 and o.review_state='approved'
       and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
       and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))`,
-  [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
+  [identity.tenantId, jsonIds(scopedFundIds), jsonIds(documentIds)]);
 
   const exportId = randomUUID();
   const generatedAt = new Date().toISOString();

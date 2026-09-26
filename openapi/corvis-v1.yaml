@@ -263,6 +263,7 @@ paths:
         '403': { description: Missing exports:create permission or redistribution rights }
     post:
       operationId: createExport
+      description: Creates a governed export job. Without `scope`, the export covers every currently entitled published snapshot (as before). With `scope.snapshotId`, the export is restricted to that one already-entitled published snapshot (e.g. "export this view" from Review) — the caller must already be entitled to it.
       requestBody:
         required: true
         content:
@@ -272,8 +273,15 @@ paths:
               required: [format]
               properties:
                 format: { type: string, enum: [parquet, csv, xlsx] }
+                scope:
+                  type: object
+                  required: [snapshotId]
+                  properties:
+                    snapshotId: { type: string, format: uuid }
       responses:
         '202': { description: Export job accepted }
+        '400': { description: Invalid format or scope }
+        '403': { description: The requested scope is not one of the caller's currently entitled published snapshots }
   /exports/{exportId}:
     get:
       operationId: getExport

@@ -16,8 +16,11 @@ export type ExportDeliveryStatus = {
   downloadExpiresAt?: string;
 };
 
+/** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
+export type ExportScope = { snapshotId: string };
+
 export interface DeliveryPort {
-  createExport(format: ExportFormat): Promise<ExportManifest>;
+  createExport(format: ExportFormat, scope?: ExportScope): Promise<ExportManifest>;
   listExports(): Promise<ExportDeliveryStatus[]>;
   /** Issues a fresh short-lived download link for one of the caller's exports, on demand. */
   prepareDownload(exportId: string): Promise<ExportDeliveryStatus>;
