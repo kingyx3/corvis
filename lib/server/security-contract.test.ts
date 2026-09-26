@@ -47,6 +47,16 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
   const preMembershipIdentityRoutes = new Set([
     "app/api/v1/invitations/accept/route.ts",
   ]);
+  // SCIM is a machine-to-machine provisioning protocol: the caller is an
+  // external identity provider authenticating with a tenant-scoped, hashed
+  // bearer token (see lib/server/scim.ts#authenticateScim), not a Corvis
+  // user session. There is no RequestIdentity/role to resolve, so these
+  // routes get their own authorization assertion instead of the session-based
+  // resolveAuthorizedRequestIdentity check every other route must have.
+  const scimRoutes = new Set([
+    "app/api/v1/scim/v2/Users/route.ts",
+    "app/api/v1/scim/v2/Users/[id]/route.ts",
+  ]);
 
   for (const file of files) {
     const text = await source(file);
@@ -56,6 +66,11 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
       assert.match(text, /resolveRequestIdentity\(request\)/, `${file} must cryptographically authenticate the invitee before membership exists`);
       assert.match(text, /identity\.emailVerified/, `${file} must require the identity provider's verified email claim`);
       assert.match(text, /acceptTenantInvitation\(/, `${file} must let the token, not a client tenant selector, determine the granted membership`);
+      continue;
+    }
+
+    if (scimRoutes.has(file)) {
+      assert.match(text, /authenticateScim\(request/, `${file} must authenticate the SCIM caller's tenant-scoped bearer token`);
       continue;
     }
 
