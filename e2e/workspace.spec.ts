@@ -27,6 +27,16 @@ test("the sidebar shows the real workspace/tenant identity, not the static place
   await expect(workspaceSection.locator(".workspace-dot")).toHaveText("P");
 });
 
+test("a user can switch workspaces without retaining the previous workspace UI state", async ({ page }) => {
+  await page.goto("/");
+  const switcher = page.getByRole("combobox", { name: "Current workspace" });
+  await expect(switcher).toHaveValue("demo-workspace");
+  await switcher.selectOption("demo-workspace-secondary");
+  await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
+  await expect(switcher).toHaveValue("demo-workspace-secondary");
+  await expect(switcher).toContainText("Operations Workspace");
+});
+
 test("global workspace search is actionable", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /search entitled workspace data/i }).click();

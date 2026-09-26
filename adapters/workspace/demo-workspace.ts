@@ -77,19 +77,24 @@ export function createDemoWorkspacePort(): WorkspacePort {
       };
     },
     async whoAmI(): Promise<WorkspaceIdentity> {
+      const selectedWorkspace = typeof window === "undefined" ? "demo-workspace" : window.localStorage.getItem("corvis:demo-workspace") || "demo-workspace";
       return {
         subject: "demo-user",
+        tenantId: "demo-tenant",
+        workspaceId: selectedWorkspace,
         tenantDisplayName: DEMO_TENANT_DISPLAY_NAME,
-        workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME,
+        workspaceDisplayName: selectedWorkspace === "demo-workspace-secondary" ? "Operations Workspace" : DEMO_WORKSPACE_DISPLAY_NAME,
         tenantAdmin: demoRole() === "admin",
       };
     },
     async listMyWorkspaces() {
-      // Demo mode has exactly one simulated workspace today; a real switcher
-      // needs a second one wired through this same port before it means anything.
       const role = demoRole();
-      return [{ workspaceId: "demo-workspace", workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME, roles: [role ?? "analyst"] }];
+      return [
+        { workspaceId: "demo-workspace", workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME, roles: [role ?? "analyst"] },
+        { workspaceId: "demo-workspace-secondary", workspaceDisplayName: "Operations Workspace", roles: [role ?? "analyst"] },
+      ];
     },
+    selectWorkspace: (_tenantId, workspaceId) => window.localStorage.setItem("corvis:demo-workspace", workspaceId),
     async listDocuments() {
       assertDemoModuleAvailable("documents");
       return demoCustomerJourneyStore.listDocuments();

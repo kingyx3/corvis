@@ -45,6 +45,9 @@ export type WorkspaceCapabilities = {
 /** Chrome-only identity (e.g. the sidebar) — never for access decisions. */
 export type WorkspaceIdentity = {
   subject: string;
+  /** Verified context identifiers used only to select the next request context. */
+  tenantId?: string;
+  workspaceId?: string;
   tenantDisplayName?: string;
   workspaceDisplayName?: string;
   /** Presentation hint only. Every tenant-admin command re-checks server-side authorization. */
@@ -121,6 +124,8 @@ export interface WorkspacePort {
   whoAmI(): Promise<WorkspaceIdentity>;
   /** Every workspace the signed-in user belongs to (for an account/workspace switcher). */
   listMyWorkspaces(): Promise<WorkspaceMembershipSummary[]>;
+  /** Persist the requested context; the server re-authorizes every subsequent request. */
+  selectWorkspace(tenantId: string, workspaceId: string): void;
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;

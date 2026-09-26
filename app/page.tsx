@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
-import type { Permission } from "@/core/enterprise";
+import type { Permission, WorkspaceMembershipSummary } from "@/core/enterprise";
 import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
@@ -54,6 +54,8 @@ export default function CorvisApp() {
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
   const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null);
+  const [workspaceMemberships, setWorkspaceMemberships] = useState<WorkspaceMembershipSummary[]>([]);
+  const [workspaceSwitchError, setWorkspaceSwitchError] = useState<string | null>(null);
 
   // Chrome-only (the sidebar's tenant/workspace identity); never gates
   // access. Fetched independently of loadWorkspace so an unavailable "who am
@@ -61,9 +63,25 @@ export default function CorvisApp() {
   // failing anything else.
   useEffect(() => {
     let active = true;
-    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch(() => {});
+    void Promise.all([workspacePort.whoAmI(), workspacePort.listMyWorkspaces()]).then(([value, memberships]) => {
+      if (!active) return;
+      setIdentity(value);
+      setWorkspaceMemberships(memberships);
+    }).catch(() => {});
     return () => { active = false; };
   }, []);
+
+  const switchWorkspace = (workspaceId: string) => {
+    if (!identity?.tenantId || !workspaceMemberships.some((workspace) => workspace.workspaceId === workspaceId)) {
+      setWorkspaceSwitchError("That workspace is no longer available. Refresh and try again.");
+      return;
+    }
+    setWorkspaceSwitchError(null);
+    workspacePort.selectWorkspace(identity.tenantId, workspaceId);
+    // A hard reload deliberately clears every workspace-scoped component,
+    // modal, search result and in-flight request before loading the new scope.
+    window.location.reload();
+  };
 
   const applyWorkspaceResults = useCallback((results: [PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]) => {
     const [capabilitiesResult, documentsResult, snapshotsResult, observationsResult] = results;
@@ -227,7 +245,7 @@ export default function CorvisApp() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
-    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} aria-current={activeView === item.id ? "page" : undefined} aria-label={item.label} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav><div className="sidebar-section"><p>WORKSPACE</p><div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? identity?.tenantDisplayName ?? "N")[0].toUpperCase()}</span><span><strong>{identity?.workspaceDisplayName ?? "Current workspace"}</strong><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div></div><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>Signed-in user</strong><small>Enterprise session</small></span></div></div></aside>
+    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} aria-current={activeView === item.id ? "page" : undefined} aria-label={item.label} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav><div className="sidebar-section"><label htmlFor="workspace-switcher">WORKSPACE</label><div className="workspace-picker"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? identity?.tenantDisplayName ?? "N")[0].toUpperCase()}</span><span><select id="workspace-switcher" aria-label="Current workspace" value={identity?.workspaceId ?? ""} disabled={!identity || workspaceMemberships.length < 2} onChange={(event) => switchWorkspace(event.target.value)}><option value={identity?.workspaceId ?? ""}>{identity?.workspaceDisplayName ?? "Current workspace"}</option>{workspaceMemberships.filter((workspace) => workspace.workspaceId !== identity?.workspaceId).map((workspace) => <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.workspaceDisplayName ?? workspace.workspaceId}</option>)}</select><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div>{workspaceSwitchError && <small className="workspace-switch-error" role="alert">{workspaceSwitchError}</small>}</div><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>Signed-in user</strong><small>Enterprise session</small></span></div></div></aside>
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{canSearch && <button className="global-search" aria-label="Search entitled workspace data" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search entitled workspace data</span><kbd aria-hidden="true">⌘K</kbd></button>}</div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {loading && <section className="page-heading" aria-busy="true"><div><p className="eyebrow">Workspace</p><h1>Loading trusted data…</h1><p className="lede">Fetching entitled documents, snapshots and observations.</p></div></section>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}

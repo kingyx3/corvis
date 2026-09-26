@@ -104,6 +104,9 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     capabilities: () => request<WorkspaceCapabilities>("/api/v1/capabilities"),
     whoAmI: () => request<WorkspaceIdentity>("/api/v1/me"),
     listMyWorkspaces: () => request<WorkspaceMembershipSummary[]>("/api/v1/my-workspaces"),
+    selectWorkspace: (tenantId, workspaceId) => {
+      window.localStorage.setItem("corvis:workspace-context:v1", JSON.stringify({ tenantId, workspaceId }));
+    },
     listDocuments: () => request<DocumentRecord[]>("/api/v1/documents"),
     listObservations: () => request<ObservationRecord[]>("/api/v1/observations"),
     listSnapshots: () => request<FundSnapshot[]>("/api/v1/snapshots"),
