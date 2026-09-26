@@ -21,7 +21,9 @@ test("the sidebar shows the real workspace/tenant identity, not the static place
   const workspaceSection = page.locator(".sidebar-section", { has: page.getByText("WORKSPACE") });
   await expect(workspaceSection.getByText("Current workspace")).toHaveCount(0);
   await expect(workspaceSection.getByText("Tenant-scoped")).toHaveCount(0);
-  await expect(workspaceSection.getByText("Primary Workspace")).toBeVisible();
+  const selector = workspaceSection.getByRole("combobox", { name: "Current workspace" });
+  await expect(selector).toHaveValue("demo-workspace");
+  await expect(selector.locator("option:checked")).toHaveText("Primary Workspace");
   await expect(workspaceSection.getByText("Meridian Capital Partners")).toBeVisible();
   // The avatar-style initial derives from the real name, not a hardcoded letter.
   await expect(workspaceSection.locator(".workspace-dot")).toHaveText("P");

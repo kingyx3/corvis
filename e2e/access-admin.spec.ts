@@ -41,7 +41,7 @@ test("Organization Admin can prepare a workspace invite and must explicitly conf
   await page.getByLabel("Reason").fill("New finance team member");
   await expect(page.getByRole("button", { name: "Create invitation" })).toBeEnabled();
 
-  await page.getByLabel("Role").selectOption("tenant_admin");
+  await invitePanel.locator(".form-grid select").nth(1).selectOption("tenant_admin");
   const create = page.getByRole("button", { name: "Create invitation" });
   await expect(page.getByLabel(/confirm this invitation grants organization-wide administration/i)).toBeVisible();
   await expect(create).toBeDisabled();

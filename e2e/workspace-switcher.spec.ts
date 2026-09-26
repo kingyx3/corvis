@@ -1,7 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-test("workspace switching resets data, permissions and search state and survives reload @matrix", async ({ page }) => {
+// Not tagged @matrix: .sidebar-section (and this switcher) is display:none at or below
+// 960px width, so this UI doesn't exist on the mobile-chromium project's viewport.
+test("workspace switching resets data, permissions and search state and survives reload", async ({ page }) => {
   await page.goto("/");
   const selector = page.getByRole("combobox", { name: "Current workspace" });
   await expect(selector).toHaveValue("demo-workspace");
@@ -19,7 +21,7 @@ test("workspace switching resets data, permissions and search state and survives
   await expect(page.getByRole("button", { name: "Data review", exact: true })).toBeVisible();
 });
 
-test("workspace selector and access management dialog pass accessibility checks @matrix", async ({ page }) => {
+test("workspace selector and access management dialog pass accessibility checks", async ({ page }) => {
   await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "admin"));
   await page.goto("/");
   await expect(page.getByRole("combobox", { name: "Current workspace" })).toBeVisible();
