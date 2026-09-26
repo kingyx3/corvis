@@ -572,6 +572,20 @@ kbd {
 .text-button:disabled {
   color: #9aa39d;
 }
+/* The sidebar chrome keeps its dark background regardless of theme, so a
+   .text-button placed inside it (e.g. the tenant-admin self-service link)
+   needs the sidebar's own light text color instead of the default, which is
+   tuned for light panels and fails contrast against #11261d. */
+.sidebar .text-button {
+  color: #dce9e1;
+}
+.sidebar .text-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.sidebar .text-button:disabled {
+  color: #7c9186;
+}
 .icon-button {
   width: 36px;
   height: 36px;
