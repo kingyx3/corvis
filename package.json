@@ -10,6 +10,7 @@
     "lint": "eslint . --max-warnings=0",
     "test": "node --test core/*.test.ts lib/*.test.ts lib/server/*.test.ts control-loop/*.test.ts adapters/upload/*.test.ts",
     "test:e2e": "playwright test",
+    "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/content-security-policy.spec.ts",
     "customer:preflight": "node scripts/customer-implementation.ts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
