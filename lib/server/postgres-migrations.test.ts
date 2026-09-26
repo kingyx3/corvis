@@ -115,6 +115,23 @@ test("review corrections and publication transitions preserve immutable history"
   assert.equal(/update corvis_facts\.observation\s+set\s+value_/i.test(sql), false);
 });
 
+test("dual-control approval count resets after a correction instead of counting stale pre-correction approvals", async () => {
+  const sql = (await migrations()).toLowerCase();
+  assert.match(sql, /select coalesce\(max\(based_on_observation_version\) \+ 1, 0\) into since_version/);
+  assert.match(
+    sql,
+    /where tenant_id=p_tenant_id and observation_id=p_observation_id and decision='approve'\s+and observation_version >= since_version/,
+  );
+  assert.match(
+    sql,
+    /where e\.tenant_id=o\.tenant_id and e\.observation_id=o\.observation_id and e\.decision='approve'\s+and e\.observation_version >= coalesce\(lc\.based_on_observation_version \+ 1, 0\)/,
+  );
+  assert.match(
+    sql,
+    /create index if not exists review_event_tenant_observation_decision_idx\s+on corvis_facts\.review_event \(tenant_id, observation_id, decision\)/,
+  );
+});
+
 test("reconciliation exceptions are versioned, attributable and enforced at publication persistence", async () => {
   const sql = (await migrations()).toLowerCase();
   assert.match(sql, /create table if not exists corvis_consolidated\.reconciliation_exception/);
