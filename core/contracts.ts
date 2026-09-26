@@ -51,6 +51,8 @@ export type FundSnapshot = {
   facts: number;
   changed: string;
   blockingExceptions?: number;
+  /** ISO publication timestamp for a published version, when known. */
+  publishedAt?: string;
 };
 
 export type StatementPeriodicity = "reported" | "quarterly" | "annual";
