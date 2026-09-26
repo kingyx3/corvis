@@ -93,7 +93,7 @@ async function recordAcquisition(
        remote_modified_at, content_sha256, acquisition_key, connector_version, disposition, rejection_reason,
        document_id, document_artifact_version_id)
     values ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::uuid,$15::uuid)
-    on conflict (tenant_id, source_connection_id, acquisition_key) do nothing`,
+    on conflict (tenant_id, source_connection_id, run_id, acquisition_key, disposition) do nothing`,
   [input.tenantId, input.sourceConnectionId, input.runId, input.providerKey, input.ref.remoteDocumentId,
     input.ref.remoteVersion, input.ref.remotePath, input.ref.remoteModifiedAt ?? null, input.contentSha256, key,
     input.connectorVersion, input.disposition, input.rejectionReason ?? null, input.documentId ?? null,
@@ -102,7 +102,7 @@ async function recordAcquisition(
 
 async function alreadyAcquired(db: PostgresSqlApi, tenantId: string, sourceConnectionId: string, key: string): Promise<boolean> {
   const rows = await db.query(`select 1 from corvis_source.acquired_document
-    where tenant_id=$1 and source_connection_id=$2::uuid and acquisition_key=$3 limit 1`,
+    where tenant_id=$1 and source_connection_id=$2::uuid and acquisition_key=$3 and disposition='accepted' limit 1`,
   [tenantId, sourceConnectionId, key]);
   return rows.length > 0;
 }
@@ -166,6 +166,10 @@ export async function runConnectionSync(
 
         if (await alreadyAcquired(db, tenantId, sourceConnectionId, key)) {
           counts.duplicate += 1;
+          await recordAcquisition(db, {
+            tenantId, sourceConnectionId, runId, providerKey: connection.providerKey, ref, contentSha256,
+            connectorVersion: connection.connectorVersion, disposition: "duplicate", rejectionReason: "already_acquired",
+          });
           continue;
         }
 
