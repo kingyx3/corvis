@@ -2,8 +2,11 @@ import { useState, type ReactNode } from "react";
 import type { ActivityRecord, FundSnapshot, View } from "@/core/contracts";
 import type { AttentionItem, AttentionTarget, ExposureBreakdownRow, FundFreshness, WorkspaceSummary } from "@/core/workspace-summary";
 import { CompositionChart } from "@/components/ui/charts/composition-chart";
+import { Sparkline } from "@/components/ui/charts/sparkline";
 import { TimeSeriesChart } from "@/components/ui/charts/time-series-chart";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { MetricCard } from "@/components/ui/metric-card";
+import { PageHeading } from "@/components/ui/page-heading";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SectorClassificationDialog } from "@/features/overview/sector-classification-dialog";
 
@@ -62,7 +65,6 @@ export function OverviewView({
   onSnapshotSelect: (snapshot: FundSnapshot) => void;
   onOpenSnapshotId: (snapshotId: string | undefined, fund?: string) => void;
   onOpenAttention: (target: AttentionTarget) => void;
-  /** Re-fetch the rollup after a governed change that feeds it (a sector classification). */
   onSummaryChanged?: () => void;
   canUpload: boolean;
   canReadDocuments: boolean;
@@ -85,21 +87,12 @@ export function OverviewView({
   }
   const holdingsItems = [...holdingsByFund.values()].map((snapshot) => ({ key: snapshot.fund, label: snapshot.fund, value: snapshot.holdings }));
   const audience = canAdmin ? "admin" : canReview ? "review" : "allocator";
-  // Per the UX architecture, each role gets fundamentally different priority
-  // content, not the same dashboard reordered: allocators see exposure first
-  // (the default order below), Review Analysts see the review queue first
-  // (reviewFirst reorders the existing metric cards and leads with the
-  // attention surface), and administrators see tenant-wide platform health
-  // first (a distinct panel, not a reorder).
   const reviewFirst = audience === "review";
   const statusComposition = [
     { key: "published", label: "Published", value: published },
     { key: "review", label: "In review", value: review },
   ];
 
-  // The unified attention surface (A5) owns the headline count (A6) when the
-  // rollup is available, so the number in the headline, the metric card and
-  // the ranked list below are one and the same.
   const attention = summary?.attention;
   const attentionTotal = attention?.counts.total ?? review;
   const attentionHeadline = attention
@@ -112,6 +105,7 @@ export function OverviewView({
   const asOfLabel = asOf ? `As of ${formatDate(asOf)}` : "No published period yet";
   const exposure = summary?.exposure;
   const trend = summary?.valueTrend ?? [];
+  const portfolioTrend = trend.map((point) => ({ period: point.period, value: point.value }));
   const focusAttention = () => {
     const section = document.getElementById("needs-attention");
     section?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -125,14 +119,9 @@ export function OverviewView({
     attention.counts.unhealthy_source ? `${attention.counts.unhealthy_source} unhealthy ${attention.counts.unhealthy_source === 1 ? "source" : "sources"}` : null,
   ].filter(Boolean).join(" · ") : "";
 
-  const attentionCard = <><div className="metric-head"><span>Needs attention</span><span className="metric-icon"><Icon name="alert" /></span></div><strong>{attentionTotal || "0"}</strong><p>{attention ? (attentionTotal ? attentionCounts : "All caught up") : review ? <><b>{blockingExceptions}</b> blocking exceptions</> : "All caught up"}</p></>;
-  const attentionClassName = `metric-card ${attentionTotal || blockingExceptions ? "warning" : ""}`;
-
   const attentionSection = attention && <section className="panel attention-panel" id="needs-attention" tabIndex={-1} aria-labelledby="needs-attention-heading">
     <div className="panel-heading"><div><p className="eyebrow">Needs your attention</p><h2 id="needs-attention-heading">{attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item" : "items"}, most urgent first` : "All caught up"}</h2></div></div>
     {attention.items.length ? <ol className="attention-list">{attention.items.map((item) => { const body = <><span className={`attention-icon severity-${item.severity}`} aria-hidden="true"><Icon name={ATTENTION_ICON[item.kind]} size={16} /></span><span className="snapshot-main"><strong>{item.title}</strong><span>{item.detail}</span></span><StatusPill status={SEVERITY_LABEL[item.severity]} /><span className="attention-action">{targetLabel(item.target)}{item.target.view !== "admin" && <Icon name="chevron" size={14} />}</span></>;
-      // Source connections are managed in the admin console on its own
-      // hostname, so that item states where to act instead of linking.
       return <li key={item.id}>{item.target.view === "admin" ? <div className="attention-row static">{body}</div> : <button type="button" className="attention-row" onClick={() => onOpenAttention(item.target)} aria-label={`${item.title}: ${item.detail} ${targetLabel(item.target)}`}>{body}</button>}</li>; })}</ol>
       : <div className="empty-row"><strong>All caught up</strong><span>No blocking exceptions, observations awaiting review, stuck documents{canAdmin ? " or unhealthy sources" : ""}.</span></div>}
   </section>;
@@ -162,14 +151,17 @@ export function OverviewView({
     {exposure.bySector.length > 0 ? breakdownPanel(exposure.bySector, "Allocation", "Exposure by sector", "Holding fair values by each company's governed Corvis sector; funds that only report a GP sector breakdown are mapped onto the same taxonomy.", classifyButton) : <div className="panel chart-panel"><figure className="chart-figure"><figcaption><p className="eyebrow">Allocation</p><h3>Exposure by sector</h3></figcaption><p className="chart-empty">No published holding sits in a sector-classified company yet.</p></figure>{classifyButton && <div className="breakdown-footer">{classifyButton}</div>}</div>}
   </section>;
 
+  const headingDescription = <>{review ? `${review} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${published} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</>;
+  const headingActions = <>{canReadObservations && review > 0 && <button className="primary-button" onClick={() => onNavigate("review")}><Icon name="alert"/>Review now</button>}{canUpload && <button className={review > 0 ? "secondary-button" : "primary-button"} onClick={onUpload}><Icon name="upload" />Upload documents</button>}</>;
+
   return <>
-    <section className="hero-row"><div><p className="eyebrow">{audience === "admin" ? "Platform health" : "Current workspace"}</p><h1>Reporting overview · {attentionHeadline}</h1><p className="lede">{review ? `${review} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${published} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</p>{summary && <p className="freshness-note" role="note"><Icon name="check" size={14} />{asOfLabel} · published (final) data only{staleFunds ? <> · <b>{staleFunds} {staleFunds === 1 ? "fund is" : "funds are"} stale</b> (no period published within {summary.freshness.staleAfterDays} days)</> : ""}</p>}</div><div className="heading-actions">{canReadObservations && review > 0 && <button className="primary-button" onClick={() => onNavigate("review")}><Icon name="alert"/>Review now</button>}{canUpload && <button className={review > 0 ? "secondary-button" : "primary-button"} onClick={onUpload}><Icon name="upload" />Upload documents</button>}</div></section>
+    <PageHeading variant="hero" eyebrow={audience === "admin" ? "Platform health" : "Current workspace"} title={`Reporting overview · ${attentionHeadline}`} description={headingDescription} actions={headingActions}>{summary && <p className="freshness-note" role="note"><Icon name="check" size={14} />{asOfLabel} · published (final) data only{staleFunds ? <> · <b>{staleFunds} {staleFunds === 1 ? "fund is" : "funds are"} stale</b> (no period published within {summary.freshness.staleAfterDays} days)</> : ""}</p>}</PageHeading>
     {audience === "admin" && (published > 0 || review > 0) && <section className="panel"><CompositionChart eyebrow="Platform health" title="Fund periods by status" description="How every reporting period across the tenant currently breaks down between review and publication, independent of your own review queue." items={statusComposition} unitLabel="Fund periods" /></section>}
     <section className="metric-grid" aria-label={`Workspace metrics ordered for ${audience} workflow`}>
-      {canReadObservations ? <button className="metric-card" style={{ order: reviewFirst ? 1 : 2 }} onClick={() => onNavigate("review")}><div className="metric-head"><span>Fund periods</span><span className="metric-icon"><Icon name="file" /></span></div><strong>{snapshots.length}</strong><p><b>{published}</b> final · <b>{review}</b> preliminary</p></button> : <div className="metric-card" style={{ order: reviewFirst ? 1 : 2 }}><div className="metric-head"><span>Fund periods</span><span className="metric-icon"><Icon name="file" /></span></div><strong>{snapshots.length}</strong><p><b>{published}</b> final · <b>{review}</b> preliminary</p></div>}
-      {canReadObservations ? <button className="metric-card" style={{ order: reviewFirst ? 3 : 1 }} onClick={() => onNavigate("review")}><div className="metric-head"><span>{exposure?.items.length ? "Published exposure" : "Trusted facts"}</span><span className="metric-icon"><Icon name="database" /></span></div><strong>{exposure?.items.length ? formatMoney(exposure.total) : factCount.toLocaleString()}</strong><p>{exposure?.items.length ? <>{asOfLabel} · <b>{exposure.items.length}</b> {exposure.items.length === 1 ? "fund" : "funds"}</> : <>Across <b>{holdingCount.toLocaleString()}</b> holdings</>}</p></button> : <div className="metric-card" style={{ order: reviewFirst ? 3 : 1 }}><div className="metric-head"><span>Trusted facts</span><span className="metric-icon"><Icon name="database" /></span></div><strong>{factCount.toLocaleString()}</strong><p>Read-only summary</p></div>}
-      {attention ? <button className={attentionClassName} style={{ order: reviewFirst ? 0 : 3 }} onClick={focusAttention} aria-controls="needs-attention">{attentionCard}</button> : canReadObservations ? <button className={attentionClassName} style={{ order: reviewFirst ? 0 : 3 }} onClick={() => onNavigate("review")}>{attentionCard}</button> : <div className={attentionClassName} style={{ order: reviewFirst ? 0 : 3 }}>{attentionCard}</div>}
-      {canReadObservations ? <button className="metric-card" style={{ order: reviewFirst ? 2 : 4 }} onClick={() => onNavigate("review")}><div className="metric-head"><span>Published snapshots</span><span className="metric-icon"><Icon name="check" /></span></div><strong>{published}</strong><p><b>{completion}%</b> of current workspace periods{summary ? <> · {asOfLabel}</> : null}</p></button> : <div className="metric-card" style={{ order: reviewFirst ? 2 : 4 }}><div className="metric-head"><span>Published snapshots</span><span className="metric-icon"><Icon name="check" /></span></div><strong>{published}</strong><p><b>{completion}%</b> of current workspace periods</p></div>}
+      <MetricCard label="Fund periods" value={snapshots.length} detail={<><b>{published}</b> final · <b>{review}</b> preliminary</>} icon={<Icon name="file"/>} order={reviewFirst ? 1 : 2} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
+      <MetricCard label={exposure?.items.length ? "Published exposure" : "Trusted facts"} value={exposure?.items.length ? formatMoney(exposure.total) : factCount.toLocaleString()} detail={exposure?.items.length ? <>{asOfLabel} · <b>{exposure.items.length}</b> {exposure.items.length === 1 ? "fund" : "funds"}</> : canReadObservations ? <>Across <b>{holdingCount.toLocaleString()}</b> holdings</> : "Read-only summary"} icon={<Icon name="database"/>} order={reviewFirst ? 3 : 1} onClick={canReadObservations ? () => onNavigate("review") : undefined} trend={portfolioTrend.length > 1 ? <Sparkline label="Published portfolio value" points={portfolioTrend} valueFormatter={formatMoney}/> : undefined}/>
+      <MetricCard label="Needs attention" value={attentionTotal || "0"} detail={attention ? (attentionTotal ? attentionCounts : "All caught up") : review ? <><b>{blockingExceptions}</b> blocking exceptions</> : "All caught up"} icon={<Icon name="alert"/>} tone={attentionTotal || blockingExceptions ? "warning" : "default"} order={reviewFirst ? 0 : 3} ariaControls={attention ? "needs-attention" : undefined} onClick={attention ? focusAttention : canReadObservations ? () => onNavigate("review") : undefined}/>
+      <MetricCard label="Published snapshots" value={published} detail={<><b>{completion}%</b> of current workspace periods{summary ? <> · {asOfLabel}</> : null}</>} icon={<Icon name="check"/>} order={reviewFirst ? 2 : 4} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
     </section>
     {reviewFirst || audience === "admin" ? <>{attentionSection}{exposureSection}{breakdownSection}</> : <>{exposureSection}{breakdownSection}{attentionSection}</>}
     {!exposure && holdingsItems.length > 0 && <section className="panel"><CompositionChart eyebrow="Exposure" title="Holdings by fund" description="How your entitled fund holdings break down across the current reporting cycle." items={holdingsItems} unitLabel="Holdings" /></section>}

@@ -18,6 +18,7 @@ import type {
   ReconciliationResolutionCommand,
   ReconciliationResolutionOutcome,
   ResearchAnswer,
+  ResearchPin,
   ResearchStreamEvent,
   ReviewDecision,
   ReviewOutcome,
@@ -117,6 +118,9 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     ),
     research: (question: string, signal?: AbortSignal) => request<ResearchAnswer>("/api/v1/research", { method: "POST", body: JSON.stringify({ question }), signal }),
     researchStream,
+    listResearchPins: () => request<ResearchPin[]>("/api/v1/research/pins"),
+    pinResearchAnswer: (command) => request<ResearchPin>("/api/v1/research/pins", { method: "POST", body: JSON.stringify(command) }),
+    unpinResearchAnswer: async (pinId: string) => { await request(`/api/v1/research/pins/${encodeURIComponent(pinId)}`, { method: "DELETE" }); },
     sourceEvidence: (sourceReferenceId: string) => request<SourceEvidence>(`/api/v1/source-references/${encodeURIComponent(sourceReferenceId)}`),
     review: (command: ReviewDecision) => request<ReviewOutcome>("/api/v1/review", { method: "POST", body: JSON.stringify(command) }),
     resolveReconciliation: (command: ReconciliationResolutionCommand) => request<ReconciliationResolutionOutcome>(

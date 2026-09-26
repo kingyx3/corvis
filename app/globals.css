@@ -400,6 +400,64 @@ h3 {
   align-items: center;
   gap: 8px;
 }
+.fund-period-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-body);
+  padding: 0 12px 0 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.fund-period-status-chip:hover {
+  box-shadow: var(--shadow-sm);
+}
+.fund-period-status-chip.tone-clear {
+  color: var(--success);
+  border-color: var(--success-border);
+  background: var(--success-bg);
+}
+.fund-period-status-chip.tone-warning {
+  color: var(--warning);
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+.fund-period-status-chip.tone-danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+.fund-period-status-chip svg {
+  flex: none;
+}
+.fund-period-status-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+  color: var(--text-strong);
+}
+.fund-period-status-text strong {
+  font-size: 12px;
+  font-weight: 650;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fund-period-status-period {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.fund-period-status-count {
+  font-weight: 600;
+}
 .global-search {
   height: 38px;
   width: 300px;
@@ -572,6 +630,20 @@ kbd {
 .text-button:disabled {
   color: #9aa39d;
 }
+/* The sidebar chrome keeps its dark background regardless of theme, so a
+   .text-button placed inside it (e.g. the tenant-admin self-service link)
+   needs the sidebar's own light text color instead of the default, which is
+   tuned for light panels and fails contrast against #11261d. */
+.sidebar .text-button {
+  color: #dce9e1;
+}
+.sidebar .text-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.sidebar .text-button:disabled {
+  color: #7c9186;
+}
 .icon-button {
   width: 36px;
   height: 36px;
@@ -608,14 +680,28 @@ kbd {
   font: inherit;
   color: inherit;
 }
-button.metric-card {
+button.metric-card,
+.metric-card-actionable {
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
-button.metric-card:hover {
+button.metric-card:hover,
+.metric-card-actionable:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
   box-shadow: 0 4px 14px rgba(19, 36, 26, 0.06);
+}
+.metric-card-hit-area {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  text-align: inherit;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 .metric-head {
   display: flex;
@@ -1935,6 +2021,7 @@ button.snapshot-row:focus-visible {
 }
 .conversation-panel {
   min-height: 560px;
+  max-height: calc(100vh - var(--topbar-height) - 220px);
   padding: 28px 30px 24px;
   display: flex;
   flex-direction: column;
@@ -2239,6 +2326,101 @@ button.snapshot-row:focus-visible {
 .evidence-policy .text-button {
   padding: 2px 6px;
   font-size: 12px;
+}
+.conversation-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+.conversation-turn + .conversation-turn {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #edf0ed;
+}
+.turn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+.turn-actions .text-button {
+  padding: 2px 0;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.saved-answer-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f4f7f4;
+  color: #3f5e4d;
+  font-size: 11px;
+  font-weight: 600;
+}
+.saved-answers-panel {
+  margin: 0 0 16px;
+  padding: 18px 20px;
+}
+.saved-answers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.saved-answers-header h3 {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text-strong);
+}
+.saved-answers-error {
+  padding: 10px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 9px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.saved-answers-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.saved-answers-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e0e5e1;
+  border-radius: var(--radius);
+}
+.saved-answers-list strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+.saved-answers-list span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.saved-answers-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 
 /* ---------- Dialogs & drawers ---------- */

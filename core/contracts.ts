@@ -3,6 +3,48 @@ export type View = "overview" | "analytics" | "documents" | "review" | "delivery
 export type DocumentStatus = "Published" | "Review" | "Extracting" | "Queued";
 export type DocumentQuality = "High" | "Medium" | "Pending";
 
+export type DocumentOrigin =
+  | { kind: "upload"; actor: string; occurredAt: string }
+  | {
+      kind: "connector";
+      providerKey: string;
+      connectionLabel: string;
+      sourceConnectionId: string;
+      runId: string;
+      acquisitionId: string;
+      acquiredAt: string;
+      remotePath: string;
+      remoteDocumentId: string;
+      remoteVersion: string;
+    };
+
+export type DocumentVersion = {
+  versionKey: string;
+  kind: "source_version" | "artifact_version";
+  label: string;
+  occurredAt: string;
+  documentId?: string;
+  artifactVersionId?: string;
+  disposition?: "accepted" | "duplicate" | "rejected" | "quarantined";
+  current: boolean;
+};
+
+export type DocumentFactLink = {
+  observationId: string;
+  sourceReferenceId: string;
+  company: string;
+  metric: string;
+  period: string;
+  state: "Approved" | "Needs review" | "Rejected";
+};
+
+export type DocumentLifecycle = {
+  documentId: string;
+  origin: DocumentOrigin;
+  versions: DocumentVersion[];
+  facts: DocumentFactLink[];
+};
+
 export type DocumentRecord = {
   id: string;
   name: string;
@@ -20,6 +62,8 @@ export type DocumentRecord = {
   processingState?: string;
   /** ISO timestamp of the latest processing-job update, when known. */
   processingUpdatedAt?: string;
+  /** Origin, version history and reverse observation lineage projected from immutable source evidence. */
+  lifecycle?: DocumentLifecycle;
 };
 
 export type ObservationRecord = {

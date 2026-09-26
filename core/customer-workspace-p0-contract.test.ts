@@ -8,7 +8,7 @@ async function source(path: string): Promise<string> {
 
 test("overview keeps a prominent actionable attention state", async () => {
   const overview = await source("features/overview/overview-view.tsx");
-  assert.match(overview, /Reporting overview · \{attentionHeadline\}/);
+  assert.match(overview, /Reporting overview · \$\{attentionHeadline\}/);
   assert.match(overview, /All caught up/);
   assert.match(overview, /Review now/);
   assert.match(overview, /Workspace metrics ordered for/);
