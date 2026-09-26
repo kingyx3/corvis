@@ -63,6 +63,90 @@
     background: #39533c;
     color: var(--text-strong);
   }
+
+  /* These selectors hardcode light-theme colors with no dark counterpart; override
+     them here so every workspace surface clears the accessibility contrast matrix
+     in dark theme too. */
+  .metric-card strong { color: var(--text-strong); }
+  .metric-card.warning {
+    background: var(--warning-bg);
+    border-color: var(--warning-border);
+  }
+  .metric-card.warning .metric-icon {
+    background: var(--surface-hover);
+    border-color: var(--warning-border);
+    color: var(--warning);
+  }
+  .metric-card.warning strong { color: var(--warning); }
+  .metric-icon {
+    border-color: var(--border);
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+  .secondary-button {
+    border-color: var(--border);
+    color: var(--text-strong);
+  }
+  .text-button {
+    color: var(--text-body);
+  }
+  .text-button:hover:not(:disabled) {
+    background: var(--surface-hover);
+    color: var(--text-strong);
+  }
+  .text-button:disabled {
+    color: var(--text-subtle);
+  }
+  .chart-data-toggle > summary {
+    color: var(--text-body);
+  }
+  .chart-data-toggle > summary:hover {
+    background: var(--surface-hover);
+  }
+  .admin-card summary {
+    color: var(--text-body);
+  }
+  .source-link,
+  .inline-link,
+  .evidence-card > button {
+    color: var(--text-body);
+  }
+  .source-link:disabled,
+  .inline-link:disabled {
+    color: var(--text-subtle);
+  }
+  .value-cell {
+    color: var(--text-strong);
+  }
+  .lineage-note {
+    background: var(--surface-raised);
+    border-color: var(--border);
+    color: var(--text-muted);
+  }
+  .lineage-note strong {
+    color: var(--text-strong);
+  }
+  .review-table tbody tr:hover,
+  .document-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .review-table tbody tr[aria-current="true"] {
+    background: var(--surface-hover);
+    box-shadow: inset 3px 0 0 var(--brand);
+  }
+  .ask-box {
+    background: var(--surface-raised);
+    border-color: var(--border);
+  }
+  .ask-box textarea::placeholder {
+    color: var(--text-subtle);
+  }
+  .user-question p {
+    color: var(--text-strong);
+  }
+  .evidence-policy {
+    color: var(--text-muted);
+  }
 }
 
 /* Typed primitive additions. Existing .page-heading, .metric-card and sidebar

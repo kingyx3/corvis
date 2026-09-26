@@ -160,12 +160,6 @@ export default function CorvisApp() {
   };
 
   const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); setActiveResult(0); };
-  const commands: CommandResult[] = [
-    ...nav.map((item) => ({ kind: "command" as const, category: "Navigation" as const, key: `nav:${item.id}`, title: item.label, detail: `Go to ${item.label}`, keywords: `navigate open go ${item.label}`, run: () => { closeSearch(); navigate(item.id); } })),
-    { kind: "command", category: "Action", key: "action:refresh", title: "Refresh workspace", detail: "Re-fetch entitled workspace data", keywords: "reload refresh sync data", run: () => { closeSearch(); void refreshWorkspace(); } },
-    ...(canUpload ? [{ kind: "command" as const, category: "Action" as const, key: "action:upload", title: "Upload documents", detail: "Open the governed document upload flow", keywords: "upload add document files", run: () => { closeSearch(); setUploadOpen(true); } }] : []),
-    ...(canReview && canReadObservations ? [{ kind: "command" as const, category: "Action" as const, key: "action:review", title: "Review data", detail: "Open observations that need review", keywords: "review approve observations exceptions", run: () => { closeSearch(); navigate("review"); } }] : []),
-  ];
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -188,10 +182,16 @@ export default function CorvisApp() {
   }, [canReadDocuments, canReadObservations, canSearch, docs, observations, searchQuery, snapshots]);
 
   const paletteResults = useMemo<PaletteResult[]>(() => {
+    const commands: CommandResult[] = [
+      ...nav.map((item) => ({ kind: "command" as const, category: "Navigation" as const, key: `nav:${item.id}`, title: item.label, detail: `Go to ${item.label}`, keywords: `navigate open go ${item.label}`, run: () => { closeSearch(); navigate(item.id); } })),
+      { kind: "command", category: "Action", key: "action:refresh", title: "Refresh workspace", detail: "Re-fetch entitled workspace data", keywords: "reload refresh sync data", run: () => { closeSearch(); void refreshWorkspace(); } },
+      ...(canUpload ? [{ kind: "command" as const, category: "Action" as const, key: "action:upload", title: "Upload documents", detail: "Open the governed document upload flow", keywords: "upload add document files", run: () => { closeSearch(); setUploadOpen(true); } }] : []),
+      ...(canReview && canReadObservations ? [{ kind: "command" as const, category: "Action" as const, key: "action:review", title: "Review data", detail: "Open observations that need review", keywords: "review approve observations exceptions", run: () => { closeSearch(); navigate("review"); } }] : []),
+    ];
     const query = searchQuery.trim().toLowerCase();
     const matchingCommands = commands.filter((command) => !query || `${command.title} ${command.detail} ${command.keywords}`.toLowerCase().includes(query));
     return [...matchingCommands, ...searchResults].slice(0, 20);
-  }, [commands, searchQuery, searchResults]);
+  }, [canReadObservations, canReview, canUpload, nav, refreshWorkspace, searchQuery, searchResults]);
   const activeResultIndex = Math.min(activeResult, Math.max(paletteResults.length - 1, 0));
 
   const choosePaletteResult = (result: PaletteResult) => {

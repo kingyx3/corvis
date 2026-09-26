@@ -31,10 +31,10 @@ test("the sidebar shows the real workspace/tenant identity, not the static place
 
 test("global workspace search is actionable", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /search entitled workspace data/i }).click();
-  const dialog = page.getByRole("dialog", { name: /global workspace search/i });
+  await page.getByRole("button", { name: /search workspace or run a command/i }).click();
+  const dialog = page.getByRole("dialog", { name: /workspace command palette/i });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Search workspace").fill("Advent");
+  await dialog.getByLabel(/search workspace or run a command/i).fill("Advent");
   const result = dialog.getByRole("option").filter({ hasText: /Advent International GPE VIII — Q2 2026\.pdf/i }).first();
   await expect(result).toBeVisible();
   await result.click();
@@ -47,8 +47,8 @@ test("global search results are keyboard navigable", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   await page.keyboard.press("Control+k");
-  const dialog = page.getByRole("dialog", { name: /global workspace search/i });
-  const input = dialog.getByRole("combobox", { name: "Search workspace" });
+  const dialog = page.getByRole("dialog", { name: /workspace command palette/i });
+  const input = dialog.getByRole("combobox", { name: /search workspace or run a command/i });
   await expect(input).toBeFocused();
   await input.fill("Advent");
   const options = dialog.getByRole("listbox", { name: /search results/i }).getByRole("option");
@@ -67,11 +67,11 @@ test("global search results are keyboard navigable", async ({ page }) => {
 
 test("observation search drills through to the focused row in the review queue", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /search entitled workspace data/i }).click();
-  const dialog = page.getByRole("dialog", { name: /global workspace search/i });
-  await dialog.getByLabel("Search workspace").fill("842");
+  await page.getByRole("button", { name: /search workspace or run a command/i }).click();
+  const dialog = page.getByRole("dialog", { name: /workspace command palette/i });
+  await dialog.getByLabel(/search workspace or run a command/i).fill("842");
   await expect(dialog.getByRole("option").filter({ hasText: /ABC Corp · Revenue/ })).toHaveCount(1);
-  await dialog.getByLabel("Search workspace").press("Enter");
+  await dialog.getByLabel(/search workspace or run a command/i).press("Enter");
   await expect(page.getByRole("heading", { name: /^data review$/i })).toBeVisible();
   const focusedRow = page.getByRole("region", { name: /data review observations table/i }).locator('tr[aria-current="true"]');
   await expect(focusedRow).toHaveCount(1);
