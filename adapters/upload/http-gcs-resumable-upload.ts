@@ -1,3 +1,4 @@
+import { workspaceContextHeaders, workspaceStorageKey } from "../../lib/workspace-context.ts";
 import type { UploadCallbacks, UploadPort, UploadResult } from "@/core/contracts";
 
 type UploadSession = {
@@ -22,7 +23,7 @@ function createJsonRequester(apiBase: string) {
   return async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${apiBase}${path}`, {
       ...init,
-      headers: { "content-type": "application/json", ...(init?.headers || {}) },
+      headers: { ...workspaceContextHeaders(), "content-type": "application/json", ...(init?.headers || {}) },
       credentials: "include",
       cache: "no-store",
     });
@@ -101,7 +102,7 @@ async function uploadChunk(input: {
 }
 
 function fingerprint(file: File) { return `${file.name}:${file.size}:${file.lastModified}`; }
-function storageKey(file: File) { return `corvis:upload:${fingerprint(file)}`; }
+function storageKey(file: File) { return workspaceStorageKey(`corvis:upload:${fingerprint(file)}`); }
 
 export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
   const apiBase = options.apiBase.replace(/\/$/, "");
@@ -157,7 +158,7 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
         offset = await queryCommittedBytes(session.uploadUrl, file.size, signal);
       } catch (error) {
         if (error instanceof ExpiredUploadSessionError) {
-          await fetch(`${apiBase}/api/v1/uploads/${session.uploadId}`, { method: "DELETE", credentials: "include" }).catch(() => undefined);
+          await fetch(`${apiBase}/api/v1/uploads/${session.uploadId}`, { method: "DELETE", credentials: "include", headers: workspaceContextHeaders() }).catch(() => undefined);
           window.localStorage.removeItem(localKey);
         }
         throw error;

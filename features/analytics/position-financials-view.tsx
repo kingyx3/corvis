@@ -1,4 +1,5 @@
 "use client";
+import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
 
 import { useEffect, useMemo, useState } from "react";
 import type { PositionFinancialStatementRow, StatementPeriodicity } from "@/core/contracts";
@@ -107,7 +108,7 @@ export function PositionFinancialsView({
   useEffect(() => {
     if (!portfolioAttributionEnabled) return;
     const controller = new AbortController();
-    void fetch("/api/v1/portfolios?limit=100",{ signal: controller.signal, headers: { accept: "application/json" } })
+    void fetch("/api/v1/portfolios?limit=100",{ signal: controller.signal, headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => response.ok ? await response.json() as PortfolioEnvelope : { data: [] })
       .then((payload) => setPortfolios(payload.data ?? []))
       .catch(() => { if (!controller.signal.aborted) setPortfolios([]); });
@@ -118,7 +119,7 @@ export function PositionFinancialsView({
     let active = true;
     const controller = new AbortController();
     const portfolio = portfolioAttributionEnabled && selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
-    void fetch(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`,{ signal: controller.signal, headers: { accept: "application/json" } })
+    void fetch(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`,{ signal: controller.signal, headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => {
         const payload = await response.json() as ApiEnvelope;
         if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);

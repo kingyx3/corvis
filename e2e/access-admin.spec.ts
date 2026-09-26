@@ -54,3 +54,23 @@ test("access administration is not exposed to a non-admin user", async ({ page }
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: /workspace sections/i }).getByRole("button", { name: /access administration/i })).toHaveCount(0);
 });
+
+test("member role changes require confirmation and preserve other workspace roles @matrix", async ({ page }) => {
+  await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "admin"));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Access administration", exact: true }).click();
+  await page.getByLabel("Filter members").fill("jordan");
+  await page.getByRole("button", { name: "Change Primary Workspace role for jordan.lee@example.test", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage workspace role" });
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await dialog.getByLabel("New workspace role").selectOption("tenant_admin");
+  await dialog.getByLabel("Access change reason").fill("Organization administration duties");
+  await expect(dialog.getByRole("button", { name: "Confirm access change" })).toBeDisabled();
+  await dialog.getByLabel("Confirm organization-wide administration for this member.").check();
+  await dialog.getByRole("button", { name: "Confirm access change" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("status").filter({ hasText: "Audit receipt" })).toBeVisible();
+  const row = page.getByRole("region", { name: "Organization access members" }).getByRole("row").filter({ hasText: "jordan.lee@example.test" });
+  await expect(row).toContainText("Organization Admin");
+  await expect(row).toContainText("Secondary Workspace · Viewer");
+});

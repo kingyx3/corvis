@@ -208,3 +208,25 @@ test("missing authoritative membership or revoked session fails closed after suc
     );
   });
 });
+
+test("human workspace selectors re-resolve authoritative roles and reject unentitled targets", async () => {
+  await withEnv(async () => {
+    const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let selected: AuthorizationPrincipal | undefined;
+    const repository: MembershipAuthorizationRepository = { async resolve(principal) { selected = principal; return null; } };
+    const request = new Request("https://corvis.example/api/v1/me", { headers: {
+      "x-corvis-identity-assertion": signedAssertion(), "x-corvis-tenant": "11111111-1111-1111-1111-111111111111", "x-corvis-workspace": workspaceId,
+    } });
+    await assert.rejects(resolveAuthorizedRequestIdentity(request, { repository, requireAuthoritative: true }), /No active authoritative/);
+    assert.equal(selected?.workspaceId, workspaceId);
+    assert.equal(selected?.subject, "idp|user-123");
+    for (const headers of [
+      { "x-corvis-tenant": "22222222-2222-4222-8222-222222222222", "x-corvis-workspace": workspaceId },
+      { "x-corvis-tenant": "11111111-1111-1111-1111-111111111111", "x-corvis-workspace": "invalid" },
+    ]) {
+      selected = undefined;
+      await assert.rejects(resolveAuthorizedRequestIdentity(new Request(request.url, { headers: { ...headers, "x-corvis-identity-assertion": signedAssertion() } }), { repository, requireAuthoritative: true }), AuthenticationError);
+      assert.equal(selected, undefined);
+    }
+  });
+});

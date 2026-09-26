@@ -1,4 +1,6 @@
+import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
 import type {
+  MemberRoleReceipt,
   DeactivateTenantAccessResult,
   TenantInvitation,
   TenantInvitationCreated,
@@ -27,16 +29,6 @@ type Envelope<T> = { data: T; correlationId: string };
 
 export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   const base = apiBase.replace(/\/$/, "");
-  const workspaceContextHeaders = (): Record<string, string> => {
-    if (typeof window === "undefined") return {};
-    try {
-      const raw = window.localStorage.getItem("corvis:workspace-context:v1");
-      const value = raw ? JSON.parse(raw) as { tenantId?: unknown; workspaceId?: unknown } : undefined;
-      return typeof value?.tenantId === "string" && typeof value.workspaceId === "string"
-        ? { "x-corvis-tenant": value.tenantId, "x-corvis-workspace": value.workspaceId }
-        : {};
-    } catch { return {}; }
-  };
 
   async function responseError(response: Response): Promise<Error> {
     const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
@@ -101,6 +93,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   }
 
   return {
+    changeMemberRole: (command) => request<MemberRoleReceipt>("/api/v1/access/members/role", { method: "POST", body: JSON.stringify(command) }),
     capabilities: () => request<WorkspaceCapabilities>("/api/v1/capabilities"),
     whoAmI: () => request<WorkspaceIdentity>("/api/v1/me"),
     listMyWorkspaces: () => request<WorkspaceMembershipSummary[]>("/api/v1/my-workspaces"),

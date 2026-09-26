@@ -140,6 +140,10 @@ Important boundaries:
 
 Tenant/workspace provisioning creates its first organization-admin invitation in the same database transaction as the tenant, workspace and audit receipt. Tenant administrators can issue additional workspace invitations from Access administration. Invitation records keep only a SHA-256 token digest, role, normalized email and expiry; the raw link is returned once and placed in the URL fragment so browsers do not send it in the request URL or referrer. Acceptance requires both that token and an authenticated OIDC/SAML identity with an explicit verified-email claim matching the invited address. A Postgres function locks and consumes the invitation while linking the immutable auth subject, creating the membership and appending the audit event atomically. The email composer is user-driven; the current runtime has no automated email-delivery provider configured.
 
+### Workspace selection
+
+The sidebar lists only the workspaces returned by the authenticated `my-workspaces` endpoint. Selecting one persists its tenant/workspace identifiers as untrusted request selectors and performs a full reload so no component state, search result, modal or request from the previous workspace survives. Every API call sends the selected context and the server independently re-resolves active membership, roles and entitlements from Postgres; appearing in the switcher never grants access by itself.
+
 ### Browser response security headers and CSP
 
 `proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `proxy.ts` (`lib/server/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:

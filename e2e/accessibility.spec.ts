@@ -17,6 +17,7 @@ function describe(violations: Violation[]): string {
 
 for (const surface of surfaces) {
   test(`${surface.label} surface has no serious or critical accessibility violations @matrix`, async ({ page }) => {
+    if (surface.role) await page.addInitScript((role) => window.sessionStorage.setItem("corvis:demo:role", role), surface.role);
     await page.goto("/");
     await openSurface(page, surface);
     await expect(page.getByRole("heading", { name: surface.heading }).first()).toBeVisible();

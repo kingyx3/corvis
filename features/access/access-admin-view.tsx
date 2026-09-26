@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { DeactivateTenantAccessResult, TenantAccessMember, TenantInvitation, TenantInvitationCreated } from "@/core/workspace";
+import type { DeactivateTenantAccessResult, TenantAccessMembership, MemberRoleReceipt, TenantAccessMember, TenantInvitation, TenantInvitationCreated } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Modal } from "@/components/ui/modal";
 import { Icon } from "@/components/ui/icon";
@@ -16,10 +16,19 @@ function roleLabel(role: string): string {
 }
 
 function identityLabel(member: TenantAccessMember): string {
-  return member.subjects[0]?.subject ?? member.userId;
+  return member.displayName ?? member.subjects[0]?.subject ?? member.userId;
 }
 
 export function AccessAdminView() {
+  const [memberQuery, setMemberQuery] = useState("");
+  const [memberSort, setMemberSort] = useState("ascending");
+  const [roleEdit, setRoleEdit] = useState<{ member: TenantAccessMember; membership: TenantAccessMembership } | null>(null);
+  const [newRole, setNewRole] = useState("viewer");
+  const [roleReason, setRoleReason] = useState("");
+  const [roleConfirm, setRoleConfirm] = useState(false);
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleError, setRoleError] = useState("");
+  const [roleReceipt, setRoleReceipt] = useState<MemberRoleReceipt | null>(null);
   const [members, setMembers] = useState<TenantAccessMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,10 +134,25 @@ export function AccessAdminView() {
     }
   };
 
+  const visibleMembers = members.filter((member) => `${identityLabel(member)} ${member.memberships.map((item) => `${item.workspaceName} ${roleLabel(item.roleName)}`).join(" ")}`.toLowerCase().includes(memberQuery.toLowerCase()))
+    .sort((a, b) => identityLabel(a).localeCompare(identityLabel(b)) * (memberSort === "ascending" ? 1 : -1));
+  const saveRole = async () => {
+    if (!roleEdit || roleBusy) return;
+    setRoleBusy(true); setRoleError("");
+    try {
+      const receipt = await workspacePort.changeMemberRole({ userId: roleEdit.member.userId, workspaceId: roleEdit.membership.workspaceId,
+        expectedRole: roleEdit.membership.roleName, roleName: newRole || null, reason: roleReason.trim(), confirmTenantAdmin: roleConfirm });
+      setRoleReceipt(receipt); setRoleEdit(null);
+      await load();
+    } catch (caught) { setRoleError(caught instanceof Error ? caught.message : "Access change failed"); }
+    finally { setRoleBusy(false); }
+  };
+
   return <>
     <section className="page-heading"><div><p className="eyebrow">Organization access</p><h1>Access administration</h1><p className="lede">Invite named users into a workspace, review current access, and revoke a departing user&apos;s access across every workspace in this organization.</p></div><button className="secondary-button" disabled={loading} onClick={() => void load()}><Icon name="clock" size={15}/>Refresh</button></section>
 
     {error && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Access administration needs attention</strong><span>{error}</span></div></div>}
+    {roleReceipt && <p className="lineage-note tone-success" role="status">Workspace access updated. Audit receipt: {roleReceipt.auditEventId}</p>}
     {result && <div className="lineage-note tone-success" role="status" aria-label="User deactivated everywhere"><Icon name="check"/><div><strong>User deactivated everywhere</strong><span>{result.revokedMemberships} membership{result.revokedMemberships === 1 ? "" : "s"} revoked · {result.expiredEntitlements} entitlement{result.expiredEntitlements === 1 ? "" : "s"} expired · {result.disabledSubjects} sign-in identit{result.disabledSubjects === 1 ? "y" : "ies"} disabled.</span></div></div>}
 
     <section className="panel" aria-labelledby="invite-member-heading">
@@ -150,12 +174,13 @@ export function AccessAdminView() {
 
     <section className="panel" aria-labelledby="access-members-heading">
       <div className="panel-heading"><div><p className="eyebrow">Active access</p><h2 id="access-members-heading">Organization members</h2></div><span className="table-muted">{members.length} active</span></div>
-      <div className="table-card" tabIndex={0} role="region" aria-label="Organization access members"><table className="data-table"><thead><tr><th>Identity</th><th>Workspace roles</th><th>Entitlements</th><th>Action</th></tr></thead><tbody>
+      <div className="form-grid"><label className="form-field"><span>Filter members</span><input className="input-control" value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="Name, workspace or role"/></label><label className="form-field"><span>Sort members</span><select value={memberSort} onChange={(event) => setMemberSort(event.target.value)}><option value="ascending">Identity A–Z</option><option value="descending">Identity Z–A</option></select></label></div>
+      <div className="table-card" tabIndex={0} role="region" aria-label="Organization access members"><table className="data-table"><thead><tr><th aria-sort={memberSort === "ascending" ? "ascending" : "descending"}>Identity</th><th>Workspace roles</th><th>Entitlements</th><th>Action</th></tr></thead><tbody>
         {loading && <tr><td colSpan={4} className="empty-cell">Loading tenant-scoped access…</td></tr>}
-        {!loading && members.length === 0 && <tr><td colSpan={4} className="empty-cell">No active named users are available.</td></tr>}
-        {!loading && members.map((member) => <tr key={member.userId}>
+        {!loading && visibleMembers.length === 0 && <tr><td colSpan={4} className="empty-cell">No active members match this filter.</td></tr>}
+        {!loading && visibleMembers.map((member) => <tr key={member.userId}>
           <td><strong>{identityLabel(member)}</strong><span className="table-secondary">{member.subjects.map((subject) => subject.authMethod.toUpperCase()).join(" · ")} · {member.userId}</span></td>
-          <td>{member.memberships.length ? member.memberships.map((membership) => <span className="table-secondary" key={`${membership.workspaceId}:${membership.roleName}`}><strong>{membership.workspaceName}</strong> · {roleLabel(membership.roleName)}</span>) : <span className="table-muted">No active memberships</span>}</td>
+          <td>{member.memberships.length ? member.memberships.map((membership) => <span className="table-secondary" key={`${membership.workspaceId}:${membership.roleName}`}><strong>{membership.workspaceName}</strong> · {roleLabel(membership.roleName)} · Active {!member.isCurrentUser && <button className="text-button" aria-label={`Change ${membership.workspaceName} role for ${identityLabel(member)}`} onClick={() => { setRoleEdit({ member, membership }); setNewRole(membership.roleName); setRoleReason(""); setRoleConfirm(false); setRoleError(""); }}>Manage role</button>}</span>) : <span className="table-muted">No active memberships</span>}</td>
           <td>{member.entitlements.length}</td>
           <td>{member.isCurrentUser ? <span className="table-muted">Current user</span> : <button className="secondary-button button-small" onClick={() => openDeactivate(member)}>Deactivate everywhere</button>}</td>
         </tr>)}
@@ -163,6 +188,18 @@ export function AccessAdminView() {
     </section>
 
     <div className="lineage-note"><Icon name="shield"/><div><strong>Offboarding is immediate and tenant-scoped.</strong><span>The confirmation below lists the active memberships and entitlements that will be revoked. The server disables every identity for the selected user and records the operation as one lifecycle audit event.</span></div></div>
+
+    {roleEdit && <Modal label="Manage workspace role" onClose={() => { if (!roleBusy) setRoleEdit(null); }}>
+      <div className="dialog-header"><div><h2>Manage workspace role</h2><p>{identityLabel(roleEdit.member)} · {roleEdit.membership.workspaceName}</p><p>Current role: {roleLabel(roleEdit.membership.roleName)}. Other workspace access is preserved.</p></div></div>
+      <div className="dialog-body">
+        <label className="form-field"><span>New workspace role</span><select value={newRole} onChange={(event) => { setNewRole(event.target.value); setRoleConfirm(false); }}><option value="viewer">Viewer</option><option value="analyst">Analyst</option><option value="reviewer">Review Analyst</option><option value="accountadmin">Workspace Admin</option><option value="tenant_admin">Organization Admin</option><option value="">Remove this role</option></select></label>
+        {!newRole && <p role="status">This role is revoked immediately. If it is the user&apos;s last role in this workspace, its resource entitlements also expire.</p>}
+        {newRole === "tenant_admin" && <label className="check-field"><input type="checkbox" checked={roleConfirm} onChange={(event) => setRoleConfirm(event.target.checked)}/>Confirm organization-wide administration for this member.</label>}
+        <label className="form-field"><span>Access change reason</span><textarea maxLength={1000} value={roleReason} onChange={(event) => setRoleReason(event.target.value)}/></label>
+        {roleError && <p role="alert">{roleError}</p>}
+      </div>
+      <div className="dialog-actions"><button className="secondary-button" data-autofocus disabled={roleBusy} onClick={() => setRoleEdit(null)}>Cancel</button><button className="primary-button" disabled={roleBusy || !roleReason.trim() || newRole === roleEdit.membership.roleName || (newRole === "tenant_admin" && !roleConfirm)} onClick={() => void saveRole()}>{roleBusy ? "Saving…" : "Confirm access change"}</button></div>
+    </Modal>}
 
     {selected && <Modal label={`Deactivate ${identityLabel(selected)} everywhere`} onClose={() => { if (!busy) setSelected(null); }} width="min(760px, 100%)">
       <div className="dialog-header"><div><p className="eyebrow">Confirm offboarding</p><h2>Deactivate everywhere?</h2><p>This action immediately disables the selected user&apos;s sign-in identities and revokes all access listed below. It does not delete historical audit evidence.</p></div><button className="icon-button" aria-label="Close deactivation confirmation" disabled={busy} onClick={() => setSelected(null)}>×</button></div>
