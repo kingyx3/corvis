@@ -4,6 +4,13 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { getWorkspacePersonalization, markWorkspaceVisited, normalizePinnedFundIds, updatePinnedFunds, WorkspacePersonalizationError } from "./workspace-personalization.ts";
 
+// CI runs unit tests with CORVIS_DEMO_MODE=true (see .github/workflows/ci.yml),
+// which would otherwise short-circuit every function under test to its
+// demo-mode branch before it ever touches the FakeDb below. This suite is
+// exercising the real Postgres-backed path, so it opts back out for its own
+// scope (same pattern as lib/server/platform-postgres.test.ts).
+process.env.CORVIS_DEMO_MODE = "false";
+
 const identity: RequestIdentity = {
   subject: "oidc|user-1",
   tenantId: "00000000-0000-0000-0000-000000000010",
