@@ -8,6 +8,7 @@ import type { SourceEvidence } from "@/core/workspace";
 import { Sparkline } from "@/components/ui/charts/sparkline";
 import { TimeSeriesChart, type TimeSeriesStatus } from "@/components/ui/charts/time-series-chart";
 import { Modal } from "@/components/ui/modal";
+import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
 import styles from "./position-financials.module.css";
 
@@ -93,6 +94,8 @@ export function PositionFinancialsView({
   const [evidence,setEvidence] = useState<EvidenceState | null>(null);
   const [evidenceBusy,setEvidenceBusy] = useState<string | null>(null);
   const [evidenceError,setEvidenceError] = useState<string | null>(null);
+  const [exportBusy,setExportBusy] = useState(false);
+  const [exportMessage,setExportMessage] = useState<{ text: string; error?: boolean } | null>(null);
 
   // Product-module composition is separate from RBAC. Failure to resolve the
   // optional capability fails closed for portfolio attribution while the base
@@ -210,14 +213,38 @@ export function PositionFinancialsView({
     if (value === periodicity) return;
     setLoading(true);
     setError(null);
+    setExportMessage(null);
     setPeriodicity(value);
   };
   const changePortfolio = (portfolioId: string) => {
     if (!portfolioAttributionEnabled || portfolioId === selectedPortfolio) return;
     setLoading(true);
     setError(null);
+    setExportMessage(null);
     setSelectedPosition("");
     setSelectedPortfolio(portfolioId);
+  };
+  const requestExport = async () => {
+    if (!chosen || !selectedRows.length) return;
+    setExportBusy(true);
+    setExportMessage(null);
+    try {
+      await deliveryPort.createExport("csv", {
+        source: "delivery",
+        scope: { positionFinancials: {
+          fundId: chosen.fundId,
+          holdingId: chosen.holdingId,
+          companyId: chosen.companyId,
+          periodicity,
+          ...(selectedPortfolio ? { portfolioId: selectedPortfolio } : {}),
+        } },
+      });
+      setExportMessage({ text: "Governed CSV requested for exactly this position, portfolio scope and periodicity. It will appear in Data delivery history." });
+    } catch (reason) {
+      setExportMessage({ text: reason instanceof Error ? reason.message : "Export request failed", error: true });
+    } finally {
+      setExportBusy(false);
+    }
   };
   const openEvidence = async (row: PositionFinancialStatementRow) => {
     const sourceReferenceId = row.sourceReferenceIds[0];
@@ -239,15 +266,17 @@ export function PositionFinancialsView({
       <div><p className="eyebrow">{portfolioAttributionEnabled ? "Portfolio analytics" : "Fund analytics"}</p><h1>Position financials</h1><p className="lede">{portfolioAttributionEnabled ? "Optionally scope by a client portfolio, then compare the complete source-reported income statement for each attributed fund position across published reporting periods." : "Compare the complete source-reported income statement for each entitled fund holding across published reporting periods. Portfolio attribution is not required."}</p></div>
       <div className={styles.controls}>
         {portfolioAttributionEnabled && <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>}
-        <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => setSelectedPosition(event.target.value)} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
+        <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => { setSelectedPosition(event.target.value); setExportMessage(null); }} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
         <fieldset className={styles.segmented}><legend>Periodicity</legend>{(["quarterly","annual","reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? styles.active : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase()+value.slice(1)}</button>)}</fieldset>
         <fieldset className={styles.segmented}><legend>Period-over-period change display</legend>{(["value","percent","both"] as const).map((value) => <button type="button" key={value} aria-pressed={deltaDisplay === value} className={deltaDisplay === value ? styles.active : ""} onClick={() => setDeltaDisplay(value)}>{value === "value" ? "Δ value" : value === "percent" ? "Δ %" : "Δ both"}</button>)}</fieldset>
+        <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>
       </div>
     </div>
 
     {portfolioAttributionEnabled && <div className={styles.ruleNote}><strong>Attribution guardrail.</strong> {chosenPortfolio ? `${chosenPortfolio.displayName} scopes which fund holdings appear; ` : "Portfolio filters scope which fund holdings appear; "}company revenue, EBITDA and other operating statement values remain the full source-reported amounts and are never multiplied by ownership stake or position size.</div>}
     <div className={styles.ruleNote}><strong>Aggregation guardrail.</strong> Annual mode prefers a reported annual disclosure. A derived annual value appears only when four explicit, compatible fiscal-quarter flow values exist; YTD, LTM, stock and cumulative values are never silently summed.</div>
     <div className={styles.ruleNote}><strong>Trust and change.</strong> Each reported value shows its governed as-of/trust state. Period-over-period movement is computed only from adjacent numeric values in this same disclosed line; no missing period is silently imputed.</div>
+    {exportMessage && <div className={exportMessage.error ? styles.inlineError : styles.ruleNote} role={exportMessage.error ? "alert" : "status"}><strong>{exportMessage.error ? "Export failed. " : "Export requested. "}</strong>{exportMessage.text}</div>}
 
     {evidenceError && <div className={styles.inlineError} role="alert">{evidenceError}</div>}
     {loading && <div className={styles.state} aria-busy="true">Loading published financial statements…</div>}
