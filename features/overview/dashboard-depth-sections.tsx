@@ -31,6 +31,22 @@ function sourceStatusLabel(health: WorkspaceDashboardSummary["sourceHealth"][num
   return "Healthy";
 }
 
+/**
+ * New customer clients can overlap briefly with an older server/demo adapter
+ * during rolling deployment. Depth sections must disappear in that window,
+ * not crash the whole workspace or offer controls whose persistence endpoint
+ * is not yet available.
+ */
+function isWorkspaceDashboardSummary(summary: WorkspaceSummary | null): summary is WorkspaceDashboardSummary {
+  if (!summary) return false;
+  const candidate = summary as Partial<WorkspaceDashboardSummary>;
+  return Array.isArray(candidate.sourceHealth)
+    && Array.isArray(candidate.personalization?.pinnedFundIds)
+    && Boolean(candidate.digest && Array.isArray(candidate.digest.items))
+    && Array.isArray(candidate.fundTrends)
+    && Boolean(candidate.trendContributors && typeof candidate.trendContributors === "object");
+}
+
 export function DashboardDepthSections({
   summary,
   observations,
@@ -46,7 +62,7 @@ export function DashboardDepthSections({
   onOpenPositionFinancials: (row: ObservationRecord) => void;
   onSummaryChanged?: () => void;
 }) {
-  const dashboard = summary as WorkspaceDashboardSummary | null;
+  const dashboard = isWorkspaceDashboardSummary(summary) ? summary : null;
   const [pinnedFundIds, setPinnedFundIds] = useState<string[]>(dashboard?.personalization.pinnedFundIds ?? []);
   const [compareFundIds, setCompareFundIds] = useState<string[]>([]);
   const [drill, setDrill] = useState<DrillPoint | null>(null);
