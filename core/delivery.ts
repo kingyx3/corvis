@@ -1,4 +1,5 @@
 import type { ExportManifest } from "@/core/enterprise";
+import type { StatementPeriodicity } from "@/core/contracts";
 
 export type ExportFormat = ExportManifest["format"];
 export type ExportDeliveryStatus = {
@@ -17,12 +18,23 @@ export type ExportDeliveryStatus = {
 };
 
 /** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
-export type ExportScope = { snapshotId: string };
+export type SnapshotExportScope = { snapshotId: string };
+/** Exact analytics view scope persisted with a governed Position Financials export. */
+export type PositionFinancialsExportScope = {
+  positionFinancials: {
+    fundId: string;
+    holdingId: string;
+    companyId: string;
+    periodicity: StatementPeriodicity;
+    portfolioId?: string;
+  };
+};
+export type ExportScope = SnapshotExportScope | PositionFinancialsExportScope;
 /** Which product surface is requesting the export, recorded on the manifest for delivery history (#182 D12). */
 export type ExportSource = NonNullable<ExportManifest["source"]>;
 export type ExportRequestOptions = { scope?: ExportScope; source?: ExportSource };
 /** Compatibility for the pre-D12 scoped Review call while the workspace-isolation PR is rebased. */
-export type ExportRequest = ExportRequestOptions | ExportScope;
+export type ExportRequest = ExportRequestOptions | SnapshotExportScope;
 
 export function normalizeExportRequest(options?: ExportRequest): ExportRequestOptions {
   if (!options) return {};

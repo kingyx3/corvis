@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ExportScope } from "../../core/delivery.ts";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { createPhysicalExport, type ExportScope } from "./physical-exports.ts";
+import { createPhysicalExport } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
@@ -74,7 +75,36 @@ test("a scoped export (e.g. 'export this view' from Review) is restricted to exa
   assert.equal(manifest.source, "review");
 });
 
-test("a scope naming a snapshot the caller is not entitled to (or that isn't published) fails closed instead of exporting every entitled snapshot", async () => {
+test("a Position Financials export persists the exact view scope and pins it to matching published snapshots", async () => {
+  const db = new FakeDb((sql, parameters) => {
+    if (sql.includes("select v.*") && sql.includes("position_financial_statement_values")) {
+      assert.match(sql, /v\.fund_id=\$5/);
+      return [{
+        statement_id: "statement-1", document_id: "doc-1", fund_id: "fund-a", holding_id: "holding-1", company_id: "company-1",
+        statement_type: "income_statement", statement_key: "is", report_period: "2026-Q2", line_id: "line-1", line_key: "revenue",
+        semantic_line_key: "revenue", source_label: "Revenue", line_role: "line", display_order: 1, depth: 0,
+        value_id: "value-1", value_number: "100", period_type: "quarter", fiscal_year: 2026, fiscal_quarter: 2,
+        source_reference_ids: ["source-1"],
+      }];
+    }
+    if (sql.includes("select distinct ps.snapshot_id") && sql.includes("position_financial_statement_values")) {
+      assert.equal(parameters[4], "fund-a");
+      assert.equal(parameters[5], "holding-1");
+      assert.equal(parameters[6], "company-1");
+      return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a" }];
+    }
+    return [];
+  });
+  const scope: ExportScope = { positionFinancials: { fundId: "fund-a", holdingId: "holding-1", companyId: "company-1", periodicity: "quarterly" } };
+  const manifest = await createPhysicalExport(identity, "csv", { scope, source: "delivery" }, db);
+  const governed = manifest as typeof manifest & { scope?: ExportScope; scopeLabel?: string };
+  assert.deepEqual(manifest.snapshotIds, ["snap-a"]);
+  assert.equal(manifest.rowCounts.positionFinancials, 1);
+  assert.deepEqual(governed.scope, scope);
+  assert.match(governed.scopeLabel ?? "", /Position financials.*company-1.*quarterly/);
+});
+
+test("a scope naming data the caller is not entitled to (or that isn't published) fails closed instead of exporting every entitled snapshot", async () => {
   const db = new FakeDb(() => []);
   await assert.rejects(
     createPhysicalExport(identity, "csv", { scope: { snapshotId: "not-mine" } }, db),
