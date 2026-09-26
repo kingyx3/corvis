@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { DocumentRecord } from "@/core/contracts";
+import { documentSecurityNotice } from "@/core/document-processing";
 import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 
@@ -29,7 +30,10 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
     </div>
     <div className="table-card" tabIndex={0} role="region" aria-label="Documents table"><table className="data-table document-table"><thead><tr><th>Document</th><th>Fund / period</th><th>Status</th><th>Quality</th><th>Uploaded</th><th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>
       {filtered.length === 0 && <tr><td colSpan={6} className="empty-cell">{docs.length ? "No documents match the current filters." : canUpload ? "No source documents yet. Upload a file to start a reporting cycle." : "No entitled source documents are available."}</td></tr>}
-      {filtered.map((doc) => <tr key={doc.id}><td><div className="document-cell"><div className={`file-tile ${doc.name.endsWith("xlsx") ? "excel" : "pdf"}`} aria-hidden="true">{doc.name.endsWith("xlsx") ? "XLS" : "PDF"}</div><div><strong>{doc.name}</strong><span>{doc.type} · {doc.pages} {doc.name.endsWith("xlsx") ? "sheets" : "pages"} · {doc.size}</span></div></div></td><td><strong className="table-primary">{doc.fund}</strong><span className="table-secondary">{doc.period}</span></td><td><StatusPill status={doc.status}/>{doc.status === "Extracting" && <div className="mini-progress"><span style={{width:`${doc.progress ?? 0}%`}}/></div>}</td><td><span className={`quality quality-${doc.quality.toLowerCase()}`}>{doc.quality}</span></td><td className="table-muted">{doc.uploaded}</td><td><button className="icon-button" aria-label={`Open ${doc.name}`} onClick={() => onSelect(doc)}><Icon name="chevron" size={16}/></button></td></tr>)}
+      {filtered.map((doc) => {
+        const securityNotice = documentSecurityNotice(doc);
+        return <tr key={doc.id}><td><div className="document-cell"><div className={`file-tile ${doc.name.endsWith("xlsx") ? "excel" : "pdf"}`} aria-hidden="true">{doc.name.endsWith("xlsx") ? "XLS" : "PDF"}</div><div><strong>{doc.name}</strong><span>{doc.type} · {doc.pages} {doc.name.endsWith("xlsx") ? "sheets" : "pages"} · {doc.size}</span></div></div></td><td><strong className="table-primary">{doc.fund}</strong><span className="table-secondary">{doc.period}</span></td><td>{securityNotice ? <div><StatusPill status="Blocked"/><strong className="table-primary">{securityNotice.label}</strong><span className="table-secondary">{securityNotice.detail} {securityNotice.action}</span></div> : <><StatusPill status={doc.status}/>{doc.status === "Extracting" && <div className="mini-progress"><span style={{width:`${doc.progress ?? 0}%`}}/></div>}</>}</td><td><span className={`quality quality-${doc.quality.toLowerCase()}`}>{doc.quality}</span></td><td className="table-muted">{doc.uploaded}</td><td><button className="icon-button" aria-label={`Open ${doc.name}`} onClick={() => onSelect(doc)}><Icon name="chevron" size={16}/></button></td></tr>;
+      })}
     </tbody></table></div>
   </>;
 }
