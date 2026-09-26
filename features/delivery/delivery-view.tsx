@@ -31,6 +31,17 @@ function rowCoverage(manifest: ExportManifest): string {
   if (positionRows != null) return `${positionRows} financial rows · ${manifest.snapshotIds.length} snapshots`;
   return `${manifest.rowCounts.observations ?? 0} observations · ${manifest.snapshotIds.length} snapshots`;
 }
+// Exports created before this field existed (#182 D16) carry no per-snapshot
+// review state; that's a fact about the export, not something to hide.
+function reviewStateLabel(manifest: ExportManifest): string {
+  const state = manifest.snapshotState;
+  if (!state || state.length === 0) return "Not recorded";
+  const openExceptions = state.reduce((sum, entry) => sum + entry.openExceptionCount, 0);
+  const versions = [...new Set(state.map((entry) => entry.version))].sort((a, b) => a - b);
+  const versionLabel = versions.length === 1 ? `v${versions[0]}` : `v${versions[0]}–v${versions[versions.length - 1]}`;
+  const exceptionLabel = openExceptions === 0 ? "no open exceptions" : `${openExceptions} open exception${openExceptions === 1 ? "" : "s"}`;
+  return `${versionLabel} · ${exceptionLabel}`;
+}
 
 export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: number }) {
   const [busy, setBusy] = useState<ExportFormat | null>(null);
@@ -120,10 +131,10 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
 
     <section className="panel" aria-labelledby="export-history-heading">
       <div className="panel-heading"><div><p className="eyebrow">Delivery history</p><h2 id="export-history-heading">Recent exports</h2></div></div>
-      <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table history-table"><thead><tr><th>Requested</th><th>Requested from</th><th>Scope</th><th>Format</th><th>Status</th><th>Coverage</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
-        {historyLoading && <tr><td colSpan={9} className="empty-cell">Loading governed export history…</td></tr>}
-        {!historyLoading && exports.length === 0 && <tr><td colSpan={9} className="empty-cell">No exports yet. Request a format above to create your first governed delivery.</td></tr>}
-        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{sourceLabel(item.manifest.source)}</td><td>{scopeLabel(item.manifest)}</td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{rowCoverage(item.manifest)}</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
+      <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table history-table"><thead><tr><th>Requested</th><th>Requested from</th><th>Scope</th><th>Format</th><th>Status</th><th>Coverage</th><th>Review state</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
+        {historyLoading && <tr><td colSpan={10} className="empty-cell">Loading governed export history…</td></tr>}
+        {!historyLoading && exports.length === 0 && <tr><td colSpan={10} className="empty-cell">No exports yet. Request a format above to create your first governed delivery.</td></tr>}
+        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{sourceLabel(item.manifest.source)}</td><td>{scopeLabel(item.manifest)}</td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{rowCoverage(item.manifest)}</td><td>{reviewStateLabel(item.manifest)}</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
       </tbody></table></div>
     </section>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Only governed published data is delivered.</strong><span>Exports carry snapshot/schema/taxonomy metadata, immutable checksum lineage and time-bounded download grants. API, webhooks and optional warehouse sharing reuse the same serving contract.</span></div></div>
