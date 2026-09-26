@@ -1,0 +1,308 @@
+/* Design-system extensions introduced by #183.
+   Keep reusable app primitives here; feature-only selectors should be prefixed. */
+
+/* Respect the user's OS theme without requiring JavaScript or a persisted preference. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0e1512;
+    --surface: #131c18;
+    --surface-raised: #18231e;
+    --surface-sunken: #0f1814;
+    --surface-hover: #1b2822;
+    --border: #303d36;
+    --border-strong: #4a584f;
+    --border-subtle: #26312b;
+    --text: #e7efe9;
+    --text-strong: #f6faf7;
+    --text-body: #d1ddd5;
+    --text-muted: #aebbb3;
+    --text-subtle: #9daaa2;
+    --brand: #d9f26e;
+    --brand-hover: #c8e45a;
+    --brand-ink: #13211a;
+    --sidebar: #08110d;
+    --sidebar-hover: #17261f;
+    --sidebar-border: #2b3b33;
+    --sidebar-text: #c2d0c7;
+    --sidebar-muted: #9eafa5;
+    --success: #9bd3a2;
+    --success-bg: #15281b;
+    --success-border: #365b3d;
+    --warning: #f1cc79;
+    --warning-bg: #2b2412;
+    --warning-border: #5d4a20;
+    --danger: #f1a39a;
+    --danger-bg: #301a18;
+    --danger-border: #6a3732;
+    --info: #9ec9e1;
+    --info-bg: #142630;
+    --info-border: #315466;
+    --focus: #b9e3c5;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.55);
+    --chart-grid: #2a3630;
+    --chart-axis: #aebbb3;
+  }
+
+  .topbar {
+    border-bottom-color: var(--border);
+    background: rgba(19, 28, 24, 0.94);
+  }
+  .global-search { border-color: var(--border-strong); }
+  kbd {
+    border-color: var(--border-strong);
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+  }
+  .avatar {
+    background: var(--surface-hover);
+    color: var(--text-body);
+  }
+  ::selection {
+    background: #39533c;
+    color: var(--text-strong);
+  }
+}
+
+/* Typed primitive additions. Existing .page-heading, .metric-card and sidebar
+   selectors remain the visual source of truth; these selectors only add states
+   that the typed components expose. */
+.metric-card-trend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+.metric-card-trend .sparkline { margin-left: auto; }
+
+.status-pill[data-tone="success"] {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success);
+}
+.status-pill[data-tone="warning"] {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+.status-pill[data-tone="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.status-pill[data-tone="info"] {
+  background: var(--info-bg);
+  border-color: var(--info-border);
+  color: var(--info);
+}
+.status-pill[data-tone="neutral"] {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+.status-pill[data-tone="success"] .status-dot { background: var(--success); }
+.status-pill[data-tone="warning"] .status-dot { background: var(--warning); }
+.status-pill[data-tone="danger"] .status-dot { background: var(--danger); }
+.status-pill[data-tone="info"] .status-dot { background: var(--info); }
+.status-pill[data-tone="neutral"] .status-dot { background: var(--text-subtle); }
+
+/* Shared sortable dense-table primitive. Buttons make sorting keyboard-native;
+   aria-sort lives on the owning th in SortableDataTable. */
+.data-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 11px 14px;
+  vertical-align: middle;
+}
+.data-table[data-density="compact"] th,
+.data-table[data-density="compact"] td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  font-size: 12px;
+}
+.data-table[data-density="comfortable"] th,
+.data-table[data-density="comfortable"] td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+.data-table thead th {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.data-table tbody tr:last-child > * { border-bottom: 0; }
+.sortable-header-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: inherit;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.sortable-header-button[data-align="end"] { justify-content: flex-end; }
+.sort-indicator {
+  width: 1.1em;
+  color: var(--text-subtle);
+  text-align: center;
+}
+.table-density-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.table-density-toggle legend { composes: visually-hidden; }
+.table-density-toggle button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.table-density-toggle button[aria-pressed="true"] {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+/* Development-only live catalog. */
+.design-system-catalog {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px;
+  display: grid;
+  gap: 28px;
+}
+.design-system-section {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.design-system-section > h2 { margin: 0; }
+.design-system-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.design-system-nav-sample {
+  width: min(320px, 100%);
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--sidebar);
+}
+.design-system-nav-sample nav {
+  display: grid;
+  gap: 4px;
+}
+.design-system-nav-sample nav button {
+  border: 0;
+  background: transparent;
+  color: var(--sidebar-text);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px;
+  text-align: left;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.design-system-nav-sample nav button.active {
+  background: var(--sidebar-hover);
+  color: #fff;
+  box-shadow: inset 3px 0 var(--accent);
+}
+.design-system-nav-sample nav button span { flex: 1; }
+
+/* Position Financials — migrated from the final CSS Module outlier (E3). */
+.position-financials-page { display: grid; gap: 18px; min-width: 0; }
+.position-financials-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.position-financials-heading h1 { margin: 4px 0 6px; }
+.position-financials-controls { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.position-financials-controls label { display: grid; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.position-financials-controls select { min-width: 260px; max-width: 420px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: inherit; padding: 9px 11px; }
+.position-financials-segmented { display: flex; gap: 3px; padding: 3px; margin: 0; border: 1px solid var(--border); border-radius: 9px; }
+.position-financials-segmented legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.position-financials-segmented button { border: 0; border-radius: var(--radius-sm); padding: 7px 10px; background: transparent; color: inherit; cursor: pointer; }
+.position-financials-segmented button.active { background: var(--surface-hover); font-weight: 650; }
+.position-financials-rule-note { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-sunken); font-size: 13px; line-height: 1.45; }
+.position-financials-rule-note strong { margin-right: 4px; }
+.position-financials-inline-error { padding: 10px 12px; border: 1px solid var(--danger-border); border-radius: 9px; background: var(--danger-bg); color: var(--danger); font-size: 13px; }
+.position-financials-state { min-height: 180px; display: grid; place-content: center; gap: 6px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-lg); padding: 30px; color: var(--text-muted); }
+.position-financials-state strong { color: inherit; }
+.position-financials-context { display: flex; flex-wrap: wrap; gap: 8px; }
+.position-financials-context > span { display: flex; gap: 6px; align-items: baseline; padding: 7px 9px; border-radius: 7px; background: var(--surface-sunken); font-size: 12px; }
+.position-financials-context strong { color: var(--text-muted); font-weight: 600; }
+.position-financials-table { min-width: 760px; }
+.position-financials-table th,
+.position-financials-table td { text-align: right; white-space: nowrap; }
+.position-financials-table thead th { position: sticky; top: 0; z-index: 2; }
+.position-financials-table .position-financials-line-header,
+.position-financials-table tbody th { position: sticky; left: 0; z-index: 1; text-align: left; background: var(--surface); min-width: 270px; }
+.position-financials-table thead .position-financials-line-header { z-index: 3; background: var(--surface-sunken); }
+.position-financials-table tbody th { white-space: normal; font-weight: 550; }
+.position-financials-table tbody th > span { display: block; }
+.position-financials-table small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-weight: 500; text-transform: none; }
+.position-financials-value-button { border: 0; padding: 2px 3px; margin: -2px -3px; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-variant-numeric: inherit; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.position-financials-value-button:hover { background: var(--surface-sunken); }
+.position-financials-value-button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.position-financials-delta { font-weight: 650 !important; }
+.position-financials-delta-up::before { content: "↑ "; }
+.position-financials-delta-down::before { content: "↓ "; }
+.position-financials-delta-flat::before { content: "→ "; }
+.position-financials-trust { color: var(--text-muted) !important; }
+.position-financials-table tr[data-role="subtotal"] > *,
+.position-financials-table tr[data-role="total"] > * { font-weight: 700; background: var(--surface-sunken); }
+.position-financials-table tr[data-role="header"] th { font-weight: 700; color: var(--text-muted); }
+.position-financials-footnote { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.position-financials-evidence-panel { display: grid; gap: 16px; }
+.position-financials-evidence-panel h2 { margin: 4px 0 0; }
+.position-financials-evidence-panel dl { display: grid; gap: 8px; margin: 0; }
+.position-financials-evidence-panel dl div { display: grid; grid-template-columns: 130px minmax(0,1fr); gap: 12px; }
+.position-financials-evidence-panel dt { color: var(--text-muted); font-size: 12px; }
+.position-financials-evidence-panel dd { margin: 0; overflow-wrap: anywhere; }
+.position-financials-evidence-panel blockquote { margin: 0; padding: 12px 14px; border-left: 3px solid var(--border); background: var(--surface-sunken); white-space: pre-wrap; }
+.position-financials-evidence-panel button { justify-self: start; }
+.position-financials-analytics-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.position-financials-chart-panel { min-width: 0; }
+@media (max-width: 900px) {
+  .position-financials-heading { display: grid; }
+  .position-financials-controls { justify-content: flex-start; }
+  .position-financials-controls label,
+  .position-financials-controls select { width: 100%; max-width: none; }
+  .position-financials-analytics-grid { grid-template-columns: 1fr; }
+  .design-system-catalog { padding: 24px 18px; }
+}
