@@ -50,7 +50,6 @@ test("the portfolio value rollup reads only current published versions of entitl
   assert.match(sql, /f\.metric_code in \('nav','fair_value'\)/);
   assert.match(sql, /conflicting_alternative/);
   assert.match(sql, /s\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
-  // Breakdown and look-through rows re-slice counted value; they never enter the total.
   assert.match(sql, /where pf\.breakdown_category is null and pf\.lookthrough_source is null/);
   assert.match(sql, /group by[^\n]*pf\.subject_level/);
 });
@@ -81,7 +80,6 @@ test("the exposure-dimension rollup classifies published fair values by governed
   assert.match(sql, /from corvis_serving\.instruments i[\s\S]*i\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
   assert.match(sql, /count\(distinct i\.instrument_type\)=1 then min\(i\.instrument_type\) else '__mixed__'/);
   assert.match(sql, /lower\(pf\.breakdown_category\) in \('sector','industry'\)/);
-  // Governed sector: held company -> current classification; GP labels only through the governed aliases.
   assert.match(sql, /left join corvis_serving\.company_sectors cs[\s\S]*cs\.company_id=case when pf\.subject_level='holding' and h\.target_type='company' then h\.target_company_id else held\.company_id end/);
   assert.match(sql, /alias\.alias_normalized=corvis_semantic\.normalize_sector_label\(pf\.breakdown_value\)/);
   assert.match(sql, /alias\.taxonomy_version='corvis_sector_v1'/);
@@ -107,17 +105,16 @@ function fakePlatform(calls: string[]): PlatformPort {
   } as unknown as PlatformPort;
 }
 
-test("the summary composes the same entitlement-scoped reads and gates sources on admin:manage", async () => {
+test("the summary composes customer-safe source health and per-user personalization for non-admin callers", async () => {
   const calls: string[] = [];
   let sourceReads = 0;
   const sources = async () => { sourceReads += 1; return [{ sourceConnectionId: "src", connectionLabel: "Room", status: "suspended", consecutiveFailures: 0 }]; };
-  const allocator = await workspaceSummary(identity, { platform: fakePlatform(calls), sources, now: new Date("2026-09-25T00:00:00Z") });
-  assert.equal(sourceReads, 0);
-  assert.deepEqual(calls.sort(), ["dimensions", "documents", "observations", "snapshots", "values"]);
-  assert.deepEqual(allocator.attention.counts, { blocking_exception: 1, needs_review: 1, stuck_document: 1, unhealthy_source: 0, total: 3 });
-
-  const admin = await workspaceSummary({ ...identity, roles: ["admin"] }, { platform: fakePlatform([]), sources, now: new Date("2026-09-25T00:00:00Z") });
+  const personalization = async () => ({ pinnedFundIds: ["fund-a"], lastSeenAt: null });
+  const allocator = await workspaceSummary(identity, { platform: fakePlatform(calls), sources, personalization, now: new Date("2026-09-25T00:00:00Z") });
   assert.equal(sourceReads, 1);
-  assert.equal(admin.attention.counts.unhealthy_source, 1);
-  assert.equal(admin.attention.counts.total, 4);
+  assert.deepEqual(calls.sort(), ["dimensions", "documents", "observations", "snapshots", "values"]);
+  assert.deepEqual(allocator.attention.counts, { blocking_exception: 1, needs_review: 1, stuck_document: 1, unhealthy_source: 1, total: 4 });
+  assert.deepEqual(allocator.personalization, { pinnedFundIds: ["fund-a"] });
+  assert.deepEqual(allocator.sourceHealth.map((row) => [row.connectionLabel, row.health]), [["Room", "action_required"]]);
+  assert.deepEqual(allocator.digest, { since: null, items: [], newPublishes: 0, exceptionChanges: 0, valueDeltas: 0 });
 });
