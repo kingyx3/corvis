@@ -116,6 +116,8 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E
         run: npm run test:e2e
+      - name: Production CSP nonce regression (customer and admin surfaces)
+        run: npm run build && npm run test:e2e:csp
 
   # Keep the historic required-check context stable while the expensive gates run
   # independently. Every prior frontend check remains blocking through this fan-in.
