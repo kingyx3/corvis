@@ -3,7 +3,8 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { getServerConfig } from "@/lib/server/config";
 import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
+import { postgres, withTransaction } from "@/lib/server/postgres";
+import { grantSupportAccess } from "@/lib/server/support-access-self-service";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLES = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
@@ -38,10 +39,13 @@ export async function POST(request: Request) {
       if (!supportGrantId || !UUID.test(supportGrantId)) {
         return json({ error: "invalid_request", correlationId: id }, { status: 400 });
       }
-      const rows = await db.query(`select corvis_control.apply_support_access_admin(
-        $1::uuid,$2,$3::uuid,$4,'revoke',$5::uuid,null,null,null,null,null,null,null,null,null,$6
-      ) as result`, [identity.tenantId, identity.subject, identity.workspaceId, id, supportGrantId, reason]);
-      return json({ data: rows[0]?.result ?? null, correlationId: id });
+      const data = await withTransaction(db, async (tx) => {
+        const rows = await tx.query(`select corvis_control.apply_support_access_admin(
+          $1::uuid,$2,$3::uuid,$4,'revoke',$5::uuid,null,null,null,null,null,null,null,null,null,$6
+        ) as result`, [identity.tenantId, identity.subject, identity.workspaceId, id, supportGrantId, reason]);
+        return rows[0]?.result ?? null;
+      });
+      return json({ data, correlationId: id });
     }
 
     const authMethod = body.authMethod === "oidc" || body.authMethod === "saml" ? body.authMethod : undefined;
@@ -58,24 +62,19 @@ export async function POST(request: Request) {
       || Date.parse(validUntil) <= Date.parse(validFrom)) {
       return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     }
-    // Separation of duties (also enforced in apply_support_access_admin, which
-    // additionally refuses another subject mapped to the approver's user).
     if (subject === identity.subject) {
       return json({ error: "support_access_self_approval_denied", correlationId: id }, { status: 403 });
     }
-    // Separation of duties: granting tenant_admin-tier support access
-    // requires the actor to already hold an active tenant_admin membership
-    // (also enforced in apply_support_access_admin, migration 048).
     if (roleName === "tenant_admin" && identity.isTenantAdmin !== true) {
       return json({ error: "tenant_admin_role_requires_tenant_admin_actor", correlationId: id }, { status: 403 });
     }
 
     const requestedId = supportGrantId && UUID.test(supportGrantId) ? supportGrantId : null;
-    const rows = await db.query(`select corvis_control.apply_support_access_admin(
-      $1::uuid,$2,$3::uuid,$4,'grant',$5::uuid,$6,$7,$8::uuid,$9::uuid,$10,$11,$12,$13::timestamptz,$14::timestamptz,$15
-    ) as result`, [identity.tenantId, identity.subject, identity.workspaceId, id, requestedId, authMethod, subject, userId,
-      workspaceId, roleName, purpose, approvalReference, validFrom, validUntil, reason]);
-    return json({ data: rows[0]?.result ?? null, correlationId: id });
+    const data = await withTransaction(db, (tx) => grantSupportAccess(identity, {
+      supportGrantId: requestedId, authMethod, subject, userId, workspaceId, roleName, purpose,
+      approvalReference, validFrom, validUntil, reason,
+    }, id, tx));
+    return json({ data, correlationId: id });
   } catch (error) {
     return apiError(error, id);
   }
