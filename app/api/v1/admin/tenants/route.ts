@@ -9,6 +9,7 @@ import {
   normalizeProvisionTenantCommand,
   PostgresTenantProvisioningRepository,
 } from "@/lib/server/tenant-provisioning";
+import { createTenantInvitation } from "@/lib/server/tenant-invitations";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
@@ -23,7 +24,18 @@ export async function POST(request: Request) {
     if (!command) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
 
     const db = postgres(getServerConfig().postgresDsn);
-    const data = await withTransaction(db, (tx) => new PostgresTenantProvisioningRepository(tx).provision(identity, id, command));
+    const data = await withTransaction(db, async (tx) => {
+      const provisioned = await new PostgresTenantProvisioningRepository(tx).provision(identity, id, command);
+      const invitation = await createTenantInvitation(identity, {
+        tenantId: provisioned.tenantId,
+        workspaceId: provisioned.workspaceId,
+        email: command.initialAdminEmail,
+        roleName: "tenant_admin",
+        reason: `Initial organization administrator invitation: ${command.reason}`,
+        confirmTenantAdmin: true,
+      }, id, tx);
+      return { ...provisioned, initialAdminInvitation: invitation };
+    });
     return json({ data, correlationId: id }, { status: 201 });
   } catch (error) {
     return apiError(error, id);

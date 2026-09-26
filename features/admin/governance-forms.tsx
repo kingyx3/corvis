@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Modal } from "@/components/ui/modal";
 
-type SubmitState = { sending: boolean; status?: number; result?: unknown; error?: string };
+type SubmitState = { sending: boolean; status?: number; result?: unknown; error?: string; invitationUrl?: string };
 type FormProps = { onSuccess: () => Promise<void> };
 type CommandBody = Record<string, unknown>;
 /** A feature flag as reported by GET /api/v1/admin/feature-flags/governance. */
@@ -37,6 +37,17 @@ function localInput(iso: string | undefined) {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
+function initialAdminEmail(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const data = (result as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return undefined;
+  const invitation = (data as { initialAdminInvitation?: unknown }).initialAdminInvitation;
+  if (!invitation || typeof invitation !== "object") return undefined;
+  const detail = (invitation as { invitation?: unknown }).invitation;
+  const email = detail && typeof detail === "object" ? (detail as { email?: unknown }).email : undefined;
+  return typeof email === "string" ? email : undefined;
+}
+
 function Select({ value, onChange, children }: { value: string; onChange: (value: string) => void; children: ReactNode }) {
   return <select value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>;
 }
@@ -45,7 +56,7 @@ function Text({ value, onChange, placeholder, type = "text" }: { value: string; 
   return <input className="input-control" type={type} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder}/>;
 }
 
-function GovernedMutation({ title, description, endpoint, body, valid, onSuccess, children, method = "POST", destructive = false }: {
+function GovernedMutation({ title, description, endpoint, body, valid, onSuccess, onReceipt, children, method = "POST", destructive = false }: {
   title: string;
   description: string;
   endpoint: string;
@@ -56,6 +67,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
   children: ReactNode;
   method?: "POST" | "PUT";
   destructive?: boolean;
+  onReceipt?: (result: unknown) => string | undefined;
 }) {
   // The previewed command is frozen when the preview opens and is exactly what
   // Apply sends, including the endpoint (which may carry target ids).
@@ -79,7 +91,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
         setState({ sending: false, status: response.status, result, error: `Command failed (${response.status}).` });
         return;
       }
-      setState({ sending: false, status: response.status, result });
+      setState({ sending: false, status: response.status, result, invitationUrl: onReceipt?.(result) });
       setPreview(null);
       await onSuccess();
     } catch {
@@ -98,6 +110,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
       {!valid && !state.error && !state.status && <span className="field-hint">Complete the required fields to review.</span>}
     </div>
     {state.result != null && <details><summary>Operation receipt</summary><pre className="code-block">{JSON.stringify(state.result, null, 2)}</pre></details>}
+    {state.invitationUrl && <div className="lineage-note tone-success" role="status"><div><strong>Initial organization admin invited</strong><span>The invitation is single-use and expires after seven days. It was not sent automatically.</span><label className="form-field"><span>One-time invitation link</span><input className="input-control" readOnly value={state.invitationUrl} onFocus={(event) => event.currentTarget.select()}/></label><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(state.invitationUrl!).catch(() => {})}>Copy invitation link</button>{initialAdminEmail(state.result) && <a className="secondary-button" href={`mailto:${encodeURIComponent(initialAdminEmail(state.result)!)}?subject=${encodeURIComponent("Your Corvis organization invitation")}&body=${encodeURIComponent(`Accept your invitation using this single-use link:\n${state.invitationUrl}\n\nThis link is confidential and should only be used by ${initialAdminEmail(state.result)}.`)}`}>Open email draft</a>}</div></div>}
     {preview && <Modal label={`Confirm ${title}`} onClose={() => setPreview(null)}><div className="dialog-body">
       <h2>{destructive ? "Confirm destructive change" : "Confirm privileged change"}</h2>
       <p>The exact command below will be re-authorized and audited by the server.</p>
@@ -122,17 +135,30 @@ function TenantProvisioning({ onSuccess }: FormProps) {
   const [workspaceSlug, setWorkspaceSlug] = useState("");
   const [workspaceDisplayName, setWorkspaceDisplayName] = useState("");
   const [reason, setReason] = useState("");
-  const body = { tenantSlug, tenantDisplayName, workspaceSlug, workspaceDisplayName, reason };
+  const [initialAdminEmail, setInitialAdminEmail] = useState("");
+  const body = { tenantSlug, tenantDisplayName, workspaceSlug, workspaceDisplayName, initialAdminEmail, reason };
   const valid = Boolean(
     TENANT_SLUG.test(tenantSlug) && tenantDisplayName &&
-    TENANT_SLUG.test(workspaceSlug) && workspaceDisplayName && reason,
+    TENANT_SLUG.test(workspaceSlug) && workspaceDisplayName && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(initialAdminEmail) && reason,
   );
-  return <GovernedMutation title="Client tenant provisioning" description="Create a new client tenant and its first workspace, atomically. Available only to Corvis operations staff." endpoint="/api/v1/admin/tenants" body={body} valid={valid} onSuccess={onSuccess}>
+  const invitationLink = (receipt: unknown): string | undefined => {
+    const outer = receipt && typeof receipt === "object" ? receipt as { data?: unknown } : undefined;
+    const data = outer?.data && typeof outer.data === "object" ? outer.data as { initialAdminInvitation?: unknown } : undefined;
+    const invite = data?.initialAdminInvitation && typeof data.initialAdminInvitation === "object" ? data.initialAdminInvitation as { token?: unknown; invitation?: { tenantId?: unknown; workspaceId?: unknown } } : undefined;
+    if (typeof window === "undefined" || typeof invite?.token !== "string" || typeof invite.invitation?.tenantId !== "string" || typeof invite.invitation.workspaceId !== "string") return undefined;
+    const url = new URL("/invite", window.location.origin);
+    url.searchParams.set("tenantId", invite.invitation.tenantId);
+    url.searchParams.set("workspaceId", invite.invitation.workspaceId);
+    url.hash = invite.token;
+    return url.toString();
+  };
+  return <GovernedMutation title="Client tenant provisioning" description="Create a new client tenant, its first workspace, and an initial organization-admin invitation atomically. Available only to Corvis operations staff." endpoint="/api/v1/admin/tenants" body={body} valid={valid} onSuccess={onSuccess} onReceipt={invitationLink}>
     <div className="form-grid">
       <label className="form-field">Tenant slug<Text value={tenantSlug} onChange={(value) => setTenantSlug(value.toLowerCase())} placeholder="acme-capital"/><span className="field-hint">Lowercase letters, digits and hyphens.</span></label>
       <label className="form-field">Tenant display name<Text value={tenantDisplayName} onChange={setTenantDisplayName} placeholder="Acme Capital Partners"/></label>
       <label className="form-field">Initial workspace slug<Text value={workspaceSlug} onChange={(value) => setWorkspaceSlug(value.toLowerCase())} placeholder="primary"/></label>
       <label className="form-field">Initial workspace display name<Text value={workspaceDisplayName} onChange={setWorkspaceDisplayName} placeholder="Primary Workspace"/></label>
+      <label className="form-field">First organization admin email<Text value={initialAdminEmail} onChange={(value) => setInitialAdminEmail(value.trim())} type="email" placeholder="admin@example.org"/><span className="field-hint">A one-time invitation link will be returned after the tenant is created; send it to this address.</span></label>
       <label className="form-field">Reason<Text value={reason} onChange={setReason}/></label>
     </div>
   </GovernedMutation>;

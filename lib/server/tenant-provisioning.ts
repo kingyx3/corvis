@@ -14,6 +14,7 @@ export type ProvisionTenantCommand = {
   workspaceSlug: string;
   workspaceDisplayName: string;
   reason: string;
+  initialAdminEmail: string;
 };
 
 export type ProvisionTenantResult = {
@@ -58,12 +59,13 @@ export function normalizeProvisionTenantCommand(body: Record<string, unknown>): 
   const workspaceSlug = text(body.workspaceSlug, 1, 64)?.toLowerCase();
   const workspaceDisplayName = text(body.workspaceDisplayName, 1, 200);
   const reason = text(body.reason, 1, 1000);
+  const initialAdminEmail = text(body.initialAdminEmail, 3, 320)?.toLowerCase();
   if (
     !tenantSlug || !TENANT_SLUG.test(tenantSlug) || !tenantDisplayName ||
     !workspaceSlug || !TENANT_SLUG.test(workspaceSlug) || !workspaceDisplayName ||
-    !reason
+    !reason || !initialAdminEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(initialAdminEmail)
   ) return undefined;
-  return { tenantSlug, tenantDisplayName, workspaceSlug, workspaceDisplayName, reason };
+  return { tenantSlug, tenantDisplayName, workspaceSlug, workspaceDisplayName, reason, initialAdminEmail };
 }
 
 function isUniqueViolation(error: unknown): boolean {

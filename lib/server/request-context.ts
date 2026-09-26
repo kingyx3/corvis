@@ -16,6 +16,8 @@ export type GatewayIdentityAssertion = {
   entitlements: Entitlements;
   authMethod: "oidc" | "saml" | "service_account";
   sessionId: string;
+  email?: string;
+  emailVerified?: boolean;
   iat: number;
   exp: number;
 };
@@ -71,6 +73,9 @@ function parseAssertionPayload(value: unknown, nowSeconds: number): GatewayIdent
     modelTrainingAllowed: rawEntitlements.modelTrainingAllowed === true,
     redistributionAllowed: rawEntitlements.redistributionAllowed === true,
   };
+  if (body.email !== undefined && typeof body.email !== "string") throw new AuthenticationError("Invalid identity assertion email");
+  if (body.emailVerified !== undefined && typeof body.emailVerified !== "boolean") throw new AuthenticationError("Invalid identity assertion emailVerified");
+  if (body.emailVerified === true && (typeof body.email !== "string" || !body.email.trim())) throw new AuthenticationError("Verified identity assertion email is missing");
   const workspaceId = String(body.workspaceId);
   if (!entitlements.workspaceIds.includes(workspaceId)) throw new AuthenticationError("Workspace context not entitled");
   return {
@@ -82,6 +87,8 @@ function parseAssertionPayload(value: unknown, nowSeconds: number): GatewayIdent
     entitlements,
     authMethod,
     sessionId: String(body.sessionId),
+    ...(typeof body.email === "string" ? { email: body.email.trim().toLowerCase() } : {}),
+    ...(typeof body.emailVerified === "boolean" ? { emailVerified: body.emailVerified } : {}),
     iat,
     exp,
   };
@@ -120,6 +127,8 @@ export function verifyGatewayIdentityAssertion(assertion: string | null, secret?
     entitlements: verified.entitlements,
     authMethod: verified.authMethod,
     sessionId: verified.sessionId,
+    ...(verified.email ? { authenticatedEmail: verified.email } : {}),
+    ...(verified.emailVerified !== undefined ? { emailVerified: verified.emailVerified } : {}),
   };
 }
 
@@ -212,6 +221,8 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
       },
       authMethod: "oidc",
       sessionId: verified.sessionId,
+      ...(verified.email ? { authenticatedEmail: verified.email } : {}),
+      ...(verified.emailVerified !== undefined ? { emailVerified: verified.emailVerified } : {}),
     };
   } catch (error) {
     if (error instanceof AuthenticationError) throw error;

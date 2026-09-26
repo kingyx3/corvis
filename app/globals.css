@@ -3325,3 +3325,13 @@ button.snapshot-row:focus-visible {
 .two-column > .panel {
   margin-top: 0;
 }
+
+.invite-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+.invite-shell .panel {
+  max-width: 520px;
+}

@@ -27,6 +27,28 @@ test("Organization Admin can preview and deactivate a user everywhere", async ({
   await expect(page.getByText("jordan.lee@example.test")).toHaveCount(0);
 });
 
+test("Organization Admin can prepare a workspace invite and must explicitly confirm an Organization Admin grant", async ({ page }) => {
+  await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "admin"));
+  await page.goto("/");
+  const nav = page.getByRole("navigation", { name: /workspace sections/i });
+  await nav.getByRole("button", { name: /access administration/i }).click();
+
+  await expect(page.getByRole("heading", { name: /invite a workspace member/i })).toBeVisible();
+  await expect(page.getByLabel("Recipient email")).toBeVisible();
+  const invitePanel = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: /invite a workspace member/i }) });
+  await expect(invitePanel.locator(".form-grid select").first()).toHaveValue("demo-workspace");
+  await page.getByLabel("Recipient email").fill("new.member@example.test");
+  await page.getByLabel("Reason").fill("New finance team member");
+  await expect(page.getByRole("button", { name: "Create invitation" })).toBeEnabled();
+
+  await page.getByLabel("Role").selectOption("tenant_admin");
+  const create = page.getByRole("button", { name: "Create invitation" });
+  await expect(page.getByLabel(/confirm this invitation grants organization-wide administration/i)).toBeVisible();
+  await expect(create).toBeDisabled();
+  await page.getByLabel(/confirm this invitation grants organization-wide administration/i).check();
+  await expect(create).toBeEnabled();
+});
+
 test("access administration is not exposed to a non-admin user", async ({ page }) => {
   await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "read_only"));
   await page.goto("/");

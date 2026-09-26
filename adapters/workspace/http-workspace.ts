@@ -1,5 +1,7 @@
 import type {
   DeactivateTenantAccessResult,
+  TenantInvitation,
+  TenantInvitationCreated,
   TenantAccessMember,
   WorkspaceCapabilities,
   WorkspaceIdentity,
@@ -25,6 +27,16 @@ type Envelope<T> = { data: T; correlationId: string };
 
 export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   const base = apiBase.replace(/\/$/, "");
+  const workspaceContextHeaders = (): Record<string, string> => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem("corvis:workspace-context:v1");
+      const value = raw ? JSON.parse(raw) as { tenantId?: unknown; workspaceId?: unknown } : undefined;
+      return typeof value?.tenantId === "string" && typeof value.workspaceId === "string"
+        ? { "x-corvis-tenant": value.tenantId, "x-corvis-workspace": value.workspaceId }
+        : {};
+    } catch { return {}; }
+  };
 
   async function responseError(response: Response): Promise<Error> {
     const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
@@ -34,7 +46,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   }
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${base}${path}`, { ...init, credentials: "include", headers: { "content-type": "application/json", ...(init?.headers || {}) } });
+    const response = await fetch(`${base}${path}`, { ...init, credentials: "include", headers: { "content-type": "application/json", ...workspaceContextHeaders(), ...(init?.headers || {}) } });
     if (!response.ok) throw await responseError(response);
     const body = await response.json() as Envelope<T>;
     return body.data;
@@ -48,7 +60,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     const response = await fetch(`${base}/api/v1/research/stream`, {
       method: "POST",
       credentials: "include",
-      headers: { "content-type": "application/json", accept: "application/x-ndjson" },
+      headers: { "content-type": "application/json", accept: "application/x-ndjson", ...workspaceContextHeaders() },
       body: JSON.stringify({ question }),
       signal,
     });
@@ -103,6 +115,10 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
       method: "POST",
       body: JSON.stringify(command),
     }),
+    createAccessInvitation: (command) => request<TenantInvitationCreated>("/api/v1/access/invitations", {
+      method: "POST", body: JSON.stringify(command),
+    }),
+    listAccessInvitations: () => request<TenantInvitation[]>("/api/v1/access/invitations"),
     listReconciliationExceptions: (snapshotId: string, snapshotVersion: number) => request<ReconciliationException[]>(
       `/api/v1/reconciliation-exceptions?snapshotId=${encodeURIComponent(snapshotId)}&snapshotVersion=${snapshotVersion}`,
     ),

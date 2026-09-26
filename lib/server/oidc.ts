@@ -8,6 +8,8 @@ export const JWKS_MIN_REFRESH_INTERVAL_MS = 30_000;
 export type OidcIdentity = {
   subject: string;
   sessionId: string;
+  email?: string;
+  emailVerified?: boolean;
 };
 
 type OidcJwk = {
@@ -33,6 +35,8 @@ type JwtClaims = {
   iat?: unknown;
   exp?: unknown;
   nbf?: unknown;
+  email?: unknown;
+  email_verified?: unknown;
 };
 
 type DiscoveryDocument = {
@@ -227,6 +231,14 @@ export class OidcVerifier {
 
     const explicitSession = typeof claims.sid === "string" && claims.sid ? claims.sid : typeof claims.jti === "string" && claims.jti ? claims.jti : undefined;
     const sessionId = explicitSession ?? `token-${createHash("sha256").update(token).digest("hex")}`;
-    return { subject: claims.sub, sessionId };
+    if (claims.email !== undefined && typeof claims.email !== "string") throw new Error("invalid OIDC email claim");
+    if (claims.email_verified !== undefined && typeof claims.email_verified !== "boolean") throw new Error("invalid OIDC email verification claim");
+    if (claims.email_verified === true && (typeof claims.email !== "string" || !claims.email.trim())) throw new Error("verified OIDC email is missing");
+    return {
+      subject: claims.sub,
+      sessionId,
+      ...(typeof claims.email === "string" ? { email: claims.email.trim().toLowerCase() } : {}),
+      ...(typeof claims.email_verified === "boolean" ? { emailVerified: claims.email_verified } : {}),
+    };
   }
 }

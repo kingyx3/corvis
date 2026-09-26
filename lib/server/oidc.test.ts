@@ -51,6 +51,24 @@ test("OIDC verifier validates issuer, audience, signature and stable session ide
   assert.deepEqual(identity, { subject: "user-1", sessionId: "session-1" });
 });
 
+test("OIDC verifier carries a normalized email only from a signed, explicitly verified claim", async () => {
+  const verifier = new OidcVerifier(fetchFixture());
+  const verified = await verifier.verify({
+    authorization: `Bearer ${token({ email: " First.Admin@Example.Test ", email_verified: true })}`,
+    issuer, audience, now: new Date(1_800_000_100_000),
+  });
+  assert.deepEqual(verified, { subject: "user-1", sessionId: "session-1", email: "first.admin@example.test", emailVerified: true });
+  const unverified = await verifier.verify({
+    authorization: `Bearer ${token({ email: "admin@example.test", email_verified: false })}`,
+    issuer, audience, now: new Date(1_800_000_100_000),
+  });
+  assert.equal(unverified.emailVerified, false);
+  await assert.rejects(verifier.verify({
+    authorization: `Bearer ${token({ email_verified: true })}`,
+    issuer, audience, now: new Date(1_800_000_100_000),
+  }), /verified OIDC email is missing/);
+});
+
 test("OIDC verifier rejects wrong audience, expiry and signature tampering", async () => {
   const verifier = new OidcVerifier(fetchFixture());
   await assert.rejects(verifier.verify({

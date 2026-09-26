@@ -35,6 +35,9 @@ test("PR #149 OpenAPI omissions are explicit non-external classifications, not a
     "/jobs/job-1/recover",
     "/admin/feature-flags",
     "/admin/webhooks/subscriptions/00000000-0000-4000-8000-000000000001",
+    "/access/invitations",
+    "/admin/tenants/invitations",
+    "/invitations/accept",
   ];
 
   for (const path of intentionallyNonExternal) {
