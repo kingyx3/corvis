@@ -24,8 +24,10 @@ test("drill-through from Data review to Position Financials pre-scopes the posit
   const blocking = results.violations.filter((violation) => (accessibilityBudget.blockedImpacts as readonly string[]).includes(violation.impact ?? ""));
   expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
 
-  // Exercise the chart's tabular fallback.
-  const details = page.locator(".chart-data-toggle").first();
+  // Exercise the chart's tabular fallback. Scoped to the revenue figure by
+  // heading: the position financials page also renders a workspace exposure
+  // composition chart earlier in the DOM, so ".first()" is not reliable here.
+  const details = page.locator("figure.chart-figure", { has: page.getByRole("heading", { name: /revenue across periods/i }) }).locator(".chart-data-toggle");
   await details.locator("summary").click();
   await expect(details.locator("table")).toContainText("Q1 2026");
 

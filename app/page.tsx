@@ -9,6 +9,8 @@ import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
+import { PageHeading } from "@/components/ui/page-heading";
+import { SidebarNavItem } from "@/components/ui/sidebar-nav-item";
 import { OverviewView } from "@/features/overview/overview-view";
 import { DashboardDepthSections } from "@/features/overview/dashboard-depth-sections";
 import { PositionFinancialsView, type PositionFinancialsFocusRequest } from "@/features/analytics/position-financials-view";
@@ -27,6 +29,8 @@ type SearchResult =
   | { kind: "document"; key: string; title: string; detail: string; document: DocumentRecord }
   | { kind: "fund"; key: string; title: string; detail: string; snapshot: FundSnapshot }
   | { kind: "observation"; key: string; title: string; detail: string; observation: ObservationRecord };
+type CommandResult = { kind: "command"; category: "Navigation" | "Action"; key: string; title: string; detail: string; keywords: string; run: () => void };
+type PaletteResult = SearchResult | CommandResult;
 
 function errorMessage(reason: unknown): string { return reason instanceof Error ? reason.message : "Module temporarily unavailable"; }
 function fallbackCapabilities(documentsAvailable: boolean, observationsAvailable: boolean): WorkspaceCapabilities {
@@ -42,8 +46,6 @@ export default function CorvisApp() {
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
   const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | null>(null);
-  // The Overview rollup degrades independently: without it Overview falls
-  // back to the snapshot-derived metrics instead of blocking the workspace.
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [moduleErrors, setModuleErrors] = useState<ModuleErrors>({});
@@ -57,10 +59,6 @@ export default function CorvisApp() {
   const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null);
 
-  // Chrome-only (the sidebar's tenant/workspace identity); never gates
-  // access. Fetched independently of loadWorkspace so an unavailable "who am
-  // I" call falls back to the existing placeholder rather than blocking or
-  // failing anything else.
   useEffect(() => {
     let active = true;
     void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch(() => {});
@@ -89,9 +87,6 @@ export default function CorvisApp() {
     workspacePort.listObservations(),
   ]) as Promise<[PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]>, []);
 
-  // Background refresh after a mutation (publish, approval, upload, retry):
-  // keep the current view mounted so its confirmations, filters and queue
-  // position survive. Only the first load shows the full-page loading state.
   const loadSummary = useCallback(() => workspacePort.workspaceSummary().catch(() => null), []);
   const refreshWorkspace = useCallback(async () => {
     const [results, nextSummary] = await Promise.all([loadWorkspace(), loadSummary()]);
@@ -118,16 +113,6 @@ export default function CorvisApp() {
   const canReadSources = allowed("sources:read") && capabilities?.sourceDocumentAccessAllowed === true;
   const canSearch = canReadDocuments || canReadObservations;
 
-  // The shortcut is offered exactly when the search button is.
-  useEffect(() => {
-    if (!canSearch) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearchOpen(true); }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canSearch]);
-
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.id && snapshot.id === selectedSnapshotId) ?? snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
   const degradedModules = Object.keys(moduleErrors) as ReadModule[];
@@ -140,12 +125,8 @@ export default function CorvisApp() {
     { id: "research" as View, label: "Ask Corvis", icon: "spark" as IconName, visible: canResearch },
     { id: "access" as View, label: "Access administration", icon: "shield" as IconName, visible: canAdmin && identity?.tenantAdmin === true },
   ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, docs, identity?.tenantAdmin, observations]);
-  // A view that stops being allowed (e.g. capabilities changed on refresh)
-  // falls back to the overview instead of rendering an empty workspace.
   const activeView: View = nav.some((item) => item.id === view) ? view : "overview";
 
-  // Plain navigation drops any pending drill-through focus so a later visit to
-  // the review queue does not jump back to an old search result.
   const navigate = (next: View) => { setReviewFocus(null); setAnalyticsFocus(null); setView(next); };
   const viewPositionFinancials = (row: ObservationRecord) => {
     if (!row.companyId) return;
@@ -153,32 +134,9 @@ export default function CorvisApp() {
     setView("analytics");
   };
   const openSnapshot = (snapshot: FundSnapshot) => { if (!canReadObservations) return; setSelectedSnapshotId(snapshot.id); navigate("review"); };
-  // Drill-through from an Overview number, chart point or attention item: a
-  // snapshot id that is not in the current listing (an earlier published
-  // period) falls back to that fund's latest period in Data review.
   const openSnapshotById = (snapshotId: string | undefined, fund?: string) => {
-    const snapshot = snapshots.find((item) => item.id && item.id === snapshotId)
-      ?? snapshots.filter((item) => item.fund === fund).sort((a, b) => comparePeriods(b.period, a.period))[0];
+    const snapshot = snapshots.find((item) => item.id && item.id === snapshotId) ?? snapshots.filter((item) => item.fund === fund).sort((a, b) => comparePeriods(b.period, a.period))[0];
     if (snapshot) openSnapshot(snapshot); else if (canReadObservations) navigate("review");
-  };
-  const openAttention = (target: AttentionTarget) => {
-    if (target.view === "documents") { openDocumentById(target.documentId); return; }
-    // The admin console is served from its own hostname (the customer runtime
-    // refuses /admin), so source-health items are informational here.
-    if (target.view === "admin") return;
-    if (!canReadObservations) return;
-    if (target.snapshotId) setSelectedSnapshotId(target.snapshotId);
-    setAnalyticsFocus(null);
-    setReviewFocus(target.observationId ? (current) => ({ observationId: target.observationId!, key: (current?.key ?? 0) + 1 }) : null);
-    setView("review");
-  };
-  // Ask Corvis citation -> Review drill-through (D2, #177): reuses the same
-  // focusRequest mechanism openAttention already drives Review with.
-  const openReviewObservation = (observationId: string) => {
-    if (!canReadObservations) return;
-    setAnalyticsFocus(null);
-    setReviewFocus((current) => ({ observationId, key: (current?.key ?? 0) + 1 }));
-    setView("review");
   };
   const openDocumentById = (documentId: string) => {
     if (!canReadDocuments) return;
@@ -187,10 +145,34 @@ export default function CorvisApp() {
     setSelectedDoc(document);
     navigate("documents");
   };
+  const openAttention = (target: AttentionTarget) => {
+    if (target.view === "documents") { openDocumentById(target.documentId); return; }
+    if (target.view === "admin" || !canReadObservations) return;
+    if (target.snapshotId) setSelectedSnapshotId(target.snapshotId);
+    setAnalyticsFocus(null);
+    setReviewFocus(target.observationId ? (current) => ({ observationId: target.observationId!, key: (current?.key ?? 0) + 1 }) : null);
+    setView("review");
+  };
+  const openReviewObservation = (observationId: string) => {
+    if (!canReadObservations) return;
+    setAnalyticsFocus(null);
+    setReviewFocus((current) => ({ observationId, key: (current?.key ?? 0) + 1 }));
+    setView("review");
+  };
+
+  const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); setActiveResult(0); };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearchOpen(true); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const searchResults = useMemo<SearchResult[]>(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return [];
+    if (!query || !canSearch) return [];
     const results: SearchResult[] = [];
     if (canReadDocuments) for (const doc of docs) if (`${doc.name} ${doc.fund} ${doc.period}`.toLowerCase().includes(query)) results.push({ kind: "document", key: `doc:${doc.id}`, title: doc.name, detail: `${doc.fund} · ${doc.period}`, document: doc });
     if (canReadObservations) {
@@ -198,11 +180,23 @@ export default function CorvisApp() {
       for (const row of observations) if (`${row.company} ${row.metric} ${row.value} ${row.period}`.toLowerCase().includes(query)) results.push({ kind: "observation", key: `obs:${row.id}`, title: `${row.company} · ${row.metric}`, detail: `${row.value} · ${row.period} · ${row.state}`, observation: row });
     }
     return results.slice(0, 20);
-  }, [canReadDocuments, canReadObservations, docs, observations, searchQuery, snapshots]);
-  const activeResultIndex = Math.min(activeResult, Math.max(searchResults.length - 1, 0));
+  }, [canReadDocuments, canReadObservations, canSearch, docs, observations, searchQuery, snapshots]);
 
-  const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); setActiveResult(0); };
-  const chooseSearchResult = (result: SearchResult) => {
+  const paletteResults = useMemo<PaletteResult[]>(() => {
+    const commands: CommandResult[] = [
+      ...nav.map((item) => ({ kind: "command" as const, category: "Navigation" as const, key: `nav:${item.id}`, title: item.label, detail: `Go to ${item.label}`, keywords: `navigate open go ${item.label}`, run: () => { closeSearch(); navigate(item.id); } })),
+      { kind: "command", category: "Action", key: "action:refresh", title: "Refresh workspace", detail: "Re-fetch entitled workspace data", keywords: "reload refresh sync data", run: () => { closeSearch(); void refreshWorkspace(); } },
+      ...(canUpload ? [{ kind: "command" as const, category: "Action" as const, key: "action:upload", title: "Upload documents", detail: "Open the governed document upload flow", keywords: "upload add document files", run: () => { closeSearch(); setUploadOpen(true); } }] : []),
+      ...(canReview && canReadObservations ? [{ kind: "command" as const, category: "Action" as const, key: "action:review", title: "Review data", detail: "Open observations that need review", keywords: "review approve observations exceptions", run: () => { closeSearch(); navigate("review"); } }] : []),
+    ];
+    const query = searchQuery.trim().toLowerCase();
+    const matchingCommands = commands.filter((command) => !query || `${command.title} ${command.detail} ${command.keywords}`.toLowerCase().includes(query));
+    return [...matchingCommands, ...searchResults].slice(0, 20);
+  }, [canReadObservations, canReview, canUpload, nav, refreshWorkspace, searchQuery, searchResults]);
+  const activeResultIndex = Math.min(activeResult, Math.max(paletteResults.length - 1, 0));
+
+  const choosePaletteResult = (result: PaletteResult) => {
+    if (result.kind === "command") { result.run(); return; }
     closeSearch();
     if (result.kind === "document") { setSelectedDoc(result.document); navigate("documents"); return; }
     if (result.kind === "fund") { openSnapshot(result.snapshot); return; }
@@ -212,26 +206,26 @@ export default function CorvisApp() {
   };
   const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (!searchResults.length) return;
+      if (!paletteResults.length) return;
       event.preventDefault();
-      const next = event.key === "ArrowDown" ? Math.min(searchResults.length - 1, activeResultIndex + 1) : Math.max(0, activeResultIndex - 1);
+      const next = event.key === "ArrowDown" ? Math.min(paletteResults.length - 1, activeResultIndex + 1) : Math.max(0, activeResultIndex - 1);
       setActiveResult(next);
       document.getElementById(`search-result-${next}`)?.scrollIntoView({ block: "nearest" });
     } else if (event.key === "Enter") {
-      const result = searchResults[activeResultIndex];
+      const result = paletteResults[activeResultIndex];
       if (!result) return;
       event.preventDefault();
-      chooseSearchResult(result);
+      choosePaletteResult(result);
     }
   };
 
-  const scopedUnavailable = (title: string, detail: string) => <section className="page-heading" role="alert"><div><p className="eyebrow">Module unavailable</p><h1>{title}</h1><p className="lede">{detail}</p><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button></div></section>;
+  const scopedUnavailable = (title: string, detail: string) => <div role="alert"><PageHeading eyebrow="Module unavailable" title={title} description={detail}><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button></PageHeading></div>;
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
-    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} aria-current={activeView === item.id ? "page" : undefined} aria-label={item.label} onClick={() => navigate(item.id)}><Icon name={item.icon}/><span>{item.label}</span>{item.badge ? <b>{item.badge}</b> : null}</button>)}</nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div></div></aside>
-    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{canSearch && <button className="global-search" aria-label="Search entitled workspace data" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search entitled workspace data</span><kbd aria-hidden="true">⌘K</kbd></button>}</div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
-      {loading && <section className="page-heading" aria-busy="true"><div><p className="eyebrow">Workspace</p><h1>Loading trusted data…</h1><p className="lede">Fetching entitled documents, snapshots and observations.</p></div></section>}
+    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}</nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div></div></aside>
+    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions"><button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
+      {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
       {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void loadSummary().then(setSummary)}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void loadSummary().then(setSummary)} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" && identity?.workspaceId !== "demo-secondary" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
       {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
@@ -241,7 +235,7 @@ export default function CorvisApp() {
       {!loading && activeView === "research" && canResearch && <ResearchView suggestions={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? researchSuggestions : []} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
       {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
     </div></main>
-    {searchOpen && canSearch && <Modal label="Global workspace search" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={searchResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={searchResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search funds, companies, documents or metrics" aria-label="Search workspace"/><kbd>Esc</kbd></label><div className="search-palette-results">{!searchQuery.trim() && <p className="search-palette-empty">Type to search documents, fund periods and observations you are entitled to.</p>}{searchQuery.trim() && searchResults.length === 0 && <p role="status" className="search-palette-empty">No entitled workspace results match “{searchQuery}”.</p>}{searchResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Search results">{searchResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => chooseSearchResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
+    {searchOpen && <Modal label="Workspace command palette" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={paletteResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={paletteResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search or run a command" aria-label="Search workspace or run a command"/><kbd>Esc</kbd></label><div className="search-palette-results">{searchQuery.trim() && paletteResults.length === 0 && <p role="status" className="search-palette-empty">No commands or entitled workspace data match “{searchQuery}”.</p>}{paletteResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Commands and search results">{paletteResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => choosePaletteResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind === "command" ? result.category : result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Run/open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
     {uploadOpen && canUpload && <UploadModal onClose={() => { setUploadOpen(false); navigate("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>}
     {selectedDoc && <DocumentDrawer doc={selectedDoc} onClose={() => setSelectedDoc(null)} canOpenTrustedData={canReadObservations} onReview={() => { const match = snapshots.find((snapshot) => snapshot.fund === selectedDoc.fund && snapshot.period === selectedDoc.period); if (match?.id) setSelectedSnapshotId(match.id); setSelectedDoc(null); navigate("review"); }}/>} 
   </div>;
