@@ -5,6 +5,7 @@ import type { TableDensity } from "./table-density-toggle";
 
 type SortValue = string | number | null | undefined;
 type Direction = "ascending" | "descending";
+type SortableRowAttributes = HTMLAttributes<HTMLTableRowElement> & { "data-role"?: string };
 
 export type SortableColumn<Row> = {
   id: string;
@@ -45,7 +46,7 @@ export function SortableDataTable<Row>({
   rowKey: (row: Row) => Key;
   density?: TableDensity;
   className?: string;
-  getRowAttributes?: (row: Row) => HTMLAttributes<HTMLTableRowElement>;
+  getRowAttributes?: (row: Row) => SortableRowAttributes;
 }) {
   const [sort, setSort] = useState<{ columnId: string; direction: Direction } | null>(null);
   const orderedRows = useMemo(() => {
