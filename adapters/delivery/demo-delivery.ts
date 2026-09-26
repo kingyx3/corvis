@@ -1,13 +1,13 @@
-import type { DeliveryPort, ExportDeliveryStatus, ExportScope } from "@/core/delivery";
+import type { DeliveryPort, ExportDeliveryStatus, ExportScope, ExportSource } from "@/core/delivery";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 
 const history: ExportDeliveryStatus[] = [];
 
 export function createDemoDeliveryPort(): DeliveryPort {
   return {
-    async createExport(format, scope?: ExportScope) {
+    async createExport(format, options?: { scope?: ExportScope; source?: ExportSource }) {
       assertDemoModuleAvailable("delivery");
-      const manifest = await demoCustomerJourneyStore.createExport(format, scope?.snapshotId);
+      const manifest = await demoCustomerJourneyStore.createExport(format, options?.scope?.snapshotId, options?.source);
       history.unshift({
         exportId: manifest.exportId,
         format: manifest.format,

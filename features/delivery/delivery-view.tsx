@@ -16,6 +16,12 @@ function stateLabel(state: string): string {
   return state.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase());
 }
 
+// Exports created before this field existed have no manifest.source; they were
+// all full-tenant requests from Data delivery itself, so that's the honest default.
+function sourceLabel(source: ExportManifest["source"]): string {
+  return source === "review" ? "Data review" : "Data delivery";
+}
+
 export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: number }) {
   const [busy, setBusy] = useState<ExportFormat | null>(null);
   const [manifest, setManifest] = useState<ExportManifest | null>(null);
@@ -62,7 +68,7 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
     setBusy(format);
     setError(null);
     try {
-      setManifest(await deliveryPort.createExport(format));
+      setManifest(await deliveryPort.createExport(format, { source: "delivery" }));
       await refreshHistory();
     } catch (caught) {
       setManifest(null);
@@ -104,10 +110,10 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
 
     <section className="panel" aria-labelledby="export-history-heading">
       <div className="panel-heading"><div><p className="eyebrow">Delivery history</p><h2 id="export-history-heading">Recent exports</h2></div></div>
-      <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table history-table"><thead><tr><th>Requested</th><th>Format</th><th>Status</th><th>Coverage</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
-        {historyLoading && <tr><td colSpan={7} className="empty-cell">Loading governed export history…</td></tr>}
-        {!historyLoading && exports.length === 0 && <tr><td colSpan={7} className="empty-cell">No exports yet. Request a format above to create your first governed delivery.</td></tr>}
-        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{item.manifest.rowCounts.observations ?? 0} observations · {item.manifest.snapshotIds.length} snapshots</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
+      <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table history-table"><thead><tr><th>Requested</th><th>Requested from</th><th>Format</th><th>Status</th><th>Coverage</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
+        {historyLoading && <tr><td colSpan={8} className="empty-cell">Loading governed export history…</td></tr>}
+        {!historyLoading && exports.length === 0 && <tr><td colSpan={8} className="empty-cell">No exports yet. Request a format above to create your first governed delivery.</td></tr>}
+        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{sourceLabel(item.manifest.source)}</td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{item.manifest.rowCounts.observations ?? 0} observations · {item.manifest.snapshotIds.length} snapshots</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
       </tbody></table></div>
     </section>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Only governed published data is delivered.</strong><span>Exports carry snapshot/schema/taxonomy metadata, immutable checksum lineage and time-bounded download grants. API, webhooks and optional warehouse sharing reuse the same serving contract.</span></div></div>

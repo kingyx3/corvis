@@ -18,9 +18,11 @@ export type ExportDeliveryStatus = {
 
 /** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
 export type ExportScope = { snapshotId: string };
+/** Which product surface is requesting the export, recorded on the manifest for delivery history (#182 D12). */
+export type ExportSource = NonNullable<ExportManifest["source"]>;
 
 export interface DeliveryPort {
-  createExport(format: ExportFormat, scope?: ExportScope): Promise<ExportManifest>;
+  createExport(format: ExportFormat, options?: { scope?: ExportScope; source?: ExportSource }): Promise<ExportManifest>;
   listExports(): Promise<ExportDeliveryStatus[]>;
   /** Issues a fresh short-lived download link for one of the caller's exports, on demand. */
   prepareDownload(exportId: string): Promise<ExportDeliveryStatus>;

@@ -79,6 +79,27 @@ test("POST /exports still creates xlsx exports normally: the parquet gate does n
   assert.equal(payload.data.format, "xlsx");
 });
 
+test("POST /exports defaults source to delivery when omitted, and records an explicit source (#182 D12)", async () => {
+  const unlabeled = await exportsPost(request("csv"));
+  assert.equal(unlabeled.status, 202);
+  const unlabeledPayload = await unlabeled.json() as { data: { source: string } };
+  assert.equal(unlabeledPayload.data.source, "delivery");
+
+  const valid = request("csv");
+  const labeled = await exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body: JSON.stringify({ format: "csv", source: "review" }) }));
+  assert.equal(labeled.status, 202);
+  const labeledPayload = await labeled.json() as { data: { source: string } };
+  assert.equal(labeledPayload.data.source, "review");
+});
+
+test("POST /exports rejects a source outside the known enum with 400 instead of recording an arbitrary label", async () => {
+  const valid = request("csv");
+  const response = await exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body: JSON.stringify({ format: "csv", source: "not-a-real-surface" }) }));
+  assert.equal(response.status, 400);
+  const payload = await response.json() as { error: string };
+  assert.equal(payload.error, "invalid_export_source");
+});
+
 test("POST /exports replays the same export job for a retried Idempotency-Key instead of creating a second one", async () => {
   const first = await exportsPost(request("csv", { idempotencyKey: "retry-key-1", tenant: "tenant-idem-a" }));
   assert.equal(first.status, 202);

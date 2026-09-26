@@ -26,18 +26,22 @@ export async function POST(request: Request) {
     const parsed: unknown = await request.json();
     // A JSON `null`, array or scalar body is valid JSON but not a request object; reject it instead of throwing a TypeError (500).
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-    const body = parsed as { format?: "parquet" | "csv" | "xlsx"; scope?: { snapshotId?: unknown }; idempotencyKey?: string };
+    const body = parsed as { format?: "parquet" | "csv" | "xlsx"; scope?: { snapshotId?: unknown }; source?: unknown; idempotencyKey?: string };
     const format = body.format;
     if (!format || !["parquet","csv","xlsx"].includes(format)) return json({ error: "invalid_export_format", correlationId: id }, { status: 400 });
     if (body.scope !== undefined && (typeof body.scope !== "object" || body.scope === null || typeof body.scope.snapshotId !== "string" || !body.scope.snapshotId)) {
       return json({ error: "invalid_export_scope", correlationId: id }, { status: 400 });
     }
+    if (body.source !== undefined && body.source !== "delivery" && body.source !== "review") {
+      return json({ error: "invalid_export_source", correlationId: id }, { status: 400 });
+    }
     const scope = body.scope ? { snapshotId: body.scope.snapshotId as string } : undefined;
+    const source = body.source as "delivery" | "review" | undefined;
     if (format === "parquet") await assertFeatureEnabled(identity, "exports.parquet_delivery", "export");
     const clientKey = body.idempotencyKey || request.headers.get("idempotency-key") || undefined;
     const { status, body: data } = await withIdempotency(identity, "exports.create", clientKey, async () => ({
       status: 202,
-      body: await createPhysicalExport(identity, format, scope),
+      body: await createPhysicalExport(identity, format, { scope, source }),
     }));
     return json({ data, correlationId: id }, { status });
   } catch (error) { return apiError(error, id); }

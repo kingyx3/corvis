@@ -48,6 +48,7 @@ test("without a scope, every entitled fund's published snapshots are exported (e
   assert.deepEqual(manifest.snapshotIds, ["snap-a", "snap-b"]);
   assert.equal(manifest.rowCounts.observations, 7);
   assert.equal(manifest.rowCounts.snapshots, 2);
+  assert.equal(manifest.source, "delivery", "an unlabeled request is a full-tenant Data delivery request");
 });
 
 test("a scoped export (e.g. 'export this view' from Review) is restricted to exactly the requested, already-entitled snapshot", async () => {
@@ -66,16 +67,17 @@ test("a scoped export (e.g. 'export this view' from Review) is restricted to exa
     return [];
   });
   const scope: ExportScope = { snapshotId: "snap-a" };
-  const manifest = await createPhysicalExport(identity, "csv", scope, db);
+  const manifest = await createPhysicalExport(identity, "csv", { scope, source: "review" }, db);
   assert.deepEqual(manifest.snapshotIds, ["snap-a"]);
   assert.equal(manifest.rowCounts.observations, 3);
   assert.equal(manifest.rowCounts.snapshots, 1);
+  assert.equal(manifest.source, "review");
 });
 
 test("a scope naming a snapshot the caller is not entitled to (or that isn't published) fails closed instead of exporting every entitled snapshot", async () => {
   const db = new FakeDb(() => []);
   await assert.rejects(
-    createPhysicalExport(identity, "csv", { snapshotId: "not-mine" }, db),
+    createPhysicalExport(identity, "csv", { scope: { snapshotId: "not-mine" } }, db),
     (error: unknown) => error instanceof Error && error.name === "AuthorizationError",
   );
 });

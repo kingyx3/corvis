@@ -175,7 +175,7 @@ class DemoCustomerJourneyStore {
     return { answer: `Demo response for: ${question}`, citations, semanticQueryIds: [], uncertainty: "Demo mode" };
   }
 
-  createExport(format: ExportManifest["format"], snapshotId?: string): ExportManifest {
+  createExport(format: ExportManifest["format"], snapshotId?: string, source: NonNullable<ExportManifest["source"]> = "delivery"): ExportManifest {
     const published = this.snapshots.filter((item) => item.status === "Published" && item.id);
     const scoped = snapshotId ? published.filter((item) => item.id === snapshotId) : published;
     // Mirrors the server: a scoped export (e.g. "export this view" from Review)
@@ -193,6 +193,7 @@ class DemoCustomerJourneyStore {
         observations: this.observations.filter((row) => row.state === "Approved" && (!snapshotId || row.snapshotId === snapshotId)).length,
         snapshots: scoped.length,
       },
+      source,
     };
     return { ...manifestBase, checksumSha256: checksum(manifestBase) };
   }

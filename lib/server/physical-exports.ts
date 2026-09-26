@@ -6,6 +6,7 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 export type ExportFormat = ExportManifest["format"];
 /** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
 export type ExportScope = { snapshotId: string };
+export type ExportSource = NonNullable<ExportManifest["source"]>;
 type DeliveryManifest = ExportManifest & {
   artifact?: {
     contentType?: string;
@@ -46,9 +47,10 @@ function covers(current: readonly string[] | undefined, required: readonly strin
 export async function createPhysicalExport(
   identity: RequestIdentity,
   format: ExportFormat,
-  scope?: ExportScope,
+  options: { scope?: ExportScope; source?: ExportSource } = {},
   store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
 ): Promise<ExportManifest> {
+  const { scope, source = "delivery" } = options;
   assertRedistributionAllowed(identity);
   const fundIds = identity.entitlements.fundIds ?? [];
   const documentIds = identity.entitlements.documentIds ?? [];
@@ -84,6 +86,7 @@ export async function createPhysicalExport(
     snapshotIds: snapshots.map((row) => text(row, "snapshot_id")),
     format,
     rowCounts: { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length },
+    source,
   };
   const manifest: ExportManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
 

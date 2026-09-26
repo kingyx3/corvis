@@ -1,4 +1,4 @@
-import type { DeliveryPort, ExportDeliveryStatus, ExportFormat, ExportScope } from "@/core/delivery";
+import type { DeliveryPort, ExportDeliveryStatus, ExportFormat, ExportScope, ExportSource } from "@/core/delivery";
 import type { ExportManifest } from "@/core/enterprise";
 
 type Envelope<T> = { data: T; correlationId: string };
@@ -11,12 +11,12 @@ async function errorFrom(response: Response): Promise<Error> {
 export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
   const base = apiBase.replace(/\/$/, "");
   return {
-    async createExport(format: ExportFormat, scope?: ExportScope): Promise<ExportManifest> {
+    async createExport(format: ExportFormat, options?: { scope?: ExportScope; source?: ExportSource }): Promise<ExportManifest> {
       const response = await fetch(`${base}/api/v1/exports`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(scope ? { format, scope } : { format }),
+        body: JSON.stringify({ format, ...(options?.scope ? { scope: options.scope } : {}), ...(options?.source ? { source: options.source } : {}) }),
       });
       if (!response.ok) throw await errorFrom(response);
       const body = await response.json() as Envelope<ExportManifest>;

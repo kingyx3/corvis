@@ -171,7 +171,7 @@ export function ReviewView({
     if (!snapshot?.id) return;
     setBusy("export"); setMessage(null);
     try {
-      await deliveryPort.createExport("csv", { snapshotId: snapshot.id });
+      await deliveryPort.createExport("csv", { scope: { snapshotId: snapshot.id }, source: "review" });
       setMessage({ text: "Export requested for this snapshot. Download it from Data delivery once it's ready.", tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Export request failed", tone: "error" }); }
     finally { setBusy(null); }
