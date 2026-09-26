@@ -133,3 +133,80 @@ test("deactivate everywhere refuses to deactivate the current tenant-admin sessi
   );
   assert.equal(lifecycle.command, undefined);
 });
+
+// The transactional fake records committed effects, so an audit failure must
+// leave neither a role change nor expired resource entitlements behind.
+class RoleDb extends FakeDb {
+  committed: string[] = [];
+  pending: string[] = [];
+  failAudit = false;
+  actor = ACTOR_USER;
+  targetExists = true;
+  currentRole = "analyst";
+  actorAllowed = true;
+  override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    this.calls.push({ sql, parameters });
+    if (sql.includes("join corvis_control.membership m")) return this.actorAllowed ? [{ user_id: this.actor }] : [];
+    if (sql.includes("from corvis_control.identity_subject")) return this.targetExists ? [{ user_id: TARGET_USER }] : [];
+    if (sql.includes("from corvis_control.membership")) return [{ role_name: this.currentRole, valid_until: "2027-01-01T00:00:00Z" }];
+    return [];
+  }
+  override async execute(sql?: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    this.calls.push({ sql: sql!, parameters });
+    if (this.failAudit && sql?.includes("audit_event")) throw new Error("audit unavailable");
+    this.pending.push(sql!);
+  }
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    this.pending = [];
+    try { const result = await fn(this); this.committed.push(...this.pending); return result; }
+    finally { this.pending = []; }
+  }
+}
+
+const { changeTenantMemberRole } = await import("./tenant-access.ts");
+const roleCommand = { userId: TARGET_USER, workspaceId: WORKSPACE, expectedRole: "analyst", roleName: "viewer", reason: "Changed responsibilities", confirmTenantAdmin: false };
+
+test("role change preserves expiry and unrelated workspace access, with one audit receipt", async () => {
+  const db = new RoleDb();
+  const result = await changeTenantMemberRole(identity, roleCommand, "role-test", db);
+  assert.equal(result.roleName, "viewer");
+  assert.equal(db.committed.length, 3);
+  assert.ok(db.calls.every((call) => call.parameters[0] === TENANT));
+  const insert = db.calls.find((call) => call.sql.includes("insert into corvis_control.membership"))!;
+  assert.deepEqual(insert.parameters, [TENANT, TARGET_USER, WORKSPACE, "viewer", "2027-01-01T00:00:00Z"]);
+  assert.ok(db.committed.at(-1)?.includes("audit_event"));
+});
+
+test("removing the last workspace role expires only that workspace's entitlements", async () => {
+  const db = new RoleDb();
+  await changeTenantMemberRole(identity, { ...roleCommand, roleName: null }, "revoke-test", db);
+  const expire = db.calls.find((call) => call.sql.includes("update corvis_control.resource_entitlement"))!;
+  assert.deepEqual(expire.parameters, [TENANT, TARGET_USER, WORKSPACE]);
+  assert.equal(db.committed.some((sql) => sql.includes("insert into corvis_control.membership")), false);
+});
+
+test("failed audit rolls back the whole member change", async () => {
+  const db = new RoleDb(); db.failAudit = true;
+  await assert.rejects(changeTenantMemberRole(identity, roleCommand, "audit-test", db), /audit unavailable/);
+  assert.deepEqual(db.committed, []);
+});
+
+test("member edits reject self changes, stale selections, missing tenant members and revoked admin authority", async () => {
+  for (const [configure, code] of [
+    [(db: RoleDb) => { db.actor = TARGET_USER; }, "cannot_change_current_user"],
+    [(db: RoleDb) => { db.currentRole = "reviewer"; }, "membership_changed_refresh_required"],
+    [(db: RoleDb) => { db.targetExists = false; }, "member_not_found"],
+    [(db: RoleDb) => { db.actorAllowed = false; }, "tenant_admin_required"],
+  ] as const) {
+    const db = new RoleDb(); configure(db);
+    await assert.rejects(changeTenantMemberRole(identity, roleCommand, "negative-test", db), new RegExp(code));
+    assert.deepEqual(db.committed, []);
+  }
+});
+
+test("role changes fail closed for privilege grants, invalid roles, workspace admins and nontransactional transports", async () => {
+  await assert.rejects(changeTenantMemberRole(identity, { ...roleCommand, roleName: "tenant_admin" }, "test", new RoleDb()), /confirmation_required/);
+  await assert.rejects(changeTenantMemberRole(identity, { ...roleCommand, roleName: "superuser" }, "test", new RoleDb()), /invalid_request/);
+  await assert.rejects(changeTenantMemberRole({ ...identity, isTenantAdmin: false }, roleCommand, "test", new RoleDb()), /tenant_admin_required/);
+  await assert.rejects(changeTenantMemberRole(identity, roleCommand, "test", new FakeDb()), /transaction_required/);
+});

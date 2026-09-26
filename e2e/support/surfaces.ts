@@ -3,13 +3,15 @@ import type { Page } from "@playwright/test";
 // The critical customer flows. Every accessibility, performance and resilience assertion is driven
 // from this list so a new surface cannot be added without being covered.
 export type Surface = {
-  id: "overview" | "analytics" | "documents" | "review" | "delivery" | "research";
+  id: "overview" | "analytics" | "documents" | "review" | "delivery" | "research" | "access";
   label: string;
+  role?: "admin";
   nav: RegExp | null;
   heading: RegExp;
 };
 
 export const surfaces: Surface[] = [
+  { id: "access", label: "Access administration", role: "admin", nav: /^access administration$/i, heading: /^access administration$/i },
   { id: "overview", label: "Overview", nav: null, heading: /reporting overview/i },
   { id: "analytics", label: "Portfolio analytics", nav: /^portfolio analytics$/i, heading: /^position financials$/i },
   { id: "documents", label: "Documents", nav: /^documents$/i, heading: /^documents$/i },

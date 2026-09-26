@@ -1,3 +1,4 @@
+import { workspaceContext } from "../../lib/workspace-context.ts";
 import type { Permission } from "@/core/enterprise";
 import type { TenantAccessMember, WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
@@ -13,6 +14,8 @@ const DEMO_WORKSPACE_DISPLAY_NAME = "Primary Workspace";
 // Demo sessions can simulate a read-only viewer or a tenant admin
 // (sessionStorage "corvis:demo:role" = "read_only" | "admin") to exercise
 // capability-aware presentation without a real Postgres-backed membership.
+function secondaryWorkspace(): boolean { return workspaceContext()?.workspaceId === "demo-secondary"; }
+
 function demoRole(): "read_only" | "admin" | null {
   if (typeof window === "undefined") return null;
   const value = window.sessionStorage.getItem("corvis:demo:role");
@@ -52,11 +55,22 @@ export function createDemoWorkspacePort(): WorkspacePort {
   ];
 
   return {
+    async changeMemberRole(command) {
+      if (demoRole() !== "admin") throw new Error("tenant_admin_required");
+      const member = accessMembers.find((item) => item.userId === command.userId);
+      if (!member || member.isCurrentUser) throw new Error("member_not_found");
+      const membership = member.memberships.find((item) => item.workspaceId === command.workspaceId && item.roleName === command.expectedRole);
+      if (!membership) throw new Error("membership_changed_refresh_required");
+      if (command.roleName === "tenant_admin" && !command.confirmTenantAdmin) throw new Error("tenant_admin_confirmation_required");
+      if (command.roleName) membership.roleName = command.roleName;
+      else member.memberships = member.memberships.filter((item) => item !== membership);
+      return { auditEventId: crypto.randomUUID(), userId: command.userId, workspaceId: command.workspaceId, roleName: command.roleName };
+    },
     async capabilities() {
       const features = { portfolioAttribution: demoPortfolioAttributionEnabled() };
       const role = demoRole();
-      if (role === "read_only") {
-        return { permissions: ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false, features };
+      if (role === "read_only" || secondaryWorkspace()) {
+        return { permissions: secondaryWorkspace() ? ["documents:read"] : ["documents:read", "observations:read"], sourceDocumentAccessAllowed: false, redistributionAllowed: false, features };
       }
       const permissions: Permission[] = [
         "documents:read",
@@ -79,31 +93,33 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async whoAmI(): Promise<WorkspaceIdentity> {
       return {
         subject: "demo-user",
+        tenantId: "demo-tenant",
+        workspaceId: secondaryWorkspace() ? "demo-secondary" : "demo-workspace",
         tenantDisplayName: DEMO_TENANT_DISPLAY_NAME,
-        workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME,
+        workspaceDisplayName: secondaryWorkspace() ? "Secondary Workspace" : DEMO_WORKSPACE_DISPLAY_NAME,
         tenantAdmin: demoRole() === "admin",
       };
     },
     async listMyWorkspaces() {
-      // Demo mode has exactly one simulated workspace today; a real switcher
-      // needs a second one wired through this same port before it means anything.
+      // The second workspace intentionally has no data and read-only capabilities.
       const role = demoRole();
-      return [{ workspaceId: "demo-workspace", workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME, roles: [role ?? "analyst"] }];
+      return [{ workspaceId: "demo-workspace", workspaceDisplayName: DEMO_WORKSPACE_DISPLAY_NAME, roles: [role ?? "analyst"] }, { workspaceId: "demo-secondary", workspaceDisplayName: "Secondary Workspace", roles: ["read_only"] }];
     },
     async listDocuments() {
       assertDemoModuleAvailable("documents");
-      return demoCustomerJourneyStore.listDocuments();
+      return secondaryWorkspace() ? [] : demoCustomerJourneyStore.listDocuments();
     },
     async listObservations() {
       assertDemoModuleAvailable("observations");
-      return demoCustomerJourneyStore.listObservations();
+      return secondaryWorkspace() ? [] : demoCustomerJourneyStore.listObservations();
     },
     async listSnapshots() {
       assertDemoModuleAvailable("snapshots");
-      return demoCustomerJourneyStore.listSnapshots();
+      return secondaryWorkspace() ? [] : demoCustomerJourneyStore.listSnapshots();
     },
     async workspaceSummary() {
       assertDemoModuleAvailable("snapshots");
+      if (secondaryWorkspace()) return buildWorkspaceSummary({ snapshots: [], observations: [], documents: [], valueFacts: [], now: new Date() });
       const snapshots = demoCustomerJourneyStore.listSnapshots();
       // Mirror the server rule: only a snapshot whose current state is
       // published contributes value; history rows have no live snapshot.

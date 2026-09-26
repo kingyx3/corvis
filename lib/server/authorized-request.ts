@@ -34,6 +34,19 @@ export function assertTenantAdminRequestScope(request: Request, identity: Reques
   if (identity.isTenantAdmin !== true) throw new AuthorizationError("admin:tenant_manage");
 }
 
+/** Signed broker identity stays immutable; only human workspace context may change. */
+export function selectWorkspaceContext(request: Request, identity: RequestIdentity): RequestIdentity {
+  const tenant = request.headers.get("x-corvis-tenant");
+  const workspace = request.headers.get("x-corvis-workspace");
+  if (!tenant && !workspace) return identity;
+  if (!tenant || !workspace || tenant !== identity.tenantId) throw new AuthenticationError("Invalid tenant context");
+  if (workspace === identity.workspaceId) return identity;
+  if (!["oidc", "saml"].includes(identity.authMethod) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspace)) {
+    throw new AuthenticationError("Invalid workspace context");
+  }
+  return { ...identity, workspaceId: workspace };
+}
+
 /**
  * Authentication and authorization deliberately cross separate boundaries.
  *
@@ -47,7 +60,8 @@ export async function resolveAuthorizedRequestIdentity(
   request: Request,
   options: ResolveAuthorizedOptions = {},
 ): Promise<RequestIdentity> {
-  const authenticated = await resolveRequestIdentity(request);
+  let authenticated = await resolveRequestIdentity(request);
+  authenticated = selectWorkspaceContext(request, authenticated);
 
   // Every route that reaches this point has an authenticated tenant and
   // subject (a user or a service account), so this is the narrowest place
@@ -66,6 +80,7 @@ export async function resolveAuthorizedRequestIdentity(
   // application admin as tenant admin; production-like requests always use the
   // authoritative raw-role signal below.
   if (!requireAuthoritative || authenticated.authMethod === "demo") {
+    if (request.headers.get("x-corvis-identity-assertion") && request.headers.get("x-corvis-workspace") && !requireAuthoritative) throw new AuthenticationError("Workspace selection requires authoritative authorization");
     const identity: RequestIdentity = {
       ...authenticated,
       isTenantAdmin: authenticated.roles.includes("admin"),

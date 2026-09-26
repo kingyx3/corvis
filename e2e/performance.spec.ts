@@ -15,6 +15,7 @@ test("initial navigation to the workspace completes within budget", async ({ pag
 
 for (const surface of surfaces.filter((entry) => entry.nav)) {
   test(`switching to the ${surface.label} surface completes within budget`, async ({ page }) => {
+    if (surface.role) await page.addInitScript((role) => window.sessionStorage.setItem("corvis:demo:role", role), surface.role);
     await page.goto("/");
     await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
 

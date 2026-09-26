@@ -271,6 +271,15 @@ h3 {
   color: var(--sidebar-muted);
   margin: 0 12px 6px;
 }
+/* .form-field's default text color is tuned for light surfaces and fails
+   contrast against the dark sidebar background; the workspace switcher
+   reuses .form-field for its select, so give it sidebar-appropriate colors. */
+.sidebar-section .form-field {
+  color: var(--sidebar-text);
+}
+.sidebar-section .form-field > small {
+  color: var(--sidebar-muted);
+}
 .workspace-dot {
   width: 28px;
   height: 28px;

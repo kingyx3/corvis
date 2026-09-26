@@ -44,6 +44,8 @@ export type WorkspaceCapabilities = {
 
 /** Chrome-only identity (e.g. the sidebar) — never for access decisions. */
 export type WorkspaceIdentity = {
+  tenantId?: string;
+  workspaceId?: string;
   subject: string;
   tenantDisplayName?: string;
   workspaceDisplayName?: string;
@@ -71,6 +73,7 @@ export type TenantAccessEntitlement = {
 };
 
 export type TenantAccessMember = {
+  displayName?: string;
   userId: string;
   subjects: TenantAccessSubject[];
   memberships: TenantAccessMembership[];
@@ -116,7 +119,11 @@ export type AcceptedTenantInvitation = {
   roleName: TenantInvitation["roleName"];
 };
 
+export type ChangeMemberRole = { userId: string; workspaceId: string; expectedRole: string; roleName: string | null; reason: string; confirmTenantAdmin: boolean };
+export type MemberRoleReceipt = { auditEventId: string; userId: string; workspaceId: string; roleName: string | null };
+
 export interface WorkspacePort {
+  changeMemberRole(command: ChangeMemberRole): Promise<MemberRoleReceipt>;
   capabilities(): Promise<WorkspaceCapabilities>;
   whoAmI(): Promise<WorkspaceIdentity>;
   /** Every workspace the signed-in user belongs to (for an account/workspace switcher). */

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
+import { workspaceStorageKey } from "@/lib/workspace-context";
 import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon } from "@/components/ui/icon";
@@ -30,13 +31,13 @@ const REVIEW_UI_STATE_KEY = "corvis:review:ui-state";
 type PersistedReviewState = { stateFilter: string; query: string; confidenceFilter: string; sortMode: string; focusedObservationId?: string };
 function readPersistedReviewState(): PersistedReviewState | null {
   if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(REVIEW_UI_STATE_KEY);
+  const raw = window.sessionStorage.getItem(workspaceStorageKey(REVIEW_UI_STATE_KEY));
   if (!raw) return null;
   try { return JSON.parse(raw) as PersistedReviewState; } catch { return null; }
 }
 function writePersistedReviewState(state: PersistedReviewState): void {
   if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(REVIEW_UI_STATE_KEY, JSON.stringify(state));
+  window.sessionStorage.setItem(workspaceStorageKey(REVIEW_UI_STATE_KEY), JSON.stringify(state));
 }
 
 export function ReviewView({
@@ -171,7 +172,7 @@ export function ReviewView({
     if (!snapshot?.id) return;
     setBusy("export"); setMessage(null);
     try {
-      await deliveryPort.createExport("csv", { scope: { snapshotId: snapshot.id }, source: "review" });
+      await deliveryPort.createExport("csv", { snapshotId: snapshot.id });
       setMessage({ text: "Export requested for this snapshot. Download it from Data delivery once it's ready.", tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Export request failed", tone: "error" }); }
     finally { setBusy(null); }
