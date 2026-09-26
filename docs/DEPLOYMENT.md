@@ -32,8 +32,6 @@ reviewed PR -> protected main -> immutable release images + provenance
 - `uat` — separate production-like environment using synthetic or explicitly sanitized data.
 - `prod` — production environment with the strongest provider and release protections.
 
-`staging` is deprecated; use `uat`.
-
 ## Release images
 
 `.github/workflows/build-release.yml` is the image boundary. It runs only from protected `main`, verifies release governance, authenticates through GitHub OIDC/WIF, and emits GitHub provenance attestations.

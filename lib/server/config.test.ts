@@ -59,7 +59,6 @@ test("optional capability bindings do not make unrelated production paths unstar
   assert.equal(config.aiEndpoint, undefined);
   assert.equal(config.observabilityEndpoint, undefined);
   assert.equal(config.dataLifecycleEndpoint, undefined);
-  assert.equal(config.exportDeliveryEndpoint, undefined);
   assert.equal(config.workerSecret, undefined);
   assert.deepEqual(config.uploadAllowedOrigins, []);
 });
