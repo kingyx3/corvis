@@ -1,13 +1,15 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
+import type { ExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { PostgresPositionFinancialStatementRepository } from "./position-financial-statements.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type ExportFormat = ExportManifest["format"];
-/** Restricts a governed export to one already-entitled published snapshot (e.g. "export this view" from Review). */
-export type ExportScope = { snapshotId: string };
 export type ExportSource = NonNullable<ExportManifest["source"]>;
 type DeliveryManifest = ExportManifest & {
+  scope?: ExportScope;
+  scopeLabel?: string;
   artifact?: {
     contentType?: string;
     sizeBytes?: number;
@@ -43,6 +45,63 @@ function covers(current: readonly string[] | undefined, required: readonly strin
   const allowed = new Set(current ?? []);
   return required.every((value) => allowed.has(value));
 }
+function isSnapshotScope(scope: ExportScope | undefined): scope is { snapshotId: string } {
+  return Boolean(scope && "snapshotId" in scope);
+}
+
+async function positionFinancialSnapshots(
+  identity: RequestIdentity,
+  scope: Extract<ExportScope, { positionFinancials: unknown }>,
+  store: PostgresSqlApi,
+): Promise<PostgresRow[]> {
+  const fundIds = identity.entitlements.fundIds ?? [];
+  const documentIds = identity.entitlements.documentIds ?? [];
+  if (!fundIds.includes(scope.positionFinancials.fundId) || documentIds.length === 0) return [];
+  const p = scope.positionFinancials;
+  const parameters: unknown[] = [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds), identity.workspaceId, p.fundId, p.holdingId, p.companyId];
+  let portfolioPredicate = "";
+  if (p.portfolioId) {
+    parameters.push(p.portfolioId);
+    portfolioPredicate = `and exists (
+        select 1 from corvis_serving.client_portfolio_holding_attribution pa
+        where pa.tenant_id=v.tenant_id
+          and pa.workspace_id::text=$4
+          and pa.portfolio_id::text=$8
+          and pa.owning_fund_id=v.fund_id
+          and pa.holding_id::text=v.holding_id::text
+          and pa.root_fund_id in (select jsonb_array_elements_text($2::jsonb))
+          and pa.owning_fund_id in (select jsonb_array_elements_text($2::jsonb))
+      )`;
+  }
+  return store.query(`select distinct ps.snapshot_id,ps.schema_version,ps.taxonomy_version,ps.fund_id
+    from corvis_serving.position_financial_statement_values v
+    join corvis_consolidated.reconciliation_run rr
+      on rr.tenant_id=v.tenant_id
+     and rr.canonicalization_run_id=v.canonicalization_run_id
+     and rr.document_id=v.document_id
+     and rr.fund_id=v.fund_id
+     and rr.report_period=v.report_period
+     and rr.status='ready'
+    join corvis_consolidated.fund_period_snapshot ps
+      on ps.tenant_id=rr.tenant_id
+     and ps.snapshot_id=rr.snapshot_id
+     and ps.version>=rr.snapshot_version
+     and ps.status='published'
+    where v.tenant_id=$1::uuid
+      and v.fund_id in (select jsonb_array_elements_text($2::jsonb))
+      and v.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      and v.fund_id=$5
+      and v.holding_id::text=$6
+      and v.company_id::text=$7
+      ${portfolioPredicate}
+      and not exists (
+        select 1 from corvis_consolidated.fund_period_snapshot newer
+        where newer.tenant_id=ps.tenant_id
+          and newer.snapshot_id=ps.snapshot_id
+          and newer.version>ps.version
+      )
+    order by ps.snapshot_id`, parameters as import("./postgres.ts").PostgresPrimitive[]);
+}
 
 export async function createPhysicalExport(
   identity: RequestIdentity,
@@ -54,19 +113,39 @@ export async function createPhysicalExport(
   assertRedistributionAllowed(identity);
   const fundIds = identity.entitlements.fundIds ?? [];
   const documentIds = identity.entitlements.documentIds ?? [];
-  const snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id
-    from corvis_serving.fund_period_snapshots
-    where tenant_id=$1 and status='published'
-      and fund_id in (select jsonb_array_elements_text($2::jsonb))
-      ${scope ? "and snapshot_id::text=$3" : ""}
-    order by published_at desc`,
-  scope ? [identity.tenantId, jsonIds(fundIds), scope.snapshotId] : [identity.tenantId, jsonIds(fundIds)]);
-  // A scoped export (e.g. "export this view" from Review) must resolve to
-  // exactly the requested, already-entitled snapshot; fail closed rather than
-  // silently falling back to every entitled snapshot.
+  const snapshotScope = isSnapshotScope(scope) ? scope : undefined;
+  const positionScope = scope && "positionFinancials" in scope ? scope : undefined;
+
+  let snapshots: PostgresRow[];
+  let positionRowCount: number | undefined;
+  if (positionScope) {
+    const p = positionScope.positionFinancials;
+    const rows = await new PostgresPositionFinancialStatementRepository(store).list(identity, {
+      fundId: p.fundId,
+      holdingId: p.holdingId,
+      companyId: p.companyId,
+      periodicity: p.periodicity,
+      portfolioId: p.portfolioId,
+      limit: 5000,
+    });
+    if (rows.length === 0) throw new AuthorizationError("exports:scope");
+    positionRowCount = rows.length;
+    snapshots = await positionFinancialSnapshots(identity, positionScope, store);
+  } else {
+    snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id
+      from corvis_serving.fund_period_snapshots
+      where tenant_id=$1 and status='published'
+        and fund_id in (select jsonb_array_elements_text($2::jsonb))
+        ${snapshotScope ? "and snapshot_id::text=$3" : ""}
+      order by published_at desc`,
+    snapshotScope ? [identity.tenantId, jsonIds(fundIds), snapshotScope.snapshotId] : [identity.tenantId, jsonIds(fundIds)]);
+  }
+  // Any scoped export must resolve to the exact already-entitled published data
+  // represented by that scope; fail closed rather than falling back to broader data.
   if (scope && snapshots.length === 0) throw new AuthorizationError("exports:scope");
+
   const scopedFundIds = scope ? [...new Set(snapshots.map((row) => text(row, "fund_id")))] : fundIds;
-  const counts = scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
+  const counts = positionScope || scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
     from corvis_serving.observations o
     join corvis_source.source_reference r
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -77,6 +156,12 @@ export async function createPhysicalExport(
 
   const exportId = randomUUID();
   const generatedAt = new Date().toISOString();
+  const scopeLabel = positionScope
+    ? `Position financials · ${positionScope.positionFinancials.companyId} · ${positionScope.positionFinancials.periodicity}${positionScope.positionFinancials.portfolioId ? ` · portfolio ${positionScope.positionFinancials.portfolioId}` : ""}`
+    : snapshotScope ? `Snapshot ${snapshotScope.snapshotId}` : undefined;
+  const rowCounts = positionScope
+    ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }
+    : { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length };
   const base = {
     exportId,
     tenantId: identity.tenantId,
@@ -85,10 +170,12 @@ export async function createPhysicalExport(
     taxonomyVersion: snapshots.length ? text(snapshots[0]!, "taxonomy_version", "v1") : "v1",
     snapshotIds: snapshots.map((row) => text(row, "snapshot_id")),
     format,
-    rowCounts: { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length },
+    rowCounts,
     source,
+    ...(scope ? { scope } : {}),
+    ...(scopeLabel ? { scopeLabel } : {}),
   };
-  const manifest: ExportManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
+  const manifest: DeliveryManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
 
   await store.execute(`insert into corvis_serving.export_job
       (tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
