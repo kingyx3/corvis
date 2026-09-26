@@ -58,6 +58,12 @@ function latest(a: PositionFinancialStatementRow, b: PositionFinancialStatementR
   return a.reportPeriod >= b.reportPeriod ? a : b;
 }
 
+/** The single most-authoritative reported value for one line/period, out of possibly several disclosed rows. */
+function valueForRows(candidateRows: PositionFinancialStatementRow[], periodKeyValue: string): PositionFinancialStatementRow | undefined {
+  const matching = candidateRows.filter((row) => row.valueId != null && periodKey(row) === periodKeyValue);
+  return matching.reduce<PositionFinancialStatementRow | undefined>((best, row) => best ? latest(best, row) : row, undefined);
+}
+
 function signedNumber(value: number, maximumFractionDigits = 2): string {
   const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(Math.abs(value));
   return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
@@ -195,17 +201,59 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
   }, [selectedRows]);
 
   const featuredLine = useMemo(() => lines.find((line) => line.rows.some((row) => row.valueId != null)), [lines]);
-  const valueFor = (line: LineGroup, period: PeriodColumn): PositionFinancialStatementRow | undefined => {
-    const matching = line.rows.filter((row) => row.valueId != null && periodKey(row) === period.key);
-    return matching.reduce<PositionFinancialStatementRow | undefined>((best, row) => best ? latest(best, row) : row, undefined);
-  };
+  const valueFor = (line: LineGroup, period: PeriodColumn): PositionFinancialStatementRow | undefined => valueForRows(line.rows, period.key);
   const trendPoints = useMemo(() => {
     if (!featuredLine) return [];
     return periods.map((period) => {
-      const row = featuredLine.rows.filter((candidate) => candidate.valueId != null && periodKey(candidate) === period.key).reduce<PositionFinancialStatementRow | undefined>((best, candidate) => best ? latest(best, candidate) : candidate, undefined);
+      const row = valueForRows(featuredLine.rows, period.key);
       return { period: period.key, label: period.label, value: numericFinancialValue(row), status: (row?.preliminary ? "preliminary" : row?.isRestatement ? "restated" : row?.isDerived ? "derived" : "final") as TimeSeriesStatus };
     });
   }, [featuredLine, periods]);
+
+  // D10: compare the same metric line across multiple positions side by
+  // side, independent of which single position is focused above.
+  const metricOptions = useMemo(() => {
+    const map = new Map<string, { key: string; label: string }>();
+    for (const row of rows) {
+      const key = row.semanticLineKey || row.lineKey;
+      if (!map.has(key)) map.set(key, { key, label: row.sourceLabel });
+    }
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareMetricKey, setCompareMetricKey] = useState("");
+  const [comparePositionKeys, setComparePositionKeys] = useState<string[]>([]);
+  const effectiveCompareMetricKey = compareMetricKey && metricOptions.some((option) => option.key === compareMetricKey) ? compareMetricKey : metricOptions[0]?.key ?? "";
+  const defaultComparePositionKeys = (keys: string[]) => {
+    const valid = keys.filter((key) => positions.some((position) => position.key === key));
+    return valid.length ? valid : positions.slice(0, Math.min(3, positions.length)).map((position) => position.key);
+  };
+  const effectiveComparePositionKeys = defaultComparePositionKeys(comparePositionKeys);
+  const compareRows = useMemo(() => {
+    if (!effectiveCompareMetricKey || !effectiveComparePositionKeys.length) return [];
+    return effectiveComparePositionKeys
+      .map((key) => positions.find((position) => position.key === key))
+      .filter((position): position is typeof positions[number] => position != null)
+      .map((position) => ({
+        position,
+        rowsForMetric: rows.filter((row) => `${row.fundId}\u001f${row.holdingId}\u001f${row.companyId}` === position.key && (row.semanticLineKey || row.lineKey) === effectiveCompareMetricKey),
+      }));
+  }, [effectiveCompareMetricKey, effectiveComparePositionKeys, positions, rows]);
+  const comparePeriods = useMemo<PeriodColumn[]>(() => {
+    const map = new Map<string, PeriodColumn>();
+    for (const entry of compareRows) for (const row of entry.rowsForMetric) {
+      if (row.valueId == null) continue;
+      const key = periodKey(row);
+      const end = row.periodEnd ?? row.asOfDate ?? row.sourceDocumentPeriodEnd ?? row.reportPeriod;
+      const existing = map.get(key);
+      if (!existing || end > existing.end) map.set(key, { key, label: periodLabel(row), end });
+    }
+    return [...map.values()].sort((a, b) => a.end.localeCompare(b.end));
+  }, [compareRows]);
+  const toggleComparePosition = (key: string) => setComparePositionKeys((current) => {
+    const base = defaultComparePositionKeys(current);
+    return base.includes(key) ? base.filter((item) => item !== key) : [...base, key];
+  });
 
   const chosen = positions.find((position) => position.key === effectiveSelectedPosition);
   const chosenPortfolio = portfolioAttributionEnabled ? portfolios.find((portfolio) => portfolio.id === selectedPortfolio) : undefined;
@@ -279,8 +327,21 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     <fieldset className="position-financials-segmented"><legend>Periodicity</legend>{(["quarterly", "annual", "reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? "active" : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase() + value.slice(1)}</button>)}</fieldset>
     <fieldset className="position-financials-segmented"><legend>Period-over-period change display</legend>{(["value", "percent", "both"] as const).map((value) => <button type="button" key={value} aria-pressed={deltaDisplay === value} className={deltaDisplay === value ? "active" : ""} onClick={() => setDeltaDisplay(value)}>{value === "value" ? "Δ value" : value === "percent" ? "Δ %" : "Δ both"}</button>)}</fieldset>
     <TableDensityToggle value={density} onChange={setDensity} label="Financial table density"/>
+    <button type="button" className="secondary-button" aria-expanded={compareOpen} disabled={positions.length < 2} onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Hide comparison" : "Compare positions"}</button>
     <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>
   </div>;
+
+  const compareColumns: SortableColumn<typeof compareRows[number]>[] = [
+    { id: "position", header: "Position", rowHeader: true, sortValue: (entry) => `${entry.position.companyId}:${entry.position.fundId}`, render: (entry) => <><span>{entry.position.companyId}</span><small>{entry.position.fundId}</small></> },
+    ...comparePeriods.map((period): SortableColumn<typeof compareRows[number]> => ({
+      id: period.key,
+      header: <>{period.label}<small>As of {period.end}</small></>,
+      align: "end",
+      sortValue: (entry) => numericFinancialValue(valueForRows(entry.rowsForMetric, period.key)),
+      render: (entry) => <span>{displayValue(valueForRows(entry.rowsForMetric, period.key))}</span>,
+    })),
+    { id: "trend", header: "Trend", align: "end", render: (entry) => <Sparkline label={`${metricOptions.find((option) => option.key === effectiveCompareMetricKey)?.label ?? "Metric"} for ${entry.position.companyId}`} points={comparePeriods.map((period) => ({ period: period.key, label: period.label, value: numericFinancialValue(valueForRows(entry.rowsForMetric, period.key)) }))}/> },
+  ];
 
   return <section className="position-financials-page" aria-label="Position financial statements">
     <PageHeading className="position-financials-heading" eyebrow={portfolioAttributionEnabled ? "Portfolio analytics" : "Fund analytics"} title="Position financials" description={portfolioAttributionEnabled ? "Optionally scope by a client portfolio, then compare the complete source-reported income statement for each attributed fund position across published reporting periods." : "Compare the complete source-reported income statement for each entitled fund holding across published reporting periods. Portfolio attribution is not required."} actions={controls}/>
@@ -294,6 +355,16 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     {loading && <div className="position-financials-state" aria-busy="true">Loading published financial statements…</div>}
     {!loading && error && <div className="position-financials-state" role="alert"><strong>Financial statements unavailable</strong><span>{error}</span></div>}
     {!loading && !error && !rows.length && <div className="position-financials-state"><strong>No published position income statements yet</strong><span>Once reviewed statement-line candidates are included in a published fund period, they will appear here without requiring a fixed chart of accounts.</span></div>}
+
+    {!loading && !error && rows.length > 0 && compareOpen && positions.length > 1 && <section className="panel position-financials-compare-panel" aria-label="Compare a metric across positions">
+      <div className="position-financials-compare-controls">
+        <label><span>Metric</span><select value={effectiveCompareMetricKey} onChange={(event) => setCompareMetricKey(event.target.value)}>{metricOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}</select></label>
+        <fieldset className="position-financials-compare-positions"><legend>Positions</legend>{positions.map((position) => <label key={position.key} className="position-financials-compare-position-toggle"><input type="checkbox" checked={effectiveComparePositionKeys.includes(position.key)} onChange={() => toggleComparePosition(position.key)}/>{position.companyId} · {position.fundId}</label>)}</fieldset>
+      </div>
+      {!effectiveComparePositionKeys.length ? <p className="position-financials-footnote">Select two or more positions above to compare this metric side by side.</p> : !comparePeriods.length ? <p className="position-financials-footnote">No published value for this metric across the selected positions.</p> : <div className="data-table-wrap" role="region" aria-label="Position comparison table">
+        <SortableDataTable caption={`${metricOptions.find((option) => option.key === effectiveCompareMetricKey)?.label ?? "Metric"} compared across positions`} rows={compareRows} columns={compareColumns} rowKey={(entry) => entry.position.key} density={density} className="position-financials-table"/>
+      </div>}
+    </section>}
 
     {!loading && !error && rows.length > 0 && chosen && <>
       <section className="position-financials-analytics-grid" aria-label="Position financial metrics">
