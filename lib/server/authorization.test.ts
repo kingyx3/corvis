@@ -57,6 +57,13 @@ test("authoritative membership and data rights map roles, resources, source acce
   assert.equal(result?.redistributionAllowed, true);
   assert.equal(result?.tenantDisplayName, "Meridian Capital Partners");
   assert.equal(result?.workspaceDisplayName, "Primary Workspace");
+  // Chrome data (e.g. a workspace switcher) covers every workspace the
+  // membership rows span, not just the one requested — unlike every other
+  // field above, which stays scoped to requestedWorkspaceRows.
+  assert.deepEqual(result?.memberships, [
+    { workspaceId: principal.workspaceId, workspaceDisplayName: "Primary Workspace", roles: ["reviewer", "read_only"] },
+    { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: undefined, roles: ["analyst"] },
+  ]);
   assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
   assert.match(db.lastSql, /t\.display_name as tenant_display_name/);
   assert.match(db.lastSql, /w\.display_name as workspace_display_name/);
@@ -85,6 +92,7 @@ test("tenant/workspace display names are undefined, not an empty string, when th
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
   assert.equal(result?.tenantDisplayName, undefined);
   assert.equal(result?.workspaceDisplayName, undefined);
+  assert.deepEqual(result?.memberships, [{ workspaceId: principal.workspaceId, workspaceDisplayName: undefined, roles: ["analyst"] }]);
 });
 
 test("missing or denied current data rights fail closed even when a resource entitlement exists", async () => {

@@ -11,6 +11,7 @@ import type {
   ReviewDecision,
   ReviewOutcome,
   SnapshotPublication,
+  WorkspaceMembershipSummary,
 } from "@/core/enterprise";
 
 export type SourceEvidence = {
@@ -51,6 +52,8 @@ export type WorkspaceIdentity = {
 export interface WorkspacePort {
   capabilities(): Promise<WorkspaceCapabilities>;
   whoAmI(): Promise<WorkspaceIdentity>;
+  /** Every workspace the signed-in user belongs to (for an account/workspace switcher). */
+  listMyWorkspaces(): Promise<WorkspaceMembershipSummary[]>;
   listDocuments(): Promise<DocumentRecord[]>;
   listObservations(): Promise<ObservationRecord[]>;
   listSnapshots(): Promise<FundSnapshot[]>;

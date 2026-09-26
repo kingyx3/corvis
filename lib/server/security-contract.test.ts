@@ -42,6 +42,7 @@ test("every non-public v1 route resolves authoritative identity and enforces a r
   const identityOnlyRoutes = new Set([
     "app/api/v1/me/route.ts",
     "app/api/v1/capabilities/route.ts",
+    "app/api/v1/my-workspaces/route.ts",
   ]);
 
   for (const file of files) {
