@@ -136,6 +136,14 @@ Important boundaries:
 - async processing uses queues/jobs so extraction, connector, export, and other long-running work can fail/retry independently of synchronous customer requests;
 - customer source-portal credentials are runtime tenant secrets stored via the application into managed secret storage; they are not GitHub deployment secrets.
 
+### Browser response security headers and CSP
+
+`proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `proxy.ts` (`lib/server/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
+
+- `script-src 'self' 'nonce-<random>' 'strict-dynamic'` — no `unsafe-inline`; the framework runtime, page bundles and RSC flight-data scripts all receive the matching `nonce` attribute automatically (verified in production output — see `e2e/content-security-policy.spec.ts`, run via `npm run test:e2e:csp` against a real `npm run build`/`npm run start`, and required in CI's `e2e` job). This closes the constraint tracked in issue #159: production Next.js 16.3.5 App Router output supports hydration-safe nonces.
+- `style-src 'self' 'unsafe-inline'` stays as-is: inline `style="..."` attributes (used throughout for computed widths/colors) cannot carry a nonce, so this is an accepted, unrelated tradeoff — only `script-src` dropped `unsafe-inline`.
+- the nonce requires dynamic rendering; `app/layout.tsx` calls `connection()` so every route renders per-request (consistent with `proxy.ts` already sending `cache-control: no-store` on every response — nothing here was cacheable before this change either).
+
 ## 4. Infrastructure modules and deployed topology
 
 ```text
