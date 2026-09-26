@@ -103,8 +103,8 @@ test("plain acquisition reasons never echo arbitrary provider errors", () => {
   assert.equal(plainAcquisitionReason("rejected", "download timeout: token=super-secret"), "The provider document could not be downloaded.");
 });
 
-test("migration 059 preserves run-level duplicate audit evidence without weakening ingestion idempotency", async () => {
-  const sql = (await readFile("db/postgres/migrations/059_connector_acquisition_history.sql", "utf8")).toLowerCase();
+test("migration 060 preserves run-level duplicate audit evidence without weakening ingestion idempotency", async () => {
+  const sql = (await readFile("db/postgres/migrations/060_connector_acquisition_history.sql", "utf8")).toLowerCase();
   assert.match(sql, /drop constraint if exists acquired_document_tenant_id_source_connection_id_acquisition_key_key/);
   assert.match(sql, /create unique index acquired_document_run_outcome_unique_idx[\s\S]*tenant_id, source_connection_id, run_id, acquisition_key, disposition/);
 });
