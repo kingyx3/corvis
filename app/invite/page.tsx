@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
-type Outcome = { status: "loading" | "accepted" | "error"; message: string };
+type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry: () => void };
 
 export default function InvitationPage() {
   const [outcome, setOutcome] = useState<Outcome>({ status: "loading", message: "Checking your invitation…" });
-  const retryRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const token = window.location.hash.slice(1) || window.sessionStorage.getItem("corvis:pending-invitation:v1") || "";
@@ -42,11 +41,10 @@ export default function InvitationPage() {
       }).catch((error: unknown) => {
         if (active) {
           const detail = error instanceof Error ? error.message : "This invitation could not be accepted.";
-          setOutcome({ status: "error", message: `We couldn't accept the invitation yet (${detail}). Sign in with the invited email address, then try again. The invitation is saved in this browser tab.` });
+          setOutcome({ status: "error", message: `We couldn't accept the invitation yet (${detail}). Sign in with the invited email address, then try again. The invitation is saved in this browser tab.`, retry: accept });
         }
       });
     };
-    retryRef.current = accept;
     accept();
     return () => { active = false; };
   }, []);
@@ -55,7 +53,7 @@ export default function InvitationPage() {
     <p className="eyebrow">Corvis workspace access</p>
     <h1 id="invite-heading">{outcome.status === "accepted" ? "Invitation accepted" : "Accept your invitation"}</h1>
     <p role={outcome.status === "error" ? "alert" : "status"} className={outcome.status === "error" ? "tone-danger" : ""}>{outcome.message}</p>
-    {outcome.status === "error" && retryRef.current && <button className="primary-button" type="button" onClick={() => retryRef.current?.()}>Try again</button>}
+    {outcome.status === "error" && <button className="primary-button" type="button" onClick={outcome.retry}>Try again</button>}
     {outcome.status === "accepted" && <Link className="primary-button" href="/">Continue to Corvis</Link>}
   </section></main>;
 }
