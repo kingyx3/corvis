@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry: () => void };
+type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry?: () => void };
 
 export default function InvitationPage() {
   const [outcome, setOutcome] = useState<Outcome>({ status: "loading", message: "Checking your invitation…" });
@@ -53,7 +53,7 @@ export default function InvitationPage() {
     <p className="eyebrow">Corvis workspace access</p>
     <h1 id="invite-heading">{outcome.status === "accepted" ? "Invitation accepted" : "Accept your invitation"}</h1>
     <p role={outcome.status === "error" ? "alert" : "status"} className={outcome.status === "error" ? "tone-danger" : ""}>{outcome.message}</p>
-    {outcome.status === "error" && <button className="primary-button" type="button" onClick={outcome.retry}>Try again</button>}
+    {outcome.status === "error" && outcome.retry && <button className="primary-button" type="button" onClick={outcome.retry}>Try again</button>}
     {outcome.status === "accepted" && <Link className="primary-button" href="/">Continue to Corvis</Link>}
   </section></main>;
 }
