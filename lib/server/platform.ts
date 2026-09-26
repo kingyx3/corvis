@@ -218,6 +218,7 @@ export class PostgresProductionPlatform implements PlatformPort {
         confidence, state: reviewState(text(row,"review_state")), delta: text(row,"delta_display","—"), version: num(row,"version",1),
         fund: text(row,"fund_name") || undefined, fundId: text(row,"fund_id") || undefined,
         companyId: text(row,"company_id") || undefined, holdingId: text(row,"holding_id") || undefined,
+        riskTier: text(row,"risk_tier") || undefined, approvedReviewerCount: row.approved_reviewer_count == null ? undefined : num(row,"approved_reviewer_count"),
       };
     });
   }
