@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 type Outcome = { status: "loading" | "accepted" | "error"; message: string };
 
 export default function InvitationPage() {
   const [outcome, setOutcome] = useState<Outcome>({ status: "loading", message: "Checking your invitation…" });
-  const [retry, setRetry] = useState<(() => void) | null>(null);
+  const retryRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const token = window.location.hash.slice(1) || window.sessionStorage.getItem("corvis:pending-invitation:v1") || "";
@@ -46,7 +46,7 @@ export default function InvitationPage() {
         }
       });
     };
-    setRetry(() => accept);
+    retryRef.current = accept;
     accept();
     return () => { active = false; };
   }, []);
@@ -55,7 +55,7 @@ export default function InvitationPage() {
     <p className="eyebrow">Corvis workspace access</p>
     <h1 id="invite-heading">{outcome.status === "accepted" ? "Invitation accepted" : "Accept your invitation"}</h1>
     <p role={outcome.status === "error" ? "alert" : "status"} className={outcome.status === "error" ? "tone-danger" : ""}>{outcome.message}</p>
-    {outcome.status === "error" && retry && <button className="primary-button" type="button" onClick={retry}>Try again</button>}
+    {outcome.status === "error" && retryRef.current && <button className="primary-button" type="button" onClick={() => retryRef.current?.()}>Try again</button>}
     {outcome.status === "accepted" && <Link className="primary-button" href="/">Continue to Corvis</Link>}
   </section></main>;
 }
