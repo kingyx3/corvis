@@ -199,7 +199,10 @@ export function ReviewView({
     return () => { active = false; };
   }, [canReview, snapshotId, snapshotVersion, exceptionKey]);
 
-  const exceptions = canReview && exceptionState.key === exceptionKey ? exceptionState.items : [];
+  const exceptions = useMemo(
+    () => canReview && exceptionState.key === exceptionKey ? exceptionState.items : [],
+    [canReview, exceptionKey, exceptionState],
+  );
   const exceptionsLoaded = !canReview || !exceptionKey || exceptionState.key === exceptionKey;
   const hasSnapshotScopedRows = Boolean(snapshot?.id && rows.some((row) => row.snapshotId === snapshot.id));
   const scopedRows = hasSnapshotScopedRows ? rows.filter((row) => row.snapshotId === snapshot?.id) : rows;
