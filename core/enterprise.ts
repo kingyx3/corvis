@@ -264,4 +264,11 @@ export type ExportManifest = {
   snapshotIds: string[]; format: "parquet" | "csv" | "xlsx"; rowCounts: Record<string, number>; checksumSha256: string;
   /** Which product surface requested this export; optional only because exports created before this field existed lack it. */
   source?: "delivery" | "review";
+  /**
+   * Per-snapshot review/reconciliation state at the moment of export (#182 D16):
+   * the published snapshot version and count of still-open reconciliation
+   * exceptions each exported snapshot carried. Optional only because exports
+   * created before this field existed lack it.
+   */
+  snapshotState?: { snapshotId: string; version: number; openExceptionCount: number }[];
 };

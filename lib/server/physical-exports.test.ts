@@ -38,8 +38,8 @@ test("without a scope, every entitled fund's published snapshots are exported (e
     if (sql.includes("from corvis_serving.fund_period_snapshots")) {
       assert.doesNotMatch(sql, /snapshot_id::text=/);
       return [
-        { snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a" },
-        { snapshot_id: "snap-b", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-b" },
+        { snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a", version: 3, blocking_exception_count: 0 },
+        { snapshot_id: "snap-b", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-b", version: 1, blocking_exception_count: 2 },
       ];
     }
     if (sql.includes("from corvis_serving.observations")) return [{ row_count: 7 }];
@@ -50,6 +50,10 @@ test("without a scope, every entitled fund's published snapshots are exported (e
   assert.equal(manifest.rowCounts.observations, 7);
   assert.equal(manifest.rowCounts.snapshots, 2);
   assert.equal(manifest.source, "delivery", "an unlabeled request is a full-tenant Data delivery request");
+  assert.deepEqual(manifest.snapshotState, [
+    { snapshotId: "snap-a", version: 3, openExceptionCount: 0 },
+    { snapshotId: "snap-b", version: 1, openExceptionCount: 2 },
+  ], "each exported snapshot's published version and open-exception count travels with the manifest (#182 D16)");
 });
 
 test("a scoped export (e.g. 'export this view' from Review) is restricted to exactly the requested, already-entitled snapshot", async () => {
@@ -57,7 +61,7 @@ test("a scoped export (e.g. 'export this view' from Review) is restricted to exa
     if (sql.includes("from corvis_serving.fund_period_snapshots")) {
       assert.match(sql, /and snapshot_id::text=\$3/);
       assert.deepEqual(parameters, [identity.tenantId, JSON.stringify(identity.entitlements.fundIds), "snap-a"]);
-      return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a" }];
+      return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a", version: 2, blocking_exception_count: 1 }];
     }
     if (sql.includes("from corvis_serving.observations")) {
       // The row-count preview must also narrow to the resolved snapshot's own
@@ -73,6 +77,7 @@ test("a scoped export (e.g. 'export this view' from Review) is restricted to exa
   assert.equal(manifest.rowCounts.observations, 3);
   assert.equal(manifest.rowCounts.snapshots, 1);
   assert.equal(manifest.source, "review");
+  assert.deepEqual(manifest.snapshotState, [{ snapshotId: "snap-a", version: 2, openExceptionCount: 1 }]);
 });
 
 test("a Position Financials export persists the exact view scope and pins it to matching published snapshots", async () => {
@@ -91,7 +96,7 @@ test("a Position Financials export persists the exact view scope and pins it to 
       assert.equal(parameters[4], "fund-a");
       assert.equal(parameters[5], "holding-1");
       assert.equal(parameters[6], "company-1");
-      return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a" }];
+      return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a", version: 5, blocking_exception_count: 0 }];
     }
     return [];
   });
@@ -102,6 +107,7 @@ test("a Position Financials export persists the exact view scope and pins it to 
   assert.equal(manifest.rowCounts.positionFinancials, 1);
   assert.deepEqual(governed.scope, scope);
   assert.match(governed.scopeLabel ?? "", /Position financials.*company-1.*quarterly/);
+  assert.deepEqual(manifest.snapshotState, [{ snapshotId: "snap-a", version: 5, openExceptionCount: 0 }]);
 });
 
 test("a scope naming data the caller is not entitled to (or that isn't published) fails closed instead of exporting every entitled snapshot", async () => {
