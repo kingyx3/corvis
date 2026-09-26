@@ -23,6 +23,17 @@ export function supportAccessRequiresTenantAck(command: SupportAccessGrantComman
   return command.roleName === "tenant_admin" || command.roleName === "accountadmin" || durationHours > SUPPORT_ACK_THRESHOLD_HOURS;
 }
 
+async function validateGrant(db:PostgresSqlApi,tenantId:string,command:SupportAccessGrantCommand):Promise<void>{
+  const [identityRows,workspaceRows,membershipRows]=await Promise.all([
+    db.query(`select 1 from corvis_control.identity_subject where tenant_id=$1::uuid and auth_method=$2 and subject=$3 and user_id=$4::uuid and status='active' limit 1`,[tenantId,command.authMethod,command.subject,command.userId]),
+    db.query(`select 1 from corvis_control.workspace where tenant_id=$1::uuid and workspace_id=$2::uuid and status='active' limit 1`,[tenantId,command.workspaceId]),
+    db.query(`select 1 from corvis_control.membership where tenant_id=$1::uuid and workspace_id=$2::uuid and user_id=$3::uuid and role_name=$4 and status='active' and valid_from<=now() and (valid_until is null or valid_until>now()) limit 1`,[tenantId,command.workspaceId,command.userId,command.roleName]),
+  ]);
+  if(!identityRows.length) throw new Error("active support identity not found");
+  if(!workspaceRows.length) throw new Error("active support workspace not found");
+  if(membershipRows.length) throw new Error("requested support role is already active outside this grant");
+}
+
 async function notify(db:PostgresSqlApi,tenantId:string,supportGrantId:string,kind:"support_access_active"|"support_access_pending_ack",command:SupportAccessGrantCommand):Promise<void>{
   const title=kind==="support_access_pending_ack"?"Support access requires your acknowledgement":"Corvis support access is active";
   const message=`Corvis support access for ${command.subject} (${command.roleName}) — ${command.purpose}. Starts ${command.validFrom}; expires ${command.validUntil}.`;
@@ -34,6 +45,7 @@ export async function grantSupportAccess(identity:RequestIdentity,command:Suppor
   const supportGrantId=command.supportGrantId ?? randomUUID();
   const requiresTenantAck=supportAccessRequiresTenantAck(command);
   if(requiresTenantAck){
+    await validateGrant(db,identity.tenantId,command);
     await db.execute(`insert into corvis_control.support_access_grant
       (tenant_id,support_grant_id,auth_method,subject,user_id,workspace_id,role_name,purpose,approval_reference,valid_from,valid_until,status,approved_by_subject,requires_tenant_ack)
       values($1::uuid,$2::uuid,$3,$4,$5::uuid,$6::uuid,$7,$8,$9,$10::timestamptz,$11::timestamptz,'pending_ack',$12,true)`,[
