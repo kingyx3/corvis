@@ -15,31 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci --prefer-offline --no-audit
-      - run: npm run lint
-
-  typecheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci --prefer-offline --no-audit
-      - run: npm run typecheck
-
-  unit-tests:
+  quality:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -52,11 +28,34 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --prefer-offline --no-audit
-      - name: Unit tests
+      - name: Lint, typecheck, unit tests and dependency audit (parallel)
         shell: bash
         run: |
-          set -o pipefail
-          npm test 2>&1 | tee unit-test-output.txt
+          set +e
+          npm run lint > lint-output.txt 2>&1 &
+          lint_pid=$!
+          npm run typecheck > typecheck-output.txt 2>&1 &
+          typecheck_pid=$!
+          npm audit --audit-level=high > audit-output.txt 2>&1 &
+          audit_pid=$!
+          npm test > unit-test-output.txt 2>&1 &
+          test_pid=$!
+
+          wait "$lint_pid"; lint_status=$?
+          wait "$typecheck_pid"; typecheck_status=$?
+          wait "$audit_pid"; audit_status=$?
+          wait "$test_pid"; test_status=$?
+
+          echo "::group::npm run lint"; cat lint-output.txt; echo "::endgroup::"
+          echo "::group::npm run typecheck"; cat typecheck-output.txt; echo "::endgroup::"
+          echo "::group::npm audit --audit-level=high"; cat audit-output.txt; echo "::endgroup::"
+          echo "::group::npm test"; cat unit-test-output.txt; echo "::endgroup::"
+
+          status=0
+          for s in "$lint_status" "$typecheck_status" "$audit_status" "$test_status"; do
+            [ "$s" -eq 0 ] || status=1
+          done
+          exit "$status"
       - name: Preserve unit-test failure transcript
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -65,19 +64,6 @@ jobs:
           path: unit-test-output.txt
           if-no-files-found: error
           retention-days: 14
-
-  dependency-audit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci --prefer-offline --no-audit
-      - name: Dependency audit
-        run: npm audit --audit-level=high
 
   terraform:
     runs-on: ubuntu-latest
@@ -155,7 +141,7 @@ jobs:
   # Keep the historic required-check context stable while the expensive gates run
   # independently. Every prior frontend check remains blocking through this fan-in.
   frontend:
-    needs: [lint, typecheck, unit-tests, dependency-audit, terraform, build, e2e]
+    needs: [quality, terraform, build, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -163,20 +149,17 @@ jobs:
       - name: Verify all frontend gates passed
         shell: bash
         env:
-          LINT_RESULT: ${{ needs.lint.result }}
-          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
-          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
-          DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
           TERRAFORM_RESULT: ${{ needs.terraform.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
-          for result in "$LINT_RESULT" "$TYPECHECK_RESULT" "$UNIT_TESTS_RESULT" "$DEPENDENCY_AUDIT_RESULT" "$TERRAFORM_RESULT" "$BUILD_RESULT" "$E2E_RESULT"; do
+          for result in "$QUALITY_RESULT" "$TERRAFORM_RESULT" "$BUILD_RESULT" "$E2E_RESULT"; do
             test "$result" = "success"
           done
 
-  container-api:
+  container:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -197,13 +180,6 @@ jobs:
           set -euo pipefail
           test "$(docker image inspect "corvis-ci:${GITHUB_SHA}" --format '{{.Config.User}}')" = "corvis"
           docker run --rm --entrypoint node "corvis-ci:${GITHUB_SHA}" --version
-
-  container-control-loop:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build control-loop container
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
