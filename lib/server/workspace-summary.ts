@@ -15,8 +15,6 @@ import { getWorkspacePersonalization, type WorkspacePersonalization } from "./wo
 
 export type WorkspaceSummaryDependencies = {
   platform?: PlatformPort;
-  /** Legacy test seam: customer-safe source inputs without fund attribution. */
-  sources?: (identity: RequestIdentity) => Promise<SourceHealthInput[]>;
   sourceHealth?: (identity: RequestIdentity) => Promise<DashboardSourceHealth[]>;
   personalization?: (identity: RequestIdentity) => Promise<WorkspacePersonalization>;
   exceptionEvents?: (identity: RequestIdentity, since: string | null) => Promise<ExceptionDigestEvent[]>;
@@ -127,19 +125,7 @@ async function workspaceExceptionEvents(identity: RequestIdentity, since: string
 export async function workspaceSummary(identity: RequestIdentity, dependencies: WorkspaceSummaryDependencies = {}): Promise<WorkspaceDashboardSummary> {
   const port = dependencies.platform ?? defaultPlatform();
   const now = dependencies.now ?? new Date();
-  const sourcePromise: Promise<DashboardSourceHealth[]> = dependencies.sourceHealth
-    ? dependencies.sourceHealth(identity)
-    : dependencies.sources
-      ? dependencies.sources(identity).then((rows) => rows.map((source) => ({
-          sourceConnectionId: source.sourceConnectionId,
-          connectionLabel: source.connectionLabel,
-          status: source.status,
-          health: sourceHealthStatus(source.status, source.consecutiveFailures),
-          consecutiveFailures: source.consecutiveFailures,
-          lastSuccessAt: source.lastSuccessAt ?? null,
-          fundIds: [],
-        })))
-      : workspaceSourceHealth(identity);
+  const sourcePromise = (dependencies.sourceHealth ?? workspaceSourceHealth)(identity);
   const personalizationPromise = (dependencies.personalization ?? getWorkspacePersonalization)(identity);
 
   const [snapshots, observations, documents, valueFacts, dimensionFacts, sourceHealth, personalization] = await Promise.all([
