@@ -26,16 +26,33 @@ export async function authenticateScim(request:Request,db:PostgresSqlApi=postgre
   return {tenantId,authMethod:text(row,"auth_method") as HumanAuthMethod,defaultWorkspaceId:text(row,"default_workspace_id"),defaultRoleName:text(row,"default_role_name") as IdentityLifecycleRole};
 }
 
-export class ScimError extends Error{constructor(readonly status:number,readonly scimType:string,message:string){super(message);this.name="ScimError";}}
+export class ScimError extends Error{
+  readonly status:number;
+  readonly scimType:string;
+  constructor(status:number,scimType:string,message:string){super(message);this.name="ScimError";this.status=status;this.scimType=scimType;}
+}
 export function scimErrorResponse(error:unknown):Response{const resolved=error instanceof ScimError?error:new ScimError(500,"serverError","SCIM request failed");return Response.json({schemas:["urn:ietf:params:scim:api:messages:2.0:Error"],status:String(resolved.status),scimType:resolved.scimType,detail:resolved.message},{status:resolved.status,headers:{"cache-control":"no-store"}});}
 
 export type ScimUser={id:string;externalId:string;userName:string;active:boolean;meta:{resourceType:"User";location:string}};
 function user(row:PostgresRow,base:string):ScimUser{const id=text(row,"scim_user_id");return {id,externalId:text(row,"external_id"),userName:text(row,"user_name"),active:row.active===true,meta:{resourceType:"User",location:`${base}/${id}`}};}
 
-export async function listScimUsers(config:ScimConfiguration,base:string,filter:string|null,db:PostgresSqlApi):Promise<ScimUser[]>{
-  let sql=`select scim_user_id::text,external_id,user_name,active from corvis_control.tenant_scim_identity where tenant_id=$1::uuid`;const parameters:Array<string>=[config.tenantId];
-  const match=/^\s*(userName|externalId)\s+eq\s+"([^"]+)"\s*$/.exec(filter??"");if(filter&& !match)throw new ScimError(400,"invalidFilter","Only userName eq and externalId eq filters are supported");if(match){sql+=match[1]==="userName"?` and user_name=$2`:` and external_id=$2`;parameters.push(match[2]);}sql+=` order by created_at limit 200`;
-  return (await db.query(sql,parameters)).map((row)=>user(row,base));
+const SCIM_MAX_PAGE_SIZE=200;
+
+export type ScimUserPage={resources:ScimUser[];totalResults:number;startIndex:number};
+
+export async function listScimUsers(config:ScimConfiguration,base:string,filter:string|null,db:PostgresSqlApi,startIndex=1,count=SCIM_MAX_PAGE_SIZE):Promise<ScimUserPage>{
+  const safeStartIndex=Number.isInteger(startIndex)&&startIndex>=1?startIndex:1;
+  const safeCount=Number.isInteger(count)&&count>=0?Math.min(count,SCIM_MAX_PAGE_SIZE):SCIM_MAX_PAGE_SIZE;
+  let where=`tenant_id=$1::uuid`;const parameters:Array<string>=[config.tenantId];
+  const match=/^\s*(userName|externalId)\s+eq\s+"([^"]+)"\s*$/.exec(filter??"");if(filter&& !match)throw new ScimError(400,"invalidFilter","Only userName eq and externalId eq filters are supported");if(match){where+=match[1]==="userName"?` and user_name=$2`:` and external_id=$2`;parameters.push(match[2]);}
+  const totalRows=await db.query(`select count(*)::int as count from corvis_control.tenant_scim_identity where ${where}`,parameters);
+  const totalResults=Number(totalRows[0]?.count??0);
+  const limitIndex=parameters.length+1,offsetIndex=parameters.length+2;
+  const rows=await db.query(
+    `select scim_user_id::text,external_id,user_name,active from corvis_control.tenant_scim_identity where ${where} order by created_at limit $${limitIndex}::int offset $${offsetIndex}::int`,
+    [...parameters,String(safeCount),String(safeStartIndex-1)],
+  );
+  return {resources:rows.map((row)=>user(row,base)),totalResults,startIndex:safeStartIndex};
 }
 
 export async function createScimUser(config:ScimConfiguration,input:Record<string,unknown>,base:string,correlationId:string,db:PostgresSqlApi):Promise<ScimUser>{
