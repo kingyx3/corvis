@@ -108,9 +108,20 @@ function fakePlatform(calls: string[]): PlatformPort {
 test("the summary composes customer-safe source health and per-user personalization for non-admin callers", async () => {
   const calls: string[] = [];
   let sourceReads = 0;
-  const sources = async () => { sourceReads += 1; return [{ sourceConnectionId: "src", connectionLabel: "Room", status: "suspended", consecutiveFailures: 0 }]; };
+  const sourceHealth = async () => {
+    sourceReads += 1;
+    return [{
+      sourceConnectionId: "src",
+      connectionLabel: "Room",
+      status: "suspended",
+      health: "action_required" as const,
+      consecutiveFailures: 0,
+      lastSuccessAt: null,
+      fundIds: ["fund-a"],
+    }];
+  };
   const personalization = async () => ({ pinnedFundIds: ["fund-a"], lastSeenAt: null });
-  const allocator = await workspaceSummary(identity, { platform: fakePlatform(calls), sources, personalization, now: new Date("2026-09-25T00:00:00Z") });
+  const allocator = await workspaceSummary(identity, { platform: fakePlatform(calls), sourceHealth, personalization, now: new Date("2026-09-25T00:00:00Z") });
   assert.equal(sourceReads, 1);
   assert.deepEqual(calls.sort(), ["dimensions", "documents", "observations", "snapshots", "values"]);
   assert.deepEqual(allocator.attention.counts, { blocking_exception: 1, needs_review: 1, stuck_document: 1, unhealthy_source: 1, total: 4 });
