@@ -64,7 +64,7 @@ uses its separately bounded requester-history contract.
 Production Postgres repositories now push the requested page into SQL with
 a keyset predicate and `limit + 1` fetch for the document/job/observation/
 snapshot lists and the governed serving-resource collections above. This
-prevents the old silent-cap problem where rows beyond an in-memory fetch
+prevents the former silent-cap failure where rows beyond an in-memory fetch
 ceiling could never be reached, and avoids loading an entire entitled
 collection for each page. Demo/test adapters may still paginate already
 materialized arrays, but that is not the production Postgres path.
@@ -133,8 +133,8 @@ internal processing event stream. `WEBHOOK_EVENT_TYPES` currently exposes:
 `CorrectionReplacementDeliveryRequested` and `ExportRequested`. Internal
 processing/job signals — including `DocumentRegistered`, stage-ready/retry
 transport events, and stage blocked/dead-letter operator state — are not
-subscribable and are excluded from delivery even for legacy subscription rows.
-Expand the customer event vocabulary only through a reviewed external-contract
+subscribable and are excluded from delivery even for pre-policy subscription
+rows. Expand the customer event vocabulary only through a reviewed external-contract
 change; do not expose internal outbox events merely because they exist.
 
 Subscription administration and per-subscription signing-key rotation

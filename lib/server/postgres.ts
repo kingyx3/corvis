@@ -47,9 +47,8 @@ type PostgresClientOptions = {
  * Minimal provider adapter for Supabase/Postgres HTTP SQL execution.
  *
  * Product/domain modules must depend on their own repository ports rather than
- * this client. This adapter exists only as a shared transport primitive while
- * legacy Snowflake persistence is migrated one bounded module at a time.
- * Keep runtime syntax erasable because Node 24 executes these TypeScript tests directly.
+ * this shared transport primitive. Keep runtime syntax erasable because Node 24
+ * executes these TypeScript tests directly.
  */
 export class PostgresHttpSqlApi implements PostgresSqlApi {
   private readonly dsn: string;
@@ -104,8 +103,9 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
 
 const nativeClients = new Map<string, NativePostgresSqlApi>();
 
-/** Native provider DSNs use the Postgres wire protocol; legacy HTTPS gateways
- * remain supported explicitly, never inferred from a failed native connection.
+/** Native provider DSNs use the Postgres wire protocol; explicit HTTPS SQL
+ * gateway bindings remain supported for compatibility and are never inferred
+ * from a failed native connection.
  */
 export function postgres(dsn?: string): PostgresSqlApi {
   if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required for Postgres persistence");

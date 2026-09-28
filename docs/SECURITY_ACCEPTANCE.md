@@ -28,7 +28,7 @@ The repository modules are:
 - `infra/terraform/modules/gcp-api-gateway` — API Gateway, restricted edge API key, dedicated gateway service account and Cloud Run invoker grant;
 - `infra/terraform/modules/cloud-run-runtime` — scale-to-zero runtime with network ingress available to API Gateway but no public IAM invocation grant.
 
-The old `gcp-serverless-origin` external load-balancer / Cloud Armor / Certificate Manager / Authenticated Origin Pull path has been removed from the repository baseline.
+The retired `gcp-serverless-origin` external load-balancer / Cloud Armor / Certificate Manager / Authenticated Origin Pull path has been removed from the repository baseline.
 
 Cloudflare remains separate from application authentication and tenant authorization. Passing the edge key boundary does not grant an application identity, workspace membership, entitlement or data right. The application continues to require its signed identity assertion and server-side authorization context; Postgres RLS remains an independent tenant-isolation boundary.
 

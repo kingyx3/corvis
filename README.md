@@ -116,7 +116,7 @@ Global economic identity never widens tenant access. Source-evidence access and 
 
 The repository contains production-oriented foundations for GCS resumable ingestion, serving/review/publication, permissioned retrieval, admin/control APIs, exports/webhooks, jobs/outbox, control evidence and initial GCP Terraform.
 
-The repository is currently migrating legacy Snowflake-primary persistence code to the approved Postgres-primary implementation. Production is not enterprise-ready merely because adapters or infrastructure code exist; live provider bindings, production-equivalent UAT, direct identity verification/control-plane authorization, complete Postgres/RLS migration, Cloudflare/origin hardening, durable processing, admin UI, broader E2E/security coverage and operated control/SRE evidence remain tracked in GitHub issues.
+The Postgres-primary application migration is complete: production application persistence and research use governed Postgres paths. Snowflake is not part of the launch application runtime and remains optional downstream analytics/sharing only. Production is not enterprise-ready merely because adapters or infrastructure code exist; live provider bindings, production-equivalent UAT, direct identity verification/control-plane authorization, provider-backed RLS/security evidence, Cloudflare/origin hardening, durable processing, admin UI, broader E2E/security coverage and operated control/SRE evidence remain tracked in GitHub issues.
 
 Technical status and activation:
 

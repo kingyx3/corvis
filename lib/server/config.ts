@@ -8,15 +8,6 @@ export type ServerConfig = {
 
   postgresDsn?: string;
 
-  // Snowflake is an optional downstream analytics/sharing replica. These
-  // bindings must not be required for the application to start.
-  snowflakeDsn?: string;
-  snowflakeSqlApiUrl?: string;
-  snowflakeOauthToken?: string;
-  snowflakeDatabase?: string;
-  snowflakeWarehouse?: string;
-  snowflakeRole?: string;
-
   objectStoreBucket?: string;
   gcpAccessToken?: string;
   gcsChunkSizeBytes: number;
@@ -72,12 +63,6 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     authJwksUrl: env.CORVIS_AUTH_JWKS_URL,
     trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
     postgresDsn: env.CORVIS_POSTGRES_DSN,
-    snowflakeDsn: env.CORVIS_SNOWFLAKE_DSN,
-    snowflakeSqlApiUrl: env.CORVIS_SNOWFLAKE_SQL_API_URL,
-    snowflakeOauthToken: env.CORVIS_SNOWFLAKE_OAUTH_TOKEN,
-    snowflakeDatabase: env.CORVIS_SNOWFLAKE_DATABASE,
-    snowflakeWarehouse: env.CORVIS_SNOWFLAKE_WAREHOUSE,
-    snowflakeRole: env.CORVIS_SNOWFLAKE_ROLE,
     objectStoreBucket: env.CORVIS_OBJECT_STORE_BUCKET,
     gcpAccessToken: env.CORVIS_GCP_ACCESS_TOKEN,
     gcsChunkSizeBytes: positiveInteger(env.CORVIS_GCS_CHUNK_SIZE_BYTES) ?? 8 * 1024 * 1024,
