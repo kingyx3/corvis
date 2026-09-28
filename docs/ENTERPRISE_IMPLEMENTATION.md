@@ -2,7 +2,7 @@
 
 This document maps Confluence-owned business/enterprise requirements to executable repository components. GitHub owns the technical implementation details; Confluence owns business semantics, customer rights, control requirements and readiness decisions.
 
-See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.md`](MODULARITY.md) for module/failure-isolation requirements, and [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md) for the canonical distinction between the tenant/workspace **Review Analyst** persona and Corvis **Data Operations Reviewer** / **Resolver** functions. The persisted `reviewer` role key is a backwards-compatible machine identifier, not a human-facing label.
+See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.md`](MODULARITY.md) for module/failure-isolation requirements, and [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md) for the canonical distinction between the tenant/workspace **Review Analyst** persona and Corvis **Data Operations Reviewer** / **Resolver** functions. The persisted `reviewer` role key is a compatibility identifier, not a human-facing label.
 
 ## Implemented runtime
 
@@ -27,7 +27,7 @@ See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.
 
 **Target/current architecture:** Supabase Postgres Singapore is the sole operational/canonical/serving structured write authority. GCS remains source evidence. Snowflake is optional downstream only.
 
-**Repository migration state:** legacy Snowflake-primary code is still being replaced.
+**Repository migration state:** remaining Snowflake-primary persistence code is still being replaced.
 
 - Production config now requires `CORVIS_POSTGRES_DSN` and no longer requires Snowflake bindings to start.
 - Existing Snowflake migrations contain useful domain structures but are not the target production dialect/security model.
@@ -58,7 +58,7 @@ Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 - The demo/E2E harness is stateful across the product seams: an uploaded source creates a review-scoped snapshot and structured observations, review decisions unlock publication, and published snapshots can be requested through the delivery module.
 - Playwright covers the representative seam `upload → structured observations → review → publish → structured delivery` and an injected Observations-module outage that leaves unrelated customer surfaces available.
 - These tests prove product contracts and blast-radius behavior in CI; they are **not** production/provider activation evidence. Production-equivalent `uat` must repeat the journey against real Postgres/GCS/processing/delivery bindings and fault-inject representative module/dependency failures.
-- The largest remaining technical coupling is the legacy `lib/server/platform.ts` service/persistence composition. Issue #28 must replace its Snowflake-oriented persistence paths with bounded Postgres-backed repositories/module adapters rather than reproducing a new provider-specific platform monolith.
+- The largest remaining technical coupling is the existing `lib/server/platform.ts` service/persistence composition. Issue #28 must replace its Snowflake-oriented persistence paths with bounded Postgres-backed repositories/module adapters rather than reproducing a new provider-specific platform monolith.
 
 See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
@@ -68,7 +68,7 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 - Retrieval carries tenant/workspace/document/fund filters before search execution.
 - Source text is treated as untrusted data and responses carry source-reference citations.
 - Semantic-query ID/hash foundations exist.
-- The current implementation still reads broad serving facts through the legacy Snowflake adapter; deterministic Postgres semantic-query routing, streaming/error behavior and full evaluation coverage remain in issue #7 and #28.
+- The current implementation still reads broad serving facts through the Snowflake-primary compatibility adapter; deterministic Postgres semantic-query routing, streaming/error behavior and full evaluation coverage remain in issue #7 and #28.
 
 ### Reliability and delivery
 
@@ -93,7 +93,7 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
 - Admin API foundations exist for feature flags, deletion workflows, control evidence and readiness.
 - Data-lifecycle adapter and evidence foundations exist.
-- These paths still require migration from legacy Snowflake persistence to the Postgres control plane under #28.
+- These paths still require migration from Snowflake-primary persistence to the Postgres control plane under #28.
 - The separate production admin application and full cross-channel control/entitlement implementation remain tracked in issue #10.
 - Recurring automated evidence collection/freshness/escalation remains tracked in issue #14.
 
