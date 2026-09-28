@@ -37,7 +37,7 @@ ________________________________________________________________________________
 
 Cloudflare remains the public edge. Google API Gateway is the GCP public API ingress. Cloud Run is an IAM-protected backend invoked by a dedicated gateway service identity.
 
-The old GCP External Application Load Balancer + Cloud Armor + Certificate Manager + origin-mTLS module has been removed from the baseline repository implementation. Those services may be reintroduced only when a documented network-layer, customer, regulatory, or service-capability requirement cannot be satisfied by the gateway design.
+The retired GCP External Application Load Balancer + Cloud Armor + Certificate Manager + origin-mTLS module has been removed from the baseline repository implementation. Those services may be reintroduced only when a documented network-layer, customer, regulatory, or service-capability requirement cannot be satisfied by the gateway design.
 
 ## Security boundaries
 
@@ -144,7 +144,7 @@ UAT must prove all of the following before this migration is considered operatio
 6. the dedicated gateway workload identity is the only normal public-path Cloud Run invoker;
 7. application authentication, tenant isolation/RLS, CSRF/cache-safety, WAF and rate-limit acceptance still pass;
 8. large source uploads continue directly to GCS;
-9. Terraform state/plan contains no legacy external LB/Cloud Armor baseline after cutover;
+9. Terraform state/plan contains no retired external LB/Cloud Armor baseline after cutover;
 10. GitHub environment configuration remains minimal and derived values remain derived;
 11. sanitized evidence is retained for the accepted release SHA.
 
