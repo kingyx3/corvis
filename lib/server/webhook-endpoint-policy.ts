@@ -10,7 +10,7 @@ import { BlockList, isIP } from "node:net";
  * types and uses `outbox_event.published_at` / `attempt_count` as its own
  * dispatch/dead-letter bookkeeping. They are never customer-facing webhook
  * events: a subscription may not name them, and webhook delivery never
- * selects them even if a legacy subscription row does.
+ * selects them even if a pre-policy subscription row does.
  */
 export const PROCESSING_TRANSPORT_EVENT_TYPES = [
   "DocumentRegistered",
