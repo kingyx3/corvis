@@ -27,12 +27,13 @@ See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.
 
 **Target/current architecture:** Supabase Postgres Singapore is the sole operational/canonical/serving structured write authority. GCS remains source evidence. Snowflake is optional downstream only.
 
-**Repository migration state:** remaining Snowflake-primary persistence code is still being replaced.
+**Repository migration state:** the Postgres-primary application migration is complete; Snowflake is not an application persistence dependency.
 
-- Production config now requires `CORVIS_POSTGRES_DSN` and no longer requires Snowflake bindings to start.
-- Existing Snowflake migrations contain useful domain structures but are not the target production dialect/security model.
-- `lib/server/snowflake.ts` and direct Snowflake calls still exist in multiple service paths.
-- Postgres schemas/migrations/RLS plus repository/adapter migration remain tracked in issue #28.
+- Production config requires `CORVIS_POSTGRES_DSN` and does not require Snowflake bindings to start.
+- `PostgresProductionPlatform` is the active production composition for workspace, review/publication and operations persistence.
+- `lib/server/research.ts` reads governed Postgres serving observations and records semantic-query logs in Postgres.
+- The obsolete Snowflake-primary DDL reference set and unused application Snowflake SQL API adapter have been removed.
+- Issue #28 is complete. Remaining data-plane work is provider-backed UAT/RLS/recovery/performance evidence and bounded decomposition where justified, not an application persistence migration.
 
 Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 
@@ -58,7 +59,7 @@ Technical target rules are in [`DATA_PLATFORM.md`](DATA_PLATFORM.md).
 - The demo/E2E harness is stateful across the product seams: an uploaded source creates a review-scoped snapshot and structured observations, review decisions unlock publication, and published snapshots can be requested through the delivery module.
 - Playwright covers the representative seam `upload → structured observations → review → publish → structured delivery` and an injected Observations-module outage that leaves unrelated customer surfaces available.
 - These tests prove product contracts and blast-radius behavior in CI; they are **not** production/provider activation evidence. Production-equivalent `uat` must repeat the journey against real Postgres/GCS/processing/delivery bindings and fault-inject representative module/dependency failures.
-- The largest remaining technical coupling is the existing `lib/server/platform.ts` service/persistence composition. Issue #28 must replace its Snowflake-oriented persistence paths with bounded Postgres-backed repositories/module adapters rather than reproducing a new provider-specific platform monolith.
+- `lib/server/platform.ts` remains a broad service composition boundary. Further decomposition should be driven by concrete failure/scaling/security boundaries; its production persistence paths are already Postgres-backed.
 
 See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
@@ -68,7 +69,7 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 - Retrieval carries tenant/workspace/document/fund filters before search execution.
 - Source text is treated as untrusted data and responses carry source-reference citations.
 - Semantic-query ID/hash foundations exist.
-- The current implementation still reads broad serving facts through the Snowflake-primary compatibility adapter; deterministic Postgres semantic-query routing, streaming/error behavior and full evaluation coverage remain in issue #7 and #28.
+- Governed structured research reads Postgres serving observations. Provider-backed retrieval/AI evaluation, streaming/error behavior and full production-like coverage remain in issue #7 and the activation tracks.
 
 ### Reliability and delivery
 
@@ -93,7 +94,7 @@ See [`MODULARITY.md`](MODULARITY.md) and issue #12.
 
 - Admin API foundations exist for feature flags, deletion workflows, control evidence and readiness.
 - Data-lifecycle adapter and evidence foundations exist.
-- These paths still require migration from Snowflake-primary persistence to the Postgres control plane under #28.
+- These paths use the Postgres control plane; remaining work is provider-backed activation/evidence and the separate production admin surface.
 - The separate production admin application and full cross-channel control/entitlement implementation remain tracked in issue #10.
 - Recurring automated evidence collection/freshness/escalation remains tracked in issue #14.
 
@@ -120,7 +121,7 @@ Technical standards:
 
 Corvis product modules consume stable contracts rather than vendor-specific implementation details. GCS, Postgres/Supabase, identity providers, search/model providers, Cloudflare and telemetry providers remain replaceable behind implementation boundaries provided they continue to satisfy business/data/security contracts.
 
-Snowflake is specifically **not** a required application adapter at launch; any remaining Snowflake implementation must become optional downstream analytics/sharing or be removed as #28 completes.
+Snowflake is specifically **not** a required application adapter at launch. If activated later, it must be introduced as optional downstream analytics/sharing without changing Postgres write authority.
 
 ## Implementation is not activation
 
