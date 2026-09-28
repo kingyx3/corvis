@@ -47,9 +47,8 @@ type PostgresClientOptions = {
  * Minimal provider adapter for Supabase/Postgres HTTP SQL execution.
  *
  * Product/domain modules must depend on their own repository ports rather than
- * this client. This adapter exists only as a shared transport primitive while
- * remaining Snowflake-primary persistence is migrated one bounded module at a time.
- * Keep runtime syntax erasable because Node 24 executes these TypeScript tests directly.
+ * this shared transport primitive. Keep runtime syntax erasable because Node 24
+ * executes these TypeScript tests directly.
  */
 export class PostgresHttpSqlApi implements PostgresSqlApi {
   private readonly dsn: string;
