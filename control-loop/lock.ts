@@ -38,8 +38,8 @@ function activeOtherOwner(raw: string | null, owner: string, now: Date, staleAft
 /**
  * Acquire the single-writer mutation lease. Conditional stores use an atomic
  * generation precondition so overlapping Cloud Run Job executions cannot both
- * win a read-then-write race. File stores retain the legacy outer-concurrency
- * behavior used by GitHub Actions.
+ * win a read-then-write race. File stores retain the workflow-level
+ * outer-concurrency behavior used by GitHub Actions.
  */
 export async function acquireLock(store: StateStore, owner: string, now: Date, staleAfterMs: number): Promise<LockResult> {
   const record: LockRecord = { owner, acquiredAt: now.toISOString() };
