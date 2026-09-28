@@ -92,13 +92,13 @@ exercises, and representative large-dataset/performance tests. Those require
 
 Application/domain code must not depend on Supabase SDK-specific semantics, direct physical table assumptions or Snowflake SQL as product contracts. Repository/service adapters own persistence details.
 
-Migration from the legacy Snowflake-primary code should:
+Migration from remaining Snowflake-primary persistence code should:
 
 1. introduce/strengthen structured-data repository interfaces;
 2. port useful existing Snowflake DDL/domain structures into PostgreSQL migrations;
 3. migrate one service path at a time to Postgres;
 4. avoid application dual writes;
-5. add replay/tenant-isolation/lineage/snapshot tests before removing the legacy path;
+5. add replay/tenant-isolation/lineage/snapshot tests before removing the superseded path;
 6. leave any remaining Snowflake code clearly optional/downstream.
 
 ## Retrieval and AI
