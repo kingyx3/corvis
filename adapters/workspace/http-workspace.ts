@@ -27,6 +27,7 @@ import type {
 } from "@/core/enterprise";
 
 type Envelope<T> = { data: T; correlationId: string };
+type CollectionEnvelope<T> = Envelope<T[]> & { nextCursor: string | null };
 
 export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   const base = apiBase.replace(/\/$/, "");
@@ -43,6 +44,32 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     if (!response.ok) throw await responseError(response);
     const body = await response.json() as Envelope<T>;
     return body.data;
+  }
+
+  /**
+   * First-party collection reads always use the published cursor contract.
+   * The server still preserves its no-query compatibility mode for older
+   * external v1 consumers, but Corvis itself must not depend on that branch.
+   */
+  async function requestCollection<T>(path: string): Promise<T[]> {
+    const items: T[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const query = new URLSearchParams({ limit: "200" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`${base}${path}?${query.toString()}`, {
+        credentials: "include",
+        headers: { "content-type": "application/json", ...workspaceContextHeaders() },
+      });
+      if (!response.ok) throw await responseError(response);
+      const body = await response.json() as CollectionEnvelope<T>;
+      items.push(...body.data);
+      if (body.nextCursor && seen.has(body.nextCursor)) throw new Error("pagination_cursor_cycle");
+      cursor = body.nextCursor;
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return items;
   }
 
   async function researchStream(
@@ -98,9 +125,9 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     capabilities: () => request<WorkspaceCapabilities>("/api/v1/capabilities"),
     whoAmI: () => request<WorkspaceIdentity>("/api/v1/me"),
     listMyWorkspaces: () => request<WorkspaceMembershipSummary[]>("/api/v1/my-workspaces"),
-    listDocuments: () => request<DocumentRecord[]>("/api/v1/documents"),
-    listObservations: () => request<ObservationRecord[]>("/api/v1/observations"),
-    listSnapshots: () => request<FundSnapshot[]>("/api/v1/snapshots"),
+    listDocuments: () => requestCollection<DocumentRecord>("/api/v1/documents"),
+    listObservations: () => requestCollection<ObservationRecord>("/api/v1/observations"),
+    listSnapshots: () => requestCollection<FundSnapshot>("/api/v1/snapshots"),
     workspaceSummary: () => request<WorkspaceSummary>("/api/v1/workspace-summary"),
     listCompanySectors: () => request<CompanySectorRecord[]>("/api/v1/company-sectors"),
     assignCompanySector: (command: CompanySectorAssignment) => request<CompanySectorAssignmentOutcome>("/api/v1/company-sectors", { method: "POST", body: JSON.stringify({ ...command, idempotencyKey: crypto.randomUUID() }) }),
