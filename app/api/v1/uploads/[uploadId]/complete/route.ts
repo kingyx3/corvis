@@ -12,7 +12,7 @@ export async function POST(request: Request, context: { params: Promise<{ upload
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const current = await uploads().get(identity, uploadId);
-    if (!canAccessUpload(identity, current.actorSubject)) {
+    if (!canAccessUpload(identity, current)) {
       return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
     }
     // The body is optional: the key may come from the Idempotency-Key header instead.

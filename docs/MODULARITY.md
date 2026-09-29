@@ -108,6 +108,17 @@ Each module must define:
 - structured logs/metrics/traces including tenant-safe correlation IDs;
 - a feature flag/kill switch when safe degradation is possible.
 
+### Scope of kill switches and the emergency stop
+
+Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/feature-flags/kill-switch` and `/emergency-stop`) are **module switches, not a tenant-wide stop**. They deny only the code paths that call `assertFeatureEnabled` / `isFeatureEnabled` in `lib/server/feature-flags.ts`, which today are:
+
+| Flag | Gated paths |
+| --- | --- |
+| `module.portfolio_attribution` (`PORTFOLIO_ATTRIBUTION_FLAG`) | `GET /portfolios`, `GET /portfolio-holdings`, `GET /position-financials?portfolioId=…`, and the capability advertised by `GET /capabilities` |
+| `exports.parquet_delivery` | `POST /exports` with `format=parquet` |
+
+Uploads, review, publication, CSV/XLSX exports, research and every read of published data are **not** gated: engaging the emergency stop leaves them running. To stop a tenant entirely, revoke its sessions (`/admin/session-revocations`), disable its identities (`/admin/identity-lifecycle`) or block it at the edge; a new flag-gated capability must add its path to this table.
+
 A non-critical module being unavailable must not make the entire application fail readiness. Production readiness should distinguish **required core dependencies** from **optional/degradable capabilities**.
 
 ## Debugging rule
