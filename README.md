@@ -48,7 +48,7 @@ See [`docs/GITHUB_ENVIRONMENTS.md`](docs/GITHUB_ENVIRONMENTS.md) for the exact v
 
 ## Repository ownership
 
-Target monorepo boundaries:
+Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `app/`, `lib/`, `core/`, `adapters/`, `features/` and `infra/terraform/modules/` today; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current map.
 
 ```text
 apps/
@@ -130,6 +130,7 @@ Technical status and activation:
 
 ```bash
 npm install
+cp .env.example .env.local   # enables demo mode; without it the app has no way to authenticate
 npm run dev
 ```
 

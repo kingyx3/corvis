@@ -30,24 +30,25 @@ whole run. All of this is covered by `lib/server/source-connectors.test.ts`,
 secret redaction, idempotent duplicate/replacement discovery, error-class
 routing, and the migration's own RLS/constraint contract).
 
+**Implemented since this module landed:** `GcpSecretManagerSecretStore`
+(`lib/server/source-connector-runtime.ts`) is the production `SecretStore`, and
+the customer/admin routes under `app/api/v1/source-connections/**` (list,
+create, test, reauthorize, activity) call the module above.
+
 **Not yet implemented — the next integration step, in order:**
-1. A real `SecretStore` implementation (GCP Secret Manager or an approved
-   equivalent). No live secret-manager client exists in this repository
-   today (unlike Postgres/GCS, which the app already talks to directly),
-   and shipping one that has never been exercised against a real project
-   would be worse than leaving the port unimplemented. `SecretStore` is the
-   exact seam it plugs into.
-2. `app/api/v1/source-connections/**` customer/admin routes (create, list,
-   test, pause, resume, revoke, reauthorize) calling the module above,
-   gated the same way other admin-only surfaces are.
-3. At least one real `ConnectorDriver` for an approved representative
-   provider, and an `IngestSink` implementation that feeds an accepted
-   download into the existing upload/document-registration pipeline
-   (`lib/server/uploads.ts`) instead of a parallel path.
-4. Scheduling (Cloud Scheduler/Cloud Tasks or equivalent) that calls
+1. At least one real `ConnectorDriver` for an approved representative
+   provider. `sourceConnectorDrivers()` is currently an empty registry, so a
+   connection test or sync resolves to `unregistered_provider`. An
+   `IngestSink` implementation must feed an accepted download into the
+   existing upload/document-registration pipeline (`lib/server/uploads.ts`)
+   instead of a parallel path.
+2. Scheduling (Cloud Scheduler/Cloud Tasks or equivalent) that calls
    `runConnectionSync` for each due `active` connection using
-   `source_connection.next_scheduled_at`.
-5. Provider-specific UAT fixtures per the "Testing" section below, run
+   `source_connection.next_scheduled_at`. `runConnectionSync` has no caller
+   outside tests today.
+3. Pause, resume and revoke commands (only create, list, test and
+   reauthorize are routed).
+4. Provider-specific UAT fixtures per the "Testing" section below, run
    against synthetic/test portal accounts.
 
 Building 1–4 unlocks the customer-facing `Connect source` flow this

@@ -31,6 +31,13 @@ test("period labels resolve to period-end dates and order chronologically", () =
   assert.deepEqual(["Q1 2026", "Detecting…", "Q3 2025", "Q4 2025"].sort(comparePeriods), ["Q3 2025", "Q4 2025", "Q1 2026", "Detecting…"]);
 });
 
+test("period comparison is chronological where a lexicographic comparison is not", () => {
+  // "Q4 2025" > "Q2 2026" as strings; the views must order and pick "latest" by period end date.
+  assert.ok("Q4 2025" > "Q2 2026");
+  assert.ok(comparePeriods("Q2 2026", "Q4 2025") > 0);
+  assert.deepEqual(["Q4 2025", "Q2 2026", "Q1 2026"].sort((a, b) => comparePeriods(b, a)), ["Q2 2026", "Q1 2026", "Q4 2025"]);
+});
+
 test("value trend holds each fund at its latest published value, in chronological order", () => {
   const summary = buildWorkspaceSummary({ ...empty, valueFacts: [
     fact({ snapshotId: "a2", period: "Q2 2026", value: 120 }),

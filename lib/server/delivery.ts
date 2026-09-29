@@ -262,7 +262,9 @@ export async function processWebhookDeliveries(
   let processed=0,failed=0;
   for(const row of events){
     const tenantId=String(row.tenant_id), eventId=String(row.event_id), webhookId=String(row.webhook_id);
-    const envelope:WebhookEnvelope={id:eventId,type:String(row.event_type),createdAt:String(row.created_at),tenantId,data:row.payload};
+    // pg returns timestamptz as "2026-09-29 10:11:12.123456+00"; customers receive RFC 3339.
+    const createdMs=timestampMs(row.created_at);
+    const envelope:WebhookEnvelope={id:eventId,type:String(row.event_type),createdAt:createdMs===undefined?String(row.created_at):new Date(createdMs).toISOString(),tenantId,data:row.payload};
     const body=JSON.stringify(envelope); const deliveryId=randomUUID();
     const attempt=Number(row.prior_attempts??0)+1;
     const context={correlationId:`webhook:${deliveryId}`,tenantId};

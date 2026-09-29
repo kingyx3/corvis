@@ -89,3 +89,11 @@ test("unpinResearchAnswer scopes the delete to the caller and fails closed when 
   await unpinResearchAnswer(identity, "pin-1", db);
   assert.deepEqual(db.calls.at(-1)?.parameters, ["pin-1", identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject]);
 });
+
+test("pinResearchAnswer rejects an oversized answer payload", async () => {
+  const db = new FakeDb();
+  await assert.rejects(
+    pinResearchAnswer(identity, { question: "Q", askedAt: "2026-05-01T00:00:00.000Z", answer: { ...answer, answer: "x".repeat(70_000) } }, db),
+    (error: unknown) => error instanceof ResearchPinError && error.code === "invalid_answer",
+  );
+});

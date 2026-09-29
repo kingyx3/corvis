@@ -16,6 +16,11 @@ test("tenant access CSV quotes metadata without leaking columns",()=>{
   assert.match(csv,/occurred_at,actor,action/);assert.match(csv,/"\{""email"":""a,b@example.com""\}"/);
 });
 
+test("tenant access CSV neutralises spreadsheet formulas in attacker-influenced identifiers",()=>{
+  const csv=tenantAccessAuditCsv([{auditEventId:"a",occurredAt:"2026-09-26T00:00:00Z",actorSubject:"=HYPERLINK(\"http://x\")",action:"access.member.role_changed",targetType:"membership",targetId:"@SUM(A1)",outcome:"success",metadata:{}}]);
+  assert.match(csv,/,"'=HYPERLINK\(""http:\/\/x""\)",/);assert.match(csv,/,'@SUM\(A1\),/);
+});
+
 test("support acknowledgement threshold covers privilege and duration",()=>{
   const base={supportGrantId:null,authMethod:"oidc" as const,subject:"support",userId:workspace,workspaceId:workspace,roleName:"reviewer",purpose:"diagnostic",approvalReference:"INC-1",validFrom:"2026-09-26T00:00:00.000Z",validUntil:"2026-09-26T03:00:00.000Z",reason:"diagnostic"};
   assert.equal(SUPPORT_ACK_THRESHOLD_HOURS,4);assert.equal(supportAccessRequiresTenantAck(base),false);assert.equal(supportAccessRequiresTenantAck({...base,roleName:"tenant_admin"}),true);assert.equal(supportAccessRequiresTenantAck({...base,validUntil:"2026-09-26T05:00:01.000Z"}),true);

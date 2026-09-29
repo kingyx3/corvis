@@ -32,6 +32,7 @@ export function AccessAdminView() {
   const [members, setMembers] = useState<TenantAccessMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deactivateError, setDeactivateError] = useState("");
   const [selected, setSelected] = useState<TenantAccessMember | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -115,12 +116,14 @@ export function AccessAdminView() {
     setSelected(member);
     setReason("");
     setError(null);
+    setDeactivateError("");
   };
 
   const deactivate = async () => {
     if (!selected || !reason.trim() || busy) return;
     setBusy(true);
     setError(null);
+    setDeactivateError("");
     try {
       const outcome = await workspacePort.deactivateAccessMember({ userId: selected.userId, reason: reason.trim() });
       setResult(outcome);
@@ -128,7 +131,7 @@ export function AccessAdminView() {
       setSelected(null);
       setReason("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "User could not be deactivated");
+      setDeactivateError(caught instanceof Error ? caught.message : "User could not be deactivated");
     } finally {
       setBusy(false);
     }
@@ -210,6 +213,7 @@ export function AccessAdminView() {
         <h3>Entitlements to expire</h3>
         <div className="table-card" tabIndex={0} role="region" aria-label="Entitlements to expire"><table className="data-table"><thead><tr><th>Workspace</th><th>Resource</th><th>Permission</th></tr></thead><tbody>{selected.entitlements.length ? selected.entitlements.map((entitlement) => <tr key={`${entitlement.workspaceId}:${entitlement.resourceType}:${entitlement.resourceId}:${entitlement.permission}`}><td>{entitlement.workspaceName}</td><td>{entitlement.resourceType} · {entitlement.resourceId}</td><td>{entitlement.permission}</td></tr>) : <tr><td colSpan={3} className="empty-cell">No active resource entitlements.</td></tr>}</tbody></table></div>
         <label className="form-field"><span>Offboarding reason</span><textarea value={reason} maxLength={1000} rows={3} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Employment ended; revoke all organization access"/><small>Recorded in the lifecycle audit event.</small></label>
+        {deactivateError && <p role="alert">{deactivateError}</p>}
       </div>
       <div className="dialog-actions"><button className="secondary-button" disabled={busy} onClick={() => setSelected(null)}>Cancel</button><button className="primary-button" disabled={busy || !reason.trim()} onClick={() => void deactivate()}>{busy ? "Deactivating…" : "Deactivate everywhere"}</button></div>
     </Modal>}

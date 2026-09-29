@@ -7,7 +7,7 @@ and `lib/server/http.ts`/`lib/server/pagination.ts`.
 ## Envelope and errors
 
 Every response is `{ data, correlationId }` on success (an action route may
-add fields alongside `data`, as `snapshots/publish` does). Every route reads
+add fields alongside `data`, as `snapshots/publish` does). Two families are deliberately not enveloped: `uploads/initiate` returns the upload session object directly, and `scim/v2/**` follows the SCIM 2.0 wire format. Every route reads
 or generates `correlationId` from the `x-correlation-id` request header via
 `correlationId(request)` and echoes it back, including on error, so a client
 and server log can be correlated even across a failure.

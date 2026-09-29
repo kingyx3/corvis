@@ -1,9 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { neutraliseSpreadsheetFormula } from "../csv.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
-import { INVITATION_TTL_DAYS, type TenantInvitation } from "./tenant-invitations.ts";
+import { INVITATION_TTL_DAYS, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
 
 export const SUPPORT_ACK_THRESHOLD_HOURS = 4;
 export const ROLE_EXPLANATIONS: Record<string, string> = {
@@ -54,7 +55,8 @@ export async function listTenantAccessAudit(identity: RequestIdentity, db: Postg
 }
 
 function csvCell(value: unknown): string {
-  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  // Actor and target identifiers are attacker-influenced text: neutralise spreadsheet formulas.
+  const raw = neutraliseSpreadsheetFormula(typeof value === "string" ? value : JSON.stringify(value ?? ""));
   return /[",\r\n]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
 }
 export function tenantAccessAuditCsv(events: TenantAccessAuditEvent[]): string {
@@ -94,11 +96,11 @@ export async function markTenantAccessNotificationsRead(identity: RequestIdentit
 
 export async function acknowledgeSupportAccess(identity: RequestIdentity, supportGrantId: string, correlationId: string, db: PostgresSqlApi): Promise<void> {
   requireTenantAdmin(identity);
-  if (!UUID.test(supportGrantId)) throw new Error("invalid_support_grant_id");
+  if (!UUID.test(supportGrantId)) throw new TenantInvitationError("invalid_support_grant_id", 400);
   const rows = await db.query(`select auth_method,subject,user_id::text,workspace_id::text,role_name,purpose,approval_reference,valid_from,valid_until,approved_by_subject
     from corvis_control.support_access_grant where tenant_id=$1::uuid and support_grant_id=$2::uuid and status='pending_ack' and valid_until>now() for update`, [identity.tenantId,supportGrantId]);
   const grant = rows[0];
-  if (!grant) throw new Error("support_grant_not_pending");
+  if (!grant) throw new TenantInvitationError("support_grant_not_pending", 409);
   await db.execute(`delete from corvis_control.support_access_grant where tenant_id=$1::uuid and support_grant_id=$2::uuid and status='pending_ack'`, [identity.tenantId,supportGrantId]);
   await db.query(`select corvis_control.apply_support_access_admin($1::uuid,$2,$3::uuid,$4,'grant',$5::uuid,$6,$7,$8::uuid,$9::uuid,$10,$11,$12,$13::timestamptz,$14::timestamptz,$15) as result`, [
     identity.tenantId,text(grant,"approved_by_subject"),identity.workspaceId,correlationId,supportGrantId,text(grant,"auth_method"),text(grant,"subject"),text(grant,"user_id"),text(grant,"workspace_id"),text(grant,"role_name"),text(grant,"purpose"),text(grant,"approval_reference"),text(grant,"valid_from"),text(grant,"valid_until"),"Tenant administrator acknowledged elevated support access",
@@ -109,17 +111,17 @@ export async function acknowledgeSupportAccess(identity: RequestIdentity, suppor
 
 export async function revokeTenantInvitation(identity: RequestIdentity, invitationId: string, reason: string, correlationId: string, db: PostgresSqlApi): Promise<void> {
   requireTenantAdmin(identity);
-  if (!UUID.test(invitationId) || reason.trim().length < 3 || reason.length > 1000) throw new Error("invalid_request");
+  if (!UUID.test(invitationId) || reason.trim().length < 3 || reason.length > 1000) throw new TenantInvitationError("invalid_request", 400);
   const changed = await db.query(`update corvis_control.tenant_invitation set status='revoked'
     where tenant_id=$1::uuid and invitation_id=$2::uuid and status='pending' and expires_at>now()
     returning workspace_id::text,email,role_name`, [identity.tenantId,invitationId]);
-  if (!changed[0]) throw new Error("invitation_not_pending");
+  if (!changed[0]) throw new TenantInvitationError("invitation_not_pending", 409);
   await new PostgresOperationsRepository(db).audit({ id:randomUUID(),occurredAt:new Date().toISOString(),tenantId:identity.tenantId,workspaceId:text(changed[0],"workspace_id"),actorSubject:identity.subject,sessionId:identity.sessionId,action:"tenant_invitation.revoked",targetType:"tenant_invitation",targetId:invitationId,outcome:"success",correlationId,metadata:{email:text(changed[0],"email"),roleName:text(changed[0],"role_name"),reason:reason.trim()} });
 }
 
 export async function resendTenantInvitation(identity: RequestIdentity, invitationId: string, reason: string, correlationId: string, db: PostgresSqlApi): Promise<{ invitation: TenantInvitation; token: string }> {
   requireTenantAdmin(identity);
-  if (!UUID.test(invitationId) || reason.trim().length < 3 || reason.length > 1000) throw new Error("invalid_request");
+  if (!UUID.test(invitationId) || reason.trim().length < 3 || reason.length > 1000) throw new TenantInvitationError("invalid_request", 400);
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const expiresAt = new Date(Date.now()+INVITATION_TTL_DAYS*86400000).toISOString();
@@ -127,7 +129,7 @@ export async function resendTenantInvitation(identity: RequestIdentity, invitati
     from corvis_control.workspace w where i.tenant_id=$1::uuid and i.invitation_id=$2::uuid and i.status='pending' and i.expires_at>now()
       and w.tenant_id=i.tenant_id and w.workspace_id=i.workspace_id
     returning i.invitation_id::text,i.tenant_id::text,i.workspace_id::text,w.display_name as workspace_name,i.email,i.role_name,i.status,i.created_at,i.expires_at`, [identity.tenantId,invitationId,tokenHash,expiresAt]);
-  const row=rows[0]; if(!row) throw new Error("invitation_not_pending");
+  const row=rows[0]; if(!row) throw new TenantInvitationError("invitation_not_pending", 409);
   await new PostgresOperationsRepository(db).audit({ id:randomUUID(),occurredAt:new Date().toISOString(),tenantId:identity.tenantId,workspaceId:text(row,"workspace_id"),actorSubject:identity.subject,sessionId:identity.sessionId,action:"tenant_invitation.resent",targetType:"tenant_invitation",targetId:invitationId,outcome:"success",correlationId,metadata:{email:text(row,"email"),roleName:text(row,"role_name"),reason:reason.trim(),expiresAt} });
   return { token, invitation:{invitationId:text(row,"invitation_id"),tenantId:text(row,"tenant_id"),workspaceId:text(row,"workspace_id"),workspaceName:text(row,"workspace_name"),email:text(row,"email"),roleName:text(row,"role_name") as TenantInvitation["roleName"],status:"pending",createdAt:text(row,"created_at"),expiresAt:text(row,"expires_at")} };
 }

@@ -233,6 +233,20 @@ jobs:
             echo "Applying ${migration}"
             PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f "${migration}"
           done
+      - run: npm ci --prefer-offline --no-audit
+      - name: Apply full migration chain through the production runner, twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Raw psql above never enforces the runner's one-transaction contract or
+          # its ledger, so exercise the exact path deploys use. The second run
+          # must be a clean no-op.
+          createdb corvis_runner_smoke
+          PGDATABASE=corvis_runner_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
+          export CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_runner_smoke?sslmode=disable"
+          node db/postgres/migrate.ts --apply > runner-first.json
+          node db/postgres/migrate.ts --apply > runner-second.json
+          node -e 'const r=require("fs");const a=JSON.parse(r.readFileSync("runner-first.json","utf8"));const b=JSON.parse(r.readFileSync("runner-second.json","utf8"));if(a.result!=="pass"||b.result!=="pass"||b.applied.length!==0||a.applied.length===0)process.exit(1)'
       - name: Exercise reviewed economic graph canonicalization
         shell: bash
         run: |
@@ -246,6 +260,7 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-stage-recovery-hardening.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/outbox-event-authenticity-guard.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/sector-taxonomy.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-invitation-acceptance.sql
       - name: Exercise RLS tenant-isolation negatives as a non-owner role
         shell: bash
         run: |

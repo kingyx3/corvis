@@ -1,13 +1,14 @@
 import { AuthorizationError } from "@/core/enterprise";
 import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecycle";
 import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
-import { InvalidIdempotencyKeyError } from "@/lib/server/idempotency";
+import { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } from "@/lib/server/idempotency";
 import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { RateLimitError } from "@/lib/server/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
+import { TenantInvitationError } from "@/lib/server/tenant-invitations";
 import { UploadRequestError } from "@/lib/server/uploads";
 import { logEvent } from "@/lib/server/telemetry";
 import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
@@ -54,6 +55,14 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof InvalidIdempotencyKeyError) {
     logEvent("warn", "api.invalid_idempotency_key", { correlationId });
     return json({ error: error.code, correlationId }, { status: 400 });
+  }
+  if (error instanceof TenantInvitationError) {
+    logEvent("warn", "tenant_admin.request_denied", { correlationId }, { code: error.code });
+    return json({ error: error.code, correlationId }, { status: error.status });
+  }
+  if (error instanceof IdempotencyKeyReuseError) {
+    logEvent("warn", "api.idempotency_key_reused", { correlationId });
+    return json({ error: error.code, correlationId }, { status: 422 });
   }
   if (error instanceof LegalHoldError) {
     logEvent("warn", "deletion.blocked_by_legal_hold", { correlationId }, { holds: error.holds });

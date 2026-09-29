@@ -2,6 +2,8 @@
 -- inventing a global SLA. A deadline is nullable and is expected to be supplied
 -- by the tenant/customer workflow that owns the reporting commitment.
 
+begin;
+
 alter table corvis_consolidated.fund_period_snapshot
   add column if not exists review_deadline_at timestamptz;
 
@@ -137,3 +139,5 @@ join corvis_consolidated.fund_period_snapshot current_snapshot
 
 comment on column corvis_consolidated.fund_period_snapshot.review_deadline_at is
   'Optional tenant/workflow supplied review deadline. Null means no configured deadline; Corvis does not fabricate one.';
+
+commit;

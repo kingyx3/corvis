@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { WorkspaceMembershipSummary } from "@/core/enterprise";
 import type { WorkspaceIdentity } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
+import { safeRemoveItem } from "@/lib/safe-storage";
 import { WORKSPACE_CONTEXT_KEY } from "@/lib/workspace-context";
 
 type SwitcherMembership=WorkspaceMembershipSummary&{supportAccess?:{supportGrantId:string;roleName:string;purpose:string;expiresAt:string}};
@@ -44,6 +45,6 @@ export function WorkspaceSwitcher({ identity }: { identity: WorkspaceIdentity | 
       : <div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? "W")[0].toUpperCase()}</span><span><strong>{identity?.workspaceDisplayName ?? "Current workspace"}</strong><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div>}
     {current?.supportAccess&&<div className="lineage-note tone-warning" role="status" aria-label="Active Corvis support access"><strong>Corvis support session active</strong><span>{current.supportAccess.purpose} · expires {new Date(current.supportAccess.expiresAt).toLocaleString()}</span></div>}
     {identity?.tenantAdmin===true&&<a className="text-button" href="/access-self-service">Audit, bulk onboarding &amp; support access</a>}
-    {busy && <p role="status">Switching workspace…</p>}{error && <div><p role="alert">{error}</p>{!identity && <button className="secondary-button" onClick={() => { window.localStorage.removeItem(WORKSPACE_CONTEXT_KEY); window.location.reload(); }}>Reset workspace selection</button>}</div>}
+    {busy && <p role="status">Switching workspace…</p>}{error && <div><p role="alert">{error}</p>{!identity && <button className="secondary-button" onClick={() => { safeRemoveItem("local", WORKSPACE_CONTEXT_KEY); window.location.reload(); }}>Reset workspace selection</button>}</div>}
   </div>;
 }

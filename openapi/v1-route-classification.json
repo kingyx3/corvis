@@ -15,6 +15,10 @@
     { "pattern": "/portfolio-holdings", "visibility": "workspace_control", "reason": "Workspace portfolio-to-holding attribution/read surface; it never grants fund access or ownership-weights underlying operating facts." },
     { "pattern": "/jobs/{jobId}/retry", "visibility": "operator", "reason": "Tenant operator recovery command; requires tenant_admin scope." },
     { "pattern": "/jobs/{jobId}/recover", "visibility": "operator", "reason": "Tenant operator dead-letter recovery command; requires tenant_admin scope." },
+    { "pattern": "/document-lifecycle", "visibility": "workspace_control", "reason": "Document provenance/lifecycle read composed for the Corvis Documents view; not part of the stable integration contract." },
+    { "pattern": "/position-financials", "visibility": "workspace_control", "reason": "Position financial-statement analytics read composed for the Corvis Analytics view; versioned with the product rather than the stable integration contract." },
+    { "pattern": "/workspace-preferences", "visibility": "workspace_control", "reason": "Per-user workspace personalization (saved views, dashboard layout) for the Corvis product UI." },
+    { "pattern": "/scim/v2/**", "visibility": "identity_control", "reason": "SCIM 2.0 user provisioning for tenant identity providers; authenticated by a tenant SCIM bearer token and governed by the SCIM protocol, not the Corvis JSON envelope contract." },
     { "pattern": "/health", "visibility": "operator", "reason": "Runtime health endpoint, not a customer data contract." }
   ]
 }

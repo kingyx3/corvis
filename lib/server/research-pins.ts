@@ -15,6 +15,8 @@ export class ResearchPinError extends Error {
 
 const MAX_PINS = 50;
 const MAX_QUESTION_LENGTH = 2000;
+/** A pinned answer is the payload the caller already received; bound it so a client cannot store arbitrary blobs. */
+const MAX_ANSWER_JSON_LENGTH = 64 * 1024;
 
 function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 
@@ -63,7 +65,7 @@ export async function pinResearchAnswer(
 ): Promise<ResearchPin> {
   const question = input.question.trim();
   if (!question || question.length > MAX_QUESTION_LENGTH) throw new ResearchPinError("invalid_question");
-  if (!input.answer || typeof input.answer.answer !== "string") throw new ResearchPinError("invalid_answer");
+  if (!input.answer || typeof input.answer.answer !== "string" || JSON.stringify(input.answer).length > MAX_ANSWER_JSON_LENGTH) throw new ResearchPinError("invalid_answer");
   const askedAt = toIso(input.askedAt);
   if (unavailableInDemo(identity)) {
     return { pinId: crypto.randomUUID(), question, answer: input.answer, askedAt, pinnedAt: new Date().toISOString() };

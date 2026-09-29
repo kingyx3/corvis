@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { ActivityRecord, FundSnapshot, View } from "@/core/contracts";
-import type { AttentionItem, AttentionTarget, ExposureBreakdownRow, FundFreshness, WorkspaceSummary } from "@/core/workspace-summary";
+import { comparePeriods, type AttentionItem, type AttentionTarget, type ExposureBreakdownRow, type FundFreshness, type WorkspaceSummary } from "@/core/workspace-summary";
 import { CompositionChart } from "@/components/ui/charts/composition-chart";
 import { Sparkline } from "@/components/ui/charts/sparkline";
 import { TimeSeriesChart } from "@/components/ui/charts/time-series-chart";
@@ -43,6 +43,8 @@ function targetLabel(target: AttentionTarget): string {
 export function OverviewView({
   snapshots,
   summary,
+  summaryError,
+  onRetrySummary,
   activity,
   onNavigate,
   onUpload,
@@ -59,6 +61,9 @@ export function OverviewView({
 }: {
   snapshots: FundSnapshot[];
   summary: WorkspaceSummary | null;
+  /** Set when the workspace summary failed to load for a role that is entitled to it. */
+  summaryError?: string;
+  onRetrySummary?: () => void;
   activity: ActivityRecord[];
   onNavigate: (view: View) => void;
   onUpload: () => void;
@@ -83,7 +88,7 @@ export function OverviewView({
   const holdingsByFund = new Map<string, FundSnapshot>();
   for (const snapshot of snapshots) {
     const current = holdingsByFund.get(snapshot.fund);
-    if (!current || snapshot.period > current.period) holdingsByFund.set(snapshot.fund, snapshot);
+    if (!current || comparePeriods(snapshot.period, current.period) > 0) holdingsByFund.set(snapshot.fund, snapshot);
   }
   const holdingsItems = [...holdingsByFund.values()].map((snapshot) => ({ key: snapshot.fund, label: snapshot.fund, value: snapshot.holdings }));
   const audience = canAdmin ? "admin" : canReview ? "review" : "allocator";
@@ -95,7 +100,8 @@ export function OverviewView({
 
   const attention = summary?.attention;
   const attentionTotal = attention?.counts.total ?? review;
-  const attentionHeadline = attention
+  const attentionUnavailable = !attention && summaryError !== undefined;
+  const attentionHeadline = attentionUnavailable ? "Attention data unavailable" : attention
     ? attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item needs" : "items need"} attention` : "All caught up"
     : review ? `${review} ${review === 1 ? "reporting period needs" : "reporting periods need"} attention` : "All caught up";
   const formatMoney = moneyFormatter(summary?.currency ?? null);
@@ -119,12 +125,16 @@ export function OverviewView({
     attention.counts.unhealthy_source ? `${attention.counts.unhealthy_source} unhealthy ${attention.counts.unhealthy_source === 1 ? "source" : "sources"}` : null,
   ].filter(Boolean).join(" · ") : "";
 
-  const attentionSection = attention && <section className="panel attention-panel" id="needs-attention" tabIndex={-1} aria-labelledby="needs-attention-heading">
+  const attentionUnavailableSection = attentionUnavailable && <section className="panel attention-panel" id="needs-attention" tabIndex={-1} aria-labelledby="needs-attention-heading" role="alert">
+    <div className="panel-heading"><div><p className="eyebrow">Needs your attention</p><h2 id="needs-attention-heading">Attention data unavailable</h2></div></div>
+    <div className="empty-row"><strong>We couldn’t load what needs your attention ({summaryError}).</strong><span>Blocking exceptions, reviews, stuck documents and unhealthy sources may exist that are not shown here.</span>{onRetrySummary && <button type="button" className="secondary-button" onClick={onRetrySummary}>Retry</button>}</div>
+  </section>;
+  const attentionSection = attentionUnavailableSection || (attention && <section className="panel attention-panel" id="needs-attention" tabIndex={-1} aria-labelledby="needs-attention-heading">
     <div className="panel-heading"><div><p className="eyebrow">Needs your attention</p><h2 id="needs-attention-heading">{attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item" : "items"}, most urgent first` : "All caught up"}</h2></div></div>
     {attention.items.length ? <ol className="attention-list">{attention.items.map((item) => { const body = <><span className={`attention-icon severity-${item.severity}`} aria-hidden="true"><Icon name={ATTENTION_ICON[item.kind]} size={16} /></span><span className="snapshot-main"><strong>{item.title}</strong><span>{item.detail}</span></span><StatusPill status={SEVERITY_LABEL[item.severity]} /><span className="attention-action">{targetLabel(item.target)}{item.target.view !== "admin" && <Icon name="chevron" size={14} />}</span></>;
       return <li key={item.id}>{item.target.view === "admin" ? <div className="attention-row static">{body}</div> : <button type="button" className="attention-row" onClick={() => onOpenAttention(item.target)} aria-label={`${item.title}: ${item.detail} ${targetLabel(item.target)}`}>{body}</button>}</li>; })}</ol>
       : <div className="empty-row"><strong>All caught up</strong><span>No blocking exceptions, observations awaiting review, stuck documents{canAdmin ? " or unhealthy sources" : ""}.</span></div>}
-  </section>;
+  </section>);
 
   const exposureSection = exposure && <section className="two-column overview-charts">
     <div className="panel chart-panel"><TimeSeriesChart eyebrow="Portfolio value" title="Published portfolio value" description={`Every fund at its latest published value (NAV, else summed holding fair value)${summary?.currency ? ` in ${summary.currency}` : ""} as of each period; a fund that has not reported a period yet is carried forward and the point is marked derived. Periods still in review are excluded until published.`} name="Portfolio value" unit={summary?.currency ?? undefined} data={trend.map((point) => ({ period: point.period, label: point.carriedForwardFunds ? `${point.period} · ${point.fundCount - point.carriedForwardFunds}/${point.fundCount} reported` : point.period, value: point.value, status: point.carriedForwardFunds ? "derived" as const : "final" as const }))} valueFormatter={formatMoney} onSelectPoint={(point) => { const match = trend.find((row) => row.period === point.period); if (match?.snapshotIds[0]) onOpenSnapshotId(match.snapshotIds[0]); }} selectLabel="Open period" /></div>
@@ -160,7 +170,7 @@ export function OverviewView({
     <section className="metric-grid" aria-label={`Workspace metrics ordered for ${audience} workflow`}>
       <MetricCard label="Fund periods" value={snapshots.length} detail={<><b>{published}</b> final · <b>{review}</b> preliminary</>} icon={<Icon name="file"/>} order={reviewFirst ? 1 : 2} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
       <MetricCard label={exposure?.items.length ? "Published exposure" : "Trusted facts"} value={exposure?.items.length ? formatMoney(exposure.total) : factCount.toLocaleString()} detail={exposure?.items.length ? <>{asOfLabel} · <b>{exposure.items.length}</b> {exposure.items.length === 1 ? "fund" : "funds"}</> : canReadObservations ? <>Across <b>{holdingCount.toLocaleString()}</b> holdings</> : "Read-only summary"} icon={<Icon name="database"/>} order={reviewFirst ? 3 : 1} onClick={canReadObservations ? () => onNavigate("review") : undefined} trend={portfolioTrend.length > 1 ? <Sparkline label="Published portfolio value" points={portfolioTrend} valueFormatter={formatMoney}/> : undefined}/>
-      <MetricCard label="Needs attention" value={attentionTotal || "0"} detail={attention ? (attentionTotal ? attentionCounts : "All caught up") : review ? <><b>{blockingExceptions}</b> blocking exceptions</> : "All caught up"} icon={<Icon name="alert"/>} tone={attentionTotal || blockingExceptions ? "warning" : "default"} order={reviewFirst ? 0 : 3} ariaControls={attention ? "needs-attention" : undefined} onClick={attention ? focusAttention : canReadObservations ? () => onNavigate("review") : undefined}/>
+      <MetricCard label="Needs attention" value={attentionUnavailable ? "—" : attentionTotal || "0"} detail={attentionUnavailable ? "Attention data unavailable" : attention ? (attentionTotal ? attentionCounts : "All caught up") : review ? <><b>{blockingExceptions}</b> blocking exceptions</> : "All caught up"} icon={<Icon name="alert"/>} tone={attentionUnavailable || attentionTotal || blockingExceptions ? "warning" : "default"} order={reviewFirst ? 0 : 3} ariaControls={attention || attentionUnavailable ? "needs-attention" : undefined} onClick={attention || attentionUnavailable ? focusAttention : canReadObservations ? () => onNavigate("review") : undefined}/>
       <MetricCard label="Published snapshots" value={published} detail={<><b>{completion}%</b> of current workspace periods{summary ? <> · {asOfLabel}</> : null}</>} icon={<Icon name="check"/>} order={reviewFirst ? 2 : 4} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
     </section>
     {reviewFirst || audience === "admin" ? <>{attentionSection}{exposureSection}{breakdownSection}</> : <>{exposureSection}{breakdownSection}{attentionSection}</>}

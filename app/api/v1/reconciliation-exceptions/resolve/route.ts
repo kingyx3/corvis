@@ -56,7 +56,7 @@ export async function POST(request: Request) {
         }),
       });
       return { status: 202, body: outcome };
-    });
+    }, undefined, { ...command, idempotencyKey: undefined });
     return json({ data, correlationId: id }, { status });
   } catch (error) { return apiError(error, id); }
 }

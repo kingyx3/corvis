@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { safeGetItem, safeRemoveItem, safeSetItem } from "@/lib/safe-storage";
 
 type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry?: () => void };
 
@@ -9,7 +10,7 @@ export default function InvitationPage() {
   const [outcome, setOutcome] = useState<Outcome>({ status: "loading", message: "Checking your invitation…" });
 
   useEffect(() => {
-    const token = window.location.hash.slice(1) || window.sessionStorage.getItem("corvis:pending-invitation:v1") || "";
+    const token = window.location.hash.slice(1) || safeGetItem("session", "corvis:pending-invitation:v1") || "";
     const params = new URLSearchParams(window.location.search);
     const tenantId = params.get("tenantId") ?? "";
     const workspaceId = params.get("workspaceId") ?? "";
@@ -21,7 +22,7 @@ export default function InvitationPage() {
       queueMicrotask(() => setOutcome({ status: "error", message: "This invitation link is incomplete. Ask the organization administrator to issue a new one." }));
       return;
     }
-    window.sessionStorage.setItem("corvis:pending-invitation:v1", token);
+    safeSetItem("session", "corvis:pending-invitation:v1", token);
     let active = true;
     const accept = () => {
       setOutcome({ status: "loading", message: "Checking your invitation…" });
@@ -34,9 +35,10 @@ export default function InvitationPage() {
         const payload = await response.json().catch(() => ({})) as { error?: string; data?: { tenantId?: string; workspaceId?: string } };
         if (!response.ok) throw new Error(payload.error ?? `invitation_accept_failed_${response.status}`);
         if (payload.data?.tenantId && payload.data.workspaceId) {
-          window.localStorage.setItem("corvis:workspace-context:v1", JSON.stringify({ tenantId: payload.data.tenantId, workspaceId: payload.data.workspaceId }));
+          // Best effort: a blocked store must not turn an accepted invitation into a failure.
+          safeSetItem("local", "corvis:workspace-context:v1", JSON.stringify({ tenantId: payload.data.tenantId, workspaceId: payload.data.workspaceId }));
         }
-        window.sessionStorage.removeItem("corvis:pending-invitation:v1");
+        safeRemoveItem("session", "corvis:pending-invitation:v1");
         if (active) setOutcome({ status: "accepted", message: "Your invitation has been accepted. Your access is active." });
       }).catch((error: unknown) => {
         if (active) {
