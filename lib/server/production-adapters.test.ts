@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 // Node's native test runner does not resolve the application's @/* bundler aliases.
 // The production adapters themselves are covered by strict TypeScript, Next build and CodeQL.
 
-test("Snowflake statement rows preserve positional contract", () => {
+test("SQL statement rows preserve positional contract", () => {
   const columns = ["document_id", "size_bytes"];
   const values = ["doc-1", 42];
   const row = Object.fromEntries(columns.map((name, index) => [name, values[index]]));
