@@ -12,10 +12,8 @@ on:
 
 permissions:
   contents: read
-  checks: read
   id-token: write
   attestations: write
-  packages: write
 
 concurrency:
   group: build-release-${{ inputs.environment }}

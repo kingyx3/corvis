@@ -33,7 +33,7 @@ Terraform deploy                 Bootstrap GCP foundation
 
 ## Bootstrap owns Terraform state
 
-`Bootstrap GCP foundation` is the only workflow allowed to create the remote state bucket. It configures the bucket with uniform bucket-level access, public-access prevention, object versioning, soft delete disabled, and lifecycle cleanup for noncurrent state versions after 30 days or once more than 20 newer versions exist.
+`Bootstrap GCP foundation` is the only workflow allowed to create the remote state bucket. It configures the bucket with uniform bucket-level access, public-access prevention, object versioning, soft delete disabled, and lifecycle cleanup for noncurrent state versions after 30 days or once more than 100 newer versions exist (soft delete is off because versioning already makes a deleted state object recoverable).
 
 Normal `Terraform deploy` never recreates a missing backend. If state has been fully decommissioned, deployment fails closed and instructs the operator to run bootstrap first. This prevents an empty state file from accidentally treating existing resources as unmanaged.
 

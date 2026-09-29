@@ -125,14 +125,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="https://github.com/google/go-containerregistry/releases/download/${GCRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
-          curl --fail --location --silent --show-error "$url" -o go-containerregistry.tar.gz
-          curl --fail --location --silent --show-error "https://github.com/google/go-containerregistry/releases/download/${GCRANE_VERSION}/checksums.txt" -o checksums.txt
-          expected="$(awk '$2 == "go-containerregistry_Linux_x86_64.tar.gz" {print $1}' checksums.txt)"
-          [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || { echo "Unable to resolve pinned gcrane checksum."; exit 1; }
-          echo "${expected}  go-containerregistry.tar.gz" | sha256sum --check --strict
-          tar -xzf go-containerregistry.tar.gz gcrane
-          sudo install -m 0755 gcrane /usr/local/bin/gcrane
+          # Built from the pinned module version. The Go toolchain verifies the
+          # module against the public checksum database (sum.golang.org), a
+          # transparency log independent of the release assets, instead of
+          # trusting a checksums.txt served by the same release as the binary.
+          GOFLAGS=-mod=mod GOSUMDB=sum.golang.org GOPROXY=https://proxy.golang.org \
+            go install "github.com/google/go-containerregistry/cmd/gcrane@${GCRANE_VERSION}"
+          sudo install -m 0755 "$(go env GOPATH)/bin/gcrane" /usr/local/bin/gcrane
           gcrane version
 
       - name: Configure Artifact Registry authentication

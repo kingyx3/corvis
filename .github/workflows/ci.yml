@@ -65,6 +65,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  dockerfile-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: hadolint (pinned by digest)
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
+          for dockerfile in Dockerfile Dockerfile.control-loop; do
+            echo "Linting ${dockerfile}"
+            docker run --rm -i "${image}" hadolint --failure-threshold warning - < "${dockerfile}"
+          done
+
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 10

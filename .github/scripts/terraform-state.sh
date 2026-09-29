@@ -10,6 +10,14 @@ bucket="gs://${TF_STATE_BUCKET}"
 
 case "${action}" in
   ensure)
+    # The state holds secrets (for example the gateway API key), so deleted or
+    # overwritten state stays recoverable through object versioning: noncurrent
+    # versions are kept 30 days and up to 100 per object (20 could be pruned by
+    # one busy day of applies, #236). Soft delete stays off because versioning
+    # already turns a delete into a recoverable noncurrent version.
+    # Encryption is Google-managed: the environment's KMS key is itself managed
+    # by this Terraform state, so a state-bucket CMEK would have to be
+    # bootstrapped outside Terraform first.
     lifecycle_file="$(mktemp)"
     trap 'rm -f "${lifecycle_file}"' EXIT
     cat >"${lifecycle_file}" <<'JSON'
@@ -21,7 +29,7 @@ case "${action}" in
     },
     {
       "action": {"type": "Delete"},
-      "condition": {"isLive": false, "numNewerVersions": 20}
+      "condition": {"isLive": false, "numNewerVersions": 100}
     }
   ]
 }
