@@ -1,3 +1,4 @@
+import type { SchemaElement } from "hyparquet";
 import { parquetWriteBuffer } from "hyparquet-writer";
 
 export type ExportCell = string | number | boolean | null;
@@ -28,6 +29,68 @@ export const EXPORT_COLUMNS = [
   "updated_at",
 ] as const;
 
+/**
+ * Documented row cap. Exports are rendered fully in memory (a streaming rewrite
+ * is out of scope), so the cap bounds worst-case memory: XLSX text and the
+ * stored zip are held alongside the row objects. It is also far below XLSX's
+ * hard sheet limit of 1,048,576 rows (header included). Exceeding it raises a
+ * typed, non-retryable {@link ExportRowLimitError} instead of buffering without bound.
+ */
+export const EXPORT_MAX_ROWS = 200_000;
+
+export class ExportRowLimitError extends Error {
+  readonly code = "export_row_limit_exceeded";
+  /** Retrying can never help: the data set is what it is. */
+  readonly retryable = false;
+  readonly rowCount: number;
+  readonly maxRows: number;
+  constructor(rowCount: number, maxRows: number = EXPORT_MAX_ROWS) {
+    super(`Export has more than the maximum of ${maxRows} rows; narrow the export scope`);
+    this.name = "ExportRowLimitError";
+    this.rowCount = rowCount;
+    this.maxRows = maxRows;
+  }
+}
+
+export function assertExportRowLimit(rowCount: number, maxRows: number = EXPORT_MAX_ROWS): void {
+  if (rowCount > maxRows) throw new ExportRowLimitError(rowCount, maxRows);
+}
+
+/** numeric(38,10) columns arrive as decimal strings and are never routed through a JS double. */
+export const DECIMAL_SCALE = 10;
+export const DECIMAL_PRECISION = 38;
+const DECIMAL_STRING = /^-?\d+(?:\.\d+)?$/;
+
+export function isDecimalString(value: unknown): value is string {
+  return typeof value === "string" && DECIMAL_STRING.test(value);
+}
+
+/** Decimal digits that must survive a double round trip (IEEE 754 keeps 15). */
+function significantDigits(decimal: string): number {
+  const [whole = "", fraction = ""] = decimal.replace(/^-/, "").split(".");
+  const digits = `${whole}${fraction.replace(/0+$/, "")}`.replace(/^0+/, "");
+  return digits.length;
+}
+
+/** Unscaled integer for DECIMAL(38,10). Excess fractional digits are truncated, never rounded through a float. */
+export function decimalToUnscaled(value: ExportCell | undefined): bigint | null {
+  if (value == null || value === "") return null;
+  let decimal: string;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    decimal = value.toFixed(DECIMAL_SCALE);
+  } else if (isDecimalString(value)) {
+    decimal = value;
+  } else {
+    return null; // e.g. numeric NaN
+  }
+  const negative = decimal.startsWith("-");
+  const [whole = "0", fraction = ""] = decimal.replace(/^-/, "").split(".");
+  const unscaled = BigInt(`${whole}${fraction.slice(0, DECIMAL_SCALE).padEnd(DECIMAL_SCALE, "0")}`);
+  if (unscaled.toString().length > DECIMAL_PRECISION) return null;
+  return negative ? -unscaled : unscaled;
+}
+
 function text(value: ExportCell | undefined): string {
   if (value == null) return "";
   return String(value);
@@ -43,8 +106,9 @@ function neutralizeFormula(value: ExportCell | undefined, raw: string): string {
   return typeof value === "string" && /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
 }
 
-function csvCell(value: ExportCell | undefined): string {
-  const raw = neutralizeFormula(value, text(value));
+function csvCell(value: ExportCell | undefined, column?: string): string {
+  // A negative decimal string is a typed number, not a formula.
+  const raw = column === "value_number" && isDecimalString(value) ? value : neutralizeFormula(value, text(value));
   if (/[",\r\n]/.test(raw)) return `"${raw.replaceAll('"', '""')}"`;
   return raw;
 }
@@ -52,7 +116,7 @@ function csvCell(value: ExportCell | undefined): string {
 export function renderCsv(rows: readonly ExportRow[]): Buffer {
   const lines = [
     EXPORT_COLUMNS.join(","),
-    ...rows.map((row) => EXPORT_COLUMNS.map((column) => csvCell(row[column])).join(",")),
+    ...rows.map((row) => EXPORT_COLUMNS.map((column) => csvCell(row[column], column)).join(",")),
   ];
   return Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8");
 }
@@ -82,8 +146,11 @@ function excelColumn(index: number): string {
 }
 
 function worksheetXml(rows: readonly ExportRow[]): string {
-  const renderCell = (value: ExportCell | undefined, reference: string) => {
+  const renderCell = (value: ExportCell | undefined, reference: string, column?: string) => {
     if (value == null) return `<c r="${reference}" t="inlineStr"><is><t></t></is></c>`;
+    // Decimal strings become numeric cells only when a double holds them exactly; otherwise the
+    // exact text is kept so no precision is silently lost.
+    if (column === "value_number" && isDecimalString(value) && significantDigits(value) <= 15) return `<c r="${reference}"><v>${value}</v></c>`;
     if (typeof value === "number" && Number.isFinite(value)) return `<c r="${reference}"><v>${value}</v></c>`;
     if (typeof value === "boolean") return `<c r="${reference}" t="b"><v>${value ? 1 : 0}</v></c>`;
     return `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(String(value))}</t></is></c>`;
@@ -92,7 +159,7 @@ function worksheetXml(rows: readonly ExportRow[]): string {
   const header = `<row r="1">${EXPORT_COLUMNS.map((column, index) => renderCell(column, `${excelColumn(index)}1`)).join("")}</row>`;
   const body = rows.map((row, rowIndex) => {
     const number = rowIndex + 2;
-    return `<row r="${number}">${EXPORT_COLUMNS.map((column, index) => renderCell(row[column], `${excelColumn(index)}${number}`)).join("")}</row>`;
+    return `<row r="${number}">${EXPORT_COLUMNS.map((column, index) => renderCell(row[column], `${excelColumn(index)}${number}`, column)).join("")}</row>`;
   }).join("");
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
@@ -207,25 +274,27 @@ export function renderXlsx(rows: readonly ExportRow[]): Buffer {
 }
 
 export function renderParquet(rows: readonly ExportRow[]): Buffer {
+  // value_number is numeric(38,10): write it as an exact Parquet DECIMAL(38,10)
+  // (16-byte fixed-length, unscaled bigint), never as a lossy DOUBLE.
+  const schema: SchemaElement[] = [{ name: "root", num_children: EXPORT_COLUMNS.length }];
   const columnData = EXPORT_COLUMNS.map((name) => {
-    if (name === "value_number" || name === "version") {
-      return {
-        name,
-        data: rows.map((row) => row[name] == null || row[name] === "" ? null : Number(row[name])),
-        type: "DOUBLE" as const,
-      };
+    if (name === "value_number") {
+      schema.push({ name, type: "FIXED_LEN_BYTE_ARRAY", type_length: 16, converted_type: "DECIMAL", scale: DECIMAL_SCALE, precision: DECIMAL_PRECISION, repetition_type: "OPTIONAL" });
+      return { name, data: rows.map((row) => decimalToUnscaled(row[name])) };
     }
-    return {
-      name,
-      data: rows.map((row) => row[name] == null ? null : String(row[name])),
-      type: "STRING" as const,
-    };
+    if (name === "version") {
+      schema.push({ name, type: "DOUBLE", repetition_type: "OPTIONAL" });
+      return { name, data: rows.map((row) => row[name] == null || row[name] === "" ? null : Number(row[name])) };
+    }
+    schema.push({ name, type: "BYTE_ARRAY", converted_type: "UTF8", repetition_type: "OPTIONAL" });
+    return { name, data: rows.map((row) => row[name] == null ? null : String(row[name])) };
   });
-  const arrayBuffer = parquetWriteBuffer({ columnData });
+  const arrayBuffer = parquetWriteBuffer({ columnData, schema });
   return Buffer.from(arrayBuffer);
 }
 
 export function renderExport(format: "csv" | "xlsx" | "parquet", rows: readonly ExportRow[]): RenderedExport {
+  assertExportRowLimit(rows.length);
   if (format === "csv") return { bytes: renderCsv(rows), contentType: "text/csv; charset=utf-8", extension: "csv" };
   if (format === "xlsx") return {
     bytes: renderXlsx(rows),

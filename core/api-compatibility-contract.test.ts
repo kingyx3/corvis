@@ -44,6 +44,27 @@ test("published API v1 paths and methods are append-only", async () => {
   }
 });
 
+test("every published OpenAPI v1 operation is recorded in the compatibility baseline", async () => {
+  // The previous test protects baseline -> spec. This one protects spec -> baseline, so an
+  // operation added to the spec (or a path that never made it into the baseline, as ten
+  // published paths once did) cannot later be removed without failing the append-only check.
+  const baseline = JSON.parse(await readFile("openapi/v1-compatibility-baseline.json", "utf8")) as Baseline;
+  const operations = operationsFromOpenApi(await readFile("openapi/corvis-v1.yaml", "utf8"));
+
+  for (const [path, methods] of operations) {
+    const recorded = baseline.publishedOperations[path];
+    assert.ok(recorded, `published path ${path} is missing from openapi/v1-compatibility-baseline.json`);
+    for (const method of methods) {
+      assert.ok(recorded.includes(method), `published operation ${method.toUpperCase()} ${path} is missing from openapi/v1-compatibility-baseline.json`);
+    }
+  }
+  assert.deepEqual(
+    Object.keys(baseline.publishedOperations).sort(),
+    [...operations.keys()].sort(),
+    "baseline paths and spec paths must be identical",
+  );
+});
+
 test("stable API conventions remain represented by the v1 contract", async () => {
   const baseline = JSON.parse(await readFile("openapi/v1-compatibility-baseline.json", "utf8")) as Baseline;
   const openapi = await readFile("openapi/corvis-v1.yaml", "utf8");

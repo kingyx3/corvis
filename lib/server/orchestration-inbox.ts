@@ -1,4 +1,5 @@
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { redactErrorText } from "./processing-error-text.ts";
 
 export type EventDeliveryEnvelope = {
   tenantId: string;
@@ -77,7 +78,7 @@ export class PostgresEventInboxRepository {
 
   async fail(tenantId: string, consumerName: string, eventId: string, leaseToken: string, error: string): Promise<"retryable" | "failed" | undefined> {
     const rows = await this.db.query(`select corvis_control.fail_event_delivery(
-      $1::uuid,$2,$3::uuid,$4::uuid,$5) as next_state`, [tenantId, consumerName, eventId, leaseToken, error.slice(0, 2000)]);
+      $1::uuid,$2,$3::uuid,$4::uuid,$5) as next_state`, [tenantId, consumerName, eventId, leaseToken, redactErrorText(error, 2000)]);
     const next = rows[0]?.next_state;
     return next === "retryable" || next === "failed" ? next : undefined;
   }

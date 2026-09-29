@@ -36,7 +36,7 @@ class FakeDb implements PostgresSqlApi {
       return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", report_period: "2026 Q2", blocking_exception_count: this.snapshotBlockers,
         ...(this.snapshotStatus ? { status: this.snapshotStatus } : {}) }];
     }
-    if (sql.includes("count(*) filter (where review_state<>'approved')")) {
+    if (sql.includes("with snapshot_observation as") && sql.includes("needs_review_count")) {
       return [{ needs_review_count: 0, critical_count: 0, lineage_count: 1, total_count: 1 }];
     }
     if (sql.includes("independently_reviewed")) return [{ independently_reviewed: 0 }];
@@ -257,11 +257,18 @@ test("publication preflight reads governed blockers and post-correction independ
   const result = await new PostgresProductionPlatform(db).publish(identity, { snapshotId, action: "publish", expectedVersion: 1 });
   assert.equal(result.accepted, true);
   assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.fund_period_snapshots/);
-  assert.match(db.calls[1]?.sql ?? "", /review_state<>'approved'/);
+  // Counts are scoped to the snapshot version's own source observations and ignore terminal states.
+  const counts = db.calls[1]!;
+  assert.match(counts.sql, /from corvis_consolidated\.fund_period_snapshot s[\s\S]*s\.snapshot_id=\$2::uuid and s\.version=\$3/);
+  assert.match(counts.sql, /review_state not in \('approved','rejected','superseded'\)/);
+  assert.doesNotMatch(counts.sql, /o\.fund_id|fund_id=\$2/, "must not count the whole fund");
+  assert.deepEqual(counts.parameters, [identity.tenantId, snapshotId, 1]);
   const independentReview = db.calls.find((call) => call.sql.includes("independently_reviewed"));
   assert.ok(independentReview);
   assert.match(independentReview.sql, /r\.observation_version > coalesce/);
   assert.match(independentReview.sql, /c\.decision='correct'/);
+  assert.match(independentReview.sql, /s\.snapshot_id=\$2::uuid and s\.version=\$3/, "independent-review evidence is snapshot-scoped too");
+  assert.deepEqual(independentReview.parameters, [identity.tenantId, snapshotId, 1]);
   assert.match(db.calls.at(-1)?.sql ?? "", /append_snapshot_transition/);
 });
 

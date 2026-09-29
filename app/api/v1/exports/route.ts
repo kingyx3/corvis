@@ -6,22 +6,19 @@ import { withIdempotency } from "@/lib/server/idempotency";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { createPhysicalExport } from "@/lib/server/physical-exports";
 import { listPhysicalExportStatuses } from "@/lib/server/export-history";
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
+import { isNonEmptyString } from "@/lib/server/request-validation";
 
 function exportScope(value: unknown): ExportScope | undefined | null {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (nonEmptyString(candidate.snapshotId)) return { snapshotId: candidate.snapshotId };
+  if (isNonEmptyString(candidate.snapshotId)) return { snapshotId: candidate.snapshotId };
   const raw = candidate.positionFinancials;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const position = raw as Record<string, unknown>;
-  if (!nonEmptyString(position.fundId) || !nonEmptyString(position.holdingId) || !nonEmptyString(position.companyId)) return null;
+  if (!isNonEmptyString(position.fundId) || !isNonEmptyString(position.holdingId) || !isNonEmptyString(position.companyId)) return null;
   if (position.periodicity !== "reported" && position.periodicity !== "quarterly" && position.periodicity !== "annual") return null;
-  if (position.portfolioId !== undefined && !nonEmptyString(position.portfolioId)) return null;
+  if (position.portfolioId !== undefined && !isNonEmptyString(position.portfolioId)) return null;
   return {
     positionFinancials: {
       fundId: position.fundId,

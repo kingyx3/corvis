@@ -135,6 +135,18 @@ jobs:
           exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Full history so the release commit can be compared with HEAD.
+          fetch-depth: 0
+
+      # Migrations and Terraform run from this checkout while the image comes
+      # from release_sha, so db/ and infra/ must be identical between the two.
+      - name: Assert release matches deployment checkout
+        if: inputs.action == 'apply' && inputs.release_sha != ''
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: bash .github/scripts/assert-release-matches-head.sh "${RELEASE_SHA}"
 
       - name: Verify effective release governance
         if: inputs.action == 'apply'
@@ -258,6 +270,15 @@ jobs:
             fi
           fi
 
+      # A known-good rollback is an incident response: it must never be blocked by
+      # missing alert channels, so the guard covers fresh releases only.
+      - name: Require prod alerting channels
+        if: inputs.action == 'apply' && inputs.environment == 'prod' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
+        shell: bash
+        env:
+          CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+        run: bash .github/scripts/assert-prod-alerting.sh
+
       - name: Terraform init
         shell: bash
         run: |
@@ -272,10 +293,29 @@ jobs:
         run: terraform -chdir="${TF_ROOT}" validate
 
       - name: Terraform plan
-        run: terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
+          # Render the exact plan that apply will consume into the job summary,
+          # capped well below the 1 MiB step-summary limit.
+          terraform -chdir="${TF_ROOT}" show -no-color tfplan > "${RUNNER_TEMP}/tfplan.txt"
+          {
+            echo "### Terraform plan (${{ inputs.environment }}, ${{ inputs.action }})"
+            echo '```text'
+            head -c 60000 "${RUNNER_TEMP}/tfplan.txt"
+            echo
+            echo '```'
+            if [[ "$(wc -c < "${RUNNER_TEMP}/tfplan.txt")" -gt 60000 ]]; then
+              echo "_Plan output truncated to 60000 bytes; see the step log for the full plan._"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       # The dev root is foundation-only (no Cloud Run runtime, no Postgres DSN
       # secret), so runtime secret checks and migrations apply to uat/prod only.
+      # Migrations are forward-only: a known-good rollback redeploys an older
+      # image and must never migrate the database from the current checkout.
+      # They still run before apply for a fresh release_sha (the new image needs them).
       - name: Require enabled Postgres runtime secret
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         shell: bash
@@ -294,17 +334,17 @@ jobs:
           echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
         with:
           node-version: 24
           cache: npm
 
       - name: Install migration runtime
-        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
         run: npm ci --ignore-scripts --prefer-offline --no-audit
 
       - name: Apply versioned Postgres migrations
-        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
         shell: bash
         run: |
           set -euo pipefail
@@ -317,7 +357,7 @@ jobs:
           unset dsn
 
       - name: Upload migration evidence
-        if: always() && inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
+        if: always() && inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}

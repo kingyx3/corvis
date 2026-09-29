@@ -128,14 +128,17 @@ export async function workspaceSummary(identity: RequestIdentity, dependencies: 
   const sourcePromise = (dependencies.sourceHealth ?? workspaceSourceHealth)(identity);
   const personalizationPromise = (dependencies.personalization ?? getWorkspacePersonalization)(identity);
 
-  const [snapshots, observations, documents, valueFacts, dimensionFacts, sourceHealth, personalization] = await Promise.all([
+  const canReadDocuments = hasPermission(identity, "documents:read");
+  const [snapshots, observations, documents, valueFacts, dimensionFacts, sourceHealth, personalization, attentionAggregates] = await Promise.all([
     port.listSnapshots(identity),
     port.listObservations(identity),
-    hasPermission(identity, "documents:read") ? port.listDocuments(identity) : Promise.resolve([]),
+    canReadDocuments ? port.listDocuments(identity) : Promise.resolve([]),
     port.portfolioValueFacts(identity),
     port.exposureDimensionFacts(identity),
     sourcePromise,
     personalizationPromise,
+    // Exact counts: the unpaged lists above are capped and newest-first, so they lose the oldest (stuck) work.
+    port.attentionAggregates ? port.attentionAggregates(identity, { includeDocuments: canReadDocuments }) : Promise.resolve(undefined),
   ]);
 
   const attentionSources: SourceHealthInput[] = sourceHealth.map((source) => ({
@@ -145,7 +148,7 @@ export async function workspaceSummary(identity: RequestIdentity, dependencies: 
     consecutiveFailures: source.consecutiveFailures,
     lastSuccessAt: source.lastSuccessAt ?? undefined,
   }));
-  const base = buildWorkspaceSummary({ snapshots, observations, documents, valueFacts, dimensionFacts, sources: attentionSources, now });
+  const base = buildWorkspaceSummary({ snapshots, observations, documents, valueFacts, dimensionFacts, sources: attentionSources, attentionAggregates, now });
   const fundTrends = buildFundTrends(valueFacts, base.currency);
   const trendContributors = buildTrendContributors(fundTrends, base.valueTrend.map((point) => point.period));
   const exceptionEvents = await (dependencies.exceptionEvents ?? workspaceExceptionEvents)(identity, personalization.lastSeenAt);

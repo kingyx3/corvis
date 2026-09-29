@@ -102,6 +102,13 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
+    // The HTTPS SQL transport has no single connection to hold a transaction
+    // on, so `withTransaction` would silently run non-atomically there and a
+    // mutation could commit without its required audit row (or an export job
+    // without its outbox event). Production must use the native wire protocol.
+    if (!/^postgres(?:ql)?:\/\//i.test(config.postgresDsn ?? "")) {
+      throw new Error("CORVIS_POSTGRES_DSN must be a native postgres:// or postgresql:// URL in production (the HTTPS transport cannot provide transactions)");
+    }
   }
   return config;
 }

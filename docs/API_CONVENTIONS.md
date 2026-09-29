@@ -20,8 +20,11 @@ The stable error codes today include `authentication_required` (401),
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
 `FeatureFlagGovernanceError`/`DeletionExecutionError`/`WebhookSubscriptionError`
 code, etc.), `invalid_cursor` (400), `invalid_json` (400, malformed request
-body), `invalid_idempotency_key` (400), the research-specific timeout/cancel/provider
-codes, and `internal_error` (500) as the fallback. Adding a new typed error class
+body), `invalid_idempotency_key` (400), `idempotency_key_reused` (422), `rate_limited`
+(429 with `Retry-After`), the research-specific timeout/cancel/provider
+codes, and `internal_error` (500) as the fallback. `openapi/corvis-v1.yaml`
+declares 401, 403, 429 and 500 once as shared components and references them from
+every operation, and documents every 4xx body as the `ErrorResponse` schema. Adding a new typed error class
 means adding one `instanceof` branch to `apiError()`, not reinventing the
 envelope in the route.
 
@@ -209,7 +212,13 @@ routes such as `/api/v1/source-connections/**` remain available to
 `/api/v1` is the published version today. `openapi/v1-compatibility-baseline.json`
 is an append-only CI baseline for already-published v1 paths/methods and stable
 contract conventions: additive operations are allowed, but a baseline operation
-cannot silently disappear from `openapi/corvis-v1.yaml`.
+cannot silently disappear from `openapi/corvis-v1.yaml`. The check also runs the
+other way: every operation in the spec must be recorded in the baseline, so a new
+published path is protected from the day it is added.
+`lib/server/openapi-response-schemas.test.ts` holds real route responses to the
+schemas in the spec (using the dependency-free validator in
+`lib/server/test-support/openapi-support.ts`), so documented shapes cannot drift
+from what the handlers return.
 
 Breaking changes use a new version prefix rather than changing v1 in place.
 The governed migration/notice/sunset process, including the rule that security

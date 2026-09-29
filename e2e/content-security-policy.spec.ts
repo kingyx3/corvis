@@ -67,3 +67,14 @@ test("every request receives its own fresh nonce", async ({ page }) => {
   expect(secondNonce).toBeTruthy();
   expect(firstNonce).not.toEqual(secondNonce);
 });
+
+test("connect-src is an allowlist (self + the GCS upload host), not a blanket https:", async ({ page }) => {
+  const { csp } = await loadWithCspCapture(page, "/");
+  const connectSrc = csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("connect-src"));
+  expect(connectSrc, `no connect-src directive in: ${csp}`).toBeTruthy();
+  const sources = connectSrc!.split(/\s+/).slice(1);
+  expect(sources).toContain("'self'");
+  expect(sources).toContain("https://storage.googleapis.com");
+  expect(sources).not.toContain("https:");
+  expect(sources).not.toContain("*");
+});

@@ -17,6 +17,11 @@ type GcsOptions = {
   accessToken?: string;
 };
 
+export type JsonWithGeneration<T> = { value: T; generation: string };
+/** `ok:false` is an `ifGenerationMatch` precondition failure (HTTP 412): someone else wrote first. */
+export type ConditionalPutResult = { ok: true; generation: string } | { ok: false };
+export type ObjectPage = { names: string[]; nextPageToken?: string };
+
 /**
  * Control-plane surface the upload lifecycle depends on. Keeping it structural
  * lets the ingestion failure paths be exercised against an in-memory store
@@ -40,6 +45,20 @@ export interface UploadObjectStore {
   getObjectSha256(key: string, generation?: string): Promise<string>;
   deleteObject(key: string): Promise<void>;
   listObjects(prefix: string, limit?: number): Promise<string[]>;
+  /**
+   * Optional optimistic-concurrency surface. GcsControlClient implements it; a store
+   * without it (the in-memory fakes) falls back to unconditional writes.
+   * Reads a JSON object together with its GCS generation.
+   */
+  getJsonWithGeneration?<T>(key: string): Promise<JsonWithGeneration<T> | null>;
+  /**
+   * Writes JSON only if the object's generation still equals `generation`
+   * (`"0"`: only if the object does not exist yet). Resolves `{ok:false}` on a
+   * lost race instead of throwing.
+   */
+  putJsonIfGenerationMatch?(key: string, value: unknown, generation: string): Promise<ConditionalPutResult>;
+  /** One page of a prefix listing, resumable with `nextPageToken`. */
+  listObjectPage?(prefix: string, options: { limit: number; pageToken?: string }): Promise<ObjectPage>;
 }
 
 const CANCEL_TIMEOUT_MS = 10_000;
@@ -158,6 +177,50 @@ export class GcsControlClient implements UploadObjectStore {
 
   async putJson(key: string, value: unknown): Promise<void> {
     await this.putObject(key, Buffer.from(JSON.stringify(value)), "application/json");
+  }
+
+  async putJsonIfGenerationMatch(key: string, value: unknown, generation: string): Promise<ConditionalPutResult> {
+    if (!/^\d+$/.test(generation)) throw new Error("GCS ifGenerationMatch requires a numeric generation");
+    const url = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+    url.searchParams.set("uploadType", "media");
+    url.searchParams.set("name", key);
+    url.searchParams.set("ifGenerationMatch", generation);
+    url.searchParams.set("fields", "generation");
+    const body = Buffer.from(JSON.stringify(value));
+    const response = await this.authorizedFetch(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(body.byteLength) },
+      body: Uint8Array.from(body).buffer,
+    });
+    if (response.status === 412) return { ok: false };
+    if (!response.ok) throw new Error(`GCS conditional write failed (${response.status})`);
+    const written = await response.json() as { generation?: string };
+    if (!written.generation) throw new Error("GCS conditional write returned no generation");
+    return { ok: true, generation: written.generation };
+  }
+
+  async getJsonWithGeneration<T>(key: string): Promise<JsonWithGeneration<T> | null> {
+    const response = await this.authorizedFetch(this.mediaUrl(key));
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GCS metadata read failed (${response.status})`);
+    // The generation of the bytes actually returned travels with the response, so a concurrent
+    // overwrite between a separate metadata call and this read cannot be missed.
+    const generation = response.headers.get("x-goog-generation");
+    if (!generation) throw new Error("GCS metadata read returned no generation");
+    return { value: await response.json() as T, generation };
+  }
+
+  async listObjectPage(prefix: string, options: { limit: number; pageToken?: string }): Promise<ObjectPage> {
+    const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+    url.searchParams.set("prefix", prefix);
+    url.searchParams.set("fields", "items/name,nextPageToken");
+    url.searchParams.set("maxResults", String(Math.min(1000, Math.max(1, options.limit))));
+    if (options.pageToken) url.searchParams.set("pageToken", options.pageToken);
+    const response = await this.authorizedFetch(url.toString());
+    if (!response.ok) throw new Error(`GCS object listing failed (${response.status})`);
+    const body = await response.json() as { items?: { name?: string }[]; nextPageToken?: string };
+    const names = (body.items ?? []).flatMap((item) => item.name ? [item.name] : []);
+    return { names, ...(body.nextPageToken ? { nextPageToken: body.nextPageToken } : {}) };
   }
 
   async putObject(

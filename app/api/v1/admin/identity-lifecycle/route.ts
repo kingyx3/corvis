@@ -4,12 +4,13 @@ import { getServerConfig } from "@/lib/server/config";
 import { readJsonObject } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import {
-  identityLifecycleRepository,
+  guardIdentityLifecycleCommand,
+  PostgresIdentityLifecycleRepository,
   type HumanAuthMethod,
   type IdentityLifecycleMembership,
   type IdentityLifecycleRole,
 } from "@/lib/server/identity-lifecycle";
-import { postgres } from "@/lib/server/postgres";
+import { postgres, withTransaction } from "@/lib/server/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLES = new Set<IdentityLifecycleRole>(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
       return json({ data: rows[0]?.result ?? null, correlationId: id }, { status: 200 });
     }
 
-    const data = await identityLifecycleRepository().apply({
+    const command = {
       tenantId: identity.tenantId,
       eventKey,
       actorSubject: identity.subject,
@@ -100,6 +101,12 @@ export async function POST(request: Request) {
       userId,
       memberships: desiredMemberships,
       reason,
+    };
+    // Guard and apply share one transaction so the last-admin check cannot race.
+    const db = postgres(getServerConfig().postgresDsn);
+    const data = await withTransaction(db, async (tx) => {
+      await guardIdentityLifecycleCommand(identity, command, tx);
+      return new PostgresIdentityLifecycleRepository(tx).apply(command);
     });
 
     return json({ data, correlationId: id }, { status: 200 });

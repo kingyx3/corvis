@@ -268,3 +268,69 @@ test("the lifecycle adapter call is bounded by a timeout signal", async () => {
     else process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = previous;
   }
 });
+
+async function withAdapter<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+  process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = "https://lifecycle.example.test";
+  try { return await run(); } finally {
+    if (previous === undefined) delete process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT;
+    else process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = previous;
+  }
+}
+
+test("an executing request whose lease expired is reclaimed, keeps the ledger gap-free and reuses the stable idempotency key", async () => {
+  await withAdapter(async () => {
+    const db = new FakeDb(baseRequest({ state: "executing", execution_attempts: 1, lease_expired: true, requested_by: "oidc|requester" }));
+    let idempotencyKey: string | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      idempotencyKey = (init?.headers as Record<string, string>)["idempotency-key"];
+      return new Response(JSON.stringify({ evidence: { rowsDeleted: 2 } }), { status: 200 });
+    }) as typeof fetch;
+    const result = await executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl });
+    assert.equal(result.attempt, 2);
+    assert.equal(idempotencyKey, `${TENANT}:${REQUEST_ID}`);
+    assert.deepEqual(db.evidenceRows.map((row) => [row.attempt, row.outcome]), [[1, "failed"], [2, "completed"]]);
+    const claim = db.calls.find((call) => call.sql.includes("state='executing'") && call.sql.includes("make_interval"))!;
+    assert.match(claim.sql, /\(state<>'executing' or coalesce\(execution_lease_expires_at/);
+  });
+});
+
+test("an executing request with a live lease is not claimable", async () => {
+  await withAdapter(async () => {
+    const db = new FakeDb(baseRequest({ state: "executing", execution_attempts: 1, lease_expired: false, requested_by: "oidc|requester" }));
+    await assert.rejects(
+      () => executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: async () => { throw new Error("must not call the adapter"); } }),
+      (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_request_not_executable",
+    );
+    assert.equal(db.evidenceRows.length, 0);
+  });
+});
+
+test("reclaiming keeps four-eyes and legal-hold behaviour", async () => {
+  await withAdapter(async () => {
+    const own = new FakeDb(baseRequest({ state: "executing", execution_attempts: 1, lease_expired: true, requested_by: "oidc|admin-1" }));
+    await assert.rejects(
+      () => executeDeletionRequest(identity(), REQUEST_ID, { db: own, fetchImpl: async () => { throw new Error("no"); } }),
+      (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_requires_independent_approver",
+    );
+    const held = new FakeDb(baseRequest({ state: "executing", execution_attempts: 1, lease_expired: true, requested_by: "oidc|requester" }));
+    held.legalHolds = [{ source: "legal_hold", data_class: "financials", reference: "matter-1" }];
+    await assert.rejects(
+      () => executeDeletionRequest(identity(), REQUEST_ID, { db: held, fetchImpl: async () => { throw new Error("no"); } }),
+      (error: unknown) => error instanceof LegalHoldError,
+    );
+  });
+});
+
+test("persisted last_error is redacted and bounded", async () => {
+  await withAdapter(async () => {
+    const db = new FakeDb(baseRequest());
+    await assert.rejects(() => executeDeletionRequest(identity(), REQUEST_ID, {
+      db, fetchImpl: (async () => { throw new Error("adapter down Bearer ya29.abcdefghijklmnop https://a.example/x?sig=zzz"); }) as typeof fetch,
+    }));
+    const failUpdate = db.calls.find((call) => call.sql.includes("state='retryable'"))!;
+    const stored = String(failUpdate.parameters[0]);
+    assert.equal(/ya29|zzz/.test(stored), false);
+    assert.match(stored, /^Error: adapter down/);
+  });
+});

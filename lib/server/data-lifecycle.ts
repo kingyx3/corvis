@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { safeErrorText } from "./processing-error-text.ts";
 
 /**
  * Retention and deletion execution.
@@ -15,6 +16,17 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
  */
 
 export const EXECUTABLE_DELETION_STATES: readonly string[] = ["requested", "approved", "retryable", "blocked"];
+
+/**
+ * How long an `executing` claim is honoured. A worker that crashes after the
+ * compare-and-swap (or whose failure bookkeeping itself fails) leaves the
+ * request in `executing`; once this lease has passed, the next authorized
+ * execute call reclaims it. The adapter call is idempotent on the stable
+ * `idempotency-key` header (tenant:request), so a reclaimed attempt that
+ * repeats an already-performed deletion is a no-op at the adapter. Well above
+ * DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS so a live attempt is never reclaimed.
+ */
+export const DELETION_EXECUTION_LEASE_MINUTES = 10;
 
 /** Upper bound on a single lifecycle-adapter call so a hung adapter cannot pin the request open. */
 export const DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS = 30_000;
@@ -185,7 +197,8 @@ export async function executeDeletionRequest(
   // A malformed id can never name a request; reject it before the ::uuid cast turns it into a 500.
   if (!UUID.test(requestId)) throw new DeletionExecutionError("deletion_request_not_found");
 
-  const rows = await db.query(`select scope, state, execution_attempts, completion_evidence, evidence_hash, requested_by
+  const rows = await db.query(`select scope, state, execution_attempts, completion_evidence, evidence_hash, requested_by,
+      (state='executing' and coalesce(execution_lease_expires_at,'-infinity'::timestamptz) < now()) as lease_expired
     from corvis_control.deletion_request
     where tenant_id=$1 and deletion_request_id=$2::uuid limit 1`, [identity.tenantId, requestId]);
   const request = rows[0];
@@ -207,7 +220,9 @@ export async function executeDeletionRequest(
       evidenceHash: retained?.evidenceHash || text(request, "evidence_hash") || evidenceHash(identity.tenantId, requestId, num(request, "execution_attempts"), evidence),
     };
   }
-  if (!EXECUTABLE_DELETION_STATES.includes(state)) throw new DeletionExecutionError("deletion_request_not_executable");
+  // An `executing` request is only claimable once its lease has expired (abandoned attempt).
+  const reclaiming = state === "executing" && (request.lease_expired === true || request.lease_expired === "true");
+  if (!EXECUTABLE_DELETION_STATES.includes(state) && !reclaiming) throw new DeletionExecutionError("deletion_request_not_executable");
   // Separation of duties: executing records the executor as approver, so the
   // requester can never approve and run their own irreversible deletion.
   if (text(request, "requested_by") === identity.subject) throw new DeletionExecutionError("deletion_requires_independent_approver");
@@ -223,12 +238,20 @@ export async function executeDeletionRequest(
       approved_by=coalesce(approved_by,$1),
       approved_at=coalesce(approved_at,now()),
       execution_attempts=$4,
+      execution_lease_expires_at=now()+make_interval(mins => $7),
       blocked_reason=null,
       last_error=null
     where tenant_id=$2 and deletion_request_id=$3::uuid and state=$5 and execution_attempts=$6
+      and (state<>'executing' or coalesce(execution_lease_expires_at,'-infinity'::timestamptz) < now())
     returning deletion_request_id`,
-  [identity.subject, identity.tenantId, requestId, attempt, state, previousAttempts]);
+  [identity.subject, identity.tenantId, requestId, attempt, state, previousAttempts, DELETION_EXECUTION_LEASE_MINUTES]);
   if (claimed.length === 0) throw new DeletionExecutionError("deletion_request_not_executable");
+  if (reclaiming) {
+    // Keep the ledger gap-free: the abandoned attempt never wrote its own evidence row.
+    await recordEvidence(db, identity, requestId, previousAttempts, "failed", {
+      outcome: "failed", error: "execution lease expired before completion; attempt reclaimed", attempt: previousAttempts, reclaimedBy: identity.subject,
+    });
+  }
 
   const coveredDataClasses = new Set(await retentionCoverage(db, identity.tenantId, scope.dataClasses));
   const uncovered = scope.dataClasses.filter((dataClass) => !coveredDataClasses.has(dataClass));
@@ -269,13 +292,13 @@ export async function executeDeletionRequest(
     const hash = await recordEvidence(db, identity, requestId, attempt, "completed", evidence);
     await db.execute(`update corvis_control.deletion_request set
         state='completed', completed_at=now(), completion_evidence=$1::jsonb,
-        evidence_hash=$4, evidence_recorded_at=now(), blocked_reason=null, last_error=null
+        evidence_hash=$4, evidence_recorded_at=now(), blocked_reason=null, last_error=null,
+        execution_lease_expires_at=null
       where tenant_id=$2 and deletion_request_id=$3::uuid`,
     [JSON.stringify(evidence), identity.tenantId, requestId, hash]);
     return { requestId, state: "completed", attempt, replayed: false, evidence, evidenceHash: hash };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown";
-    await failRequest(db, identity, requestId, attempt, message, scope);
+    await failRequest(db, identity, requestId, attempt, safeErrorText(error), scope);
     throw error;
   }
 }
@@ -290,7 +313,8 @@ async function blockRequest(
 ): Promise<void> {
   const hash = await recordEvidence(db, identity, requestId, attempt, "blocked", { outcome: "blocked", reason, attempt, ...detail });
   await db.execute(`update corvis_control.deletion_request set
-      state='blocked', blocked_reason=$1, evidence_hash=$4, evidence_recorded_at=now()
+      state='blocked', blocked_reason=$1, evidence_hash=$4, evidence_recorded_at=now(),
+      execution_lease_expires_at=null
     where tenant_id=$2 and deletion_request_id=$3::uuid`,
   [reason, identity.tenantId, requestId, hash]);
 }
@@ -304,7 +328,8 @@ async function failRequest(
   scope: DeletionScope,
 ): Promise<void> {
   await recordEvidence(db, identity, requestId, attempt, "failed", { outcome: "failed", error: message, attempt, scope });
-  await db.execute(`update corvis_control.deletion_request set state='retryable', last_error=$1
+  await db.execute(`update corvis_control.deletion_request set state='retryable', last_error=$1,
+      execution_lease_expires_at=null
     where tenant_id=$2 and deletion_request_id=$3::uuid`, [message, identity.tenantId, requestId]);
 }
 

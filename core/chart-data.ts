@@ -6,14 +6,28 @@ export type CompositionSegment = CompositionInput & { percent: number };
 // into "Other" rather than cycling hues, which would break CVD-safe adjacency.
 export const MAX_CATEGORICAL_SEGMENTS = 8;
 
+/**
+ * Values that cannot be drawn as a share of a whole (negative, e.g. leverage or
+ * a "not attributed" residual below zero) are left out of the segments but never
+ * silently: `omitted` carries their count and summed value, and `netTotal` is
+ * the sum of every finite input, so a caller can reconcile `total` (the sum of
+ * the drawn, positive segments, and the basis of each `percent`) with the
+ * headline figure: `total + omitted.value === netTotal`.
+ */
+export type CompositionOmission = { count: number; value: number };
+
 export function aggregateComposition(
   items: CompositionInput[],
   maxSegments: number = MAX_CATEGORICAL_SEGMENTS,
-): { segments: CompositionSegment[]; total: number } {
-  const positive = items.filter((item) => item.value > 0);
+): { segments: CompositionSegment[]; total: number; omitted: CompositionOmission; netTotal: number } {
+  const finite = items.filter((item) => Number.isFinite(item.value));
+  const positive = finite.filter((item) => item.value > 0);
+  const dropped = finite.filter((item) => item.value < 0);
+  const omitted: CompositionOmission = { count: dropped.length, value: dropped.reduce((sum, item) => sum + item.value, 0) };
+  const netTotal = finite.reduce((sum, item) => sum + item.value, 0);
   const sorted = [...positive].sort((a, b) => b.value - a.value);
   const total = sorted.reduce((sum, item) => sum + item.value, 0);
-  if (total <= 0) return { segments: [], total: 0 };
+  if (total <= 0) return { segments: [], total: 0, omitted, netTotal };
 
   const kept = sorted.length > maxSegments ? sorted.slice(0, maxSegments - 1) : sorted;
   const overflow = sorted.length > maxSegments ? sorted.slice(maxSegments - 1) : [];
@@ -22,7 +36,7 @@ export function aggregateComposition(
     const overflowValue = overflow.reduce((sum, item) => sum + item.value, 0);
     segments.push({ key: "other", label: `Other (${overflow.length})`, value: overflowValue, percent: (overflowValue / total) * 100 });
   }
-  return { segments, total };
+  return { segments, total, omitted, netTotal };
 }
 
 export type TrendPoint = { period: string; value: number | null };

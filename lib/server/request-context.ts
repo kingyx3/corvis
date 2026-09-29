@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import type { Entitlements, RequestIdentity, Role } from "../../core/enterprise.ts";
 import { getServerConfig, type ServerConfig } from "./config.ts";
 import { OidcVerifier } from "./oidc.ts";
+import { logEvent } from "./telemetry.ts";
 
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;
@@ -190,6 +191,24 @@ export function userBearerAuthorization(request: Request): string | null {
   return request.headers.get("x-forwarded-authorization") ?? request.headers.get("authorization");
 }
 
+/**
+ * Why OIDC verification failed, for logs only: the caller always sees the same
+ * 401. An IdP/JWKS outage or misconfiguration (metadata fetch failure, timeout,
+ * unusable discovery/JWKS document) is an operator problem that would otherwise
+ * be indistinguishable from bad credentials on a dashboard.
+ */
+export function classifyOidcFailure(error: unknown): "idp_unavailable" | "token_rejected" {
+  const message = error instanceof Error ? error.message : "";
+  const cause = error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
+  const causeCode = cause && typeof cause === "object" ? (cause as { code?: unknown }).code : undefined;
+  const name = error instanceof Error ? error.name : "";
+  if (name === "AbortError" || name === "TimeoutError" || typeof causeCode === "string" || message === "fetch failed"
+    || /OIDC metadata request failed|(invalid OIDC (JWKS response|discovery document)|OIDC JWKS response contained no usable signing keys)|OIDC discovery (issuer mismatch|document has no JWKS URI)|OIDC JWKS URL must use HTTPS|invalid OIDC issuer URL|OIDC issuer must use HTTPS/i.test(message)) {
+    return "idp_unavailable";
+  }
+  return "token_rejected";
+}
+
 async function directOidcIdentity(request: Request, config: ServerConfig): Promise<RequestIdentity> {
   const tenantId = request.headers.get("x-corvis-tenant")?.trim();
   const workspaceId = request.headers.get("x-corvis-workspace")?.trim();
@@ -226,6 +245,15 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
     };
   } catch (error) {
     if (error instanceof AuthenticationError) throw error;
+    // The response stays a generic 401; the cause is logged so an IdP/JWKS
+    // outage is distinguishable from rejected credentials. Only our own
+    // verifier text is logged, never the token.
+    const reason = classifyOidcFailure(error);
+    logEvent(reason === "idp_unavailable" ? "error" : "warn", "auth.oidc_verification_failed", { correlationId: (request.headers.get("x-correlation-id") ?? "unknown").slice(0, 128) }, {
+      reason,
+      errorName: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : "unknown",
+    });
     throw new AuthenticationError("OIDC authentication failed");
   }
 }

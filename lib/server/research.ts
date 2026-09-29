@@ -10,6 +10,16 @@ import { getServerConfig } from "./config.ts";
 import { isFeatureEnabled } from "./feature-flags.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
+import {
+  assessNumericGrounding,
+  entitledSourceReferenceIds,
+  extractNumericFigures,
+  NO_GROUNDED_FIGURES_ANSWER,
+  NO_GROUNDED_FIGURES_UNCERTAINTY,
+  sanitizeLabel,
+  sanitizePage,
+  sanitizeSnippet,
+} from "./research-grounding.ts";
 
 type SearchHit = {
   sourceReferenceId: string;
@@ -61,17 +71,19 @@ function queryId(question: string, shape: GovernedSemanticQueryShape, rows: Post
 }
 function questionHash(question: string): string { return createHash("sha256").update(question).digest("hex"); }
 
-function sanitizeSnippet(value?: string): string | undefined {
-  if (!value) return undefined;
-  return value.slice(0, 4000).replace(/\b(ignore|disregard|override)\s+(all|previous|system|developer)\s+(instructions?|rules?)\b/gi, "[untrusted-document-instruction]");
-}
+const MAX_USED_FACT_IDS = 1000;
 
-function validateUsedFactIds(usedFactIds: string[] | undefined, allowedFactIds: string[]): void {
-  if (!usedFactIds) return;
+/**
+ * `usedFactIds` must be an array of strings; anything else (absent, null, wrong type) counts as "cited nothing".
+ * Ids outside the governed semantic result are a provider contract violation and abort the answer.
+ */
+function normalizeUsedFactIds(usedFactIds: unknown, allowedFactIds: string[]): string[] {
+  if (!Array.isArray(usedFactIds) || usedFactIds.length > MAX_USED_FACT_IDS || !usedFactIds.every((id) => typeof id === "string")) return [];
   const allowed = new Set(allowedFactIds);
   if (usedFactIds.some((factId) => !allowed.has(factId))) {
     throw new Error("AI answer service referenced facts outside the governed semantic result");
   }
+  return [...new Set(usedFactIds as string[])];
 }
 
 function managedSignal(callerSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
@@ -217,9 +229,24 @@ export class PermissionedResearchService {
     }
     if (!response.ok) throw new ResearchProviderError("search", response.status);
     const body = await providerJson<SearchResponse>(response, "search", signal);
-    return (body.hits ?? [])
-      .filter((hit) => hit.sourceReferenceId && hit.documentId && sourceDocumentIds.includes(hit.documentId))
-      .map((hit) => ({ ...hit, text: sanitizeSnippet(hit.text) }));
+    const hits = Array.isArray(body.hits) ? body.hits : [];
+    // Rebuild every hit from known fields only: the index is external, so nothing it returns reaches the model or a
+    // citation unless it is a string id we recognise, a bounded page number, or text through the shared sanitizer.
+    const candidates: SearchHit[] = hits
+      .filter((hit): hit is SearchHit => typeof hit === "object" && hit !== null
+        && typeof hit.sourceReferenceId === "string" && typeof hit.documentId === "string"
+        && sourceDocumentIds.includes(hit.documentId))
+      .map((hit) => ({
+        sourceReferenceId: hit.sourceReferenceId,
+        documentId: hit.documentId,
+        page: sanitizePage(hit.page),
+        label: sanitizeLabel(hit.label),
+        text: sanitizeSnippet(hit.text),
+      }));
+    // Same rule as GET /source-references/[id]: the reference must exist for this tenant, belong to the claimed
+    // document, and that document must be readable by the caller. Others are dropped before the model sees them.
+    const readable = await entitledSourceReferenceIds(this.db, identity, candidates);
+    return candidates.filter((hit) => readable.has(hit.sourceReferenceId));
   }
 
   async answer(identity: RequestIdentity, question: string, options: ResearchExecutionOptions = {}): Promise<ResearchAnswer> {
@@ -285,10 +312,17 @@ export class PermissionedResearchService {
       if (!response.ok) throw new ResearchProviderError("ai", response.status);
       const body = await providerJson<AiResponse>(response, "ai", execution.signal);
       if (!body.answer) throw new ResearchProviderError("ai", response.status);
-      validateUsedFactIds(body.usedFactIds, semantic.factIds);
+      const usedFactIds = normalizeUsedFactIds(body.usedFactIds, semantic.factIds);
+      // Figures in the generated text must be citable facts and must appear in the cited rows (research-grounding.ts).
+      // A failing answer is downgraded, not thrown: the deterministic computedResults are still worth showing and the
+      // user gets a clearly labelled "no grounded figures" answer instead of a provider error. Foreign fact ids above
+      // still throw: that is a contract violation, not a weak answer.
+      const grounding = assessNumericGrounding(body.answer, semantic.rows, usedFactIds);
+      const uncertaintyGrounded = !body.uncertainty || extractNumericFigures(body.uncertainty).length === 0
+        || assessNumericGrounding(body.uncertainty, semantic.rows, usedFactIds).grounded;
 
       const links = await this.citationLinks(identity.tenantId, hits.map((hit) => hit.sourceReferenceId));
-      const citations: SourceCitation[] = hits.map((hit) => {
+      const citations: SourceCitation[] = grounding.grounded ? hits.map((hit) => {
         const link = links.get(hit.sourceReferenceId);
         return {
           sourceReferenceId: hit.sourceReferenceId,
@@ -298,7 +332,7 @@ export class PermissionedResearchService {
           observationId: link?.observationId,
           hasOpenReconciliation: link?.hasOpenReconciliation,
         };
-      });
+      }) : [];
       const computed: SemanticComputedResult = {
         semanticQueryId,
         status: semantic.status,
@@ -307,13 +341,24 @@ export class PermissionedResearchService {
         rows: semantic.rows,
         reason: semantic.shape.reason,
       };
+      if (!grounding.grounded) {
+        return {
+          answer: NO_GROUNDED_FIGURES_ANSWER,
+          citations,
+          semanticQueryIds: [semanticQueryId],
+          computedResults: [computed],
+          modelVersion: body.modelVersion,
+          uncertainty: NO_GROUNDED_FIGURES_UNCERTAINTY,
+          grounding: "no_grounded_figures",
+        };
+      }
       return {
         answer: body.answer,
         citations,
         semanticQueryIds: [semanticQueryId],
         computedResults: [computed],
         modelVersion: body.modelVersion,
-        uncertainty: body.uncertainty,
+        uncertainty: uncertaintyGrounded ? body.uncertainty : undefined,
       };
     } finally {
       execution.dispose();

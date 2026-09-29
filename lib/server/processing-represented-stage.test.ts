@@ -231,7 +231,7 @@ test("representation provider configuration is optional and bounded", () => {
     endpoint: "https://representation.example/",
     audience: "https://representation.example/",
     outputBucket,
-    timeoutMs: 25_000,
+    timeoutMs: 20_000,
   });
   assert.throws(() => configuredRepresentationProducerConfig({
     NODE_ENV: "test",

@@ -63,17 +63,23 @@ Runtime removal is never an accidental side effect of an empty release input; us
 A normal production-like promotion performs this ordered graph:
 
 1. validate `main`, target environment and release selection;
-2. verify live GitHub release governance;
-3. authenticate through WIF and require the bootstrap-owned remote state bucket;
-4. resolve the API/worker and control-loop image tags to immutable digests;
-5. validate Terraform and produce the exact locked plan;
-6. require the enabled canonical Postgres DSN secret;
-7. apply versioned forward-only migrations and retain sanitized evidence;
-8. apply the exact Terraform plan;
-9. verify public API health when the edge is enabled;
-10. run live edge/IAM/worker acceptance, two-tenant Postgres/RLS acceptance and scheduled control-loop runtime acceptance;
-11. only when all acceptance families pass, record the accepted API/worker + control-loop image set in `known-good.json`;
-12. complete the parent promotion run.
+2. for a `release_sha` apply, check out full history and refuse the deploy if `db/` or `infra/` differ between the checkout (`main` HEAD) and the release commit (`.github/scripts/assert-release-matches-head.sh`);
+3. verify live GitHub release governance;
+4. authenticate through WIF and require the bootstrap-owned remote state bucket;
+5. resolve the API/worker and control-loop image tags to immutable digests;
+6. for a fresh prod runtime deploy (not a known-good rollback), refuse an empty `MONITORING_NOTIFICATION_CHANNEL_IDS` so production alerts cannot be inert (`.github/scripts/assert-prod-alerting.sh`);
+7. validate Terraform and produce the exact locked plan, rendered (truncated to 60 kB) into the job summary;
+8. require the enabled canonical Postgres DSN secret;
+9. apply versioned forward-only migrations and retain sanitized evidence (skipped for `rollback_known_good`);
+10. apply the exact Terraform plan;
+11. verify public API health when the edge is enabled;
+12. run live edge/IAM/worker acceptance, two-tenant Postgres/RLS acceptance and scheduled control-loop runtime acceptance;
+13. only when all acceptance families pass, record the accepted API/worker + control-loop image set in `known-good.json`;
+14. complete the parent promotion run.
+
+Migrations and Terraform always run from the checked-out `main` HEAD, while the image comes from `release_sha`. The step 2 guard therefore blocks promoting an older accepted release after later `main` commits changed `db/` or `infra/`: build, accept in UAT and promote a release from the current HEAD instead. Migrations run before the Terraform apply because the new image needs them, so a failed apply leaves the database migrated with no Terraform change; migrations are forward-only.
+
+`rollback_known_good=true` redeploys the recorded older image set and never runs migrations, because forward-only migrations from HEAD must not execute under an older image. The Postgres secret check and the Terraform apply still run. The production alerting-channel check applies to fresh releases only: an incident rollback is never blocked by missing alert channels.
 
 A failed deploy never starts acceptance. Failed or incomplete acceptance never advances known-good.
 
@@ -145,6 +151,8 @@ Database rollback remains forward-safe: routine release rollback never silently 
 
 - `idle` removes runtime/public-edge resources while retaining durable foundations, data and Terraform state;
 - `full` explicitly removes Terraform-managed data/resources and deletes remote state last while retaining the recoverable KMS/bootstrap trust anchors defined by the lifecycle contract.
+
+`gcp-bootstrap.yml` shares the `terraform-<environment>` concurrency group with deploys and decommission, so the three can never race on one state. Bootstrap plans blank runtime inputs (no API image, no Cloudflare zone), which would destroy a live runtime; after planning, `.github/scripts/assert-no-runtime-destroy.sh` inspects `terraform show -json` and fails the run, listing every address, if any resource would be deleted or replaced. The `allow_destroy` dispatch input acknowledges this for `dev` and `uat` only and is refused for `prod`.
 
 Control-loop Cloud Run Jobs follow the same decommission switch. Their state bucket is durable foundation state and is purgeable only through explicit full decommission.
 

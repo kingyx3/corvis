@@ -171,7 +171,12 @@ export function ReviewView({
     const override = overrides[row.id];
     return override && (override.version ?? 0) > (row.version ?? 0) ? override : row;
   });
-  const [busy, setBusy] = useState<string | null>(null);
+  // Each in-flight action is tracked under its own key so finishing one never clears the busy
+  // state of another that is still running (e.g. opening evidence while an approval is pending).
+  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const startBusy = (key: string) => setBusyKeys((current) => new Set(current).add(key));
+  const endBusy = (key: string) => setBusyKeys((current) => { const next = new Set(current); next.delete(key); return next; });
+  const busy = { has: (key: string) => busyKeys.has(key) };
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
   const [exceptionState, setExceptionState] = useState<{ key: string; items: ReconciliationException[]; error?: string }>({ key: "", items: [] });
@@ -280,17 +285,17 @@ export function ReviewView({
   // here and downloaded from Data delivery once ready, not handed back inline.
   const requestExport = async () => {
     if (!snapshot?.id) return;
-    setBusy("export"); setMessage(null);
+    startBusy("export"); setMessage(null);
     try {
       await deliveryPort.createExport("csv", { snapshotId: snapshot.id });
       setMessage({ text: "Export requested for this snapshot. Download it from Data delivery once it's ready.", tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Export request failed", tone: "error" }); }
-    finally { setBusy(null); }
+    finally { endBusy("export"); }
   };
 
   const applyDecision = async (row: ObservationRecord, decision: "approve" | "reject" | "correct", correctedValue?: string, reasonCode?: string) => {
     if (!canReview) return;
-    setBusy(row.id); setMessage(null);
+    startBusy(row.id); setMessage(null);
     try {
       const outcome = await workspacePort.review({ observationId: row.id, decision, reasonCode: reasonCode || (decision === "approve" ? "reviewer_verified" : decision === "reject" ? "reviewer_rejected" : "reviewer_corrected"), correctedValue, expectedVersion: row.version || 1 });
       const updated: ObservationRecord = { ...row, value: decision === "correct" && correctedValue ? correctedValue : row.value, state: outcome.nextState === "approved" ? "Approved" : outcome.nextState === "rejected" ? "Rejected" : "Needs review", version: outcome.newVersion };
@@ -299,7 +304,7 @@ export function ReviewView({
       if (decision === "approve" && outcome.nextState === "review_required") setMessage({ text: "First critical approval recorded; an independent second reviewer is still required.", tone: "success" });
       else setMessage({ text: decision === "approve" ? "Observation approval recorded." : decision === "reject" ? "Observation rejected and retained in review history." : "Correction recorded; the corrected observation remains review-required until approved.", tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Review failed", tone: "error" }); }
-    finally { setBusy(null); }
+    finally { endBusy(row.id); }
   };
 
   const openReviewDialog = (row: ObservationRecord, decision: "correct" | "reject") => {
@@ -322,26 +327,26 @@ export function ReviewView({
   const showSourceReference = async (sourceReferenceId: string, busyKey: string) => {
     if (!canReadSources) return;
     const requestId = ++evidenceRequestRef.current;
-    setBusy(busyKey); setMessage(null);
+    startBusy(busyKey); setMessage(null);
     try {
       const opened = await workspacePort.sourceEvidence(sourceReferenceId);
       if (requestId === evidenceRequestRef.current) setEvidence(opened);
     } catch (error) {
       if (requestId === evidenceRequestRef.current) setMessage({ text: error instanceof Error ? error.message : "Source evidence could not be opened", tone: "error" });
-    } finally { setBusy((current) => current === busyKey ? null : current); }
+    } finally { endBusy(busyKey); }
   };
 
   const resolveException = async (item: ReconciliationException, action: ReconciliationResolutionAction, note: string) => {
     if (!canReview) return;
     const selectedSourceReferenceId = action === "select_source" ? selectedSources[item.exceptionId] || item.sourceReferences[0]?.sourceReferenceId : undefined;
     if (action === "select_source" && !selectedSourceReferenceId) { setMessage({ text: "No entitled competing source is available for this source-authority decision.", tone: "error" }); return; }
-    setBusy(`exception:${item.exceptionId}`); setMessage(null);
+    startBusy(`exception:${item.exceptionId}`); setMessage(null);
     try {
       const outcome = await workspacePort.resolveReconciliation({ exceptionId: item.exceptionId, expectedVersion: item.version, action, reasonCode: `reviewer_${action}`, selectedSourceReferenceId, note: note.trim() || undefined });
       setExceptionState((current) => current.key !== exceptionKey ? current : { key: current.key, items: current.items.map((exception) => exception.exceptionId === item.exceptionId ? { ...exception, status: "resolved", version: outcome.newVersion, resolvedAt: new Date().toISOString() } : exception) });
       setMessage({ text: `Reconciliation exception resolved: ${actionLabel(action)}.`, tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Reconciliation resolution failed", tone: "error" }); }
-    finally { setBusy(null); }
+    finally { endBusy(`exception:${item.exceptionId}`); }
   };
 
   const openExceptionDialog = (item: ReconciliationException, action: ReconciliationResolutionAction) => { setExceptionDialog({ item, action }); setExceptionNote(""); };
@@ -349,18 +354,18 @@ export function ReviewView({
 
   const publish = async () => {
     if (!canPublish || !snapshot?.id || !snapshot.version || publishBlocked) return;
-    setBusy("publish"); setMessage(null);
+    startBusy("publish"); setMessage(null);
     try {
       await workspacePort.publish({ snapshotId: snapshot.id, action: "publish", expectedVersion: snapshot.version });
       const published: FundSnapshot = { ...snapshot, status: "Published", version: snapshot.version + 1, changed: "Just now", blockingExceptions: 0 };
       onPublished?.(published);
       setMessage({ text: "Snapshot publication accepted and recorded in the serving audit trail.", tone: "success" });
     } catch (error) { setMessage({ text: error instanceof Error ? error.message : "Publication failed", tone: "error" }); }
-    finally { setBusy(null); }
+    finally { endBusy("publish"); }
   };
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && snapshot?.id && <button className="secondary-button" disabled={!alreadyPublished || busy === "export"} title={alreadyPublished ? undefined : "Publish this snapshot first: the governed export pipeline only exports published, audited data"} onClick={() => void requestExport()}><Icon name="download"/>{busy === "export" ? "Requesting export…" : "Export this snapshot"}</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy === "publish"} onClick={() => void publish()}><Icon name="check"/>{busy === "publish" ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
+    <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && snapshot?.id && <button className="secondary-button" disabled={!alreadyPublished || busy.has("export")} title={alreadyPublished ? undefined : "Publish this snapshot first: the governed export pipeline only exports published, audited data"} onClick={() => void requestExport()}><Icon name="download"/>{busy.has("export") ? "Requesting export…" : "Export this snapshot"}</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy.has("publish")} onClick={() => void publish()}><Icon name="check"/>{busy.has("publish") ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
     {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note tone-warning" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{needsReview} {needsReview === 1 ? "observation needs" : "observations need"} review and {blockingExceptions} reconciliation {blockingExceptions === 1 ? "exception remains" : "exceptions remain"} open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
     {message && <div className={`lineage-note ${message.tone === "error" ? "tone-danger" : "tone-success"}`} role={message.tone === "error" ? "alert" : "status"}><Icon name={message.tone === "error" ? "alert" : "shield"}/><div><strong>{message.tone === "error" ? "Workflow action failed" : "Workflow status"}</strong><span>{message.text}</span></div></div>}
@@ -378,9 +383,9 @@ export function ReviewView({
         return <tr key={item.exceptionId}>
           <td><strong className="capitalize">{item.type.replaceAll("_", " ")}</strong><span className="table-secondary">{item.summary}</span><span className="table-secondary">{[item.subjectType,item.subjectId,item.metricCode,item.materiality !== "unknown" ? item.materiality : undefined].filter(Boolean).join(" · ") || "Snapshot-level blocker"}</span></td>
           <td><div className="cell-stack"><span><strong>Why flagged:</strong> {ruleLabel(item)}</span>{prior ? <span><strong>Prior published {prior.reportPeriod ?? "period"}:</strong> {displayReconciliationValue(prior.value)}</span> : <span className="table-secondary">No matching prior published value</span>}{contextString(item,"reviewDeadlineAt") && <span><strong>Review deadline:</strong> {new Date(contextString(item,"reviewDeadlineAt")!).toLocaleString()}</span>}</div></td>
-          <td><div className="cell-stack">{current.length > 0 && current.map((candidate,index) => { const delta = reconciliationDelta(candidate.value,prior?.value); const source = item.sourceReferences.find((entry) => entry.sourceReferenceId === candidate.sourceReferenceId); return <span key={`${candidate.observationId ?? "value"}:${index}`}><strong>{displayReconciliationValue(candidate.value)}</strong>{delta ? ` · Δ ${delta}` : ""}{source && canReadSources ? <> · <button className="source-link" disabled={busy === `exception-source:${source.sourceReferenceId}`} onClick={() => void showSourceReference(source.sourceReferenceId, `exception-source:${source.sourceReferenceId}`)}><Icon name="source" size={14}/>{source.page ? `Page ${source.page}` : source.sheetName || source.documentId}</button></> : candidate.sourceReferenceId ? ` · ${candidate.sourceReferenceId}` : ""}</span>; })}{current.length === 0 && (item.sourceReferences.length ? <div className="heading-actions">{item.sourceReferences.map((source) => canReadSources ? <button key={source.sourceReferenceId} className="source-link" disabled={busy === `exception-source:${source.sourceReferenceId}`} onClick={() => void showSourceReference(source.sourceReferenceId, `exception-source:${source.sourceReferenceId}`)}><Icon name="source" size={14}/>{source.page ? `Page ${source.page}` : source.sheetName || source.documentId}</button> : <span key={source.sourceReferenceId}>{source.page ? `Page ${source.page}` : source.documentId}</span>)}</div> : "No entitled source excerpt available")}</div></td>
+          <td><div className="cell-stack">{current.length > 0 && current.map((candidate,index) => { const delta = reconciliationDelta(candidate.value,prior?.value); const source = item.sourceReferences.find((entry) => entry.sourceReferenceId === candidate.sourceReferenceId); return <span key={`${candidate.observationId ?? "value"}:${index}`}><strong>{displayReconciliationValue(candidate.value)}</strong>{delta ? ` · Δ ${delta}` : ""}{source && canReadSources ? <> · <button className="source-link" disabled={busy.has(`exception-source:${source.sourceReferenceId}`)} onClick={() => void showSourceReference(source.sourceReferenceId, `exception-source:${source.sourceReferenceId}`)}><Icon name="source" size={14}/>{source.page ? `Page ${source.page}` : source.sheetName || source.documentId}</button></> : candidate.sourceReferenceId ? ` · ${candidate.sourceReferenceId}` : ""}</span>; })}{current.length === 0 && (item.sourceReferences.length ? <div className="heading-actions">{item.sourceReferences.map((source) => canReadSources ? <button key={source.sourceReferenceId} className="source-link" disabled={busy.has(`exception-source:${source.sourceReferenceId}`)} onClick={() => void showSourceReference(source.sourceReferenceId, `exception-source:${source.sourceReferenceId}`)}><Icon name="source" size={14}/>{source.page ? `Page ${source.page}` : source.sheetName || source.documentId}</button> : <span key={source.sourceReferenceId}>{source.page ? `Page ${source.page}` : source.documentId}</span>)}</div> : "No entitled source excerpt available")}</div></td>
           <td>{item.status === "open" ? <StatusPill status="Needs review"/> : <StatusPill status="Approved"/>}</td>
-          <td>{item.status === "open" ? <div className="heading-actions">{item.type === "source_authority" && <select className="filter-button inline-select" aria-label={`Authoritative source for ${item.summary}`} value={selectedSource} onChange={(event) => setSelectedSources((currentState) => ({ ...currentState, [item.exceptionId]: event.target.value }))}><option value="">Choose source</option>{item.sourceReferences.map((source) => <option key={source.sourceReferenceId} value={source.sourceReferenceId}>{source.page ? `Page ${source.page}` : source.documentId}</option>)}</select>}{item.allowedActions.map((action) => <button key={action} className="secondary-button button-small" disabled={busy === `exception:${item.exceptionId}` || (action === "select_source" && !selectedSource)} onClick={() => openExceptionDialog(item, action)}>{actionLabel(action)}</button>)}</div> : <span>Resolved {item.resolvedAt ? new Date(item.resolvedAt).toLocaleString() : ""}</span>}</td>
+          <td>{item.status === "open" ? <div className="heading-actions">{item.type === "source_authority" && <select className="filter-button inline-select" aria-label={`Authoritative source for ${item.summary}`} value={selectedSource} onChange={(event) => setSelectedSources((currentState) => ({ ...currentState, [item.exceptionId]: event.target.value }))}><option value="">Choose source</option>{item.sourceReferences.map((source) => <option key={source.sourceReferenceId} value={source.sourceReferenceId}>{source.page ? `Page ${source.page}` : source.documentId}</option>)}</select>}{item.allowedActions.map((action) => <button key={action} className="secondary-button button-small" disabled={busy.has(`exception:${item.exceptionId}`) || (action === "select_source" && !selectedSource)} onClick={() => openExceptionDialog(item, action)}>{actionLabel(action)}</button>)}</div> : <span>Resolved {item.resolvedAt ? new Date(item.resolvedAt).toLocaleString() : ""}</span>}</td>
         </tr>;
       })}
     </tbody></table></div>}
@@ -389,7 +394,7 @@ export function ReviewView({
     {focused && (() => { const priority = reviewPriority(focused,exceptions); return <div className="lineage-note" role="status" aria-label="Focused review item"><Icon name="table"/><div><strong>Review queue {clampedFocusedIndex + 1} of {visible.length}</strong><span>{focused.company} · {focused.metric} · {focused.confidence}% confidence · {priority.materiality} · {deadlineLabel(priority)}</span></div></div>; })()}
     <div className="table-card" tabIndex={0} role="region" aria-label="Data review observations table"><table className="data-table review-table"><thead><tr><th>Company</th><th>Metric</th><th>Value</th><th>Period</th><th>Change</th><th>Priority</th><th>Confidence</th><th>Source evidence</th><th>State / action</th></tr></thead><tbody>
       {visible.length === 0 && <tr><td colSpan={9} className="empty-cell">{scopedRows.length ? "No observations match the current review filters." : "No observations are available for this snapshot yet."}</td></tr>}
-      {visible.map((row, index) => { const priority = reviewPriority(row,exceptions); const urgent = priority.daysToDeadline != null && priority.daysToDeadline <= URGENT_REVIEW_DAYS; const dualControl = dualControlLabel(row); return <tr key={row.id} data-observation-id={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><div className="cell-stack"><strong>{row.company}</strong>{onViewPositionFinancials && row.companyId && <button type="button" className="inline-link" onClick={() => onViewPositionFinancials(row)}><Icon name="database" size={14}/>View position financials</button>}</div></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={`value-cell ${row.delta.startsWith("+") ? "positive" : ""}`}>{row.delta}</td><td><div className="cell-stack"><strong className="capitalize">{priority.materiality}</strong><span className={urgent ? "amber" : "table-secondary"}>{deadlineLabel(priority)}</span></div></td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy === `source:${row.id}`} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="cell-stack"><div className="row-actions"><button className="secondary-button button-small" disabled={busy === row.id} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy === row.id} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div>{dualControl && <span className="table-secondary" role="status">{dualControl}</span>}</div> : <div className="cell-stack"><StatusPill status={row.state}/>{dualControl && <span className="table-secondary">{dualControl}</span>}</div>}</td></tr>; })}
+      {visible.map((row, index) => { const priority = reviewPriority(row,exceptions); const urgent = priority.daysToDeadline != null && priority.daysToDeadline <= URGENT_REVIEW_DAYS; const dualControl = dualControlLabel(row); return <tr key={row.id} data-observation-id={row.id} aria-current={index === clampedFocusedIndex ? "true" : undefined}><td><div className="cell-stack"><strong>{row.company}</strong>{onViewPositionFinancials && row.companyId && <button type="button" className="inline-link" onClick={() => onViewPositionFinancials(row)}><Icon name="database" size={14}/>View position financials</button>}</div></td><td>{row.metric}</td><td><strong className="value-cell">{row.value}</strong></td><td>{row.period}</td><td className={`value-cell ${row.delta.startsWith("+") ? "positive" : ""}`}>{row.delta}</td><td><div className="cell-stack"><strong className="capitalize">{priority.materiality}</strong><span className={urgent ? "amber" : "table-secondary"}>{deadlineLabel(priority)}</span></div></td><td><div className="confidence"><span>{row.confidence}%</span><div><i style={{width:`${row.confidence}%`}}/></div></div></td><td>{canReadSources ? <button className="source-link" disabled={!row.sourceReferenceId || busy.has(`source:${row.id}`)} onClick={() => row.sourceReferenceId && void showSourceReference(row.sourceReferenceId, `source:${row.id}`)}><Icon name="source" size={14}/>{row.sourceReferenceId ? row.source : "No entitled source reference"}</button> : <span>{row.source}</span>}</td><td>{row.state === "Needs review" && canReview ? <div className="cell-stack"><div className="row-actions"><button className="secondary-button button-small" disabled={busy.has(row.id)} onClick={() => void applyDecision(row,"approve")}>Approve</button><button className="text-button" disabled={busy.has(row.id)} onClick={() => openReviewDialog(row,"correct")}>Correct</button><button className="text-button" disabled={busy.has(row.id)} onClick={() => openReviewDialog(row,"reject")}>Reject</button></div>{dualControl && <span className="table-secondary" role="status">{dualControl}</span>}</div> : <div className="cell-stack"><StatusPill status={row.state}/>{dualControl && <span className="table-secondary">{dualControl}</span>}</div>}</td></tr>; })}
     </tbody></table></div>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Every published value must be traceable.</strong><span>Snapshot → consolidated fact → reviewed observation → source reference → original document. Exception resolutions are versioned and attributable.</span></div></div>
 

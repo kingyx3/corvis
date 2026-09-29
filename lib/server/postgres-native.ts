@@ -50,6 +50,11 @@ export function nativePostgresConfig(
     idleTimeoutMillis: 30_000,
     maxLifetimeSeconds: 300,
     statement_timeout: 30_000,
+    // A request that dies (or a handler that awaits something slow) between
+    // `begin` and `commit` would otherwise pin a pooled connection, its row
+    // locks and the shared 5-slot pool indefinitely. The server terminates
+    // such a session after this idle period.
+    idle_in_transaction_session_timeout: 60_000,
     query_timeout: 35_000,
     allowExitOnIdle: true,
     // Keep the existing SQL API's JSON timestamp contract across transports.
@@ -97,10 +102,21 @@ export class PostgresDriverError extends Error {
   }
 }
 
+const TRANSIENT_POSTGRES_CODES = new Set(["CONNECT_TIMEOUT", "QUERY_TIMEOUT"]);
+
+/**
+ * A database that is unreachable, out of pool connections or timing out: a
+ * transient, retryable condition rather than a defect in the request or code.
+ * Callers map it to 503 + Retry-After instead of an opaque 500.
+ */
+export function isTransientPostgresError(error: unknown): error is PostgresDriverError {
+  return error instanceof PostgresDriverError && (error.phase === "connection" || TRANSIENT_POSTGRES_CODES.has(error.code));
+}
+
 export class NativePostgresSqlApi implements PostgresSqlApi {
   private readonly pool: Pool;
   /** `limits` may only tune pool size and timeouts (the migration CLI); TLS and connection settings always come from the DSN policy. */
-  constructor(dsn: string, limits: Pick<PoolConfig, "max" | "statement_timeout" | "lock_timeout" | "query_timeout"> = {}) {
+  constructor(dsn: string, limits: Pick<PoolConfig, "max" | "statement_timeout" | "lock_timeout" | "query_timeout" | "idle_in_transaction_session_timeout"> = {}) {
     this.pool = new Pool({ ...nativePostgresConfig(dsn), ...limits });
     // An idle socket error must not crash the API process. The pool discards
     // that socket; subsequent requests reconnect under the bounded timeout.

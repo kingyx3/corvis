@@ -1,4 +1,5 @@
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
+import { ApiError, MalformedStreamError, UnauthenticatedError, notifySessionExpired } from "../../lib/api-errors.ts";
 import type {
   MemberRoleReceipt,
   DeactivateTenantAccessResult,
@@ -34,9 +35,12 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
 
   async function responseError(response: Response): Promise<Error> {
     const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
-    return new Error(body.reasons?.length
+    const message = body.reasons?.length
       ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}`
-      : body.error || `Corvis API request failed (${response.status})`);
+      : body.error || `Corvis API request failed (${response.status})`;
+    // 401 means the session is gone; callers surface a re-authentication prompt instead of a module error.
+    if (response.status === 401) { notifySessionExpired(); return new UnauthenticatedError(message, body.error); }
+    return new ApiError(message, response.status, body.error);
   }
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -94,7 +98,13 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
 
     const consumeLine = (line: string) => {
       if (!line.trim()) return;
-      const event = JSON.parse(line) as ResearchStreamEvent;
+      let event: ResearchStreamEvent;
+      try {
+        event = JSON.parse(line) as ResearchStreamEvent;
+      } catch {
+        throw new MalformedStreamError();
+      }
+      if (!event || typeof event !== "object" || typeof event.type !== "string") throw new MalformedStreamError();
       onEvent(event);
       if (event.type === "result") answer = event.data;
       if (event.type === "error") throw new Error(event.code);
@@ -115,6 +125,10 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
       if (buffer.trim()) consumeLine(buffer);
       if (!answer) throw new Error("research_stream_ended_without_result");
       return answer;
+    } catch (failure) {
+      // Stop the server producing (and the browser buffering) events nobody will read.
+      await reader.cancel().catch(() => undefined);
+      throw failure;
     } finally {
       reader.releaseLock();
     }

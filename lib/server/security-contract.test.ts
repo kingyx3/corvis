@@ -3,16 +3,6 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-async function routeFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) found.push(...await routeFiles(full));
-    else if (entry.isFile() && entry.name === "route.ts") found.push(full.replaceAll("\\", "/"));
-  }
-  return found.sort();
-}
-
 async function sourceFiles(root: string): Promise<string[]> {
   const found: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
@@ -27,103 +17,27 @@ async function source(file: string) {
   return readFile(file, "utf8");
 }
 
-function assertPermission(sourceText: string, permission: string, file: string) {
-  const escaped = permission.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  assert.match(sourceText, new RegExp(`assertPermission\\(identity,\\s*[\"']${escaped}[\"']\\)`), `${file} must enforce ${permission}`);
-}
-
-test("every non-public v1 route resolves authoritative identity and enforces a role permission", async () => {
-  const files = await routeFiles("app/api/v1");
-  assert.ok(files.length > 10, "expected the v1 API surface to be discovered");
-
-  const publicRoutes = new Set([
-    "app/api/v1/health/route.ts",
-  ]);
-  const identityOnlyRoutes = new Set([
-    "app/api/v1/me/route.ts",
-    "app/api/v1/capabilities/route.ts",
-    "app/api/v1/my-workspaces/route.ts",
-  ]);
-  const preMembershipIdentityRoutes = new Set([
-    "app/api/v1/invitations/accept/route.ts",
-  ]);
-  // SCIM is a machine-to-machine provisioning protocol: the caller is an
-  // external identity provider authenticating with a tenant-scoped, hashed
-  // bearer token (see lib/server/scim.ts#authenticateScim), not a Corvis
-  // user session. There is no RequestIdentity/role to resolve, so these
-  // routes get their own authorization assertion instead of the session-based
-  // resolveAuthorizedRequestIdentity check every other route must have.
-  const scimRoutes = new Set([
-    "app/api/v1/scim/v2/Users/route.ts",
-    "app/api/v1/scim/v2/Users/[id]/route.ts",
-  ]);
-
-  for (const file of files) {
-    const text = await source(file);
-    if (publicRoutes.has(file)) continue;
-
-    if (preMembershipIdentityRoutes.has(file)) {
-      assert.match(text, /resolveRequestIdentity\(request\)/, `${file} must cryptographically authenticate the invitee before membership exists`);
-      assert.match(text, /identity\.emailVerified/, `${file} must require the identity provider's verified email claim`);
-      assert.match(text, /acceptTenantInvitation\(/, `${file} must let the token, not a client tenant selector, determine the granted membership`);
-      continue;
-    }
-
-    if (scimRoutes.has(file)) {
-      assert.match(text, /authenticateScim\(request/, `${file} must authenticate the SCIM caller's tenant-scoped bearer token`);
-      continue;
-    }
-
-    assert.match(text, /resolveAuthorizedRequestIdentity\(request\)/, `${file} must resolve authoritative request authorization`);
-    if (!identityOnlyRoutes.has(file)) {
-      assert.match(text, /assertPermission\(identity,/, `${file} must enforce a role permission`);
-    }
-  }
+// The general "every route authenticates and enforces a role permission" check and the per-route
+// permission table that used to live here as source regexes are now behavioural: see
+// lib/server/route-authorization.test.ts, which calls every handler with no credentials (401) and with
+// each role lacking the route's permission (403), and asserts SCIM, worker, entitlement, upload and
+// tenant-scoping behaviour. What remains below is only what a request cannot exercise.
+test("invitation acceptance authenticates the invitee before membership exists and lets the token pick the tenant", async () => {
+  const text = await source("app/api/v1/invitations/accept/route.ts");
+  assert.match(text, /resolveRequestIdentity\(request\)/, "the invitee must be cryptographically authenticated before membership exists");
+  assert.match(text, /identity\.emailVerified/, "the identity provider's verified email claim must be required");
+  assert.match(text, /acceptTenantInvitation\(/, "the token, not a client tenant selector, must determine the granted membership");
 });
 
-test("privileged and evidence routes preserve their specific authorization boundaries", async () => {
-  const expectations: Array<[string, string]> = [
-    ["app/api/v1/admin/control-evidence/route.ts", "admin:manage"],
-    ["app/api/v1/admin/tenants/invitations/route.ts", "admin:manage"],
-    ["app/api/v1/admin/deletion-requests/route.ts", "admin:manage"],
-    ["app/api/v1/admin/deletion-requests/[requestId]/execute/route.ts", "admin:manage"],
-    ["app/api/v1/admin/feature-flags/route.ts", "admin:manage"],
-    ["app/api/v1/admin/readiness/route.ts", "admin:manage"],
-    ["app/api/v1/admin/session-revocations/route.ts", "admin:manage"],
-    ["app/api/v1/admin/webhooks/subscriptions/route.ts", "admin:manage"],
-    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/route.ts", "admin:manage"],
-    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/rotate-signing-key/route.ts", "admin:manage"],
-    ["app/api/v1/admin/webhooks/subscriptions/[webhookId]/deliveries/route.ts", "admin:manage"],
-    ["app/api/v1/jobs/[jobId]/retry/route.ts", "admin:manage"],
-    ["app/api/v1/exports/route.ts", "exports:create"],
-    ["app/api/v1/research/route.ts", "research:query"],
-    ["app/api/v1/research/stream/route.ts", "research:query"],
-    ["app/api/v1/review/route.ts", "observations:review"],
-    ["app/api/v1/snapshots/publish/route.ts", "snapshots:publish"],
-    ["app/api/v1/source-connections/route.ts", "admin:manage"],
-    ["app/api/v1/source-connections/[sourceConnectionId]/route.ts", "admin:manage"],
-    ["app/api/v1/source-connections/[sourceConnectionId]/test/route.ts", "admin:manage"],
-    ["app/api/v1/source-connections/[sourceConnectionId]/reauthorize/route.ts", "admin:manage"],
-    ["app/api/v1/access/invitations/route.ts", "admin:manage"],
-    ["app/api/v1/source-references/[sourceReferenceId]/route.ts", "sources:read"],
-    ["app/api/v1/uploads/initiate/route.ts", "documents:write"],
-    ["app/api/v1/uploads/[uploadId]/route.ts", "documents:write"],
-    ["app/api/v1/uploads/[uploadId]/complete/route.ts", "documents:write"],
-  ];
-
-  for (const [file, permission] of expectations) {
+test("every upload entry point uses the shared owner-or-admin access rule", async () => {
+  // The rule lives in lib/server/upload-access.ts (tested behaviourally in upload-access.test.ts) and route
+  // authorization for every v1 route is exercised behaviourally in route-authorization.test.ts; this only pins
+  // that no entry point re-inlines its own copy of the rule.
+  for (const file of ["app/api/v1/uploads/[uploadId]/route.ts", "app/api/v1/uploads/[uploadId]/complete/route.ts", "lib/server/uploads.ts"]) {
     const text = await source(file);
-    assertPermission(text, permission, file);
+    assert.match(text, /canAccessUpload\(identity,/, `${file} must use the shared upload access rule`);
+    assert.doesNotMatch(text, /roles\.includes\(["']admin["']\)/, `${file} must not re-inline the upload access rule`);
   }
-
-  const sourceReference = await source("app/api/v1/source-references/[sourceReferenceId]/route.ts");
-  assert.match(sourceReference, /assertDocumentAccess\(identity,\s*documentId,\s*true\)/, "source evidence must require document-level source entitlement");
-
-  const uploadStatus = await source("app/api/v1/uploads/[uploadId]/route.ts");
-  assert.match(uploadStatus, /actorSubject === identity\.subject \|\| identity\.roles\.includes\(["']admin["']\)/, "upload status/abort must stay uploader-scoped except for admins");
-
-  const uploadComplete = await source("app/api/v1/uploads/[uploadId]/complete/route.ts");
-  assert.match(uploadComplete, /current\.actorSubject !== identity\.subject && !identity\.roles\.includes\(["']admin["']\)/, "upload completion must stay uploader-scoped except for admins");
 });
 
 test("browser and client adapter code cannot manufacture trusted identity gateway headers", async () => {

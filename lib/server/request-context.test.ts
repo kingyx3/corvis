@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, sign } from "node:crypto";
-import { AuthenticationError, resolveRequestIdentity, verifyGatewayIdentityAssertion, type GatewayIdentityAssertion } from "./request-context.ts";
+import { AuthenticationError, classifyOidcFailure, resolveRequestIdentity, verifyGatewayIdentityAssertion, type GatewayIdentityAssertion } from "./request-context.ts";
 
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;
 
@@ -209,11 +209,11 @@ const productionEnvironment = {
 const tenantUuid = "11111111-1111-4111-8111-111111111111";
 const workspaceUuid = "22222222-2222-4222-8222-222222222222";
 
-async function withProductionEnv(fn: () => Promise<void>) {
+async function withProductionEnv(fn: () => Promise<void>, overrides: Record<string, string> = {}) {
   const env = process.env as Record<string, string | undefined>;
   const previous = Object.fromEntries(Object.keys(productionEnvironment).map((key) => [key, env[key]]));
   try {
-    for (const [key, value] of Object.entries(productionEnvironment)) {
+    for (const [key, value] of Object.entries({ ...productionEnvironment, ...overrides })) {
       if (value == null) delete env[key];
       else env[key] = value;
     }
@@ -280,4 +280,48 @@ test("production OIDC verifies the caller token API Gateway forwards in X-Forwar
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+async function captureLogs(fn: () => Promise<void>): Promise<Array<Record<string, unknown>>> {
+  const records: Array<Record<string, unknown>> = [];
+  const originals = { error: console.error, warn: console.warn, info: console.info };
+  const collect = (line: unknown) => { try { records.push(JSON.parse(String(line)) as Record<string, unknown>); } catch { /* not a structured log line */ } };
+  console.error = collect; console.warn = collect; console.info = collect;
+  try { await fn(); } finally { Object.assign(console, originals); }
+  return records;
+}
+
+test("an IdP/JWKS outage is still a 401 for the caller but is logged as an outage, not bad credentials", { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }); }) as typeof fetch;
+  try {
+    await withProductionEnv(async () => {
+      const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const shapedToken = `${encode({ alg: "RS256", kid: "k1" })}.${encode({ iss: "https://idp.outage.example", aud: "corvis", sub: "u", iat: nowSeconds - 5, exp: nowSeconds + 300 })}.c2ln`;
+      const request = new Request("https://corvis.example/api/v1/me", { headers: {
+        authorization: `Bearer ${shapedToken}`, "x-corvis-tenant": tenantUuid, "x-corvis-workspace": workspaceUuid, "x-correlation-id": "corr-outage",
+      }});
+      const logs = await captureLogs(async () => {
+        await assert.rejects(resolveRequestIdentity(request), (error) => error instanceof AuthenticationError && error.message === "OIDC authentication failed");
+      });
+      const record = logs.find((entry) => entry.event === "auth.oidc_verification_failed");
+      assert.ok(record, "the verification failure cause must be logged");
+      assert.equal(record.reason, "idp_unavailable");
+      assert.equal(record.level, "error");
+      assert.equal(record.correlationId, "corr-outage");
+      assert.ok(!JSON.stringify(record).includes(shapedToken), "the bearer token must never be logged");
+    }, { CORVIS_AUTH_ISSUER: "https://idp.outage.example" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("OIDC failures are classified as an IdP outage or a rejected token", () => {
+  assert.equal(classifyOidcFailure(new Error("OIDC metadata request failed with status 503")), "idp_unavailable");
+  assert.equal(classifyOidcFailure(Object.assign(new Error("aborted"), { name: "AbortError" })), "idp_unavailable");
+  assert.equal(classifyOidcFailure(new Error("invalid OIDC JWKS response")), "idp_unavailable");
+  assert.equal(classifyOidcFailure(new Error("malformed OIDC bearer token")), "token_rejected");
+  assert.equal(classifyOidcFailure(new Error("OIDC token expired")), "token_rejected");
+  assert.equal(classifyOidcFailure("not an error"), "token_rejected");
 });

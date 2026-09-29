@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { canAccessUpload } from "./upload-access.ts";
 import { sealArtifactIntegrity } from "./upload-integrity.ts";
 
 export type UploadRequestErrorCode =
@@ -17,7 +18,8 @@ export type UploadRequestErrorCode =
   | "upload_expired"
   | "upload_incomplete"
   | "invalid_file_content"
-  | "upload_integrity_failed";
+  | "upload_integrity_failed"
+  | "upload_conflict";
 
 const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
   invalid_upload_request: 400,
@@ -32,6 +34,7 @@ const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
   upload_incomplete: 409,
   invalid_file_content: 422,
   upload_integrity_failed: 422,
+  upload_conflict: 409,
 };
 
 /** Client-attributable upload failure with a stable code and HTTP status (see apiError). */
@@ -77,6 +80,8 @@ export type UploadLifecycleOptions = {
   limit?: number;
   abandonedAfterMs?: number;
   quarantineRetentionMs?: number;
+  /** Resume a previous sweep: the `nextCursor` it returned. Sessions are visited in listing order. */
+  cursor?: string;
 };
 
 export type UploadLifecycleSweep = {
@@ -85,6 +90,8 @@ export type UploadLifecycleSweep = {
   quarantinePurged: number;
   retained: number;
   skipped: number;
+  /** Present when more session objects remain; pass it as `options.cursor` to continue. */
+  nextCursor?: string;
 };
 
 export interface UploadSessionPort {
@@ -144,6 +151,10 @@ function assertSameInitiate(session: UploadSession, input: { fileName: string; c
     || (session.checksumSha256 ?? undefined) !== (input.checksumSha256 ?? undefined)) {
     throw new UploadRequestError("upload_idempotency_mismatch", "Upload idempotency key was reused for a different file");
   }
+}
+
+function isConflict(error: unknown): boolean {
+  return error instanceof UploadRequestError && error.code === "upload_conflict";
 }
 
 function emptySweep(): UploadLifecycleSweep {
@@ -280,18 +291,54 @@ export class ProductionUploadSessions implements UploadSessionPort {
     this.db = db;
   }
 
+  /**
+   * Generation each session object was read (or last written) at. Writes are
+   * conditional on it (`ifGenerationMatch`), so two racing load-modify-persist
+   * flows cannot both win: the loser gets `upload_conflict` instead of silently
+   * overwriting the other's state. Stores without the conditional surface (the
+   * in-memory fakes) fall back to unconditional writes.
+   */
+  private readonly generations = new WeakMap<UploadSession, string>();
+
   private async persist(session: UploadSession): Promise<void> {
-    await this.store.putJson(sessionKey(session.tenantId, session.uploadId), session);
+    const key = sessionKey(session.tenantId, session.uploadId);
+    const generation = this.generations.get(session);
+    if (this.store.putJsonIfGenerationMatch && generation !== undefined) {
+      const result = await this.store.putJsonIfGenerationMatch(key, session, generation);
+      if (!result.ok) throw new UploadRequestError("upload_conflict", "Upload session was modified concurrently; retry the request");
+      this.generations.set(session, result.generation);
+      return;
+    }
+    await this.store.putJson(key, session);
+    this.generations.delete(session);
+  }
+
+  /** First write of a brand-new session: it must not already exist. */
+  private async persistNew(session: UploadSession): Promise<void> {
+    if (!this.store.putJsonIfGenerationMatch) { await this.persist(session); return; }
+    const result = await this.store.putJsonIfGenerationMatch(sessionKey(session.tenantId, session.uploadId), session, "0");
+    if (!result.ok) throw new UploadRequestError("upload_conflict", "Upload session already exists");
+    this.generations.set(session, result.generation);
+  }
+
+  private async readSession(key: string): Promise<UploadSession | null> {
+    if (this.store.getJsonWithGeneration) {
+      const found = await this.store.getJsonWithGeneration<UploadSession>(key);
+      if (!found) return null;
+      this.generations.set(found.value, found.generation);
+      return found.value;
+    }
+    return this.store.getJson<UploadSession>(key);
   }
 
   private async load(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
-    const session = await this.store.getJson<UploadSession>(sessionKey(identity.tenantId, uploadId));
+    const session = await this.readSession(sessionKey(identity.tenantId, uploadId));
     if (!session || session.tenantId !== identity.tenantId) throw new UploadRequestError("upload_not_found", "Upload not found");
     return session;
   }
 
   private assertUploader(identity: RequestIdentity, session: UploadSession): void {
-    if (session.actorSubject !== identity.subject && !identity.roles.includes("admin")) throw new UploadRequestError("upload_not_found", "Upload not found");
+    if (!canAccessUpload(identity, session.actorSubject)) throw new UploadRequestError("upload_not_found", "Upload not found");
   }
 
   private async registerInitiated(session: UploadSession): Promise<void> {
@@ -326,10 +373,35 @@ export class ProductionUploadSessions implements UploadSessionPort {
     session.state = "complete";
     session.malwareScanStatus = "clean";
     session.releasedAt = new Date().toISOString();
-    const rows = await this.db.query(`select corvis_source.release_clean_artifact($1::uuid,$2::uuid,$3::uuid,$4,$5) as job_id`,
-      [session.tenantId,session.documentId,session.artifactVersionId,session.storageVersionId ?? null,session.ingestionId]);
-    if (!rows[0]?.job_id) throw new Error("Artifact release did not create processing state");
+    // Claim the transition durably BEFORE the irreversible release. A concurrent abort claims
+    // "aborted" the same way and then purges the bytes, so whichever conditional write lands first
+    // wins and the loser stops (upload_conflict) instead of leaving purged bytes under a session
+    // that says complete.
     await this.persist(session);
+    try {
+      const rows = await this.db.query(`select corvis_source.release_clean_artifact($1::uuid,$2::uuid,$3::uuid,$4,$5) as job_id`,
+        [session.tenantId,session.documentId,session.artifactVersionId,session.storageVersionId ?? null,session.ingestionId]);
+      if (!rows[0]?.job_id) throw new Error("Artifact release did not create processing state");
+    } catch (error) {
+      // Nothing was released: reopen the session so the next poll (or the scheduled release) retries.
+      session.state = "quarantined";
+      session.releasedAt = undefined;
+      await this.persist(session).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Re-reads a session after losing a conditional write, so a poll reports the winner's state. */
+  private async reload(session: UploadSession): Promise<UploadSession> {
+    return (await this.readSession(sessionKey(session.tenantId, session.uploadId))) ?? session;
+  }
+
+  /** Aborted/expired sessions can never be released: take them out of the scheduled release's queue. */
+  private async markArtifactPurged(session: UploadSession): Promise<void> {
+    await this.db.execute(`update corvis_source.document_artifact_version
+      set quarantine_status='purged'
+      where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')`,
+    [session.tenantId,session.artifactVersionId]).catch(() => undefined);
   }
 
   private async refreshScan(session: UploadSession): Promise<UploadSession> {
@@ -347,7 +419,13 @@ export class ProductionUploadSessions implements UploadSessionPort {
         await this.quarantineIntegrityFailure(session);
         throw error;
       }
-      await this.release(session);
+      try {
+        await this.release(session);
+      } catch (error) {
+        // Lost the race to a concurrent abort/release: report the winner's state rather than failing a read.
+        if (isConflict(error)) return this.reload(session);
+        throw error;
+      }
     } else if (status === config.gcsMalwareThreatValue) {
       session.malwareScanStatus = "threat";
       await this.db.execute(`update corvis_source.document_artifact_version
@@ -355,7 +433,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
         where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
       await this.db.execute(`update corvis_source.document set status='quarantined'
         where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
-      await this.persist(session);
+      try { await this.persist(session); } catch (error) { if (isConflict(error)) return this.reload(session); throw error; }
     }
     return session;
   }
@@ -380,19 +458,53 @@ export class ProductionUploadSessions implements UploadSessionPort {
   private async expire(session: UploadSession): Promise<void> {
     await this.purgeObject(session, Date.now());
     session.state = "aborted";
+    await this.markArtifactPurged(session);
     await this.db.execute(`update corvis_source.document set status='aborted'
       where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
-    await this.persist(session);
+    await this.persist(session).catch((error) => { if (!isConflict(error)) throw error; });
+  }
+
+  private async readIdempotency(key: string): Promise<{ uploadId?: string; generation?: string } | null> {
+    if (this.store.getJsonWithGeneration) {
+      const found = await this.store.getJsonWithGeneration<{ uploadId?: string }>(key);
+      return found ? { uploadId: found.value.uploadId, generation: found.generation } : null;
+    }
+    const found = await this.store.getJson<{ uploadId?: string }>(key);
+    return found ? { uploadId: found.uploadId } : null;
+  }
+
+  /**
+   * Binds the idempotency key to `uploadId`. With conditional writes this is an atomic
+   * claim (the key must still be absent, or still hold the aborted record we replaced),
+   * so two concurrent initiates with one key can never both create a document.
+   */
+  private async claimIdempotency(key: string, uploadId: string, priorGeneration: string | undefined): Promise<boolean> {
+    if (!this.store.putJsonIfGenerationMatch) { await this.store.putJson(key, { uploadId }); return true; }
+    return (await this.store.putJsonIfGenerationMatch(key, { uploadId }, priorGeneration ?? "0")).ok;
   }
 
   async initiate(identity: RequestIdentity, input: Parameters<UploadSessionPort["initiate"]>[1]): Promise<UploadSession> {
     validateInitiate(input);
-    const prior = await this.store.getJson<{ uploadId: string }>(idempotencyKey(identity.tenantId, input.idempotencyKey));
-    if (prior?.uploadId) {
-      const existing = await this.get(identity, prior.uploadId).catch(() => null);
-      if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
+    const idempotencyObject = idempotencyKey(identity.tenantId, input.idempotencyKey);
+    // A lost claim means a concurrent initiate with the same key won; the next pass returns its session.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const prior = await this.readIdempotency(idempotencyObject);
+      if (prior?.uploadId) {
+        const existing = await this.get(identity, prior.uploadId).catch(() => null);
+        if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
+      }
+      const created = await this.createSession(identity, input, idempotencyObject, prior?.generation);
+      if (created) return created;
     }
+    throw new UploadRequestError("upload_conflict", "Concurrent uploads with the same idempotency key; retry the request");
+  }
 
+  private async createSession(
+    identity: RequestIdentity,
+    input: Parameters<UploadSessionPort["initiate"]>[1],
+    idempotencyObject: string,
+    priorGeneration: string | undefined,
+  ): Promise<UploadSession | undefined> {
     const config = getServerConfig();
     const uploadId = randomUUID(); const documentId = randomUUID(); const artifactVersionId = randomUUID(); const ingestionId = randomUUID();
     const objectKey = `tenant=${safeName(identity.tenantId)}/document=${documentId}/artifact=${artifactVersionId}/original/${safeName(input.fileName)}`;
@@ -414,8 +526,15 @@ export class ProductionUploadSessions implements UploadSessionPort {
       objectKey, resumableUploadUrl, contentValidated: false, malwareScanStatus: "pending",
     };
     try {
-      await this.persist(session);
-      await this.store.putJson(idempotencyKey(identity.tenantId, input.idempotencyKey), { uploadId });
+      await this.persistNew(session);
+      if (!await this.claimIdempotency(idempotencyObject, uploadId, priorGeneration)) {
+        // Lost the race: discard this attempt entirely (nothing was registered yet).
+        await this.store.cancelResumableUpload(resumableUploadUrl).catch(() => undefined);
+        session.state = "aborted";
+        session.purgedAt = new Date().toISOString();
+        await this.persist(session).catch(() => undefined);
+        return undefined;
+      }
       await this.registerInitiated(session);
       return session;
     } catch (error) {
@@ -469,17 +588,29 @@ export class ProductionUploadSessions implements UploadSessionPort {
   }
 
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {
-    const session = await this.load(identity, uploadId);
-    this.assertUploader(identity, session);
-    if (session.state === "aborted") return;
-    // Released source evidence is already queued for processing; aborting must
-    // not relabel the registered document as aborted.
-    if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
-    await this.purgeObject(session, Date.now());
-    session.state = "aborted";
-    await this.db.execute(`update corvis_source.document set status='aborted'
-      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
-    await this.persist(session);
+    for (let attempt = 0; ; attempt += 1) {
+      const session = await this.load(identity, uploadId);
+      this.assertUploader(identity, session);
+      if (session.state === "aborted") return;
+      // Released source evidence is already queued for processing; aborting must
+      // not relabel the registered document as aborted.
+      if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
+      // Claim the abort durably BEFORE destroying anything. A concurrent release claims "complete"
+      // the same way; the loser of the conditional write re-reads and re-decides, so bytes are never
+      // purged under a session that ends up complete.
+      session.state = "aborted";
+      try { await this.persist(session); } catch (error) {
+        if (isConflict(error) && attempt < 2) continue;
+        throw error;
+      }
+      await this.markArtifactPurged(session);
+      await this.purgeObject(session, Date.now());
+      await this.db.execute(`update corvis_source.document set status='aborted'
+        where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
+      // Recording purgedAt is best effort: the aborted state is already durable and sweep finishes any purge.
+      await this.persist(session).catch((error) => { if (!isConflict(error)) throw error; });
+      return;
+    }
   }
 
   /**
@@ -495,38 +626,58 @@ export class ProductionUploadSessions implements UploadSessionPort {
     const quarantineRetentionMs = options.quarantineRetentionMs ?? QUARANTINE_RETENTION_MS;
     const summary = emptySweep();
 
-    for (const key of await this.store.listObjects(sessionPrefix(tenantId), limit)) {
-      const session = await this.store.getJson<UploadSession>(key);
+    // `limit` bounds the session objects visited per call; the cursor lets a caller walk past the
+    // first page (a plain listing capped at `limit` could never see later keys).
+    let keys: string[];
+    if (this.store.listObjectPage) {
+      const page = await this.store.listObjectPage(sessionPrefix(tenantId), { limit, pageToken: options.cursor });
+      keys = page.names;
+      if (page.nextPageToken) summary.nextCursor = page.nextPageToken;
+    } else {
+      keys = await this.store.listObjects(sessionPrefix(tenantId), limit);
+    }
+    for (const key of keys) {
+      const session = await this.readSession(key);
       if (!session?.uploadId || session.tenantId !== tenantId) { summary.skipped += 1; continue; }
       summary.scanned += 1;
-
-      // Accepted source evidence is retained: never cancelled, never deleted.
-      if (session.state === "complete") { summary.retained += 1; continue; }
-      if (session.purgedAt) { summary.skipped += 1; continue; }
-
-      if (session.state === "quarantined") {
-        const unreleasable = session.malwareScanStatus === "threat" || session.contentValidated === false;
-        if (!unreleasable && ageMs(session, now) <= quarantineRetentionMs) { summary.skipped += 1; continue; }
-        await this.purgeObject(session, now);
-        await this.db.execute(`update corvis_source.document_artifact_version
-          set quarantine_status='purged'
-          where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
-        await this.persist(session);
-        summary.quarantinePurged += 1;
-        continue;
+      try {
+        await this.sweepSession(session, now, abandonedAfterMs, quarantineRetentionMs, summary);
+      } catch (error) {
+        // A concurrent request changed the session under us: leave it to that request / the next sweep.
+        if (!isConflict(error)) throw error;
+        summary.skipped += 1;
       }
-
-      if (session.state === "aborted") { await this.purgeObject(session, now); await this.persist(session); summary.abandoned += 1; continue; }
-      if (ageMs(session, now) <= abandonedAfterMs) { summary.skipped += 1; continue; }
-
-      await this.purgeObject(session, now);
-      session.state = "aborted";
-      await this.db.execute(`update corvis_source.document set status='aborted'
-        where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
-      await this.persist(session);
-      summary.abandoned += 1;
     }
     return summary;
+  }
+
+  private async sweepSession(session: UploadSession, now: number, abandonedAfterMs: number, quarantineRetentionMs: number, summary: UploadLifecycleSweep): Promise<void> {
+    // Accepted source evidence is retained: never cancelled, never deleted.
+    if (session.state === "complete") { summary.retained += 1; return; }
+    if (session.purgedAt) { summary.skipped += 1; return; }
+
+    if (session.state === "quarantined") {
+      const unreleasable = session.malwareScanStatus === "threat" || session.contentValidated === false;
+      if (!unreleasable && ageMs(session, now) <= quarantineRetentionMs) { summary.skipped += 1; return; }
+      await this.purgeObject(session, now);
+      await this.db.execute(`update corvis_source.document_artifact_version
+        set quarantine_status='purged'
+        where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
+      await this.persist(session);
+      summary.quarantinePurged += 1;
+      return;
+    }
+
+    if (session.state === "aborted") { await this.purgeObject(session, now); await this.persist(session); summary.abandoned += 1; return; }
+    if (ageMs(session, now) <= abandonedAfterMs) { summary.skipped += 1; return; }
+
+    await this.purgeObject(session, now);
+    session.state = "aborted";
+    await this.markArtifactPurged(session);
+    await this.db.execute(`update corvis_source.document set status='aborted'
+      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
+    await this.persist(session);
+    summary.abandoned += 1;
   }
 }
 

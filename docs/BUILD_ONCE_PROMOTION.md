@@ -64,6 +64,8 @@ For a new production-like release:
 5. the parent prod workflow automatically reconciles source read trust and copies/verifies both OCI images before migrations/Terraform can start;
 6. production acceptance advances `known-good.json` only after all required live acceptance families pass.
 
+Because migrations and Terraform run from the checked-out `main` HEAD, the deploy refuses a `release_sha` whose `db/` or `infra/` trees differ from HEAD (`assert-release-matches-head.sh` lists the differing paths). If other work merged to `main` between UAT acceptance and prod promotion and touched those trees, build and accept a new release from the current HEAD and promote that. Changes outside `db/` and `infra/` (application code, docs) do not block promotion because the image is immutable. `rollback_known_good` never runs migrations.
+
 `Build release image` intentionally offers only `dev` and `uat`; `prod` is not a valid build target.
 
 ## Provider activation dependency

@@ -4,11 +4,13 @@ import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/lib/server
 import { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } from "@/lib/server/idempotency";
 import { InvalidCursorError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
+import { isTransientPostgresError } from "@/lib/server/postgres-native";
 import { RateLimitError } from "@/lib/server/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
 import { AuthenticationError } from "@/lib/server/request-context";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
 import { TenantInvitationError } from "@/lib/server/tenant-invitations";
+import { adminSqlErrorClassification } from "@/lib/server/sql-application-errors";
 import { UploadRequestError } from "@/lib/server/uploads";
 import { logEvent } from "@/lib/server/telemetry";
 import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
@@ -23,6 +25,9 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
     },
   });
 }
+
+/** Seconds a client should wait before retrying after a transient database unavailability. */
+export const DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
 
 export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof AuthenticationError) {
@@ -96,6 +101,20 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof UploadRequestError) {
     logEvent("warn", "upload.request_denied", { correlationId }, { code: error.code });
     return json({ error: error.code, correlationId }, { status: error.status });
+  }
+  if (isTransientPostgresError(error)) {
+    logEvent("error", "api.database_unavailable", { correlationId }, { phase: error.phase, code: error.code });
+    return json({ error: "service_unavailable", correlationId }, {
+      status: 503,
+      headers: { "retry-after": String(DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS) },
+    });
+  }
+  // Business outcomes raised by the admin SQL functions (identity lifecycle,
+  // access policy, support access) are client errors, not internal faults.
+  const sqlOutcome = adminSqlErrorClassification(error);
+  if (sqlOutcome) {
+    logEvent("warn", "admin.sql_request_denied", { correlationId }, { code: sqlOutcome.code });
+    return json({ error: sqlOutcome.code, correlationId }, { status: sqlOutcome.status });
   }
   if (error instanceof ResearchTimeoutError) {
     logEvent("warn", "research.timeout", { correlationId });

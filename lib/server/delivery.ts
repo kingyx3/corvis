@@ -1,7 +1,9 @@
 import { randomUUID } from "crypto";
-import { deliverExportArtifact } from "./export-delivery.ts";
+import { deleteExportAttemptArtifacts, deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
+import type { GcsControlClient } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { errorClassOf, safeErrorText } from "./processing-error-text.ts";
 import { countMetric, durationValueMetric } from "./telemetry.ts";
 import {
   assertWebhookEndpointAllowed,
@@ -34,6 +36,10 @@ export const WEBHOOK_MAX_ATTEMPTS = 5;
 /** Per-request budget for one outbound webhook POST. */
 export const WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
 export const EXPORT_MAX_ATTEMPTS = 5;
+/** Export retry backoff: 1m, 2m, 4m, 8m (capped at 15m) with +/-20% jitter. */
+export const EXPORT_RETRY_BASE_DELAY_MS = 60_000;
+export const EXPORT_RETRY_MAX_DELAY_MS = 15 * 60_000;
+export const EXPORT_RETRY_JITTER_RATIO = 0.2;
 /**
  * A `delivering` row older than this was claimed by a worker that crashed or
  * was killed mid-delivery; nothing else would ever move it, so the next run
@@ -58,6 +64,39 @@ export function computeWebhookRetryDelayMs(attempt: number, random: RandomSource
   return Math.max(0, Math.round(capped + jitter));
 }
 
+/** Capped exponential backoff with jitter for a failed export attempt (`attempt` is 1-based). */
+export function computeExportRetryDelayMs(attempt: number, random: RandomSource = Math.random): number {
+  const exponential = EXPORT_RETRY_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1));
+  const capped = Math.min(exponential, EXPORT_RETRY_MAX_DELAY_MS);
+  const jitter = (random() * 2 - 1) * capped * EXPORT_RETRY_JITTER_RATIO;
+  return Math.max(0, Math.round(capped + jitter));
+}
+
+export type DeliveryTaskFailure = { error: string; message: string };
+
+/**
+ * Runs the independent delivery-tick tasks with `allSettled` so one rejection
+ * never hides the others' results (their side effects have already happened).
+ * A failed task is reported as `{ error, message }` with a stable class and a
+ * redacted message; `failed` lists the task names that rejected.
+ */
+export async function settleDeliveryTasks<T extends Record<string, () => Promise<unknown>>>(tasks: T): Promise<{
+  results: { [K in keyof T]: Awaited<ReturnType<T[K]>> | DeliveryTaskFailure };
+  failed: string[];
+}> {
+  const names = Object.keys(tasks);
+  const settled = await Promise.allSettled(names.map((name) => tasks[name]!()));
+  const results: Record<string, unknown> = {};
+  const failed: string[] = [];
+  settled.forEach((outcome, index) => {
+    const name = names[index]!;
+    if (outcome.status === "fulfilled") { results[name] = outcome.value; return; }
+    failed.push(name);
+    results[name] = { error: errorClassOf(outcome.reason), message: safeErrorText(outcome.reason) } satisfies DeliveryTaskFailure;
+  });
+  return { results: results as { [K in keyof T]: Awaited<ReturnType<T[K]>> | DeliveryTaskFailure }, failed };
+}
+
 export async function reclaimStaleExportDeliveries(store: PostgresSqlApi): Promise<number> {
   const rows = await store.query(`update corvis_serving.export_job
     set state=case when coalesce(delivery_attempts,0)>=$1 then 'failed' else 'retryable' end,
@@ -68,26 +107,27 @@ export async function reclaimStaleExportDeliveries(store: PostgresSqlApi): Promi
   return rows.length;
 }
 
-export async function processQueuedExports(limit=25, store: PostgresSqlApi = db()): Promise<{processed:number;failed:number}> {
+export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(), random: RandomSource = Math.random, objectStore?: Pick<GcsControlClient,"bucket"|"putObject"|"deleteObject">): Promise<{processed:number;failed:number}> {
   await reclaimStaleExportDeliveries(store);
   const rows=await store.query(`select tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,
       format,snapshot_ids,manifest,delivery_attempts,created_at
     from corvis_serving.export_job
     where state in ('queued','retryable') and coalesce(delivery_attempts,0)<${EXPORT_MAX_ATTEMPTS}
+      and coalesce(delivery_next_attempt_at,'-infinity'::timestamptz) <= now()
     order by created_at limit $1`,[limit]);
   let processed=0,failed=0;
   for(const row of rows){
     const tenantId=String(row.tenant_id); const exportId=String(row.export_id);
     const priorAttempts=Number(row.delivery_attempts??0);
     const claimed=await store.query(`update corvis_serving.export_job
-      set state='delivering',delivery_attempts=coalesce(delivery_attempts,0)+1,delivery_started_at=now(),last_error=null
+      set state='delivering',delivery_attempts=coalesce(delivery_attempts,0)+1,delivery_started_at=now(),delivery_next_attempt_at=null,last_error=null
       where tenant_id=$1 and export_id=$2::uuid and state in ('queued','retryable') and coalesce(delivery_attempts,0)=$3
       returning delivery_attempts`,[tenantId,exportId,priorAttempts]);
     if(!claimed[0]) continue;
     const attempt=Number(claimed[0].delivery_attempts??priorAttempts+1);
     const context={correlationId:`export:${exportId}`,tenantId,workspaceId:row.workspace_id==null?undefined:String(row.workspace_id)};
     try{
-      const delivered=await deliverExportArtifact(row,store);
+      const delivered=await deliverExportArtifact(row,store,objectStore,{attempt});
       const completed=await store.query(`update corvis_serving.export_job
         set state='complete',object_uri=$1,expires_at=$2::timestamptz,checksum_sha256=$3,
             manifest=$4::jsonb,completed_at=now(),last_error=null
@@ -99,13 +139,20 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         durationValueMetric("delivery.export",completedAt-startedAt,context,{format:String(row.format)});
       }
       countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
+      // Objects written by earlier (failed or abandoned) attempts are no longer referenced.
+      if(attempt>1&&completed[0]) await deleteExportAttemptArtifacts(row,Array.from({length:attempt-1},(_,i)=>i+1),objectStore).catch(()=>undefined);
       processed++;
     }catch(error){
       failed++;
-      const state=attempt>=EXPORT_MAX_ATTEMPTS?"failed":"retryable";
-      await store.execute(`update corvis_serving.export_job set state=$1,last_error=$2
+      // Deterministic failures (e.g. the row cap) can never succeed on retry.
+      const permanent=(error as {retryable?:unknown}|null)?.retryable===false;
+      const state=permanent||attempt>=EXPORT_MAX_ATTEMPTS?"failed":"retryable";
+      const nextAttemptAt=state==="retryable"?new Date(Date.now()+computeExportRetryDelayMs(attempt,random)).toISOString():null;
+      // Best effort: remove whatever this attempt may have written so retries do not orphan objects.
+      await deleteExportAttemptArtifacts(row,attempt,objectStore).catch(()=>undefined);
+      await store.execute(`update corvis_serving.export_job set state=$1,last_error=$2,delivery_next_attempt_at=$6::timestamptz
         where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
-      [state,error instanceof Error?error.message:"unknown",tenantId,exportId,attempt]);
+      [state,safeErrorText(error),tenantId,exportId,attempt,nextAttemptAt]);
       countMetric("delivery.export",1,context,{outcome:state,format:String(row.format)});
     }
   }
@@ -294,12 +341,12 @@ export async function processWebhookDeliveries(
       failed++;
       const state=attempt>=5?"failed":"retryable";
       const nextAttemptAt=state==="retryable"?new Date(Date.now()+computeWebhookRetryDelayMs(attempt,random)).toISOString():null;
-      const message=error instanceof Error?(error.name==="TimeoutError"?"Webhook endpoint timed out":error.message):"unknown";
+      const message=error instanceof Error&&error.name==="TimeoutError"?"Webhook endpoint timed out":safeErrorText(error);
       await store.execute(`update corvis_control.webhook_delivery
         set state=$1,next_attempt_at=$2::timestamptz,
             last_error=$3
         where tenant_id=$4 and delivery_id=$5::uuid and state='delivering'`,
-      [state,nextAttemptAt,message.slice(0,2000),tenantId,deliveryId]);
+      [state,nextAttemptAt,message,tenantId,deliveryId]);
       if(state==="failed") await markWebhookFanoutCompleteIfDone(store,tenantId,eventId);
       countMetric("delivery.webhook",1,context,{outcome:state,eventType:String(row.event_type)});
     }

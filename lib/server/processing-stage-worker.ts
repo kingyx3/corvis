@@ -5,6 +5,7 @@ import type {
   PostgresProcessingStageRepository,
 } from "./orchestration-stage.ts";
 import type { PostgresProcessingStageEffectRepository } from "./orchestration-stage-effect.ts";
+import { safeErrorText } from "./processing-error-text.ts";
 import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 import { countMetric } from "./telemetry.ts";
 
@@ -77,8 +78,9 @@ function effectKey(delivery: ProcessingStageDelivery): string {
     .digest("hex");
 }
 
+/** Stable class + redacted, truncated message: this text is persisted to `last_error`. */
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return safeErrorText(error);
 }
 
 function telemetryContext(delivery: ProcessingStageDelivery) {

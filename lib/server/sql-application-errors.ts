@@ -27,6 +27,47 @@ export const SQL_APPLICATION_ERRORS = [
   "requires an exhausted job",
   // corvis_control.claim_processing_stage_delivery authenticity guard (046, 050)
   "event id has no matching outbox record",
+  // corvis_control.apply_identity_lifecycle / reactivate_identity_admin (011, 041, 043, 048)
+  "invalid identity lifecycle operation",
+  "human identity lifecycle only supports oidc or saml",
+  "invalid identity lifecycle fields",
+  "memberships must be an array",
+  "disable must not include memberships",
+  "invalid membership entry",
+  "duplicate membership entry",
+  "identity lifecycle event replay conflict",
+  "identity subject is already mapped to a different user",
+  "disabled identity requires explicit reactivation",
+  "identity subject does not match the requested user",
+  "identity subject does not match requested user",
+  "identity is not disabled",
+  "tenant_admin_role_requires_tenant_admin_actor",
+  // corvis_control.apply_resource_entitlement_admin / apply_data_right_admin (040)
+  "invalid resource entitlement operation",
+  "invalid resource type",
+  "invalid resource permission",
+  "resource id required",
+  "reason required",
+  "invalid entitlement effective dates",
+  "invalid data-right operation",
+  "invalid data-right effective dates",
+  // "active support workspace not found" contains "workspace not found": keep the
+  // longer fragment first because the first contained fragment wins.
+  "active support workspace not found",
+  "workspace not found",
+  "subject user not found",
+  // corvis_control.apply_support_access_admin (041, 045, 048)
+  "invalid support access operation",
+  "invalid support auth method",
+  "invalid support role",
+  "support purpose required",
+  "approval reference required",
+  "support access requires a future expiry",
+  "support access cannot be self-approved",
+  "active support identity not found",
+  "requested support role is already active outside this grant",
+  "support grant id required",
+  "support grant not found",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -46,4 +87,65 @@ export function sqlApplicationErrorOf(error: unknown): string {
     if ((error as { name?: unknown }).name === "PostgresDriverError") return "";
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Client-facing classification of the admin-function fragments above: the
+ * stable public error code and HTTP status a route returns instead of a 500.
+ * Fragments consumed elsewhere (invitations, dead-letter recovery, the
+ * delivery authenticity guard) are mapped by their own callers and are absent.
+ */
+const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code: string; status: number }>> = {
+  "invalid identity lifecycle operation": { code: "invalid_request", status: 400 },
+  "human identity lifecycle only supports oidc or saml": { code: "invalid_request", status: 400 },
+  "invalid identity lifecycle fields": { code: "invalid_request", status: 400 },
+  "memberships must be an array": { code: "invalid_request", status: 400 },
+  "disable must not include memberships": { code: "invalid_request", status: 400 },
+  "invalid membership entry": { code: "invalid_request", status: 400 },
+  "duplicate membership entry": { code: "invalid_request", status: 400 },
+  "identity lifecycle event replay conflict": { code: "identity_lifecycle_event_conflict", status: 409 },
+  "identity subject is already mapped to a different user": { code: "identity_subject_conflict", status: 409 },
+  "disabled identity requires explicit reactivation": { code: "identity_disabled", status: 409 },
+  "identity subject does not match the requested user": { code: "identity_subject_mismatch", status: 409 },
+  "identity subject does not match requested user": { code: "identity_subject_mismatch", status: 409 },
+  "identity is not disabled": { code: "identity_not_disabled", status: 409 },
+  "tenant_admin_role_requires_tenant_admin_actor": { code: "tenant_admin_role_requires_tenant_admin_actor", status: 403 },
+  "invalid resource entitlement operation": { code: "invalid_request", status: 400 },
+  "invalid resource type": { code: "invalid_request", status: 400 },
+  "invalid resource permission": { code: "invalid_request", status: 400 },
+  "resource id required": { code: "invalid_request", status: 400 },
+  "reason required": { code: "invalid_request", status: 400 },
+  "invalid entitlement effective dates": { code: "invalid_request", status: 400 },
+  "invalid data-right operation": { code: "invalid_request", status: 400 },
+  "invalid data-right effective dates": { code: "invalid_request", status: 400 },
+  "active support workspace not found": { code: "support_workspace_not_found", status: 404 },
+  "workspace not found": { code: "workspace_not_found", status: 404 },
+  "subject user not found": { code: "subject_user_not_found", status: 404 },
+  "invalid support access operation": { code: "invalid_request", status: 400 },
+  "invalid support auth method": { code: "invalid_request", status: 400 },
+  "invalid support role": { code: "invalid_request", status: 400 },
+  "support purpose required": { code: "invalid_request", status: 400 },
+  "approval reference required": { code: "invalid_request", status: 400 },
+  "support access requires a future expiry": { code: "invalid_request", status: 400 },
+  "support access cannot be self-approved": { code: "support_access_self_approval_denied", status: 403 },
+  "active support identity not found": { code: "support_identity_not_found", status: 404 },
+  "requested support role is already active outside this grant": { code: "support_role_already_active", status: 409 },
+  "support grant id required": { code: "invalid_request", status: 400 },
+  "support grant not found": { code: "support_grant_not_found", status: 404 },
+};
+
+/**
+ * The public code/status for an admin SQL business error, or undefined when
+ * the error is not one (so callers fall through to their normal handling).
+ * Native driver errors carry only the allowlisted fragment; fakes and non-native
+ * drivers are matched on their raw message.
+ */
+export function adminSqlErrorClassification(error: unknown): { code: string; status: number } | undefined {
+  if (error && typeof error === "object") {
+    const carried = (error as { applicationError?: unknown }).applicationError;
+    if (typeof carried === "string") return ADMIN_SQL_ERROR_CLASSIFICATION[carried as SqlApplicationError];
+    if ((error as { name?: unknown }).name === "PostgresDriverError") return undefined;
+  }
+  const fragment = matchSqlApplicationError(error);
+  return fragment ? ADMIN_SQL_ERROR_CLASSIFICATION[fragment] : undefined;
 }

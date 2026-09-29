@@ -158,20 +158,23 @@ function aggregationSupported(operation: SemanticOperation, candidate: MetricCan
   return false;
 }
 
-function factIds(rows: PostgresRow[]): string[] {
-  const result = new Set<string>();
-  for (const row of rows) {
-    const observationId = text(row.observation_id);
-    if (observationId) result.add(observationId);
-    const sourceIds = row.source_observation_ids;
-    if (Array.isArray(sourceIds)) {
-      for (const value of sourceIds) {
-        const id = text(value);
-        if (id) result.add(id);
-      }
+/** The observation ids a semantic row is derived from: its own id (value rows) and/or its aggregated members. */
+export function rowFactIds(row: PostgresRow): string[] {
+  const ids = new Set<string>();
+  const observationId = text(row.observation_id);
+  if (observationId) ids.add(observationId);
+  const sourceIds = row.source_observation_ids;
+  if (Array.isArray(sourceIds)) {
+    for (const value of sourceIds) {
+      const id = text(value);
+      if (id) ids.add(id);
     }
   }
-  return [...result].sort();
+  return [...ids];
+}
+
+function factIds(rows: PostgresRow[]): string[] {
+  return [...new Set(rows.flatMap(rowFactIds))].sort();
 }
 
 export class GovernedSemanticQueryService {

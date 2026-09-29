@@ -54,3 +54,41 @@ test("expected tenant-admin request errors keep their own 4xx status instead of 
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: "invitation_not_pending", correlationId: "corr-tenant" });
 });
+
+const { PostgresDriverError } = await import("@/lib/server/postgres-native");
+
+test("database connection failures and timeouts are a retryable 503, not a 500", async () => {
+  for (const error of [
+    new PostgresDriverError("connection", "CONNECT_TIMEOUT"),
+    new PostgresDriverError("connection", "ECONNREFUSED"),
+    new PostgresDriverError("query", "QUERY_TIMEOUT"),
+  ]) {
+    const response = apiError(error, "corr-db");
+    assert.equal(response.status, 503, error.message);
+    assert.equal(response.headers.get("retry-after"), "5");
+    assert.deepEqual(await response.json(), { error: "service_unavailable", correlationId: "corr-db" });
+  }
+  // An ordinary failed query stays an opaque 500 and carries no Retry-After.
+  const query = apiError(new PostgresDriverError("query", "42P01"), "corr-q");
+  assert.equal(query.status, 500);
+  assert.equal(query.headers.get("retry-after"), null);
+});
+
+test("admin SQL business errors map to their own 4xx status instead of a 500", async () => {
+  const cases: Array<[unknown, number, string]> = [
+    [new PostgresDriverError("query", "P0001", "disabled identity requires explicit reactivation"), 409, "identity_disabled"],
+    [new PostgresDriverError("query", "P0001", "tenant_admin_role_requires_tenant_admin_actor"), 403, "tenant_admin_role_requires_tenant_admin_actor"],
+    [new PostgresDriverError("query", "P0001", "support access cannot be self-approved"), 403, "support_access_self_approval_denied"],
+    [new PostgresDriverError("query", "P0001", "subject user not found"), 404, "subject_user_not_found"],
+    [new PostgresDriverError("query", "P0001", "invalid data-right effective dates"), 400, "invalid_request"],
+    // Non-native drivers and fakes are matched on the raw message, longest fragment first.
+    [new Error("active support workspace not found"), 404, "support_workspace_not_found"],
+  ];
+  for (const [error, status, code] of cases) {
+    const response = apiError(error, "corr-sql");
+    assert.equal(response.status, status, code);
+    assert.deepEqual(await response.json(), { error: code, correlationId: "corr-sql" });
+  }
+  // A native driver error with no allowlisted fragment never falls back to message matching.
+  assert.equal(apiError(new PostgresDriverError("query", "P0001"), "corr-x").status, 500);
+});

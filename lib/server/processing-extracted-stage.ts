@@ -2,14 +2,13 @@ import { createHash } from "crypto";
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { boundedFetch, DEFAULT_PROVIDER_TIMEOUT_MS, MAX_PROVIDER_TIMEOUT_MS, METADATA_TIMEOUT_MS, withStageBudget } from "./processing-stage-http.ts";
 
 const EXTRACTION_CONTRACT_VERSION = "1";
 const EXTRACTION_SCHEMA_VERSION = "1.6";
 const EXTRACTION_SKILL_ID = "quarterly_fund_report_extraction";
 const EXTRACTION_SKILL_VERSION = "2.1";
 const EXTRACTION_ORCHESTRATION_POLICY_VERSION = "1";
-const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
-const METADATA_TIMEOUT_MS = 5_000;
 const PROVIDER_RESPONSE_LIMIT_BYTES = 64 * 1024;
 const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -564,41 +563,13 @@ export class PostgresExtractionCandidateRepository implements ExtractionCandidat
   }
 }
 
-function boundedSignal(parent: AbortSignal, timeoutMs: number, label: string): { signal: AbortSignal; dispose(): void } {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort(parent.reason);
-  parent.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error(`${label} timed out`)), timeoutMs);
-  if (parent.aborted) onAbort();
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-      parent.removeEventListener("abort", onAbort);
-    },
-  };
-}
-
-async function boundedFetch(
-  fetchImpl: typeof fetch,
-  url: string,
-  init: RequestInit,
-  parent: AbortSignal,
-  timeoutMs: number,
-  label: string,
-): Promise<Response> {
-  const execution = boundedSignal(parent, timeoutMs, label);
-  try { return await fetchImpl(url, { ...init, signal: execution.signal, cache: "no-store" }); }
-  finally { execution.dispose(); }
-}
-
 async function googleIdentityToken(fetchImpl: typeof fetch, audience: string, signal: AbortSignal): Promise<string> {
   const url = new URL("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity");
   url.searchParams.set("audience", audience);
   url.searchParams.set("format", "full");
-  const response = await boundedFetch(fetchImpl, url.toString(), { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP extraction identity token request");
+  const { response, value } = await boundedFetch(fetchImpl, url.toString(), { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP extraction identity token request", (res) => res.ok ? res.text() : Promise.resolve(""));
   if (!response.ok) throw new Error(`GCP extraction identity token request failed (${response.status})`);
-  const token = (await response.text()).trim();
+  const token = value.trim();
   if (!token) throw new Error("GCP extraction identity token response was empty");
   return token;
 }
@@ -638,7 +609,7 @@ export class HttpExtractionProvider implements ExtractionProvider {
 
   async extract(input: Parameters<ExtractionProvider["extract"]>[0]): Promise<ExtractionBundleDescriptor> {
     const token = await googleIdentityToken(this.fetchImpl, this.config.audience, input.signal);
-    const response = await boundedFetch(this.fetchImpl, `${this.config.endpoint.replace(/\/$/, "")}/v1/extractions`, {
+    const { response, value: responseText } = await boundedFetch(this.fetchImpl, `${this.config.endpoint.replace(/\/$/, "")}/v1/extractions`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -677,11 +648,14 @@ export class HttpExtractionProvider implements ExtractionProvider {
         },
         output: { objectUri: input.outputObjectUri, format: "jsonl" },
       }),
-    }, input.signal, this.config.timeoutMs, "extraction provider");
+    }, input.signal, this.config.timeoutMs, "extraction provider", async (res) => {
+      if (!res.ok) return "";
+      const declaredLength = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > PROVIDER_RESPONSE_LIMIT_BYTES) throw new Error("extraction provider response exceeds metadata limit");
+      // Read while the provider timeout is still armed.
+      return res.text();
+    });
     if (!response.ok) throw new Error(`extraction provider failed (${response.status})`);
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > PROVIDER_RESPONSE_LIMIT_BYTES) throw new Error("extraction provider response exceeds metadata limit");
-    const responseText = await response.text();
     if (Buffer.byteLength(responseText, "utf8") > PROVIDER_RESPONSE_LIMIT_BYTES) throw new Error("extraction provider response exceeds metadata limit");
     let body: Record<string, unknown>;
     try {
@@ -737,11 +711,11 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
   private async accessToken(signal: AbortSignal): Promise<string> {
     if (this.staticToken) return this.staticToken;
     if (this.cachedToken && this.cachedToken.expiresAt - Date.now() > 60_000) return this.cachedToken.value;
-    const response = await boundedFetch(this.fetchImpl,
+    const { response, value: body } = await boundedFetch(this.fetchImpl,
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-      { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP extraction GCS token request");
+      { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP extraction GCS token request",
+      (res) => res.ok ? res.json() as Promise<{ access_token?: string; expires_in?: number }> : Promise.resolve({} as { access_token?: string; expires_in?: number }));
     if (!response.ok) throw new Error(`GCP extraction GCS token response failed (${response.status})`);
-    const body = await response.json() as { access_token?: string; expires_in?: number };
     if (!body.access_token) throw new Error("GCP extraction GCS token response was empty");
     this.cachedToken = { value: body.access_token, expiresAt: Date.now() + Math.max(60, body.expires_in ?? 300) * 1000 };
     return body.access_token;
@@ -755,12 +729,13 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     const metadataUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(parsed.bucket)}/o/${encodeURIComponent(parsed.key)}`);
     metadataUrl.searchParams.set("fields", "generation,size,metadata");
     metadataUrl.searchParams.set("generation", input.descriptor.storageGeneration);
-    const metadataResponse = await boundedFetch(this.fetchImpl, metadataUrl.toString(), {
+    const { response: metadataResponse, value: metadata } = await boundedFetch(this.fetchImpl, metadataUrl.toString(), {
       headers: { authorization: `Bearer ${token}` },
-    }, input.signal, METADATA_TIMEOUT_MS, "GCS extraction metadata read");
+    }, input.signal, METADATA_TIMEOUT_MS, "GCS extraction metadata read", (res) => res.ok
+      ? res.json() as Promise<{ generation?: string; size?: string; metadata?: Record<string, string> }>
+      : Promise.resolve({} as { generation?: string; size?: string; metadata?: Record<string, string> }));
     if (metadataResponse.status === 404) throw new Error("extraction candidate bundle is missing from GCS");
     if (!metadataResponse.ok) throw new Error(`GCS extraction metadata read failed (${metadataResponse.status})`);
-    const metadata = await metadataResponse.json() as { generation?: string; size?: string; metadata?: Record<string, string> };
     const custom = metadata.metadata ?? {};
     const manifest = input.descriptor.orchestrationManifest;
     if (metadata.generation !== input.descriptor.storageGeneration) throw new Error("extraction bundle GCS generation mismatch");
@@ -780,13 +755,18 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     const mediaUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(parsed.bucket)}/o/${encodeURIComponent(parsed.key)}`);
     mediaUrl.searchParams.set("alt", "media");
     mediaUrl.searchParams.set("generation", input.descriptor.storageGeneration);
-    const mediaResponse = await boundedFetch(this.fetchImpl, mediaUrl.toString(), {
+    // The bundle can be up to MAX_BUNDLE_BYTES, so its transfer gets the provider-sized timeout
+    // (still capped by the stage budget) and stays armed through arrayBuffer().
+    const { response: mediaResponse, value: mediaBuffer } = await boundedFetch(this.fetchImpl, mediaUrl.toString(), {
       headers: { authorization: `Bearer ${token}` },
-    }, input.signal, METADATA_TIMEOUT_MS, "GCS extraction bundle read");
+    }, input.signal, MAX_PROVIDER_TIMEOUT_MS, "GCS extraction bundle read", async (res) => {
+      if (!res.ok) return new ArrayBuffer(0);
+      const declaredLength = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
+      return res.arrayBuffer();
+    });
     if (!mediaResponse.ok) throw new Error(`GCS extraction bundle read failed (${mediaResponse.status})`);
-    const declaredLength = Number(mediaResponse.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
-    const bytes = Buffer.from(await mediaResponse.arrayBuffer());
+    const bytes = Buffer.from(mediaBuffer);
     if (bytes.length !== input.descriptor.sizeBytes) throw new Error("extraction bundle body size does not match immutable metadata");
     if (bytes.length > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
     const hash = createHash("sha256").update(bytes).digest("hex");
@@ -940,7 +920,8 @@ export function createExtractedDocumentStageHandler(input: {
   bundleReader: ExtractionBundleReader;
   outputBucket: string;
 }): ProcessingStageHandler {
-  return async (effect, signal) => {
+  // One budget for every provider/metadata/GCS call, strictly under the router's 30s.
+  return withStageBudget(async (effect, signal) => {
     if (effect.stage !== "extracted") throw new Error(`extracted document handler cannot execute stage ${effect.stage}`);
     assertNotAborted(signal);
     const predecessor = predecessorResult(effect);
@@ -1024,13 +1005,13 @@ export function createExtractedDocumentStageHandler(input: {
       skillVersion: EXTRACTION_SKILL_VERSION,
       orchestrationPolicyVersion: EXTRACTION_ORCHESTRATION_POLICY_VERSION,
     };
-  };
+  });
 }
 
 function positiveTimeout(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_PROVIDER_TIMEOUT_MS;
-  return Math.min(parsed, 25_000);
+  return Math.min(parsed, MAX_PROVIDER_TIMEOUT_MS);
 }
 
 export function configuredExtractionProviderConfig(env: NodeJS.ProcessEnv = process.env): ExtractionProviderConfig | undefined {

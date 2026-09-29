@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExportScope } from "../../core/delivery.ts";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { createPhysicalExport } from "./physical-exports.ts";
+import { createPhysicalExport, redeemPhysicalExportGrant } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
@@ -116,4 +116,20 @@ test("a scope naming data the caller is not entitled to (or that isn't published
     createPhysicalExport(identity, "csv", { scope: { snapshotId: "not-mine" } }, db),
     (error: unknown) => error instanceof Error && error.name === "AuthorizationError",
   );
+});
+
+test("a download grant is single use: redemption consumes it atomically and a replay matches nothing", async () => {
+  let consumed = false;
+  const db = new FakeDb((sql) => {
+    if (!sql.startsWith("update corvis_serving.export_download_grant")) return [];
+    assert.match(sql, /g\.consumed_at is null/);
+    assert.match(sql, /set consumed_at=now\(\)/);
+    if (consumed) return [];
+    consumed = true;
+    return [{ object_uri: "gs://b/exports/t/e/attempt-1/observations.csv", format: "csv", checksum_sha256: "a".repeat(64), snapshot_ids: [], manifest: { snapshotIds: [], artifact: { fundIds: ["fund-a"], documentIds: ["doc-1"] } } }];
+  });
+  const first = await redeemPhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "token", db);
+  assert.equal(first?.format, "csv");
+  assert.equal(await redeemPhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "token", db), null, "replaying the same token must fail");
+  assert.equal(db.queries.filter((call) => call.sql.startsWith("select")).length, 0, "validation and consumption are one statement, not check-then-mark");
 });

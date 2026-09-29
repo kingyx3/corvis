@@ -53,6 +53,21 @@ test("production requires only authoritative cross-cutting auth, Postgres and ob
   }
 });
 
+test("production requires a native Postgres DSN because the HTTPS transport cannot run transactions", () => {
+  for (const dsn of ["https://postgres.example.com/sql", "http://postgres.example.com/sql", "not-a-url"]) {
+    assert.throws(
+      () => getServerConfig({ ...productionEnvironment(), CORVIS_POSTGRES_DSN: dsn }),
+      /native postgres/,
+      dsn,
+    );
+  }
+  for (const dsn of ["postgres://u:p@db.example.com/postgres", "postgresql://u:p@db.example.com/postgres?sslmode=require"]) {
+    assert.doesNotThrow(() => getServerConfig({ ...productionEnvironment(), CORVIS_POSTGRES_DSN: dsn }));
+  }
+  // Development and tests may still use the HTTPS transport.
+  assert.doesNotThrow(() => getServerConfig({ NODE_ENV: "test", CORVIS_POSTGRES_DSN: "https://fake-postgres.test/sql" }));
+});
+
 test("optional capability bindings do not make unrelated production paths unstartable", () => {
   const config = getServerConfig(productionEnvironment());
   assert.equal(config.searchEndpoint, undefined);

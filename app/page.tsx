@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
 import type { Permission } from "@/core/enterprise";
 import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
-import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
+import { NO_DEMO_FIXTURES, loadDemoUiFixtures, type DemoUiFixtures } from "@/runtime/demo-fixtures";
+import { SESSION_EXPIRED_EVENT, friendlyErrorMessage, isUnauthenticatedError } from "@/lib/api-errors";
+import { parseViewHash, viewHash } from "@/lib/view-hash";
+import { useDocumentTitle } from "@/components/ui/use-document-title";
+import { ViewErrorBoundary } from "@/components/ui/view-error-boundary";
 import { createLatestRequestGate } from "@/lib/latest-request";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -34,7 +38,7 @@ type SearchResult =
 type CommandResult = { kind: "command"; category: "Navigation" | "Action"; key: string; title: string; detail: string; keywords: string; run: () => void };
 type PaletteResult = SearchResult | CommandResult;
 
-function errorMessage(reason: unknown): string { return reason instanceof Error ? reason.message : "Module temporarily unavailable"; }
+function errorMessage(reason: unknown): string { return friendlyErrorMessage(reason, "This module is temporarily unavailable. Retry, or contact support if it persists."); }
 function fallbackCapabilities(documentsAvailable: boolean, observationsAvailable: boolean): WorkspaceCapabilities {
   const permissions: Permission[] = [];
   if (documentsAvailable) permissions.push("documents:read");
@@ -60,16 +64,31 @@ export default function CorvisApp() {
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
   const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [demoFixtures, setDemoFixtures] = useState<DemoUiFixtures>(NO_DEMO_FIXTURES);
+  const [announcement, setAnnouncement] = useState("");
 
   useEffect(() => {
     let active = true;
-    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch(() => {});
+    // Demo-only fixtures are a dynamic import behind the build-time demo flag; production builds never fetch them.
+    void loadDemoUiFixtures().then((fixtures) => { if (active) setDemoFixtures(fixtures); }).catch(() => {});
     return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    // An expired session is not a module failure: prompt re-authentication instead of degrading silently.
+    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch((reason: unknown) => { if (active && isUnauthenticatedError(reason)) setSessionExpired(true); });
+    const onExpired = () => setSessionExpired(true);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => { active = false; window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired); };
   }, []);
 
   const applyWorkspaceResults = useCallback((results: [PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]) => {
     const [capabilitiesResult, documentsResult, snapshotsResult, observationsResult] = results;
     const nextErrors: ModuleErrors = {};
+    // A successful re-fetch (Retry after signing in again) clears the prompt.
+    setSessionExpired([capabilitiesResult, documentsResult, snapshotsResult, observationsResult].some((result) => result.status === "rejected" && isUnauthenticatedError(result.reason)));
     if (documentsResult.status === "fulfilled") setDocs(documentsResult.value); else nextErrors.documents = errorMessage(documentsResult.reason);
     if (snapshotsResult.status === "fulfilled") setSnapshots(snapshotsResult.value); else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
     if (observationsResult.status === "fulfilled") setObservations(observationsResult.value); else nextErrors.observations = errorMessage(observationsResult.reason);
@@ -83,6 +102,7 @@ export default function CorvisApp() {
     setLoading(false);
   }, []);
   const applySummaryResult = useCallback((result: PromiseSettledResult<WorkspaceSummary>) => {
+    if (result.status === "rejected" && isUnauthenticatedError(result.reason)) setSessionExpired(true);
     setSummary(result.status === "fulfilled" ? result.value : null);
     setModuleErrors((current) => {
       const next = { ...current };
@@ -152,12 +172,58 @@ export default function CorvisApp() {
     { id: "access" as View, label: "Access administration", icon: "shield" as IconName, visible: canAdmin && identity?.tenantAdmin === true },
   ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, docs, identity?.tenantAdmin, observations]);
   const activeView: View = nav.some((item) => item.id === view) ? view : "overview";
+  const activeLabel = nav.find((item) => item.id === activeView)?.label ?? "Overview";
 
-  const navigate = (next: View) => { setReviewFocus(null); setAnalyticsFocus(null); setView(next); };
+  // The active view lives in the URL hash so reload and Back/Forward land on the same view.
+  // Forward navigation pushes an entry; history traversal only reads the hash.
+  const changeView = useCallback((next: View) => {
+    setView(next);
+    const inUrl = parseViewHash(window.location.hash);
+    if (inUrl !== next && !(inUrl === null && next === "overview")) window.history.pushState(null, "", viewHash(next));
+  }, []);
+  useEffect(() => {
+    const readHash = () => {
+      const parsed = parseViewHash(window.location.hash);
+      // Other hashes (the skip link's #main-content) are not view routes and leave the view alone.
+      if (parsed) setView(parsed); else if (!window.location.hash) setView("overview");
+    };
+    readHash();
+    window.addEventListener("popstate", readHash);
+    window.addEventListener("hashchange", readHash);
+    return () => { window.removeEventListener("popstate", readHash); window.removeEventListener("hashchange", readHash); };
+  }, []);
+  // Once permissions are known, a hash for a view this user cannot open is corrected in place.
+  useEffect(() => {
+    if (loading) return;
+    const inUrl = parseViewHash(window.location.hash);
+    if (inUrl !== null && inUrl !== activeView) window.history.replaceState(null, "", viewHash(activeView));
+  }, [activeView, loading]);
+
+
+  useDocumentTitle(`${activeLabel} · Corvis`);
+
+  // After the first render of real content, a change of view moves focus to the new view's h1
+  // (so keyboard and screen-reader users land at the top of the new content) and is announced.
+  const shownView = useRef<View | null>(null);
+  useEffect(() => {
+    if (loading) return;
+    const previous = shownView.current;
+    shownView.current = activeView;
+    if (previous === null || previous === activeView) return;
+    setAnnouncement(`Navigated to ${activeLabel}`);
+    const main = document.getElementById("main-content");
+    const heading = main?.querySelector<HTMLElement>("h1");
+    // A view that already moved focus itself (e.g. a drill-through to a specific row) keeps it, and
+    // focusing the heading never scrolls: views position their own content (row reveal, etc.).
+    const viewMovedFocus = main != null && document.activeElement !== main && main.contains(document.activeElement);
+    if (heading && !viewMovedFocus) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+  }, [activeLabel, activeView, loading]);
+
+  const navigate = useCallback((next: View) => { setReviewFocus(null); setAnalyticsFocus(null); changeView(next); }, [changeView]);
   const viewPositionFinancials = (row: ObservationRecord) => {
     if (!row.companyId) return;
     setAnalyticsFocus((current) => ({ companyId: row.companyId!, fundId: row.fundId, holdingId: row.holdingId, period: row.period, key: (current?.key ?? 0) + 1 }));
-    setView("analytics");
+    changeView("analytics");
   };
   const openSnapshot = (snapshot: FundSnapshot) => { if (!canReadObservations) return; setSelectedSnapshotId(snapshot.id); navigate("review"); };
   const openSnapshotById = (snapshotId: string | undefined, fund?: string) => {
@@ -177,13 +243,13 @@ export default function CorvisApp() {
     if (target.snapshotId) setSelectedSnapshotId(target.snapshotId);
     setAnalyticsFocus(null);
     setReviewFocus(target.observationId ? (current) => ({ observationId: target.observationId!, key: (current?.key ?? 0) + 1 }) : null);
-    setView("review");
+    changeView("review");
   };
   const openReviewObservation = (observationId: string) => {
     if (!canReadObservations) return;
     setAnalyticsFocus(null);
     setReviewFocus((current) => ({ observationId, key: (current?.key ?? 0) + 1 }));
-    setView("review");
+    changeView("review");
   };
 
   const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); setActiveResult(0); };
@@ -218,7 +284,7 @@ export default function CorvisApp() {
     const query = searchQuery.trim().toLowerCase();
     const matchingCommands = commands.filter((command) => !query || `${command.title} ${command.detail} ${command.keywords}`.toLowerCase().includes(query));
     return [...matchingCommands, ...searchResults].slice(0, 20);
-  }, [canReadObservations, canReview, canUpload, nav, refreshWorkspace, searchQuery, searchResults]);
+  }, [canReadObservations, canReview, canUpload, nav, navigate, refreshWorkspace, searchQuery, searchResults]);
   const activeResultIndex = Math.min(activeResult, Math.max(paletteResults.length - 1, 0));
 
   const choosePaletteResult = (result: PaletteResult) => {
@@ -228,7 +294,7 @@ export default function CorvisApp() {
     if (result.kind === "fund") { openSnapshot(result.snapshot); return; }
     if (result.observation.snapshotId) setSelectedSnapshotId(result.observation.snapshotId);
     setReviewFocus((current) => ({ observationId: result.observation.id, key: (current?.key ?? 0) + 1 }));
-    setView("review");
+    changeView("review");
   };
   const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -251,16 +317,19 @@ export default function CorvisApp() {
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}</nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div></div></aside>
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
+      {sessionExpired && <div className="lineage-note tone-warning" role="alert" aria-label="Session expired"><Icon name="alert"/><div><strong>Your session has expired</strong><span>Sign in again to continue. Data that was already saved is not affected.</span></div><button className="primary-button" onClick={() => window.location.reload()}>Sign in again</button></div>}
       {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
-      {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
-      {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void refreshSummary()}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} summaryError={canReadObservations ? moduleErrors.summary : undefined} onRetrySummary={() => void refreshSummary()} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void refreshSummary()} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" && identity?.workspaceId !== "demo-secondary" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
+      {!loading && !sessionExpired && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
+      <ViewErrorBoundary key={activeView} view={activeView} label={activeLabel}>
+      {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void refreshSummary()}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} summaryError={canReadObservations ? moduleErrors.summary : undefined} onRetrySummary={() => void refreshSummary()} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void refreshSummary()} activity={identity?.workspaceId !== "demo-secondary" ? demoFixtures.recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
       {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
       {!loading && activeView === "documents" && canReadDocuments && (moduleErrors.documents ? scopedUnavailable("Documents are temporarily unavailable", moduleErrors.documents) : <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc} canUpload={canUpload}/>)}
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)}
       {!loading && activeView === "delivery" && canExport && <DeliveryView publishedSnapshots={publishedSnapshots}/>}
-      {!loading && activeView === "research" && canResearch && <ResearchView suggestions={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" ? researchSuggestions : []} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
+      {!loading && activeView === "research" && canResearch && <ResearchView suggestions={demoFixtures.researchSuggestions} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
       {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
-    </div></main>
+      </ViewErrorBoundary>
+    </div><div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{announcement}</div></main>
     {searchOpen && <Modal label="Workspace command palette" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={paletteResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={paletteResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search or run a command" aria-label="Search workspace or run a command"/><kbd>Esc</kbd></label><div className="search-palette-results">{searchQuery.trim() && paletteResults.length === 0 && <p role="status" className="search-palette-empty">No commands or entitled workspace data match “{searchQuery}”.</p>}{paletteResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Commands and search results">{paletteResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => choosePaletteResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind === "command" ? result.category : result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Run/open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
     {uploadOpen && canUpload && <UploadModal onClose={() => { setUploadOpen(false); navigate("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>}
     {selectedDoc && <DocumentDrawer doc={selectedDoc} onClose={() => setSelectedDoc(null)} canOpenTrustedData={canReadObservations} onReview={() => { const match = snapshots.find((snapshot) => snapshot.fund === selectedDoc.fund && snapshot.period === selectedDoc.period); if (match?.id) setSelectedSnapshotId(match.id); setSelectedDoc(null); navigate("review"); }}/>} 

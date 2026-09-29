@@ -296,14 +296,17 @@ export async function redeemPhysicalExportGrant(
   store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
 ): Promise<{ objectUri: string; format: ExportFormat; checksumSha256: string } | null> {
   if (!token || token.length > 256) return null;
-  const rows = await store.query(`select j.object_uri,j.format,j.checksum_sha256,j.snapshot_ids,j.manifest
-    from corvis_serving.export_download_grant g
-    join corvis_serving.export_job j
-      on j.tenant_id=g.tenant_id and j.export_id=g.export_id
-    where g.tenant_id=$1 and g.export_id=$2::uuid and g.subject=$3
-      and g.token_sha256=$4 and g.expires_at>now()
+  // Single use: the grant is consumed by the same statement that validates it, so a replayed
+  // or concurrent redemption of one token matches no row. (A download that then fails must
+  // request a fresh grant from the single-export read.)
+  const rows = await store.query(`update corvis_serving.export_download_grant g
+    set consumed_at=now()
+    from corvis_serving.export_job j
+    where j.tenant_id=g.tenant_id and j.export_id=g.export_id
+      and g.tenant_id=$1 and g.export_id=$2::uuid and g.subject=$3
+      and g.token_sha256=$4 and g.expires_at>now() and g.consumed_at is null
       and j.requested_by=$3 and j.state='complete' and j.expires_at>now()
-    limit 1`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+    returning j.object_uri,j.format,j.checksum_sha256,j.snapshot_ids,j.manifest`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
   const row = rows[0];
   if (!row?.object_uri || !row?.checksum_sha256) return null;
   const manifest = row.manifest as DeliveryManifest;
