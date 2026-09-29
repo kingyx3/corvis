@@ -211,6 +211,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
 // Routes with their own (non-session) authentication, exercised in dedicated tests below.
 const OWN_AUTHENTICATION = new Set([
   "health/route.ts", // public
+  "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership
   "scim/v2/Users/route.ts", // tenant SCIM bearer token
   "scim/v2/Users/[id]/route.ts",
@@ -651,6 +652,10 @@ test("invitation acceptance needs an authenticated human identity, not a service
 test("the health route is public and identity-only routes need just an authenticated identity", async () => {
   const health = await load("health/route.ts");
   assert.equal((await health.GET!(requestFor("/health", { roles: null }))).status, 200);
+  const ready = await load("health/ready/route.ts");
+  const probe = await ready.GET!(requestFor("/health/ready", { roles: null }));
+  assert.ok([200, 503].includes(probe.status), "the readiness probe is public and detail-free");
+  assert.deepEqual(Object.keys(await probe.json() as object).sort(), ["service", "status"]);
   for (const file of ["me/route.ts", "capabilities/route.ts", "my-workspaces/route.ts"]) {
     const handlers = await load(file);
     for (const role of ROLES) {

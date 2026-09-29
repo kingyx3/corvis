@@ -47,3 +47,9 @@ alerts:
     severity: SEV2
   - condition: publication_freshness_p95_minutes > 60 for 10m
     severity: SEV2
+  - condition: api_latency_p95_ms > 750 for 15m
+    severity: SEV3
+  - condition: processing_transport_dead_letter > 0
+    severity: SEV2
+  - condition: worker_delivery_task_failed > 0 for 15m
+    severity: SEV2

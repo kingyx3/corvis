@@ -434,3 +434,96 @@ resource "google_logging_metric" "webhook_delivery_duration" {
     }
   }
 }
+
+# ops/slos.yaml web_api latency_ms.p95 = 750: request latency from Cloud Run's
+# own distribution metric, 95th percentile across the API service's revisions.
+resource "google_monitoring_alert_policy" "api_latency_p95" {
+  count = local.api_monitoring_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-api-latency-p95"
+  combiner     = "OR"
+  severity     = "WARNING"
+
+  conditions {
+    display_name = "API p95 latency above 750ms for 15m"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${var.api_service_name}\" AND metric.type=\"run.googleapis.com/request_latencies\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 750
+      duration        = "900s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_DELTA"
+        cross_series_reducer = "REDUCE_PERCENTILE_95"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "API p95 latency exceeded the ops/slos.yaml web_api objective (750ms). Check Postgres pool waits (CORVIS_POSTGRES_POOL_MAX, request concurrency) and cold starts before changing the budget."
+    mime_type = "text/markdown"
+  }
+}
+
+# app/api/internal/delivery logs delivery.task_failed for each scheduler-tick
+# task (exports, webhooks, processing transport, sweeps) that rejected. The
+# tick answers 500 so the scheduler retries; persistent failure pages here.
+resource "google_logging_metric" "delivery_task_failed" {
+  project = var.project_id
+  name    = "corvis_${var.environment}_delivery_task_failed"
+  filter  = <<-FILTER
+    resource.type="cloud_run_revision"
+    jsonPayload.event="delivery.task_failed"
+  FILTER
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    unit        = "1"
+  }
+}
+
+resource "google_monitoring_alert_policy" "delivery_task_failed" {
+  count = local.api_monitoring_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-worker-delivery-task-failed"
+  combiner     = "OR"
+  severity     = "ERROR"
+
+  conditions {
+    display_name = "Worker scheduler tick task failing for 15m"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/${google_logging_metric.delivery_task_failed.name}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "900s"
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "A task in the worker's scheduled delivery tick (exports, webhooks, processing transport, idempotency/webhook/upload sweeps or upload release) has failed on every tick for 15 minutes. The delivery.task_failed log names the task."
+    mime_type = "text/markdown"
+  }
+}

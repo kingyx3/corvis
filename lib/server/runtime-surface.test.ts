@@ -13,6 +13,8 @@ test("production runtime surface fails closed when service identity is unknown",
   assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", demoMode: "false" }), "disabled");
   assert.equal(resolveRuntimeSurface("unexpected", { nodeEnv: "production", serviceName: "other-service" }), "disabled");
   assert.equal(runtimeSurfaceAllows("disabled", "/api/v1/health"), true);
+  assert.equal(runtimeSurfaceAllows("disabled", "/api/v1/health/ready"), true);
+  assert.equal(runtimeSurfaceAllows("disabled", "/api/v1/health/other"), false);
   assert.equal(runtimeSurfaceAllows("disabled", "/api/v1/funds"), false);
 });
 
@@ -37,6 +39,7 @@ test("worker runtime exposes only internal endpoints plus health", () => {
   assert.equal(runtimeSurfaceAllows("worker", "/api/internal/delivery"), true);
   assert.equal(runtimeSurfaceAllows("worker", "/api/internal/processing-stage"), true);
   assert.equal(runtimeSurfaceAllows("worker", "/api/v1/health"), true);
+  assert.equal(runtimeSurfaceAllows("worker", "/api/v1/health/ready"), true, "the worker's startup probe");
   assert.equal(runtimeSurfaceAllows("worker", "/api/v1/funds"), false);
   assert.equal(runtimeSurfaceAllows("worker", "/"), false);
 });
