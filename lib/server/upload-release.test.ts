@@ -50,11 +50,13 @@ class FakeDb implements PostgresSqlApi {
   readonly released: PostgresPrimitive[][] = [];
   readonly sealed: PostgresPrimitive[][] = [];
   shaMatches = true;
+  /** What the integrity seal's own read reports the artifact as (undefined = not yet sealed). */
+  artifact: PostgresRow | undefined;
   private readonly pending: PostgresRow[];
   constructor(pending: PostgresRow[]) { this.pending = pending; }
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     if (sql.includes("from corvis_source.document_artifact_version") && sql.includes("malware_scan_status='pending'")) return this.pending;
-    if (sql.includes("select malware_scan_status, quarantine_status")) return [];
+    if (sql.includes("select malware_scan_status, quarantine_status")) return this.artifact ? [this.artifact] : [];
     if (sql.includes("set sha256=lower(coalesce(sha256")) { this.sealed.push(parameters); return [{ sha_matches: this.shaMatches }]; }
     if (sql.includes("release_clean_artifact")) { this.released.push(parameters); return [{ job_id: `registered:${String(parameters[1])}` }]; }
     throw new Error(`unexpected SQL: ${sql}`);
@@ -85,6 +87,23 @@ test("a clean verdict that lands after completion seals the digest and releases 
   assert.deepEqual(summary, { scanned: 1, released: 1, threats: 0, integrityFailed: 0, pending: 0, errors: 0 });
   assert.equal(db.sealed[0]?.[2], createHash("sha256").update(pdf).digest("hex"));
   assert.deepEqual(db.released[0], [TENANT, "d-clean", "a-clean", GENERATION, "i-clean"]);
+});
+
+test("an artifact another path already released is not released again", async () => {
+  const store = new FakeStore();
+  store.put("tenant=t/raced.pdf", pdf, {}, "clean");
+  const db = new FakeDb([pendingRow("raced", pdf)]);
+  // Simulates a concurrent interactive release landing between this tick's
+  // pending-rows query and its own integrity seal read.
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+  const summary = await releaseScannedUploads({ store, db });
+
+  assert.deepEqual(summary, { scanned: 1, released: 1, threats: 0, integrityFailed: 0, pending: 0, errors: 0 });
+  assert.deepEqual(store.hashed, [], "an already-released artifact is not re-hashed");
+  // release_clean_artifact unconditionally resets document.status back to
+  // 'queued', so calling it a second time would corrupt a pipeline that has
+  // already progressed past that stage.
+  assert.equal(db.released.length, 0, "an already-released artifact must not be re-released");
 });
 
 test("an artifact with no scanner verdict yet is left quarantined and never read", async () => {

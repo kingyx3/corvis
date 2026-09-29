@@ -369,6 +369,18 @@ export class ProductionUploadSessions implements UploadSessionPort {
         await this.persist(session);
         throw new UploadRequestError("upload_integrity_failed", "Uploaded bytes do not match the declared SHA-256");
       }
+      if (seal.outcome === "released") {
+        // Another path (the scheduled release, or a concurrent poll) already
+        // ran release_clean_artifact for this artifact. Calling it again would
+        // unconditionally reset document.status back to 'queued' even if the
+        // pipeline has since moved it past that stage, so just record the
+        // session as complete without re-releasing.
+        session.state = "complete";
+        session.malwareScanStatus = "clean";
+        session.releasedAt = session.releasedAt ?? new Date().toISOString();
+        await this.persist(session);
+        return;
+      }
     }
     session.state = "complete";
     session.malwareScanStatus = "clean";
