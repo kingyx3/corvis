@@ -32,14 +32,14 @@ test("serving, review, research and export paths retain explicit resource/data-r
   const platform = await source("lib/server/platform.ts");
   const enterprise = await source("core/enterprise.ts");
 
-  assert.match(repositories, /document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.match(repositories, /document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$2::jsonb\)/);
   assert.match(repositories, /o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
-  assert.match(repositories, /r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
-  assert.match(repositories, /o\.observation_id=\$2::uuid[\s\S]*o\.fund_id in[\s\S]*r\.document_id::text in/);
+  assert.match(repositories, /r\.document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$3::jsonb\)/);
+  assert.match(repositories, /o\.observation_id=\$2::uuid[\s\S]*o\.fund_id in[\s\S]*r\.document_id in \(select entitled\.id::uuid/);
 
   assert.match(semanticQuery, /const entitledFundIds = \[\.\.\.\(identity\.entitlements\.fundIds \?\? \[\]\)\]\.sort\(\)/);
   assert.match(semanticQuery, /const documentIds = \[\.\.\.\(identity\.entitlements\.documentIds \?\? \[\]\)\]\.sort\(\)/);
-  assert.match(semanticQuery, /o\.tenant_id=\$1[\s\S]*o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)[\s\S]*r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
+  assert.match(semanticQuery, /o\.tenant_id=\$1[\s\S]*o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)[\s\S]*r\.document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$3::jsonb\)/);
   assert.match(semanticQuery, /and o\.metric_code=\$4/);
 
   assert.match(research, /const sourceDocumentIds = identity\.entitlements\.sourceDocumentIds \?\? \[\]/);

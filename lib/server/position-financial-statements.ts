@@ -191,7 +191,7 @@ export class PostgresPositionFinancialStatementRepository {
     const predicates: string[] = [
       "v.tenant_id=$1::uuid",
       "v.fund_id in (select jsonb_array_elements_text($2::jsonb))",
-      "v.document_id::text in (select jsonb_array_elements_text($3::jsonb))",
+      "v.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')",
       `exists (
         select 1
         from corvis_consolidated.reconciliation_run rr

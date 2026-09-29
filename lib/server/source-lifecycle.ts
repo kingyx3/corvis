@@ -92,12 +92,12 @@ export async function listDocumentLifecycles(identity: RequestIdentity, db: Post
       left join corvis_source.source_connection c
         on c.tenant_id=d.tenant_id and c.source_connection_id=a.source_connection_id
       where d.tenant_id=$1::uuid
-        and d.document_id::text in (select jsonb_array_elements_text($2::jsonb))`, [identity.tenantId, documentJson]),
+        and d.document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`, [identity.tenantId, documentJson]),
     db.query(`with current_origin as (
         select distinct ad.document_id as current_document_id, ad.source_connection_id, ad.remote_document_id
         from corvis_source.acquired_document ad
         where ad.tenant_id=$1::uuid
-          and ad.document_id::text in (select jsonb_array_elements_text($2::jsonb))
+          and ad.document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
           and ad.disposition='accepted'
       )
       select co.current_document_id, h.acquisition_id, h.document_id, h.document_artifact_version_id,
@@ -110,7 +110,7 @@ export async function listDocumentLifecycles(identity: RequestIdentity, db: Post
     db.query(`select document_id, document_artifact_version_id, ingestion_id, created_at
       from corvis_source.document_artifact_version
       where tenant_id=$1::uuid
-        and document_id::text in (select jsonb_array_elements_text($2::jsonb))
+        and document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       order by document_id, created_at desc`, [identity.tenantId, documentJson]),
     (identity.entitlements.fundIds ?? []).length === 0 ? Promise.resolve([]) : db.query(`select r.document_id, o.observation_id, o.source_reference_id,
              coalesce(o.company_name, o.company_id, 'Unknown company') as company_name,
@@ -120,7 +120,7 @@ export async function listDocumentLifecycles(identity: RequestIdentity, db: Post
       join corvis_source.source_reference r
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
       where o.tenant_id=$1::uuid
-        and r.document_id::text in (select jsonb_array_elements_text($2::jsonb))
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         and o.fund_id in (select jsonb_array_elements_text($3::jsonb))
       order by r.document_id, o.updated_at desc`, [identity.tenantId, documentJson, jsonIds(identity.entitlements.fundIds ?? [])]),
   ]);

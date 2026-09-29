@@ -1,3 +1,6 @@
+// Not on a runtime request path (#239): the live stage transitions are enforced by the Postgres
+// functions from migrations 014/046. This pure state machine is kept as the executable reference
+// for those rules (orchestration.test.ts) and for the processing worker tracked in #79.
 import type { ProcessingJob, ProcessingStage } from "@/core/enterprise";
 import { redactErrorText } from "./processing-error-text.ts";
 

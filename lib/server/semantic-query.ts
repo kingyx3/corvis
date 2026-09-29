@@ -204,7 +204,7 @@ export class GovernedSemanticQueryService {
       where o.tenant_id=$1
         and o.review_state='approved'
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       group by o.metric_code,md.display_name,md.data_type,md.aggregation_behavior
       order by o.metric_code
       limit 500`, [identity.tenantId, JSON.stringify(fundIds), JSON.stringify(documentIds)]);
@@ -246,7 +246,7 @@ export class GovernedSemanticQueryService {
       where o.tenant_id=$1
         and o.review_state='approved'
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         and o.metric_code=$4
         and ($5::jsonb='[]'::jsonb or regexp_replace(lower(coalesce(o.economic_period,'')),'[^a-z0-9]+','','g') in (select jsonb_array_elements_text($5::jsonb)))
         and ($6::jsonb='[]'::jsonb

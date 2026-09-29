@@ -1,3 +1,5 @@
+// Not on a runtime request path (#239): intentional pre-wiring for the SOC 2 evidence operating
+// cadence (#111); it mirrors the Postgres promotion gate so drift can be surfaced before promotion.
 import type { EvidenceSourceDefinition } from "./control-evidence-registry.ts";
 
 /**

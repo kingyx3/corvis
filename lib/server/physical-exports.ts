@@ -92,7 +92,7 @@ async function positionFinancialSnapshots(
      and ps.status='published'
     where v.tenant_id=$1::uuid
       and v.fund_id in (select jsonb_array_elements_text($2::jsonb))
-      and v.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      and v.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and v.fund_id=$5
       and v.holding_id::text=$6
       and v.company_id::text=$7
@@ -154,7 +154,7 @@ export async function createPhysicalExport(
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
     where o.tenant_id=$1 and o.review_state='approved'
       and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-      and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))`,
+      and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`,
   [identity.tenantId, jsonIds(scopedFundIds), jsonIds(documentIds)]);
 
   const exportId = randomUUID();
@@ -220,7 +220,7 @@ async function assertCurrentArtifactAccess(
   const rows = await store.query(`select count(*) as snapshot_count
     from corvis_consolidated.fund_period_snapshot s
     where s.tenant_id=$1 and s.status='published'
-      and s.snapshot_id::text in (select jsonb_array_elements_text($2::jsonb))
+      and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);
   if (Number(rows[0]?.snapshot_count ?? 0) !== snapshotIds.length) {

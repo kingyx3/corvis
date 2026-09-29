@@ -74,7 +74,7 @@ test("metric questions execute a narrow governed query with deterministic period
   const candidateCall = db.calls[0];
   assert.match(candidateCall.sql, /bool_or\(o\.value_number is not null\) as numeric_available/i);
   assert.match(candidateCall.sql, /o\.tenant_id=\$1/i);
-  assert.match(candidateCall.sql, /r\.document_id::text in/i);
+  assert.match(candidateCall.sql, /r\.document_id in \(select entitled\.id::uuid/i);
   assert.equal(candidateCall.parameters[0], identity.tenantId);
   assert.equal(candidateCall.parameters[1], JSON.stringify(["fund-a"]));
   assert.equal(candidateCall.parameters[2], JSON.stringify([...identity.entitlements.documentIds!].sort()));

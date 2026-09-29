@@ -1,3 +1,5 @@
+// Not on a runtime request path (#239): intentional pre-wiring for customer-authorized source
+// connectors (#31); `runConnectionSync` has no scheduler caller yet (see docs/SOURCE_CONNECTORS.md).
 import { createHash, randomUUID } from "crypto";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";

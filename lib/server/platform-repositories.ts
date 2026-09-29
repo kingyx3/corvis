@@ -38,7 +38,7 @@ export class PostgresWorkspaceRepository {
     const keyset = page ? sqlKeyset("document_id::text", page, parameters) : { where: "", tail: "order by created_at desc limit 1000" };
     return this.db.query(`select * from corvis_serving.documents
       where tenant_id=$1
-        and document_id::text in (select jsonb_array_elements_text($2::jsonb))${keyset.where}
+        and document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')${keyset.where}
       ${keyset.tail}`, parameters);
   }
 
@@ -55,7 +55,7 @@ export class PostgresWorkspaceRepository {
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
       where o.tenant_id=$1
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))${keyset.where}
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')${keyset.where}
       ${keyset.tail}`, parameters);
   }
 
@@ -95,7 +95,7 @@ export class PostgresWorkspaceRepository {
           on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
         where o.tenant_id=$1
           and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-          and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+          and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
           and lower(o.review_state) not in ('approved','rejected')
       ) x
       where x.rn=1
@@ -103,7 +103,7 @@ export class PostgresWorkspaceRepository {
     const stuckDocuments = !options.includeDocuments || documentIds.length === 0 ? [] : await this.db.query(`select d.*, count(*) over () as stuck_total
       from corvis_serving.documents d
       where d.tenant_id=$1
-        and d.document_id::text in (select jsonb_array_elements_text($2::jsonb))
+        and d.document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         and lower(coalesce(d.status,'queued')) <> 'published'
         and lower(coalesce(d.status,'queued')) not like '%review%'
         and (
@@ -299,7 +299,7 @@ export class PostgresReviewPublicationRepository {
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
       where o.tenant_id=$1 and o.observation_id=$2::uuid
         and o.fund_id in (select jsonb_array_elements_text($3::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($4::jsonb))
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($4::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       limit 1`, [identity.tenantId, observationId, jsonIds(fundIds), jsonIds(documentIds)]);
     return rows[0];
   }
@@ -330,7 +330,7 @@ export class PostgresReviewPublicationRepository {
           from corvis_source.source_reference r
           where r.tenant_id=e.tenant_id
             and r.source_reference_id=any(e.competing_source_reference_ids)
-            and r.document_id::text in (select jsonb_array_elements_text($5::jsonb))
+            and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($5::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         ),'[]'::jsonb) as source_references
       from corvis_serving.reconciliation_exceptions e
       where e.tenant_id=$1 and e.snapshot_id=$2::uuid and e.snapshot_version=$3
@@ -359,7 +359,7 @@ export class PostgresReviewPublicationRepository {
           where r.tenant_id=e.tenant_id
             and r.source_reference_id=$5::uuid
             and r.source_reference_id=any(e.competing_source_reference_ids)
-            and r.document_id::text in (select jsonb_array_elements_text($6::jsonb))
+            and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($6::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         ))
       limit 1`, [
       identity.tenantId,command.exceptionId,command.expectedVersion,jsonIds(fundIds),
@@ -515,7 +515,7 @@ export class PostgresOperationsRepository {
         limit 1
       ) recovery on true
       where j.tenant_id=$1
-        and j.document_id::text in (select jsonb_array_elements_text($2::jsonb))${keyset.where}
+        and j.document_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')${keyset.where}
       ${keyset.tail}`, parameters);
     const admin = hasPermission(identity,"admin:manage");
     return rows.map((row) => ({
@@ -549,7 +549,7 @@ export class PostgresOperationsRepository {
         on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
       where o.tenant_id=$1 and o.review_state='approved'
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
-        and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))`,
+        and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`,
     [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
     return { snapshots, observationCount: Number(counts[0]?.row_count ?? 0) };
   }

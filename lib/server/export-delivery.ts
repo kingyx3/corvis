@@ -108,7 +108,7 @@ async function loadArtifactRows(
   const snapshotCheck = await store.query(`select count(*) as snapshot_count
     from corvis_consolidated.fund_period_snapshot s
     where s.tenant_id=$1 and s.status='published'
-      and s.snapshot_id::text in (select jsonb_array_elements_text($2::jsonb))
+      and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);
   if (Number(snapshotCheck[0]?.snapshot_count ?? 0) !== snapshotIds.length) throw new Error("export_snapshot_authorization_expired");
@@ -117,7 +117,7 @@ async function loadArtifactRows(
       select s.snapshot_id,s.fund_id,s.fact_ids
       from corvis_consolidated.fund_period_snapshot s
       where s.tenant_id=$1 and s.status='published'
-        and s.snapshot_id::text in (select jsonb_array_elements_text($2::jsonb))
+        and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     ), artifact_observation as (
       select distinct fact_observation.observation_id
       from requested_snapshot rs
@@ -134,7 +134,7 @@ async function loadArtifactRows(
     join corvis_source.source_reference r
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
     where o.fund_id in (select jsonb_array_elements_text($3::jsonb))
-      and r.document_id::text in (select jsonb_array_elements_text($4::jsonb))
+      and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($4::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     order by o.fund_id,o.report_date,o.metric_code,o.observation_id
     limit ${EXPORT_MAX_ROWS + 1}`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds), jsonIds(documentIds)]);
@@ -209,7 +209,7 @@ async function loadPositionFinancialRows(
     from corvis_serving.position_financial_statement_values v
     where v.tenant_id=$1::uuid
       and v.fund_id in (select jsonb_array_elements_text($2::jsonb))
-      and v.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+      and v.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and v.fund_id=$6 and v.holding_id::text=$7 and v.company_id::text=$8
       ${portfolioPredicate}
       and exists (
@@ -224,7 +224,7 @@ async function loadPositionFinancialRows(
           and rr.report_period=v.report_period
           and rr.status='ready'
           and ps.status='published'
-          and ps.snapshot_id::text in (select jsonb_array_elements_text($4::jsonb))
+          and ps.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($4::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
           and not exists (
             select 1 from corvis_consolidated.fund_period_snapshot newer
             where newer.tenant_id=ps.tenant_id and newer.snapshot_id=ps.snapshot_id and newer.version>ps.version
