@@ -142,6 +142,24 @@ resource "google_storage_bucket" "source" {
     }
   }
 
+  # Uploads live under tenant=<id>/document=... and their session/cursor state
+  # under _corvis/. The upload sweep and data-deletion requests delete those
+  # objects in the application (the age-based rules above never match them),
+  # and every session write replaces its JSON object, so each leaves a
+  # noncurrent version behind. Keep those 30 days for recovery, then expire
+  # them so purged or threat-flagged bytes do not persist indefinitely (#232).
+  # Live (current) objects, including retained source evidence, are untouched.
+  lifecycle_rule {
+    condition {
+      days_since_noncurrent_time = 30
+      matches_prefix             = ["tenant=", "_corvis/"]
+    }
+
+    action {
+      type = "Delete"
+    }
+  }
+
   depends_on = [google_kms_crypto_key_iam_member.source_gcs_service_agent]
 }
 
