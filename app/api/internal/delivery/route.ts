@@ -5,6 +5,7 @@ import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
+import { releaseScannedUploads } from "@/lib/server/upload-release";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
 
@@ -28,10 +29,10 @@ export async function POST(request:Request){
     // URL from the authenticated request instead of hard-coding a run.app host
     // or introducing a self-referential Terraform environment variable.
     const processingWorkerUrl = new URL("/api/internal/processing-stage", request.url).toString();
-    const [exportsResult,webhooksResult,processingResult,webhookFanoutSweep,idempotencyKeySweep]=await Promise.all([
+    const [exportsResult,webhooksResult,processingResult,webhookFanoutSweep,idempotencyKeySweep,uploadRelease]=await Promise.all([
       processQueuedExports(),processWebhookDeliveries(),dispatchConfiguredProcessingTransport(processingWorkerUrl),
-      sweepUnsubscribedWebhookFanoutEvents(),sweepExpiredIdempotencyKeys(),
+      sweepUnsubscribedWebhookFanoutEvents(),sweepExpiredIdempotencyKeys(),releaseScannedUploads().catch(()=>({scanned:0,released:0,threats:0,integrityFailed:0,pending:0,errors:1})),
     ]);
-    return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult,webhookFanoutSweep,idempotencyKeySweep},correlationId:id});
+    return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult,webhookFanoutSweep,idempotencyKeySweep,uploadRelease},correlationId:id});
   }catch(error){return apiError(error,id);}
 }

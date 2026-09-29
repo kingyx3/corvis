@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { getServerConfig } from "./config.ts";
 
@@ -35,6 +36,8 @@ export interface UploadObjectStore {
   getJson<T>(key: string): Promise<T | null>;
   getObjectMetadata(key: string): Promise<GcsObject | null>;
   getObjectPrefix(key: string, bytes?: number): Promise<Buffer>;
+  /** Streams the object and returns the hex SHA-256 of its bytes, pinned to `generation` when given. */
+  getObjectSha256(key: string, generation?: string): Promise<string>;
   deleteObject(key: string): Promise<void>;
   listObjects(prefix: string, limit?: number): Promise<string[]>;
 }
@@ -42,6 +45,8 @@ export interface UploadObjectStore {
 const CANCEL_TIMEOUT_MS = 10_000;
 /** Upper bound for any control-plane GCS call so a stalled provider cannot pin a request. */
 export const GCS_REQUEST_TIMEOUT_MS = 30_000;
+/** Whole-object reads (integrity hashing) legitimately outlast a metadata call; still bounded beneath a Cloud Run request. */
+export const GCS_HASH_TIMEOUT_MS = 240_000;
 const METADATA_TOKEN_TIMEOUT_MS = 5_000;
 
 /**
@@ -206,6 +211,16 @@ export class GcsControlClient implements UploadObjectStore {
     });
     if (!response.ok && response.status !== 206) throw new Error(`GCS object validation read failed (${response.status})`);
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  async getObjectSha256(key: string, generation?: string): Promise<string> {
+    const url = generation ? `${this.mediaUrl(key)}&generation=${encodeURIComponent(generation)}` : this.mediaUrl(key);
+    const response = await this.authorizedFetch(url, { signal: AbortSignal.timeout(GCS_HASH_TIMEOUT_MS) });
+    if (!response.ok || !response.body) throw new Error(`GCS object hash read failed (${response.status})`);
+    const hash = createHash("sha256");
+    // Streamed so a multi-gigabyte source document is never buffered in memory.
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) hash.update(chunk);
+    return hash.digest("hex");
   }
 
   async listObjects(prefix: string, limit = 1000): Promise<string[]> {
