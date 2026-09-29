@@ -225,6 +225,21 @@ jobs:
           set -euo pipefail
           test "$(docker image inspect "corvis-ci:${GITHUB_SHA}" --format '{{.Config.User}}')" = "corvis"
           docker run --rm --entrypoint node "corvis-ci:${GITHUB_SHA}" --version
+      - name: Start the released API container and probe /api/v1/health (#234)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No runtime surface is named, so the production container serves only
+          # the health endpoint: this proves the standalone server boots.
+          docker run -d --name corvis-smoke -p 3000:3000 "corvis-ci:${GITHUB_SHA}"
+          trap 'docker logs corvis-smoke || true; docker rm -f corvis-smoke >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if body="$(curl -fsS http://127.0.0.1:3000/api/v1/health)"; then break; fi
+            sleep 1
+          done
+          echo "${body:-}"
+          echo "${body:-}" | grep -q '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)" = "404"
       - name: Build control-loop container
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -323,6 +338,16 @@ jobs:
         run: |
           set -euo pipefail
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-isolation-negative.sql
+      # The same RLS acceptance probe the deploy workflow runs against live
+      # environments, on every PR (#234). Supabase provides the `authenticated`
+      # role; vanilla Postgres needs it created. The probe grants and rolls back.
+      - name: Postgres RLS security acceptance (security_acceptance.sql)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if; end \$\$;"
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql | tee security-acceptance.out
+          grep -q POSTGRES_RLS_SECURITY_ACCEPTANCE_PASS security-acceptance.out
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql
