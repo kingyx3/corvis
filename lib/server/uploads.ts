@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { sealArtifactIntegrity } from "./upload-integrity.ts";
 
 export type UploadRequestErrorCode =
   | "invalid_upload_request"
@@ -15,7 +16,8 @@ export type UploadRequestErrorCode =
   | "upload_not_active"
   | "upload_expired"
   | "upload_incomplete"
-  | "invalid_file_content";
+  | "invalid_file_content"
+  | "upload_integrity_failed";
 
 const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
   invalid_upload_request: 400,
@@ -29,6 +31,7 @@ const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
   upload_expired: 410,
   upload_incomplete: 409,
   invalid_file_content: 422,
+  upload_integrity_failed: 422,
 };
 
 /** Client-attributable upload failure with a stable code and HTTP status (see apiError). */
@@ -307,6 +310,19 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   private async release(session: UploadSession): Promise<void> {
     if (session.state === "complete") return;
+    if (session.objectKey) {
+      const seal = await sealArtifactIntegrity(this.store, this.db, {
+        tenantId: session.tenantId, artifactVersionId: session.artifactVersionId, documentId: session.documentId,
+        objectKey: session.objectKey, generation: session.storageVersionId,
+      });
+      if (seal.outcome === "blocked") return;
+      if (seal.outcome === "integrity_failed") {
+        session.malwareScanStatus = "error";
+        session.contentValidated = false;
+        await this.persist(session);
+        throw new UploadRequestError("upload_integrity_failed", "Uploaded bytes do not match the declared SHA-256");
+      }
+    }
     session.state = "complete";
     session.malwareScanStatus = "clean";
     session.releasedAt = new Date().toISOString();

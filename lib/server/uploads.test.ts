@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
@@ -40,6 +41,13 @@ class FakeObjectStore implements UploadObjectStore {
     if (!stored) throw new Error("GCS object validation read failed (404)");
     return stored.bytes.subarray(0, bytes);
   }
+  hashed: string[] = [];
+  async getObjectSha256(key: string): Promise<string> {
+    const stored = this.objects.get(key);
+    if (!stored) throw new Error("GCS object hash read failed (404)");
+    this.hashed.push(key);
+    return createHash("sha256").update(stored.bytes).digest("hex");
+  }
   async deleteObject(key: string): Promise<void> { this.deleted.push(key); this.objects.delete(key); }
   async listObjects(prefix: string, limit = 1000): Promise<string[]> {
     this.listCalls += 1;
@@ -78,8 +86,17 @@ class FakeObjectStore implements UploadObjectStore {
 class FakeDb implements PostgresSqlApi {
   readonly calls: Call[] = [];
   readonly releases: PostgresPrimitive[][] = [];
+  /** What the artifact row currently says (the integrity seal reads it), and whether a declared digest agrees. */
+  artifact: PostgresRow | undefined;
+  shaMatches = true;
+  sealed: PostgresPrimitive[][] = [];
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
+    if (sql.includes("select malware_scan_status, quarantine_status")) return this.artifact ? [this.artifact] : [];
+    if (sql.includes("set sha256=lower(coalesce(sha256")) {
+      this.sealed.push(parameters);
+      return [{ sha_matches: this.shaMatches }];
+    }
     if (sql.includes("release_clean_artifact")) {
       this.releases.push(parameters);
       return [{ job_id: `registered:${String(parameters[1])}` }];
@@ -96,7 +113,7 @@ class FakeDb implements PostgresSqlApi {
   }
   artifactStatuses(): string[] {
     return this.calls
-      .filter((call) => call.sql.includes("corvis_source.document_artifact_version") && call.sql.startsWith("update"))
+      .filter((call) => call.sql.includes("corvis_source.document_artifact_version") && call.sql.startsWith("update") && !call.sql.includes("set sha256="))
       .map((call) => call.sql.match(/(?:malware_scan_status|quarantine_status)='([a-z_]+)'/)?.[1] ?? String(call.parameters[1] ?? ""));
   }
 }
@@ -560,4 +577,64 @@ test("aborting an already-aborted upload is an idempotent no-op", async () => {
   await uploads.abort(actor, session.uploadId);
   assert.equal(db.calls.length, callsAfterFirst);
   assert.equal(store.cancelled.length, 1);
+});
+
+test("release seals the SHA-256 of the stored bytes onto the artifact before queueing processing", async () => {
+  const { db, store, session, released } = await acceptedUpload();
+  assert.equal(released.state, "complete");
+  const digest = createHash("sha256").update(store.objects.get(session.objectKey ?? "")?.bytes ?? Buffer.alloc(0)).digest("hex");
+  assert.equal(db.sealed.length, 1);
+  assert.equal(db.sealed[0]?.[2], digest, "the digest is computed from the object bytes, not taken from the client");
+  const sealIndex = db.calls.findIndex((call) => call.sql.includes("set sha256=lower(coalesce(sha256"));
+  const releaseIndex = db.calls.findIndex((call) => call.sql.includes("release_clean_artifact"));
+  assert.ok(sealIndex >= 0 && sealIndex < releaseIndex, "the digest must be recorded before the artifact is released");
+});
+
+test("bytes that contradict the declared SHA-256 are quarantined and never released", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput({ checksumSha256: "a".repeat(64) }));
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.shaMatches = false;
+  context.store.scan(session.objectKey ?? "", "clean");
+
+  await assert.rejects(context.uploads.get(actor, session.uploadId), (error: unknown) => {
+    assert.ok(error instanceof UploadRequestError);
+    assert.equal(error.code, "upload_integrity_failed");
+    assert.equal(error.status, 422);
+    return true;
+  });
+  assert.equal(context.db.releases.length, 0, "a contradicted digest must never reach processing");
+  assert.ok(context.db.calls.some((call) => call.sql.includes("malware_scan_status='integrity_failed'")));
+  assert.equal(storedSession(context.store, session).state, "quarantined");
+  assert.equal(storedSession(context.store, session).contentValidated, false);
+});
+
+test("an artifact already blocked in the registry is not released by a later clean verdict", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.artifact = { malware_scan_status: "threat", quarantine_status: "quarantined" };
+  context.store.scan(session.objectKey ?? "", "clean");
+  const after = await context.uploads.get(actor, session.uploadId);
+  assert.equal(after.state, "quarantined");
+  assert.equal(context.db.releases.length, 0);
+  assert.deepEqual(context.store.hashed, [], "blocked artifacts are not even read");
+});
+
+test("an artifact another worker already released is not hashed again", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+  context.store.scan(session.objectKey ?? "", "clean");
+  const after = await context.uploads.get(actor, session.uploadId);
+  assert.equal(after.state, "complete");
+  assert.deepEqual(context.store.hashed, []);
+  assert.equal(context.db.releases.length, 1, "release_clean_artifact is idempotent and still records the session as complete");
 });
