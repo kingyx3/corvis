@@ -138,6 +138,36 @@ jobs:
       - name: Production CSP nonce regression (customer and admin surfaces)
         run: npm run build && npm run test:e2e:csp
 
+  # Every other e2e spec runs against the in-memory demo port. This job builds the app the way it
+  # ships (demo off), proves no demo fixture reaches the client bundle, and smoke-tests the real
+  # HTTP adapter and authentication boundary (#237).
+  non-demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CORVIS_DEMO_MODE: "false"
+      NEXT_PUBLIC_CORVIS_DEMO_MODE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit
+      - run: npm run build
+      - name: Demo fixtures stay out of the production client bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -rlE "Nordic Capital Fund V|corvis:demo:fail:" .next/static; then
+            echo "::error::demo fixtures were bundled into a non-demo build (see files above)"
+            exit 1
+          fi
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Non-demo smoke
+        run: npm run test:e2e:non-demo
+
   # Keep the historic required-check context stable while the expensive gates run
   # independently. Every prior frontend check remains blocking through this fan-in.
   frontend:
