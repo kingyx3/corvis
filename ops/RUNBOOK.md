@@ -31,6 +31,7 @@
 - Inspect attempt/maxAttempts and dead-letter state.
 - Retry from durable upstream records; never require customer re-upload when immutable source bytes are intact.
 - Before replaying canonicalization/publication, verify idempotency and target version.
+- **Transport dead-letter** (alert `corvis-<env>-processing-transport-dead-letter`): an outbox event exhausted its publish attempts and its document stays `registered`. As a tenant admin, `GET /api/v1/admin/processing-transport/dead-letters` lists the events with their last (redacted) error; fix the cause, then `POST` the same path with `{ "eventId", "reason" }` to requeue one. The requeue is audited (`processing_transport.requeue_dead_letter`), restores the full attempt budget and is a no-op (409 `event_not_dead_lettered`) for an event that was already requeued or published.
 
 ## Data incident
 

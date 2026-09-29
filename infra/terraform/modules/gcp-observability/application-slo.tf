@@ -190,6 +190,62 @@ resource "google_logging_metric" "pipeline_dead_letter" {
   }
 }
 
+# processing-transport.ts emits this count when an outbox event exhausts its
+# publish attempts (migration 021 sets transport_dead_lettered_at). Nothing
+# retries such an event on its own, so any occurrence pages the operator, who
+# requeues it with POST /api/v1/admin/processing-transport/dead-letters (#230).
+resource "google_logging_metric" "processing_transport_dead_letter" {
+  project = var.project_id
+  name    = "corvis_${var.environment}_processing_transport_dead_letter"
+  filter  = <<-FILTER
+    resource.type="cloud_run_revision"
+    jsonPayload.event="metric.count"
+    jsonPayload.metric="processing.transport.dead_letter"
+  FILTER
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    unit        = "1"
+  }
+}
+
+resource "google_monitoring_alert_policy" "processing_transport_dead_letter" {
+  count = local.api_monitoring_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-processing-transport-dead-letter"
+  combiner     = "OR"
+  severity     = "ERROR"
+
+  conditions {
+    display_name = "Processing outbox event dead-lettered by the transport"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/${google_logging_metric.processing_transport_dead_letter.name}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "0s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "A document-processing outbox event exhausted its publish attempts and is dead-lettered; its document stays registered until it is requeued. List and requeue it with GET/POST /api/v1/admin/processing-transport/dead-letters after fixing the cause (ops/RUNBOOK.md)."
+    mime_type = "text/markdown"
+  }
+}
+
 # Publication freshness is measured from the persisted source document
 # created_at to the persisted publication_run completed_at. This intentionally
 # avoids request-time approximations or inferred timestamps.

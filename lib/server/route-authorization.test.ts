@@ -148,6 +148,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/feature-flags/retire/route.ts", { POST: ADMIN }],
   ["admin/feature-flags/route.ts", { GET: ADMIN, PUT: ADMIN }],
   ["admin/identity-lifecycle/route.ts", { POST: ADMIN }],
+  ["admin/processing-transport/dead-letters/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["admin/readiness/route.ts", { GET: ADMIN }],
   ["admin/session-revocations/route.ts", { POST: ADMIN }],
   ["admin/support-access/route.ts", { POST: ADMIN }],
@@ -657,6 +658,30 @@ test("the health route is public and identity-only routes need just an authentic
       assert.equal((await handlers.GET!(requestFor(pathFor(file), { roles: [role] }))).status, 200, `${file} as ${role}`);
     }
   }
+});
+
+test("transport dead-letter recovery lists and requeues the tenant's dead letters with an audit row", async () => {
+  const handlers = await load("admin/processing-transport/dead-letters/route.ts");
+  const dead = { event_id: SOME_UUID, event_type: "DocumentRegistered", aggregate_type: "document", aggregate_id: "d1", attempt_count: 8, last_error: "boom", created_at: "2026-09-29 10:00:00+00", transport_dead_lettered_at: "2026-09-29 11:00:00+00" };
+  seedDatabase((query) => /from corvis_control\.outbox_event/.test(query.sql) ? [dead] : []);
+  const listed = await handlers.GET!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"] }));
+  assert.equal(listed.status, 200);
+  const body = await listed.json() as { data: Array<{ eventId: string; deadLetteredAt: string }> };
+  assert.equal(body.data[0]!.eventId, SOME_UUID);
+  assert.equal(body.data[0]!.deadLetteredAt, "2026-09-29T11:00:00Z", "timestamps are RFC 3339");
+  assert.ok(queries.every((query) => !/outbox_event/.test(query.sql) || query.parameters[0] === TENANT), "scoped to the caller's tenant");
+
+  seedDatabase((query) => /update corvis_control\.outbox_event/.test(query.sql) ? [dead] : []);
+  const requeued = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID, reason: "provider outage resolved" } }));
+  assert.equal(requeued.status, 202);
+  assert.ok(queries.some((query) => /insert into corvis_control\.audit_event/.test(query.sql) && JSON.stringify(query.parameters).includes("processing_transport.requeue_dead_letter")), "the requeue is audited");
+
+  seedDatabase();
+  const missing = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID, reason: "again" } }));
+  assert.equal(missing.status, 409);
+  assert.equal(await errorOf(missing), "event_not_dead_lettered");
+  const invalid = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID } }));
+  assert.equal(invalid.status, 400);
 });
 
 test("client error ingest accepts only the PII-free event shape from an authenticated identity", async () => {
