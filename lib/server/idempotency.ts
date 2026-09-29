@@ -74,6 +74,14 @@ export interface IdempotentOutcome<T> {
 
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
+export class IdempotencyKeyReuseError extends Error {
+  readonly code = "idempotency_key_reused";
+  constructor() {
+    super("idempotency_key_reused");
+    this.name = "IdempotencyKeyReuseError";
+  }
+}
+
 export class InvalidIdempotencyKeyError extends Error {
   readonly code = "invalid_idempotency_key";
   constructor() {
@@ -95,18 +103,37 @@ function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgre
  */
 export const IDEMPOTENCY_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Deterministic JSON: object keys sorted, `undefined` members dropped. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, member]) => member !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    return `{${entries.map(([name, member]) => `${JSON.stringify(name)}:${canonicalJson(member)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
 /**
- * `idempotency_key`'s `request_hash` column exists for future
- * request-payload comparison (detecting the same key reused for a
- * different request), which this module does not implement -- doing so
- * safely needs a caller-supplied canonical fingerprint of the request body,
- * which is out of scope for the two call sites this change wires up. A
- * stable hash of `(scope, key)` satisfies the column's `not null` and
- * primary-key-adjacent role without asserting a payload guarantee this
- * module does not check.
+ * Hash stored in `idempotency_key.request_hash`. Without a caller-supplied
+ * `fingerprint` it covers only `(scope, key)`, the form every row written
+ * before payload binding carries. With one it also covers the canonical
+ * request content, so the same key reused for a different request is
+ * detected rather than silently replaying the first response.
  */
-function requestHash(scope: string, key: string): string {
-  return createHash("sha256").update(`${scope}:${key}`).digest("hex");
+function requestHash(scope: string, key: string, fingerprint?: unknown): string {
+  const base = `${scope}:${key}`;
+  return createHash("sha256").update(fingerprint === undefined ? base : `${base}:${canonicalJson(fingerprint)}`).digest("hex");
+}
+
+function assertSameRequest(row: PostgresRow, scope: string, key: string, fingerprint: unknown): void {
+  if (fingerprint === undefined) return;
+  const stored = typeof row.request_hash === "string" ? row.request_hash : undefined;
+  // A missing hash (fakes, legacy) and rows stored before payload binding
+  // still replay; only a positively different payload is refused.
+  if (!stored || stored === requestHash(scope, key, fingerprint) || stored === requestHash(scope, key)) return;
+  throw new IdempotencyKeyReuseError();
 }
 
 function parseResponseBody(value: unknown): unknown {
@@ -116,7 +143,7 @@ function parseResponseBody(value: unknown): unknown {
 
 async function findRecord(db: PostgresSqlApi, tenantId: string, scope: string, key: string): Promise<PostgresRow | undefined> {
   const rows = await db.query(
-    `select response_status, response_body from corvis_control.idempotency_key
+    `select response_status, response_body, request_hash from corvis_control.idempotency_key
       where tenant_id=$1 and scope=$2 and idempotency_key=$3
       limit 1`,
     [tenantId, scope, key],
@@ -131,14 +158,15 @@ async function insertRecordIfAbsent(
   key: string,
   status: number,
   body: unknown,
+  fingerprint: unknown,
 ): Promise<PostgresRow | undefined> {
   const rows = await db.query(
     `insert into corvis_control.idempotency_key
         (tenant_id, scope, idempotency_key, request_hash, response_status, response_body, expires_at)
       values ($1,$2,$3,$4,$5,$6::jsonb, now() + make_interval(secs => $7))
       on conflict (tenant_id, scope, idempotency_key) do nothing
-      returning response_status, response_body`,
-    [tenantId, scope, key, requestHash(scope, key), status, JSON.stringify(body ?? null), Math.floor(IDEMPOTENCY_RECORD_TTL_MS / 1000)],
+      returning response_status, response_body, request_hash`,
+    [tenantId, scope, key, requestHash(scope, key, fingerprint), status, JSON.stringify(body ?? null), Math.floor(IDEMPOTENCY_RECORD_TTL_MS / 1000)],
   );
   return rows[0];
 }
@@ -158,6 +186,8 @@ export async function withIdempotency<T>(
   clientKey: string | undefined,
   fn: () => Promise<{ status: number; body: T }>,
   db: PostgresSqlApi = controlDb(),
+  /** Canonical request content; reusing `clientKey` with a different value is refused with {@link IdempotencyKeyReuseError}. */
+  fingerprint?: unknown,
 ): Promise<IdempotentOutcome<T>> {
   if (!clientKey) {
     const fresh = await fn();
@@ -172,15 +202,20 @@ export async function withIdempotency<T>(
   // workspace for the same subject.
   const key = JSON.stringify([identity.subject, identity.workspaceId, clientKey]);
   const existing = await findRecord(db, identity.tenantId, scope, key);
-  if (existing) return toOutcome<T>(existing, true);
+  if (existing) {
+    assertSameRequest(existing, scope, key, fingerprint);
+    return toOutcome<T>(existing, true);
+  }
 
   const fresh = await fn();
-  const inserted = await insertRecordIfAbsent(db, identity.tenantId, scope, key, fresh.status, fresh.body);
+  const inserted = await insertRecordIfAbsent(db, identity.tenantId, scope, key, fresh.status, fresh.body, fingerprint);
   if (inserted) return { ...fresh, replayed: false };
 
   // Lost the insert race -- see the caveat in the module doc comment.
   const winner = await findRecord(db, identity.tenantId, scope, key);
-  return winner ? toOutcome<T>(winner, true) : { ...fresh, replayed: false };
+  if (!winner) return { ...fresh, replayed: false };
+  assertSameRequest(winner, scope, key, fingerprint);
+  return toOutcome<T>(winner, true);
 }
 
 /** Upper bound on one call to {@link sweepExpiredIdempotencyKeys}. */

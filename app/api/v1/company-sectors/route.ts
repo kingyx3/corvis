@@ -70,7 +70,7 @@ export async function POST(request: Request) {
         }),
       });
       return { status: 200, body: outcome };
-    });
+    }, undefined, command);
     return json({ data, correlationId: id }, { status });
   } catch (error) { return apiError(error, id); }
 }

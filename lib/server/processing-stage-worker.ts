@@ -5,6 +5,7 @@ import type {
   PostgresProcessingStageRepository,
 } from "./orchestration-stage.ts";
 import type { PostgresProcessingStageEffectRepository } from "./orchestration-stage-effect.ts";
+import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 import { countMetric } from "./telemetry.ts";
 
 export type ProcessingStageEffectInput = {
@@ -111,7 +112,7 @@ export async function runProcessingStageDelivery(input: {
     // one exception that is never transient: no future redelivery of a
     // fabricated event can ever become genuine, so it must be acknowledged
     // and dropped here rather than left to loop as a 500 forever.
-    if (errorText(error).includes(EVENT_NOT_AUTHENTIC_MESSAGE)) {
+    if (sqlApplicationErrorOf(error).includes(EVENT_NOT_AUTHENTIC_MESSAGE)) {
       return { outcome: "rejected", reason: "event_not_authentic" };
     }
     throw error;

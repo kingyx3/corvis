@@ -1,6 +1,7 @@
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 
 export type DeadLetterRecoveryResult =
   | { ok: true; version: number; recoveryCount: number; recoveryEventId: string }
@@ -54,7 +55,7 @@ export async function recoverDeadLetterProcessingJob(input: {
       recoveryEventId:text(row,"recovery_event_id"),
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sqlApplicationErrorOf(error);
     if (message.includes("retained durable stage-delivery evidence")
       || message.includes("retained predecessor lineage evidence")) {
       return { ok:false, reason:"missing_delivery_evidence" };

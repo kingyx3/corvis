@@ -3,17 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentLifecycle, DocumentRecord } from "@/core/contracts";
 import { documentSecurityNotice } from "@/core/document-processing";
+import { comparePeriods } from "@/core/workspace-summary";
 import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
+import { workspaceContextHeaders } from "@/lib/workspace-context";
 
 type SourceActivityAcquisition = { acquisitionId: string; disposition: string; remotePath: string; remoteVersion: string; acquiredAt: string; documentId?: string; reason: string };
 type SourceActivityRun = { runId: string; trigger: string; state: string; discoveredCount: number; acceptedCount: number; duplicateCount: number; rejectedCount: number; startedAt: string; finishedAt?: string; zeroDiscoveryLongRunning: boolean; errorClass?: string; acquisitions: SourceActivityAcquisition[] };
 type SourceActivityConnection = { sourceConnectionId: string; providerKey: string; connectionLabel: string; status: string; consecutiveFailures: number; needsAttention: boolean; attentionReason?: string; runs: SourceActivityRun[] };
 
 function displayTime(value: string | undefined): string { if (!value) return "—"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }
-function originLabel(doc: DocumentRecord): string {
+type LifecycleState = "loading" | "ready" | "error";
+function originLabel(doc: DocumentRecord, lifecycleState: LifecycleState): string {
   const origin = doc.lifecycle?.origin;
-  if (!origin) return "Loading provenance…";
+  if (!origin) return lifecycleState === "loading" ? "Loading provenance…" : lifecycleState === "error" ? "Provenance unavailable" : "Provenance not recorded";
   return origin.kind === "connector" ? `${origin.providerKey} · ${origin.connectionLabel}` : `Upload · ${origin.actor}`;
 }
 
@@ -23,36 +26,45 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
   const [status, setStatus] = useState("all");
   const [lifecycles, setLifecycles] = useState<DocumentLifecycle[]>([]);
   const [sourceActivity, setSourceActivity] = useState<SourceActivityConnection[]>([]);
+  const demoMode = process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true";
+  // The demo workspace has no lifecycle/connector API behind it, so there is nothing to load or to fail.
+  const [lifecycleState, setLifecycleState] = useState<LifecycleState>(demoMode ? "ready" : "loading");
+  const [activityFailed, setActivityFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const retryProvenance = () => { setLifecycleState("loading"); setActivityFailed(false); setReloadKey((key) => key + 1); };
 
   useEffect(() => {
+    if (demoMode) return;
     const controller = new AbortController();
-    void fetch("/api/v1/document-lifecycle", { signal: controller.signal, credentials: "same-origin" })
+    const init = { signal: controller.signal, credentials: "same-origin" as const, headers: workspaceContextHeaders() };
+    void fetch("/api/v1/document-lifecycle", init)
       .then(async (response) => response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)))
-      .then((payload) => setLifecycles(payload.data ?? []))
-      .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setLifecycles([]); });
-    void fetch("/api/v1/source-connections/activity", { signal: controller.signal, credentials: "same-origin" })
+      .then((payload) => { setLifecycles(payload.data ?? []); setLifecycleState("ready"); })
+      .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setLifecycles([]); setLifecycleState("error"); } });
+    void fetch("/api/v1/source-connections/activity", init)
       .then(async (response) => response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)))
       .then((payload) => setSourceActivity(payload.data ?? []))
-      .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") setSourceActivity([]); });
+      .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setSourceActivity([]); setActivityFailed(true); } });
     return () => controller.abort();
-  }, []);
+  }, [demoMode, reloadKey]);
 
   const lifecycleByDocument = useMemo(() => new Map(lifecycles.map((item) => [item.documentId, item])), [lifecycles]);
   const documents = useMemo(() => docs.map((doc) => ({ ...doc, lifecycle: lifecycleByDocument.get(doc.id) })), [docs, lifecycleByDocument]);
   const documentsById = useMemo(() => new Map(documents.map((doc) => [doc.id, doc])), [documents]);
-  const periods = useMemo(() => [...new Set(documents.map((doc) => doc.period))].sort().reverse(), [documents]);
+  const periods = useMemo(() => [...new Set(documents.map((doc) => doc.period))].sort((a, b) => comparePeriods(b, a)), [documents]);
   const statuses = useMemo(() => [...new Set(documents.map((doc) => doc.status))].sort(), [documents]);
   const filtered = useMemo(() => documents.filter((doc) => {
-    const matchesQuery = `${doc.name} ${doc.fund} ${doc.period} ${doc.type} ${originLabel(doc)}`.toLowerCase().includes(query.toLowerCase());
+    const matchesQuery = `${doc.name} ${doc.fund} ${doc.period} ${doc.type} ${originLabel(doc, lifecycleState)}`.toLowerCase().includes(query.toLowerCase());
     const matchesPeriod = period === "all" || doc.period === period;
     const matchesStatus = status === "all" || doc.status === status;
     return matchesQuery && matchesPeriod && matchesStatus;
-  }), [documents, period, query, status]);
+  }), [documents, lifecycleState, period, query, status]);
   const attention = sourceActivity.filter((connection) => connection.needsAttention);
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">Source library</p><h1>Documents</h1><p className="lede">Every source file, its provenance, processing state, and relationship to a fund period.</p></div>{canUpload && <button className="primary-button" onClick={onUpload}><Icon name="upload"/>Upload documents</button>}</section>
     {attention.length > 0 && <div className="table-card" role="alert"><div className="empty-cell"><strong>{attention.length} source connection{attention.length === 1 ? " needs" : "s need"} attention.</strong> {attention.map((item) => `${item.connectionLabel}: ${item.attentionReason ?? item.status}`).join(" · ")}</div></div>}
+    {(lifecycleState === "error" || activityFailed) && <div className="table-card" role="alert"><div className="empty-cell"><strong>{lifecycleState === "error" && activityFailed ? "Document provenance and source run history are unavailable." : lifecycleState === "error" ? "Document provenance is unavailable." : "Source run history is unavailable."}</strong> The documents below are unaffected. <button className="text-button" onClick={retryProvenance}>Retry</button></div></div>}
     <div className="toolbar" role="search" aria-label="Document filters">
       <label className="search-field"><Icon name="search"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search documents, funds, periods or sources" aria-label="Search documents"/></label>
       <select className="filter-button" aria-label="Reporting period" value={period} onChange={(event) => setPeriod(event.target.value)}><option value="all">All periods</option>{periods.map((item) => <option key={item} value={item}>{item}</option>)}</select>
@@ -65,7 +77,7 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
       {filtered.map((doc) => {
         const securityNotice = documentSecurityNotice(doc);
         const origin = doc.lifecycle?.origin;
-        return <tr key={doc.id}><td><div className="document-cell"><div className={`file-tile ${doc.name.endsWith("xlsx") ? "excel" : "pdf"}`} aria-hidden="true">{doc.name.endsWith("xlsx") ? "XLS" : "PDF"}</div><div><strong>{doc.name}</strong><span>{doc.type} · {doc.pages} {doc.name.endsWith("xlsx") ? "sheets" : "pages"} · {doc.size}</span></div></div></td><td><strong className="table-primary">{doc.fund}</strong><span className="table-secondary">{doc.period}</span></td><td><strong className="table-primary">{originLabel(doc)}</strong>{origin && <span className="table-secondary">{origin.kind === "connector" ? `Run ${origin.runId.slice(0, 8)} · ${displayTime(origin.acquiredAt)}` : displayTime(origin.occurredAt)}</span>}</td><td>{securityNotice ? <div><StatusPill status="Blocked"/><strong className="table-primary">{securityNotice.label}</strong><span className="table-secondary">{securityNotice.detail} {securityNotice.action}</span></div> : <><StatusPill status={doc.status}/>{doc.status === "Extracting" && <div className="mini-progress"><span style={{width:`${doc.progress ?? 0}%`}}/></div>}</>}</td><td><span className={`quality quality-${doc.quality.toLowerCase()}`}>{doc.quality}</span></td><td className="table-muted">{doc.uploaded}</td><td><button className="icon-button" aria-label={`Open ${doc.name}`} onClick={() => onSelect(doc)}><Icon name="chevron" size={16}/></button></td></tr>;
+        return <tr key={doc.id}><td><div className="document-cell"><div className={`file-tile ${doc.name.endsWith("xlsx") ? "excel" : "pdf"}`} aria-hidden="true">{doc.name.endsWith("xlsx") ? "XLS" : "PDF"}</div><div><strong>{doc.name}</strong><span>{doc.type} · {doc.pages} {doc.name.endsWith("xlsx") ? "sheets" : "pages"} · {doc.size}</span></div></div></td><td><strong className="table-primary">{doc.fund}</strong><span className="table-secondary">{doc.period}</span></td><td><strong className="table-primary">{originLabel(doc, lifecycleState)}</strong>{origin && <span className="table-secondary">{origin.kind === "connector" ? `Run ${origin.runId.slice(0, 8)} · ${displayTime(origin.acquiredAt)}` : displayTime(origin.occurredAt)}</span>}</td><td>{securityNotice ? <div><StatusPill status="Blocked"/><strong className="table-primary">{securityNotice.label}</strong><span className="table-secondary">{securityNotice.detail} {securityNotice.action}</span></div> : <><StatusPill status={doc.status}/>{doc.status === "Extracting" && <div className="mini-progress"><span style={{width:`${doc.progress ?? 0}%`}}/></div>}</>}</td><td><span className={`quality quality-${doc.quality.toLowerCase()}`}>{doc.quality}</span></td><td className="table-muted">{doc.uploaded}</td><td><button className="icon-button" aria-label={`Open ${doc.name}`} onClick={() => onSelect(doc)}><Icon name="chevron" size={16}/></button></td></tr>;
       })}
     </tbody></table></div>
 

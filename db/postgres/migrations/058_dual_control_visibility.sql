@@ -7,6 +7,8 @@
 
 -- Keep the established serving-view prefix intact and append the count so
 -- existing consumers remain binary/column-order compatible.
+begin;
+
 create or replace view corvis_serving.observations as
 with latest_correction as (
   select distinct on (tenant_id, observation_id)
@@ -50,3 +52,5 @@ left join corvis_source.source_reference r
 left join latest_correction lc
   on lc.tenant_id=o.tenant_id and lc.observation_id=o.observation_id
 where o.review_state in ('approved','review_required');
+
+commit;

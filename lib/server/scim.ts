@@ -3,6 +3,8 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { PostgresIdentityLifecycleRepository, type HumanAuthMethod, type IdentityLifecycleRole } from "./identity-lifecycle.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { userBearerAuthorization } from "./request-context.ts";
+import { TenantInvitationError } from "./tenant-invitations.ts";
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -11,8 +13,8 @@ function text(row:PostgresRow,key:string){return row[key]==null?"":String(row[ke
 
 export type ScimConfiguration={tenantId:string;authMethod:HumanAuthMethod;defaultWorkspaceId:string;defaultRoleName:IdentityLifecycleRole};
 export async function configureScim(identity:RequestIdentity,authMethod:HumanAuthMethod,workspaceId:string,roleName:IdentityLifecycleRole,db:PostgresSqlApi=postgres(getServerConfig().postgresDsn)):Promise<{configuration:ScimConfiguration;token:string}>{
-  if(identity.isTenantAdmin!==true) throw new Error("tenant_admin_required");if(!UUID.test(workspaceId)||!ROLES.has(roleName))throw new Error("invalid_scim_configuration");
-  const workspace=await db.query(`select 1 from corvis_control.workspace where tenant_id=$1::uuid and workspace_id=$2::uuid and status='active' limit 1`,[identity.tenantId,workspaceId]);if(!workspace.length)throw new Error("workspace_not_found");
+  if(identity.isTenantAdmin!==true) throw new TenantInvitationError("tenant_admin_required", 403);if(!UUID.test(workspaceId)||!ROLES.has(roleName))throw new TenantInvitationError("invalid_scim_configuration", 400);
+  const workspace=await db.query(`select 1 from corvis_control.workspace where tenant_id=$1::uuid and workspace_id=$2::uuid and status='active' limit 1`,[identity.tenantId,workspaceId]);if(!workspace.length)throw new TenantInvitationError("workspace_not_found", 404);
   const token=randomBytes(32).toString("base64url");const hash=createHash("sha256").update(token).digest("hex");
   await db.execute(`insert into corvis_control.tenant_scim_configuration(tenant_id,enabled,token_sha256,auth_method,default_workspace_id,default_role_name,updated_by_subject)
     values($1::uuid,true,$2,$3,$4::uuid,$5,$6) on conflict(tenant_id) do update set enabled=true,token_sha256=excluded.token_sha256,auth_method=excluded.auth_method,default_workspace_id=excluded.default_workspace_id,default_role_name=excluded.default_role_name,updated_by_subject=excluded.updated_by_subject,updated_at=now()`,[identity.tenantId,hash,authMethod,workspaceId,roleName,identity.subject]);
@@ -20,7 +22,7 @@ export async function configureScim(identity:RequestIdentity,authMethod:HumanAut
 }
 
 export async function authenticateScim(request:Request,db:PostgresSqlApi=postgres(getServerConfig().postgresDsn)):Promise<ScimConfiguration>{
-  const tenantId=request.headers.get("x-corvis-tenant")?.trim()??"";const authorization=request.headers.get("authorization")??"";const match=/^Bearer\s+([A-Za-z0-9_-]{40,100})$/.exec(authorization);
+  const tenantId=request.headers.get("x-corvis-tenant")?.trim()??"";const authorization=userBearerAuthorization(request)??"";const match=/^Bearer\s+([A-Za-z0-9_-]{40,100})$/.exec(authorization);
   if(!UUID.test(tenantId)||!match)throw new ScimError(401,"invalidToken","Valid SCIM bearer token and tenant are required");
   const hash=createHash("sha256").update(match[1]).digest("hex");const rows=await db.query(`select auth_method,default_workspace_id::text,default_role_name from corvis_control.tenant_scim_configuration where tenant_id=$1::uuid and enabled=true and token_sha256=$2 limit 1`,[tenantId,hash]);const row=rows[0];if(!row)throw new ScimError(401,"invalidToken","SCIM bearer token is invalid");
   return {tenantId,authMethod:text(row,"auth_method") as HumanAuthMethod,defaultWorkspaceId:text(row,"default_workspace_id"),defaultRoleName:text(row,"default_role_name") as IdentityLifecycleRole};

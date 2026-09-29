@@ -103,11 +103,11 @@ jobs:
           set -euo pipefail
           {
             echo "### Governed promotion complete"
-            echo "- Environment: `${{ inputs.environment }}`"
+            echo "- Environment: \`${{ inputs.environment }}\`"
             if [[ "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
               echo "- Release selection: last acceptance-approved known-good release set"
             else
-              echo "- Release source commit: `${RELEASE_SHA}`"
+              echo "- Release source commit: \`${RELEASE_SHA}\`"
               if [[ "${{ inputs.environment }}" == "prod" ]]; then
                 echo "- Build-once: exact UAT OCI images copied to prod and digest-verified before deploy"
               fi

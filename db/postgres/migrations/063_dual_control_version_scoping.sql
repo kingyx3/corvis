@@ -19,6 +19,8 @@
 -- all approvals, if the observation has never been corrected), which
 -- resets the count exactly when the underlying value changes.
 
+begin;
+
 create index if not exists review_event_tenant_observation_decision_idx
   on corvis_facts.review_event (tenant_id, observation_id, decision);
 
@@ -144,3 +146,5 @@ left join corvis_source.source_reference r
 left join latest_correction lc
   on lc.tenant_id=o.tenant_id and lc.observation_id=o.observation_id
 where o.review_state in ('approved','review_required');
+
+commit;

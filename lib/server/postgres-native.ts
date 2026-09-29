@@ -1,5 +1,6 @@
 import { Pool, types, type PoolConfig } from "pg";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { matchSqlApplicationError, type SqlApplicationError } from "./sql-application-errors.ts";
 
 const PEM_CERTIFICATE = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
 
@@ -85,11 +86,14 @@ export class PostgresDriverError extends Error {
   readonly phase: "connection" | "query";
   /** SQLSTATE (e.g. 42P01) or Node error code (e.g. ECONNREFUSED); never free text. */
   readonly code: string;
-  constructor(phase: "connection" | "query", code: string) {
+  /** Allowlisted business-outcome fragment from a SQL `RAISE`, when the message contained one. */
+  readonly applicationError?: SqlApplicationError;
+  constructor(phase: "connection" | "query", code: string, applicationError?: SqlApplicationError) {
     super(`Postgres ${phase} failed (${SQLSTATE.test(code) ? "SQLSTATE " : ""}${code})`);
     this.name = "PostgresDriverError";
     this.phase = phase;
     this.code = code;
+    if (applicationError) this.applicationError = applicationError;
   }
 }
 
@@ -115,7 +119,7 @@ export class NativePostgresSqlApi implements PostgresSqlApi {
       // A failed multi-statement migration can leave a transaction aborted.
       // Destroy that connection instead of returning it to the shared pool.
       client.release(true);
-      throw new PostgresDriverError("query", postgresDiagnosticCode(error));
+      throw new PostgresDriverError("query", postgresDiagnosticCode(error), matchSqlApplicationError(error));
     }
   }
   async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
@@ -135,7 +139,7 @@ export class NativePostgresSqlApi implements PostgresSqlApi {
           const results = Array.isArray(result) ? result : [result];
           return results.at(-1)?.rows ?? [];
         } catch (error) {
-          throw new PostgresDriverError("query", postgresDiagnosticCode(error));
+          throw new PostgresDriverError("query", postgresDiagnosticCode(error), matchSqlApplicationError(error));
         }
       },
       execute: async (sql: string, parameters: PostgresPrimitive[] = []) => { await tx.query(sql, parameters); },

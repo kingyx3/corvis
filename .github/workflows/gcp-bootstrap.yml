@@ -159,12 +159,12 @@ jobs:
         run: |
           {
             echo "### GCP foundation bootstrap"
-            echo "- Environment: `${{ inputs.environment }}`"
-            echo "- Action: `${{ inputs.action }}`"
-            echo "- Project: `${GCP_PROJECT_ID}`"
-            echo "- WIF provider: `${GCP_WIF_PROVIDER}`"
-            echo "- Deploy identity: `${GCP_DEPLOY_SERVICE_ACCOUNT}`"
-            echo "- Terraform state: `gs://${TF_STATE_BUCKET}` (versioned; stale noncurrent versions lifecycle-managed)"
+            echo "- Environment: \`${{ inputs.environment }}\`"
+            echo "- Action: \`${{ inputs.action }}\`"
+            echo "- Project: \`${GCP_PROJECT_ID}\`"
+            echo "- WIF provider: \`${GCP_WIF_PROVIDER}\`"
+            echo "- Deploy identity: \`${GCP_DEPLOY_SERVICE_ACCOUNT}\`"
+            echo "- Terraform state: \`gs://${TF_STATE_BUCKET}\` (versioned; stale noncurrent versions lifecycle-managed)"
             echo "- Retained KMS anchors: automatically re-adopted after a prior full decommission"
             echo "- Runtime image: intentionally disabled during bootstrap"
             echo "- Cloudflare edge: intentionally disabled during bootstrap"

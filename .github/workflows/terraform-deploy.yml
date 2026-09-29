@@ -220,14 +220,14 @@ jobs:
           {
             echo "### Terraform release selection"
             if [[ -n "${api_image}" ]]; then
-              echo "- API/worker image: `${api_image}`"
+              echo "- API/worker image: \`${api_image}\`"
             else
               echo "- API/worker runtime: disabled (no release selected)"
             fi
             if [[ "${{ inputs.environment }}" != "dev" ]]; then
-              echo "- Control-loop image: `${control_loop_image}`"
+              echo "- Control-loop image: \`${control_loop_image}\`"
             fi
-            echo "- Rollback source: `${ROLLBACK_KNOWN_GOOD}`"
+            echo "- Rollback source: \`${ROLLBACK_KNOWN_GOOD}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Validate runtime activation

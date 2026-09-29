@@ -4,6 +4,7 @@ import { getServerConfig } from "./config.ts";
 import { ConflictError } from "./platform.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 
 export const INVITATION_TTL_DAYS = 7;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -164,7 +165,7 @@ export async function acceptTenantInvitation(token: string, authMethod: "oidc" |
     };
   } catch (error) {
     if (error instanceof TenantInvitationError) throw error;
-    const code = (error as { message?: unknown } | null)?.message;
+    const code = sqlApplicationErrorOf(error);
     const mapping: Record<string, [string, number]> = {
       invitation_not_found: ["invitation_not_found", 404],
       invitation_not_pending: ["invitation_not_pending", 409],
@@ -174,7 +175,7 @@ export async function acceptTenantInvitation(token: string, authMethod: "oidc" |
       invitation_email_mismatch: ["invitation_email_mismatch", 403],
       invalid_invitation_identity: ["verified_email_required", 403],
     };
-    if (typeof code === "string" && mapping[code]) throw new TenantInvitationError(...mapping[code]);
+    if (mapping[code]) throw new TenantInvitationError(...mapping[code]);
     throw error;
   }
 }

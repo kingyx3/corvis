@@ -212,10 +212,10 @@ jobs:
 
           {
             echo "### Immutable release images"
-            echo "- Build registry: `${{ inputs.environment }}`"
-            echo "- Source commit: `${GITHUB_SHA}`"
-            echo "- API/worker image: `${API_DIGEST_REF}`"
-            echo "- Control-loop image: `${CONTROL_LOOP_DIGEST_REF}`"
+            echo "- Build registry: \`${{ inputs.environment }}\`"
+            echo "- Source commit: \`${GITHUB_SHA}\`"
+            echo "- API/worker image: \`${API_DIGEST_REF}\`"
+            echo "- Control-loop image: \`${CONTROL_LOOP_DIGEST_REF}\`"
             echo "- Build provenance: GitHub artifact attestations for both images"
             if [[ "${{ inputs.environment }}" == "uat" ]]; then
               echo "- Production promotion: copy these exact OCI digests; do not rebuild"

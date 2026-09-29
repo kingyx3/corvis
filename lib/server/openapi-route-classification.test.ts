@@ -45,3 +45,26 @@ test("PR #149 OpenAPI omissions are explicit non-external classifications, not a
     assert.ok(manifest.routes.some((entry) => patternMatches(entry.pattern, path)), `${path} must be explicitly classified`);
   }
 });
+
+test("every /api/v1 route handler is either in the OpenAPI contract or explicitly classified", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const yaml = await readFile("openapi/corvis-v1.yaml", "utf8");
+  const manifest = JSON.parse(await readFile("openapi/v1-route-classification.json", "utf8")) as { routes: Classification[] };
+  const normalise = (path: string) => path.replace(/\{[^}]+\}/g, "{}");
+  const specPaths = new Set([...yaml.matchAll(/^ {2}(\/[^\s:]*):\s*$/gm)].map((match) => normalise(match[1]!)));
+
+  const routes: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) await walk(`${dir}/${entry.name}`);
+      else if (entry.name === "route.ts") routes.push(dir.slice("app/api/v1".length) || "/");
+    }
+  }
+  await walk("app/api/v1");
+  assert.ok(routes.length > 50, "route discovery must find the API surface");
+
+  const unaccounted = routes
+    .map((route) => route.replace(/\[([^\]]+)\]/g, "{$1}"))
+    .filter((path) => !specPaths.has(normalise(path)) && !manifest.routes.some((entry) => patternMatches(entry.pattern, path) || patternMatches(entry.pattern.replace(/\{[^}]+\}/g, "{jobId}"), path.replace(/\{[^}]+\}/g, "{jobId}"))));
+  assert.deepEqual(unaccounted, [], "add each route to openapi/corvis-v1.yaml or openapi/v1-route-classification.json");
+});

@@ -19,6 +19,8 @@ type ConversationTurn = {
   /** Set once this turn's answer is saved for later reference (#182 D7). */
   pinId?: string;
   pinBusy?: boolean;
+  /** Save/remove failure, shown beside the turn's own action (the saved-answers panel may be closed). */
+  pinError?: string;
   /** True when this turn was reopened from a saved answer rather than freshly asked. */
   reopened?: boolean;
 };
@@ -125,24 +127,26 @@ export function ResearchView({ suggestions, canReadSources, onOpenReviewObservat
 
   const pinTurn = async (turn: ConversationTurn) => {
     if (!turn.answer || turn.pinBusy) return;
-    updateTurn(turn.id, { pinBusy: true });
+    updateTurn(turn.id, { pinBusy: true, pinError: undefined });
     try {
       const pin = await workspacePort.pinResearchAnswer({ question: turn.question, answer: turn.answer, askedAt: turn.askedAt });
       updateTurn(turn.id, { pinId: pin.pinId, pinBusy: false });
       setPins((current) => [pin, ...current.filter((item) => item.pinId !== pin.pinId)]);
     } catch (reason) {
-      updateTurn(turn.id, { pinBusy: false });
-      setPinsError(reason instanceof Error ? reason.message : "Could not save this answer");
+      updateTurn(turn.id, { pinBusy: false, pinError: reason instanceof Error ? reason.message : "Could not save this answer" });
     }
   };
 
-  const unpin = async (pinId: string) => {
+  // `turnId` is set when removal was requested from a conversation turn, so the failure is shown there.
+  const unpin = async (pinId: string, turnId?: string) => {
+    if (turnId) updateTurn(turnId, { pinError: undefined });
     try {
       await workspacePort.unpinResearchAnswer(pinId);
       setPins((current) => current.filter((pin) => pin.pinId !== pinId));
       setTurns((current) => current.map((turn) => turn.pinId === pinId ? { ...turn, pinId: undefined } : turn));
     } catch (reason) {
-      setPinsError(reason instanceof Error ? reason.message : "Could not remove this saved answer");
+      const message = reason instanceof Error ? reason.message : "Could not remove this saved answer";
+      if (turnId) updateTurn(turnId, { pinError: message }); else setPinsError(message);
     }
   };
 
@@ -206,8 +210,9 @@ export function ResearchView({ suggestions, canReadSources, onOpenReviewObservat
                 <div className="citation-row">{turn.answer.citations.map((citation, index) => canReadSources ? <button key={citation.sourceReferenceId} disabled={evidenceLoading === citation.sourceReferenceId} onClick={() => { setFocusedTurnId(turn.id); void openEvidence(citation.sourceReferenceId); }}>{citationLabel(citation, index)}</button> : <span key={citation.sourceReferenceId} className="citation-label">{citationLabel(citation, index)}</span>)}</div>
                 <div className="turn-actions">
                   {turn.answer.citations.length > 0 && <button type="button" className="text-button" onClick={() => setFocusedTurnId(turn.id)}>{focusedTurnId === turn.id ? "Showing sources" : "Show sources"}</button>}
-                  {turn.pinId ? <button type="button" className="text-button" disabled={turn.pinBusy} onClick={() => void unpin(turn.pinId!)}><Icon name="check" size={13}/>Saved · remove</button> : <button type="button" className="text-button" disabled={turn.pinBusy} onClick={() => void pinTurn(turn)}>{turn.pinBusy ? "Saving…" : "Save this answer"}</button>}
+                  {turn.pinId ? <button type="button" className="text-button" disabled={turn.pinBusy} onClick={() => void unpin(turn.pinId!, turn.id)}><Icon name="check" size={13}/>Saved · remove</button> : <button type="button" className="text-button" disabled={turn.pinBusy} onClick={() => void pinTurn(turn)}>{turn.pinBusy ? "Saving…" : "Save this answer"}</button>}
                 </div>
+                {turn.pinError && <p className="answer-footnote" role="alert">{turn.pinError}</p>}
                 <p className="answer-footnote">Quantitative claims must resolve to semantic queries; source citations are entitlement-checked before retrieval.</p>
               </> : <p>Ask a question to query your entitled Corvis data.</p>}
             </div></div>

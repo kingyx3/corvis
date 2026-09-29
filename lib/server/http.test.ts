@@ -6,7 +6,8 @@ import test from "node:test";
 register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 const { apiError, correlationId } = await import("@/lib/server/http");
-const { InvalidIdempotencyKeyError } = await import("@/lib/server/idempotency");
+const { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } = await import("@/lib/server/idempotency");
+const { TenantInvitationError } = await import("@/lib/server/tenant-invitations");
 
 function withCorrelation(value: string): Request {
   return new Request("https://corvis.test/api/v1/me", { headers: { "x-correlation-id": value } });
@@ -40,4 +41,16 @@ test("an invalid idempotency key is a 400 with a stable code, not a 500", async 
   const response = apiError(new InvalidIdempotencyKeyError(), "corr-1");
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_idempotency_key", correlationId: "corr-1" });
+});
+
+test("reusing an idempotency key for a different request is a 422, not a replay or a 500", async () => {
+  const response = apiError(new IdempotencyKeyReuseError(), "corr-reuse");
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), { error: "idempotency_key_reused", correlationId: "corr-reuse" });
+});
+
+test("expected tenant-admin request errors keep their own 4xx status instead of a 500", async () => {
+  const response = apiError(new TenantInvitationError("invitation_not_pending", 409), "corr-tenant");
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "invitation_not_pending", correlationId: "corr-tenant" });
 });

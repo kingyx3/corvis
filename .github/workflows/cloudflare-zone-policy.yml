@@ -130,10 +130,10 @@ jobs:
         run: |
           {
             echo "### Cloudflare shared zone policy"
-            echo "- Action: `${{ inputs.action }}`"
-            echo "- Root zone: `${TF_VAR_cloudflare_zone_name}`"
-            echo "- State: `gs://${TF_STATE_BUCKET}/corvis/cloudflare-zone-policy`"
-            echo "- Prod hostnames: `api`, `app`, `admin`"
-            echo "- UAT hostnames: `api-uat`, `app-uat`, `admin-uat`"
+            echo "- Action: \`${{ inputs.action }}\`"
+            echo "- Root zone: \`${TF_VAR_cloudflare_zone_name}\`"
+            echo "- State: \`gs://${TF_STATE_BUCKET}/corvis/cloudflare-zone-policy\`"
+            echo "- Prod hostnames: \`api\`, \`app\`, \`admin\`"
+            echo "- UAT hostnames: \`api-uat\`, \`app-uat\`, \`admin-uat\`"
             echo "- Environment DNS/Workers/routes remain owned by their environment Terraform states."
           } >> "${GITHUB_STEP_SUMMARY}"

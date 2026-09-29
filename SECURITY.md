@@ -26,4 +26,4 @@ Executable third-party GitHub Actions used by Corvis workflows and composite act
 
 ## Scope priorities
 
-The highest-priority surfaces include authentication and tenant isolation, document upload/processing, source-evidence access, APIs/exports, Snowflake serving controls, AI retrieval, secrets and privileged administration.
+The highest-priority surfaces include authentication and tenant isolation, document upload/processing, source-evidence access, APIs/exports, downstream analytics and secure-sharing controls (only once explicitly activated), AI retrieval, secrets and privileged administration.

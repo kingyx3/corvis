@@ -6,6 +6,8 @@ import "./design-system.css";
 export const metadata: Metadata = {
   title: "Corvis — Private Markets Data",
   description: "Trusted fund-period data from private-markets reporting.",
+  // Authenticated application: nothing behind the sign-in should be indexed.
+  robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {

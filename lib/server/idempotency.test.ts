@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { IDEMPOTENCY_KEY_SWEEP_LIMIT, InvalidIdempotencyKeyError, MAX_IDEMPOTENCY_KEY_LENGTH, sweepExpiredIdempotencyKeys, withIdempotency } from "./idempotency.ts";
+import { IDEMPOTENCY_KEY_SWEEP_LIMIT, IdempotencyKeyReuseError, InvalidIdempotencyKeyError, MAX_IDEMPOTENCY_KEY_LENGTH, sweepExpiredIdempotencyKeys, withIdempotency } from "./idempotency.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
@@ -36,10 +36,10 @@ class FakeIdempotencyDb implements PostgresSqlApi {
       return row ? [row] : [];
     }
     if (text.startsWith("insert into corvis_control.idempotency_key")) {
-      const [tenantId, scope, key, , status, body] = parameters;
+      const [tenantId, scope, key, requestHash, status, body] = parameters;
       const rowKey = `${String(tenantId)}:${String(scope)}:${String(key)}`;
       if (this.rows.has(rowKey)) return [];
-      const row: PostgresRow = { response_status: status, response_body: body };
+      const row: PostgresRow = { response_status: status, response_body: body, request_hash: requestHash };
       this.rows.set(rowKey, row);
       return [row];
     }
@@ -238,4 +238,29 @@ test("sweepExpiredIdempotencyKeys defaults to a bounded limit", async () => {
   };
   await sweepExpiredIdempotencyKeys(db);
   assert.deepEqual(calls[0], [IDEMPOTENCY_KEY_SWEEP_LIMIT]);
+});
+
+test("reusing a key with a different request payload is refused instead of replaying the first response", async () => {
+  const db = new FakeIdempotencyDb();
+  let calls = 0;
+  const fn = async () => ({ status: 202, body: { exportId: `export-${++calls}` } });
+
+  const first = await withIdempotency(identity(), "exports.create", "key-1", fn, db, { format: "csv", scope: { a: 1 } });
+  const replay = await withIdempotency(identity(), "exports.create", "key-1", fn, db, { scope: { a: 1 }, format: "csv" });
+  assert.equal(replay.replayed, true, "key order must not change the fingerprint");
+  assert.deepEqual(replay.body, first.body);
+
+  await assert.rejects(
+    withIdempotency(identity(), "exports.create", "key-1", fn, db, { format: "xlsx", scope: { a: 1 } }),
+    IdempotencyKeyReuseError,
+  );
+  assert.equal(calls, 1, "a refused reuse must not execute the handler");
+});
+
+test("a record stored before payload binding still replays when a fingerprint is supplied", async () => {
+  const db = new FakeIdempotencyDb();
+  const fn = async () => ({ status: 202, body: { exportId: "export-1" } });
+  await withIdempotency(identity(), "exports.create", "key-1", fn, db);
+  const replay = await withIdempotency(identity(), "exports.create", "key-1", fn, db, { format: "csv" });
+  assert.equal(replay.replayed, true);
 });

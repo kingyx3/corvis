@@ -201,7 +201,7 @@ jobs:
           count="$(terraform -chdir="${TF_ROOT}" state list | wc -l | tr -d ' ')"
           {
             echo "### Full decommission preview"
-            echo "- Terraform-managed resources currently tracked: `${count}`"
+            echo "- Terraform-managed resources currently tracked: \`${count}\`"
             if [[ "${{ steps.managed_state.outputs.has_resources }}" == "true" ]]; then
               echo "- Apply will first make deletion-protected API/worker resources removable."
               echo "- Apply then detaches the recoverable KMS anchor from state, destroys all other Terraform-managed resources, verifies empty state, hibernates KMS rotation/versions, and deletes the remote state bucket last."
@@ -291,9 +291,9 @@ jobs:
         run: |
           {
             echo "### GCP environment lifecycle"
-            echo "- Environment: `${{ inputs.environment }}`"
-            echo "- Mode: `${{ inputs.mode }}`"
-            echo "- Action: `${{ inputs.action }}`"
+            echo "- Environment: \`${{ inputs.environment }}\`"
+            echo "- Mode: \`${{ inputs.mode }}\`"
+            echo "- Action: \`${{ inputs.action }}\`"
             if [[ "${{ inputs.action }}" == "apply" && "${{ inputs.mode }}" == "idle" ]]; then
               echo "- Durable foundation/data/state: retained"
               echo "- Public API, private worker, managed transport and edge: decommissioned"

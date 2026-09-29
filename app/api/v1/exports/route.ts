@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     const { status, body: data } = await withIdempotency(identity, "exports.create", clientKey, async () => ({
       status: 202,
       body: await createPhysicalExport(identity, format, { scope, source }),
-    }));
+    }), undefined, { format, scope, source: source ?? null });
     return json({ data, correlationId: id }, { status });
   } catch (error) { return apiError(error, id); }
 }

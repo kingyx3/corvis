@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
+import { safeGetItem, safeSetItem } from "@/lib/safe-storage";
 import { workspaceStorageKey } from "@/lib/workspace-context";
 import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
@@ -124,14 +125,12 @@ type QueueFocus = { index: number } | { observationId: string };
 const REVIEW_UI_STATE_KEY = "corvis:review:ui-state";
 type PersistedReviewState = { stateFilter: string; query: string; confidenceFilter: string; materialityFilter?: string; dualControlFilter?: string; sortMode: string; focusedObservationId?: string };
 function readPersistedReviewState(): PersistedReviewState | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(workspaceStorageKey(REVIEW_UI_STATE_KEY));
+  const raw = safeGetItem("session", workspaceStorageKey(REVIEW_UI_STATE_KEY));
   if (!raw) return null;
   try { return JSON.parse(raw) as PersistedReviewState; } catch { return null; }
 }
 function writePersistedReviewState(state: PersistedReviewState): void {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(workspaceStorageKey(REVIEW_UI_STATE_KEY), JSON.stringify(state));
+  safeSetItem("session", workspaceStorageKey(REVIEW_UI_STATE_KEY), JSON.stringify(state));
 }
 
 export function ReviewView({
@@ -175,7 +174,7 @@ export function ReviewView({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [evidence, setEvidence] = useState<SourceEvidence | null>(null);
-  const [exceptionState, setExceptionState] = useState<{ key: string; items: ReconciliationException[] }>({ key: "", items: [] });
+  const [exceptionState, setExceptionState] = useState<{ key: string; items: ReconciliationException[]; error?: string }>({ key: "", items: [] });
   const [selectedSources, setSelectedSources] = useState<Record<string, string>>({});
   const [reviewDialog, setReviewDialog] = useState<ReviewDialog | null>(null);
   const [reviewValue, setReviewValue] = useState("");
@@ -209,8 +208,9 @@ export function ReviewView({
       .then((items) => { if (active) setExceptionState({ key: exceptionKey, items }); })
       .catch((error) => {
         if (!active) return;
-        setExceptionState({ key: exceptionKey, items: [] });
-        setMessage({ text: error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded", tone: "error" });
+        const text = error instanceof Error ? error.message : "Reconciliation exceptions could not be loaded";
+        setExceptionState({ key: exceptionKey, items: [], error: text });
+        setMessage({ text, tone: "error" });
       });
     return () => { active = false; };
   }, [canReview, snapshotId, snapshotVersion, exceptionKey]);
@@ -219,6 +219,7 @@ export function ReviewView({
     () => canReview && exceptionState.key === exceptionKey ? exceptionState.items : [],
     [canReview, exceptionKey, exceptionState],
   );
+  const exceptionsError = canReview && exceptionState.key === exceptionKey ? exceptionState.error : undefined;
   const exceptionsLoaded = !canReview || !exceptionKey || exceptionState.key === exceptionKey;
   const hasSnapshotScopedRows = Boolean(snapshot?.id && rows.some((row) => row.snapshotId === snapshot.id));
   const scopedRows = hasSnapshotScopedRows ? rows.filter((row) => row.snapshotId === snapshot?.id) : rows;
@@ -368,7 +369,8 @@ export function ReviewView({
 
     {canReview && snapshot?.id && <div className="table-card" tabIndex={0} role="region" aria-label="Reconciliation exceptions table"><table className="data-table"><thead><tr><th>Exception</th><th>Cause / prior published</th><th>Competing evidence</th><th>Status</th><th>Resolution</th></tr></thead><tbody>
       {!exceptionsLoaded && <tr><td colSpan={5} className="empty-cell">Loading reconciliation exceptions…</td></tr>}
-      {exceptionsLoaded && exceptions.length === 0 && <tr><td colSpan={5} className="empty-cell">No governed reconciliation exceptions are recorded for this snapshot version.</td></tr>}
+      {exceptionsError && <tr><td colSpan={5} className="empty-cell" role="alert">Reconciliation exceptions could not be loaded ({exceptionsError}). Exceptions may exist that are not shown here.</td></tr>}
+      {exceptionsLoaded && !exceptionsError && exceptions.length === 0 && <tr><td colSpan={5} className="empty-cell">No governed reconciliation exceptions are recorded for this snapshot version.</td></tr>}
       {exceptions.map((item) => {
         const selectedSource = selectedSources[item.exceptionId] || (item.sourceReferences.length === 1 ? item.sourceReferences[0]?.sourceReferenceId ?? "" : "");
         const prior = priorPublished(item);

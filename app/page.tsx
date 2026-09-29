@@ -6,6 +6,7 @@ import type { Permission } from "@/core/enterprise";
 import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
 import { recentActivity, researchSuggestions } from "@/adapters/demo/catalog";
+import { createLatestRequestGate } from "@/lib/latest-request";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
@@ -24,7 +25,7 @@ import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { AccessAdminView } from "@/features/access/access-admin-view";
 import { FundPeriodStatusChip, type FundPeriodStatus } from "@/components/ui/fund-period-status-chip";
 
-type ReadModule = "capabilities" | "documents" | "snapshots" | "observations";
+type ReadModule = "capabilities" | "documents" | "snapshots" | "observations" | "summary";
 type ModuleErrors = Partial<Record<ReadModule, string>>;
 type SearchResult =
   | { kind: "document"; key: string; title: string; detail: string; document: DocumentRecord }
@@ -77,8 +78,17 @@ export default function CorvisApp() {
       nextErrors.capabilities = errorMessage(capabilitiesResult.reason);
       setCapabilities(fallbackCapabilities(documentsResult.status === "fulfilled", observationsResult.status === "fulfilled"));
     }
-    setModuleErrors(nextErrors);
+    // The summary loads on its own path; keep its error while the other modules are re-applied.
+    setModuleErrors((current) => current.summary ? { ...nextErrors, summary: current.summary } : nextErrors);
     setLoading(false);
+  }, []);
+  const applySummaryResult = useCallback((result: PromiseSettledResult<WorkspaceSummary>) => {
+    setSummary(result.status === "fulfilled" ? result.value : null);
+    setModuleErrors((current) => {
+      const next = { ...current };
+      if (result.status === "fulfilled") delete next.summary; else next.summary = errorMessage(result.reason);
+      return next;
+    });
   }, []);
 
   const loadWorkspace = useCallback(() => Promise.allSettled([
@@ -88,19 +98,19 @@ export default function CorvisApp() {
     workspacePort.listObservations(),
   ]) as Promise<[PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]>, []);
 
-  const loadSummary = useCallback(() => workspacePort.workspaceSummary().catch(() => null), []);
-  const refreshWorkspace = useCallback(async () => {
-    const [results, nextSummary] = await Promise.all([loadWorkspace(), loadSummary()]);
-    applyWorkspaceResults(results);
-    setSummary(nextSummary);
-  }, [applyWorkspaceResults, loadSummary, loadWorkspace]);
+  const loadSummary = useCallback(() => Promise.allSettled([workspacePort.workspaceSummary()]).then(([result]) => result), []);
+
+  // Only the most recent request of each kind may apply its result: an older, slower response
+  // (e.g. from the initial load or an earlier Retry) must never overwrite a newer one.
+  const [gates] = useState(() => ({ workspace: createLatestRequestGate(), summary: createLatestRequestGate() }));
+  const refreshModules = useCallback(() => gates.workspace(loadWorkspace, applyWorkspaceResults), [applyWorkspaceResults, gates, loadWorkspace]);
+  const refreshSummary = useCallback(() => gates.summary(loadSummary, applySummaryResult), [applySummaryResult, gates, loadSummary]);
+  const refreshWorkspace = useCallback(async () => { await Promise.all([refreshModules(), refreshSummary()]); }, [refreshModules, refreshSummary]);
 
   useEffect(() => {
-    let active = true;
-    void loadWorkspace().then((results) => { if (active) applyWorkspaceResults(results); });
-    void loadSummary().then((nextSummary) => { if (active) setSummary(nextSummary); });
-    return () => { active = false; };
-  }, [applyWorkspaceResults, loadSummary, loadWorkspace]);
+    void refreshModules();
+    void refreshSummary();
+  }, [refreshModules, refreshSummary]);
 
   const allowed = useCallback((permission: Permission) => capabilities?.permissions.includes(permission) === true, [capabilities]);
   const canReadDocuments = allowed("documents:read");
@@ -130,7 +140,8 @@ export default function CorvisApp() {
     }
     return { fund: reviewSnapshot.fund, period: reviewSnapshot.period, blockingExceptions, needsReview };
   }, [canReadObservations, reviewSnapshot, summary]);
-  const degradedModules = Object.keys(moduleErrors) as ReadModule[];
+  // The summary needs observations:read; a 403 for other roles is entitlement, not degradation.
+  const degradedModules = (Object.keys(moduleErrors) as ReadModule[]).filter((module) => module !== "summary" || canReadObservations);
   const nav = useMemo(() => [
     { id: "overview" as View, label: "Overview", icon: "home" as IconName, visible: true },
     { id: "analytics" as View, label: "Portfolio analytics", icon: "database" as IconName, visible: canReadObservations },
@@ -242,7 +253,7 @@ export default function CorvisApp() {
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
       {!loading && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
-      {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void loadSummary().then(setSummary)}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void loadSummary().then(setSummary)} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" && identity?.workspaceId !== "demo-secondary" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
+      {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void refreshSummary()}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} summaryError={canReadObservations ? moduleErrors.summary : undefined} onRetrySummary={() => void refreshSummary()} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void refreshSummary()} activity={process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true" && identity?.workspaceId !== "demo-secondary" ? recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
       {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
       {!loading && activeView === "documents" && canReadDocuments && (moduleErrors.documents ? scopedUnavailable("Documents are temporarily unavailable", moduleErrors.documents) : <DocumentsView docs={docs} onUpload={() => setUploadOpen(true)} onSelect={setSelectedDoc} canUpload={canUpload}/>)}
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)}
