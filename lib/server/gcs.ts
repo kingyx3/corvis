@@ -251,13 +251,15 @@ export class GcsControlClient implements UploadObjectStore {
     return response.json() as Promise<T>;
   }
 
-  async getObject(key: string): Promise<{ bytes: Buffer; contentType?: string } | null> {
+  /** Streams an object's bytes instead of buffering them (export downloads, #231). */
+  async getObjectStream(key: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string; contentLength?: string } | null> {
     const response = await this.authorizedFetch(this.mediaUrl(key));
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`GCS object read failed (${response.status})`);
+    if (response.status === 404) { await response.body?.cancel().catch(() => undefined); return null; }
+    if (!response.ok || !response.body) { await response.body?.cancel().catch(() => undefined); throw new Error(`GCS object read failed (${response.status})`); }
     return {
-      bytes: Buffer.from(await response.arrayBuffer()),
+      body: response.body,
       contentType: response.headers.get("content-type") ?? undefined,
+      contentLength: response.headers.get("content-length") ?? undefined,
     };
   }
 

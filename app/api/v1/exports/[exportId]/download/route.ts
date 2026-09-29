@@ -20,12 +20,14 @@ export async function GET(request: Request, context: { params: Promise<{ exportI
     const grant = new URL(request.url).searchParams.get("grant") ?? "";
     const delivery = await redeemPhysicalExportGrant(identity, exportId, grant);
     if (!delivery) return json({ error: "not_found", correlationId: id }, { status: 404 });
-    const object = await gcs().getObject(exportObjectKey(delivery.objectUri));
+    // Streamed from GCS: an export can be large, and buffering it here doubled its memory cost (#231).
+    const object = await gcs().getObjectStream(exportObjectKey(delivery.objectUri));
     if (!object) return json({ error: "not_found", correlationId: id }, { status: 404 });
-    return new Response(new Uint8Array(object.bytes), {
+    return new Response(object.body, {
       status: 200,
       headers: {
         "content-type": object.contentType ?? "application/octet-stream",
+        ...(object.contentLength ? { "content-length": object.contentLength } : {}),
         "content-disposition": `attachment; filename="corvis-export-${exportId}.${extension(delivery.format)}"`,
         "cache-control": "private, no-store, max-age=0",
         "x-content-type-options": "nosniff",
