@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nativePostgresConfig, NativePostgresSqlApi, PostgresDriverError, postgresCaCertificates, postgresDiagnosticCode } from "./postgres-native.ts";
+import { nativePostgresConfig, NativePostgresSqlApi, PostgresDriverError, postgresCaCertificates, postgresDiagnosticCode, postgresPoolMax } from "./postgres-native.ts";
 import { postgres } from "./postgres.ts";
 
 test("provider URLs always verify TLS even when sslmode=require is supplied", () => {
@@ -10,6 +10,19 @@ test("provider URLs always verify TLS even when sslmode=require is supplied", ()
     assert.equal(new URL(config.connectionString!).search, "");
     assert.equal(config.max, 5);
   }
+});
+
+test("the pool size defaults to 5 and CORVIS_POSTGRES_POOL_MAX tunes it within 1-50 (#229)", () => {
+  assert.equal(postgresPoolMax(undefined), 5);
+  assert.equal(postgresPoolMax("12"), 12);
+  for (const invalid of ["0", "51", "2.5", "lots", ""]) assert.equal(postgresPoolMax(invalid), 5, invalid);
+});
+
+test("a driver error keeps Postgres's numeric position but never its message", () => {
+  const error = new PostgresDriverError("query", "42P01", undefined, 17);
+  assert.equal(error.position, 17);
+  assert.equal(error.message, "Postgres query failed (SQLSTATE 42P01)");
+  assert.equal(new PostgresDriverError("query", "42P01").position, undefined);
 });
 
 test("the pool bounds statements, queries and idle-in-transaction sessions", () => {
@@ -90,4 +103,18 @@ test("native clients are shared across repository factories", () => {
   assert.ok(first instanceof NativePostgresSqlApi);
   assert.equal(first, postgres(dsn));
   assert.throws(() => postgres("http://example.test/sql"));
+});
+
+test("transaction-pooler mode sends no timeout startup parameters and applies them with SET LOCAL instead (#229)", async () => {
+  const { postgresPoolerMode, transactionLocalSettings } = await import("./postgres-native.ts");
+  assert.equal(postgresPoolerMode(undefined), "session");
+  assert.equal(postgresPoolerMode("Transaction"), "transaction");
+  const session = nativePostgresConfig("postgresql://user:dummy@database.example.test/db", true, undefined, "session");
+  assert.equal(session.statement_timeout, 30_000);
+  const pooled = nativePostgresConfig("postgresql://user:dummy@database.example.test/db", true, undefined, "transaction");
+  assert.equal(pooled.statement_timeout, undefined);
+  assert.equal(pooled.idle_in_transaction_session_timeout, undefined);
+  assert.ok(pooled.query_timeout! > 30_000, "the client-side bound still applies");
+  assert.equal(transactionLocalSettings(), "set local statement_timeout = 30000; set local idle_in_transaction_session_timeout = 60000");
+  assert.equal(transactionLocalSettings({ statement_timeout: 900_000, lock_timeout: 30_000 }), "set local statement_timeout = 900000; set local lock_timeout = 30000; set local idle_in_transaction_session_timeout = 60000");
 });

@@ -144,6 +144,12 @@ resource "google_cloud_run_v2_service" "worker" {
   template {
     service_account = var.worker_service_account_email
 
+    # Each instance shares one Postgres pool (CORVIS_POSTGRES_POOL_MAX, default
+    # 5). Cloud Run's default concurrency of 80 would queue most requests behind
+    # that pool until its 10s connection timeout (#229); 20 keeps the wait short
+    # while instances scale out instead.
+    max_instance_request_concurrency = 20
+
     scaling {
       min_instance_count = 0
       max_instance_count = var.environment == "prod" ? 20 : 5
@@ -367,6 +373,12 @@ resource "google_cloud_run_v2_service" "api" {
 
   template {
     service_account = var.api_service_account_email
+
+    # Each instance shares one Postgres pool (CORVIS_POSTGRES_POOL_MAX, default
+    # 5). Cloud Run's default concurrency of 80 would queue most requests behind
+    # that pool until its 10s connection timeout (#229); 20 keeps the wait short
+    # while instances scale out instead.
+    max_instance_request_concurrency = 20
 
     scaling {
       min_instance_count = 0

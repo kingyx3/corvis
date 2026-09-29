@@ -75,6 +75,7 @@ try {
       alreadyApplied: error.alreadyApplied,
       appliedThisRun: error.appliedThisRun,
       driverCode: error.driverCode,
+      ...(error.failedLine !== undefined ? { failedLine: error.failedLine } : {}),
     } : {}),
   };
 }
