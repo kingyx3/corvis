@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assertDocumentAccess } from "../../core/enterprise.ts";
 import type {
   RequestIdentity,
@@ -7,6 +8,7 @@ import type {
 } from "../../core/enterprise.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { rowFactIds } from "./semantic-query.ts";
+import { rfc3339FromPostgres } from "./timestamps.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Retrieval sanitizer (#233 c)                                               */
@@ -317,6 +319,28 @@ function documentReadable(identity: RequestIdentity, documentId: string): boolea
   } catch {
     return false;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Computed-result digest (#245)                                              */
+/* -------------------------------------------------------------------------- */
+
+function canonicalCell(value: unknown): unknown {
+  if (typeof value === "string") return rfc3339FromPostgres(value);
+  if (Array.isArray(value)) return value.map(canonicalCell);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalCell((value as Record<string, unknown>)[key])]));
+  }
+  return value;
+}
+
+/**
+ * SHA-256 of the canonical JSON of a semantic result's rows: keys sorted and Postgres timestamp text normalised
+ * exactly as the API emits it, so the rows a client received (and sends back when pinning) hash to the same value
+ * the server logged when it computed them.
+ */
+export function computedRowsDigest(rows: ReadonlyArray<Record<string, unknown>>): string {
+  return createHash("sha256").update(JSON.stringify(rows.map(canonicalCell))).digest("hex");
 }
 
 /* -------------------------------------------------------------------------- */
