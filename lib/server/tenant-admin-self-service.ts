@@ -1,10 +1,12 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import type { BulkInviteRow } from "../bulk-invite-csv.ts";
 import { neutraliseSpreadsheetFormula } from "../csv.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { logEvent } from "./telemetry.ts";
+import { ConflictError } from "./platform.ts";
 import { createTenantInvitation, INVITATION_TTL_DAYS, normalizeTenantInvitation, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
 
 export const SUPPORT_ACK_THRESHOLD_HOURS = 4;
@@ -19,8 +21,6 @@ export const ROLE_EXPLANATIONS: Record<string, string> = {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const BULK_ROLES = new Set(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function text(row: PostgresRow, key: string): string { return row[key] == null ? "" : String(row[key]); }
 function requireTenantAdmin(identity: RequestIdentity): void {
@@ -136,23 +136,7 @@ export async function resendTenantInvitation(identity: RequestIdentity, invitati
   return { token, invitation:{invitationId:text(row,"invitation_id"),tenantId:text(row,"tenant_id"),workspaceId:text(row,"workspace_id"),workspaceName:text(row,"workspace_name"),email:text(row,"email"),roleName:text(row,"role_name") as TenantInvitation["roleName"],status:"pending",createdAt:text(row,"created_at"),expiresAt:text(row,"expires_at")} };
 }
 
-function parseCsvLine(line: string): string[] {
-  const fields:string[]=[]; let value=""; let quoted=false;
-  for(let i=0;i<line.length;i++){ const char=line[i]; if(char==='"'){ if(quoted&&line[i+1]==='"'){value+='"';i++;}else quoted=!quoted; } else if(char===','&&!quoted){fields.push(value.trim());value="";} else value+=char; }
-  if(quoted) throw new Error("unterminated_quote"); fields.push(value.trim()); return fields;
-}
-export type BulkInviteRow = { row:number; name:string; email:string; roleName:string; workspaceId:string; reason:string };
-export function parseBulkInviteCsv(csv:string): { rows:BulkInviteRow[]; errors:Array<{row:number;error:string}> } {
-  const lines=csv.replace(/^\uFEFF/,"").split(/\r?\n/).filter((line)=>line.trim());
-  if(lines.length<2) return {rows:[],errors:[{row:1,error:"CSV requires a header and at least one data row"}]};
-  let header:string[]; try{header=parseCsvLine(lines[0]).map((v)=>v.toLowerCase().replaceAll("_",""));}catch{return {rows:[],errors:[{row:1,error:"Invalid CSV header"}]};}
-  const index=(...names:string[])=>header.findIndex((value)=>names.includes(value));
-  const nameIndex=index("name","fullname"),emailIndex=index("email","emailaddress"),roleIndex=index("role","rolename"),workspaceIndex=index("workspace","workspaceid"),reasonIndex=index("reason");
-  if(emailIndex<0||roleIndex<0||workspaceIndex<0) return {rows:[],errors:[{row:1,error:"Required columns: email, role, workspaceId"}]};
-  const rows:BulkInviteRow[]=[]; const errors:Array<{row:number;error:string}>=[];
-  for(let i=1;i<lines.length;i++){const rowNumber=i+1;try{const values=parseCsvLine(lines[i]);const email=(values[emailIndex]??"").trim().toLowerCase(),roleName=(values[roleIndex]??"").trim(),workspaceId=(values[workspaceIndex]??"").trim(),name=nameIndex>=0?(values[nameIndex]??"").trim():"",reason=reasonIndex>=0?(values[reasonIndex]??"").trim():"Bulk enterprise onboarding";if(!EMAIL.test(email)||!BULK_ROLES.has(roleName)||!UUID.test(workspaceId)||reason.length<3||reason.length>1000){errors.push({row:rowNumber,error:"Invalid email, role, workspaceId, or reason"});continue;}rows.push({row:rowNumber,name,email,roleName,workspaceId,reason});}catch{errors.push({row:rowNumber,error:"Invalid CSV row"});}}
-  return {rows,errors};
-}
+export { parseBulkInviteCsv, type BulkInviteRow } from "../bulk-invite-csv.ts";
 
 export type BulkInviteOutcome = {
   created: Array<Record<string, unknown>>;
@@ -166,7 +150,7 @@ export type BulkInviteOutcome = {
  * confirmed implicitly from the CSV: the caller must pass an explicit
  * `confirmTenantAdmin` for the whole request, otherwise those rows fail with
  * `tenant_admin_confirmation_required`. Per-row failures report only a stable
- * code (the `TenantInvitationError` code or `invitation_failed`), never the raw
+ * code (the `TenantInvitationError`/`ConflictError` code or `invitation_failed`), never the raw
  * error message, which can carry SQL or identity details; the cause is logged.
  */
 export async function createBulkInvitations(
@@ -187,8 +171,9 @@ export async function createBulkInvitations(
       const data = await withTransaction(options.db, (tx) => createTenantInvitation(identity, command, `${options.correlationId}:${row.row}`, tx));
       created.push({ row: row.row, name: row.name, ...data });
     } catch (error) {
-      const code = error instanceof TenantInvitationError ? error.code : "invitation_failed";
-      if (!(error instanceof TenantInvitationError)) {
+      const expected = error instanceof TenantInvitationError || error instanceof ConflictError;
+      const code = expected ? error.code : "invitation_failed";
+      if (!expected) {
         logEvent("error", "tenant_admin.bulk_invitation_failed", { correlationId: options.correlationId }, { row: row.row, errorName: error instanceof Error ? error.name : typeof error });
       }
       errors.push({ row: row.row, error: code });

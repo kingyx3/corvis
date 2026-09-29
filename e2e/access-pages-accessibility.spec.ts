@@ -115,3 +115,32 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(violations, describe(violations)).toEqual([]);
   });
 }
+
+test("bulk invite requires explicit confirmation for tenant_admin rows (#244)", async ({ page }) => {
+  const bulkUrls: string[] = [];
+  await mockAccessApi(page, "loaded");
+  await page.route("**/api/v1/access/invitations/bulk**", (route) => {
+    bulkUrls.push(route.request().url());
+    return route.fulfill(json({ data: {
+      created: [{ row: 2, name: "", token: "t2", invitation: { ...invitation, invitationId: "inv-2", email: "boss@example.test", roleName: "tenant_admin" } }],
+      errors: [{ row: 3, error: "invitation_already_pending" }],
+      summary: { total: 2, created: 1, failed: 1 },
+    } }, 201));
+  });
+  await page.goto("/access-self-service");
+  await expect(page.getByText("new.analyst@example.test").first()).toBeVisible();
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  await page.getByLabel("CSV file").setInputFiles({ name: "invite.csv", mimeType: "text/csv", buffer: Buffer.from(`email,role,workspaceId\nboss@example.test,tenant_admin,${workspaceId}\nanalyst@example.test,analyst,${workspaceId}\n`) });
+  const group = page.getByRole("group", { name: /1 row\(s\) grant organization admin/i });
+  await expect(group).toContainText("Row 2: boss@example.test");
+  const submit = page.getByRole("button", { name: /validate & invite/i });
+  await expect(submit).toBeDisabled();
+  const violations = await blockingViolations(page);
+  expect(violations, describe(violations)).toEqual([]);
+  await group.getByRole("checkbox").check();
+  await submit.click();
+  await expect(page.getByText(/1 created · 1 failed/)).toBeVisible();
+  expect(bulkUrls).toHaveLength(1);
+  expect(new URL(bulkUrls[0]).searchParams.get("confirmTenantAdmin")).toBe("true");
+  await expect(page.getByRole("region", { name: /rows that were not invited/i })).toContainText("An invitation for this address is already pending.");
+});
