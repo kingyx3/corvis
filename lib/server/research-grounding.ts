@@ -103,12 +103,75 @@ const NUMBER = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+`;
 const SUFFIX = String.raw`%|per\s?cent\b|pct\b|bps?\b|basis\s+points?\b|thousand\b|million\b|billion\b|trillion\b|mm\b|mn\b|bn\b|tn\b|[kKmMbBtTxX]\b`;
 const FIGURE = new RegExp(String.raw`(?<![\d.,])(${NUMBER})(?:\s?(${SUFFIX}))?(?![\w])`, "g");
 
+const WORD_UNITS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+};
+const WORD_TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const WORD_SCALES: Record<string, number> = { thousand: 1e3, million: 1e6, billion: 1e9, trillion: 1e12 };
+const WORD_UNIT_SUFFIX = /^[ \t]*(%|per[ \t]?cent\b|pct\b|basis[ \t]+points?\b|bps?\b)/i;
+
+/**
+ * Spelled-out numbers ("four percent", "twelve million", "twenty-five", "one hundred and five", "two point five
+ * percent"). A lone small number word ("one of the funds", "three companies") is prose, not a checkable claim,
+ * so a phrase counts as a figure only when it carries a unit, ends in a magnitude word or is a compound of two or
+ * more number words.
+ */
+function extractSpelledFigures(text: string): NumericFigure[] {
+  const tokens = [...text.matchAll(/[A-Za-z]+/g)].map((match) => ({ word: match[0].toLowerCase(), start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }));
+  const isNumberWord = (word: string) => word in WORD_UNITS || word in WORD_TENS || word === "hundred" || word in WORD_SCALES;
+  const adjacent = (a: { end: number }, b: { start: number }) => /^[ \t-]+$/.test(text.slice(a.end, b.start));
+  const figures: NumericFigure[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const first = tokens[i]!;
+    if (!(first.word in WORD_UNITS || first.word in WORD_TENS) || (i > 0 && adjacent(tokens[i - 1]!, first) && isNumberWord(tokens[i - 1]!.word))) { i += 1; continue; }
+    let total = 0, current = 0, words = 0, lastScale = 1, j = i, last = first;
+    const parts: string[] = [];
+    while (j < tokens.length) {
+      const token = tokens[j]!;
+      if (j > i && !adjacent(last, token)) break;
+      const { word } = token;
+      if (word === "and" && j > i && (last.word === "hundred" || last.word in WORD_SCALES) && tokens[j + 1] && adjacent(token, tokens[j + 1]!) && (tokens[j + 1]!.word in WORD_UNITS || tokens[j + 1]!.word in WORD_TENS)) { last = token; j += 1; continue; }
+      if (word in WORD_UNITS) current += WORD_UNITS[word]!;
+      else if (word in WORD_TENS) current += WORD_TENS[word]!;
+      else if (word === "hundred") current = (current || 1) * 100;
+      else if (word in WORD_SCALES) { total += (current || 1) * WORD_SCALES[word]!; current = 0; lastScale = WORD_SCALES[word]!; }
+      else break;
+      lastScale = word in WORD_SCALES ? lastScale : 1;
+      parts.push(word); words += 1; last = token; j += 1;
+    }
+    let value = total + current;
+    let decimals = 0;
+    // "two point five": digit words after "point" are the decimal places.
+    if (tokens[j]?.word === "point" && adjacent(last, tokens[j]!)) {
+      let k = j + 1, fraction = "", prev = tokens[j]!;
+      while (k < tokens.length && tokens[k]!.word in WORD_UNITS && WORD_UNITS[tokens[k]!.word]! < 10 && adjacent(prev, tokens[k]!)) { fraction += String(WORD_UNITS[tokens[k]!.word]); prev = tokens[k]!; k += 1; }
+      if (fraction) { value = Number(`${value}.${fraction}`); decimals = fraction.length; words += 1 + fraction.length; parts.push("point", fraction); last = prev; j = k; }
+    }
+    const unitMatch = WORD_UNIT_SUFFIX.exec(text.slice(last.end));
+    const suffixText = unitMatch?.[1] ?? "";
+    const suffix = suffixText ? SUFFIXES.find(([pattern]) => pattern.test(suffixText.replace(/[ \t]+/g, " ")))?.[1] : undefined;
+    if (suffix || lastScale > 1 || words >= 2) {
+      figures.push({
+        raw: `${parts.join(" ")}${suffixText ? ` ${suffixText}` : ""}`,
+        value: lastScale > 1 ? value / lastScale : value,
+        multiplier: lastScale,
+        decimals,
+        unit: suffix?.unit ?? "none",
+      });
+    }
+    i = Math.max(j, i + 1);
+  }
+  return figures;
+}
+
 /**
  * Pulls the numeric claims out of free text. Deliberately NOT counted as figures (they are labels, not claims):
  * bare four-digit years 1900-2100, dates (ISO, uuids, urls are stripped first), list markers at the start of a
  * line, and digits glued to letters such as "Q2", "FY25", "H1", "fund-a2", "company-7" (a currency code such as "USD100" is
- * still a figure). Spelled-out numbers ("one hundred") are not parsed: the model is instructed to write figures
- * as digits, and this is a documented limit rather than a guarantee.
+ * still a figure). Spelled-out numbers are parsed too (see `extractSpelledFigures`), so writing "four percent"
+ * instead of "4%" does not bypass the grounding check.
  */
 export function extractNumericFigures(text: string): NumericFigure[] {
   const cleaned = text
@@ -136,6 +199,7 @@ export function extractNumericFigures(text: string): NumericFigure[] {
       unit: suffix?.unit ?? "none",
     });
   }
+  figures.push(...extractSpelledFigures(cleaned));
   return figures;
 }
 

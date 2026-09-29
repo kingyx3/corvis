@@ -1,6 +1,6 @@
-import { normalizeExportRequest, type DeliveryPort, type ExportDeliveryStatus, type ExportFormat, type ExportRequest } from "@/core/delivery";
+import { normalizeExportRequest, type DeliveryPort, type ExportDeliveryStatus, type ExportFormat, type ExportRequest } from "../../core/delivery.ts";
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
-import type { ExportManifest } from "@/core/enterprise";
+import type { ExportManifest } from "../../core/enterprise.ts";
 
 type Envelope<T> = { data: T; correlationId: string };
 
@@ -11,18 +11,30 @@ async function errorFrom(response: Response): Promise<Error> {
 
 export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
   const base = apiBase.replace(/\/$/, "");
+  // A double-click (or a second tab action) while an identical export request is in
+  // flight joins that request instead of creating a second export. Each logical
+  // request carries one idempotency key, so a transport retry is also deduplicated
+  // server-side.
+  const inFlight = new Map<string, Promise<ExportManifest>>();
   return {
-    async createExport(format: ExportFormat, request?: ExportRequest): Promise<ExportManifest> {
+    createExport(format: ExportFormat, request?: ExportRequest): Promise<ExportManifest> {
       const options = normalizeExportRequest(request);
-      const response = await fetch(`${base}/api/v1/exports`, {
-        method: "POST",
-        credentials: "include",
-        headers: { ...workspaceContextHeaders(), "content-type": "application/json" },
-        body: JSON.stringify({ format, ...(options.scope ? { scope: options.scope } : {}), ...(options.source ? { source: options.source } : {}) }),
-      });
-      if (!response.ok) throw await errorFrom(response);
-      const body = await response.json() as Envelope<ExportManifest>;
-      return body.data;
+      const payload = JSON.stringify({ format, ...(options.scope ? { scope: options.scope } : {}), ...(options.source ? { source: options.source } : {}) });
+      const pending = inFlight.get(payload);
+      if (pending) return pending;
+      const created = (async () => {
+        const response = await fetch(`${base}/api/v1/exports`, {
+          method: "POST",
+          credentials: "include",
+          headers: { ...workspaceContextHeaders(), "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+          body: payload,
+        });
+        if (!response.ok) throw await errorFrom(response);
+        const body = await response.json() as Envelope<ExportManifest>;
+        return body.data;
+      })().finally(() => inFlight.delete(payload));
+      inFlight.set(payload, created);
+      return created;
     },
     async listExports(): Promise<ExportDeliveryStatus[]> {
       const response = await fetch(`${base}/api/v1/exports?limit=20`, { credentials: "include", cache: "no-store", headers: { ...workspaceContextHeaders(), accept: "application/json" } });

@@ -19,6 +19,7 @@
     { "pattern": "/position-financials", "visibility": "workspace_control", "reason": "Position financial-statement analytics read composed for the Corvis Analytics view; versioned with the product rather than the stable integration contract." },
     { "pattern": "/workspace-preferences", "visibility": "workspace_control", "reason": "Per-user workspace personalization (saved views, dashboard layout) for the Corvis product UI." },
     { "pattern": "/scim/v2/**", "visibility": "identity_control", "reason": "SCIM 2.0 user provisioning for tenant identity providers; authenticated by a tenant SCIM bearer token and governed by the SCIM protocol, not the Corvis JSON envelope contract." },
-    { "pattern": "/health", "visibility": "operator", "reason": "Runtime health endpoint, not a customer data contract." }
+    { "pattern": "/client-errors", "visibility": "workspace_control", "reason": "Browser error-report ingest for the Corvis product UI; accepts only the PII-free client error event and writes it to server logs." },
+    { "pattern": "/health","visibility": "operator", "reason": "Runtime health endpoint, not a customer data contract." }
   ]
 }

@@ -144,6 +144,14 @@ test("clicking outside a dialog with typed input asks before discarding it", asy
   await expect(confirm).toBeHidden();
   await expect(dialog).toBeVisible();
 
+  // Escape asks the same question; a second Escape dismisses the prompt and keeps the input.
+  await dialog.getByLabel("Corrected value").press("Escape");
+  await expect(confirm).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /keep editing/i })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toBeHidden();
+  await expect(dialog.getByLabel("Corrected value")).toHaveValue("$77.7m");
+
   await page.mouse.click(3, 3);
   await confirm.getByRole("button", { name: /discard and close/i }).click();
   await expect(dialog).toBeHidden();

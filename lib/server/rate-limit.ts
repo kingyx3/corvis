@@ -61,6 +61,13 @@ export class RateLimiter {
     return { allowed: false, retryAfterSeconds };
   }
 
+  /** Reports whether one more request for `key` would be allowed, without recording it. */
+  peek(key: string, now: number = Date.now()): RateLimitDecision {
+    const bucket = this.buckets.get(key);
+    if (!bucket || now - bucket.windowStart >= this.windowMs || bucket.count < this.limit) return { allowed: true };
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((bucket.windowStart + this.windowMs - now) / 1000)) };
+  }
+
   /** Number of identities currently tracked. */
   get size(): number {
     return this.buckets.size;

@@ -4,7 +4,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { PostgresDriverError } from "./postgres-native.ts";
 import { RateLimiter } from "./rate-limit.ts";
-import { authenticateScim, configureScim, createScimUser, scimErrorResponse, ScimError, type ScimConfiguration } from "./scim.ts";
+import { authenticateScim, configureScim, createScimUser, scimErrorResponse, ScimError, VERIFIED_TOKEN_TTL_MS, type ScimConfiguration } from "./scim.ts";
 import { TenantInvitationError } from "./tenant-invitations.ts";
 
 const config: ScimConfiguration = {
@@ -185,6 +185,42 @@ test("the per-tenant SCIM budget holds even when the client address rotates", as
   }
   assert.deepEqual(codes, [401, 401, 429, 429]);
   assert.equal(db.calls.length, 2);
+});
+
+const VALID_ROW = { auth_method: "oidc", default_workspace_id: config.defaultWorkspaceId, default_role_name: "analyst" };
+
+test("successful SCIM authentications never spend the per-tenant budget", async () => {
+  const db = new QueueDb();
+  db.queryQueue = Array.from({ length: 5 }, () => [VALID_ROW]);
+  const limits = { clientLimiter: new RateLimiter(1000), tenantLimiter: new RateLimiter(2), verifiedTokens: new Map(), now: 1_000 };
+  for (let i = 0; i < 5; i += 1) await authenticateScim(scimRequest(), db, limits);
+  assert.equal(db.calls.length, 5, "outside a lockout every request re-checks the token in Postgres");
+});
+
+test("an attacker who exhausts the tenant budget cannot lock out a recently verified IdP token", async () => {
+  const db = new QueueDb();
+  const verifiedTokens = new Map();
+  const limits = { clientLimiter: new RateLimiter(1000), tenantLimiter: new RateLimiter(2), verifiedTokens, now: 1_000 };
+  db.queryQueue = [[VALID_ROW]];
+  await authenticateScim(scimRequest(), db, limits);
+  const attacker = () => authenticateScim(scimRequest({ authorization: `Bearer ${"a".repeat(43)}`, "cf-connecting-ip": "203.0.113.66" }), db, limits);
+  await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 401);
+  await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 401);
+  await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 429);
+  const queries = db.calls.length;
+  const resolved = await authenticateScim(scimRequest(), db, limits);
+  assert.equal(resolved.tenantId, config.tenantId);
+  assert.equal(db.calls.length, queries, "the verified token is honoured without a query during the lockout");
+  // A verification older than the TTL is not honoured during a lockout.
+  const stale = new Map([...verifiedTokens].map(([key, entry]) => [key, { ...entry, expiresAt: entry.expiresAt - VERIFIED_TOKEN_TTL_MS }]));
+  await assert.rejects(authenticateScim(scimRequest(), db, { ...limits, verifiedTokens: stale }), (error) => error instanceof ScimError && error.status === 429);
+});
+
+test("the SCIM client budget is keyed on cf-connecting-ip, not a caller-supplied x-forwarded-for", async () => {
+  const db = new QueueDb();
+  const limits = { clientLimiter: new RateLimiter(1), tenantLimiter: new RateLimiter(1000), verifiedTokens: new Map(), now: 1_000 };
+  await assert.rejects(authenticateScim(scimRequest({ "cf-connecting-ip": "198.51.100.1", "x-forwarded-for": "10.0.0.1" }), db, limits), (error) => error instanceof ScimError && error.status === 401);
+  await assert.rejects(authenticateScim(scimRequest({ "cf-connecting-ip": "198.51.100.1", "x-forwarded-for": "10.0.0.2" }), db, limits), (error) => error instanceof ScimError && error.status === 429);
 });
 
 test("malformed SCIM credentials are throttled without ever reaching the database", async () => {

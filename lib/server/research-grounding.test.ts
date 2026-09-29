@@ -73,6 +73,33 @@ test("figureMatchesEvidence: formatting, rounding tolerance and units (table)", 
   assert.equal(figureMatchesEvidence(extractNumericFigures("1")[0]!, Number.NaN), false);
 });
 
+test("spelled-out numbers are figures when they carry a unit, a magnitude or are compound (#245)", () => {
+  const cases: Array<[string, string[]]> = [
+    ["IRR rose four percent", ["four percent"]],
+    ["up four per cent", ["four per cent"]],
+    ["a fifty basis points move", ["fifty basis points"]],
+    ["NAV of twelve million", ["twelve million"]],
+    ["twenty-five holdings", ["twenty five"]],
+    ["one hundred and five companies", ["one hundred five"]],
+    ["two point five percent", ["two point 5 percent"]],
+    // prose, not claims
+    ["one of the funds and three companies", []],
+    ["The first point stands", []],
+  ];
+  for (const [text, expected] of cases) {
+    assert.deepEqual(extractNumericFigures(text).map((figure) => figure.raw), expected, text);
+  }
+  const grounded = (text: string, evidence: number) => figureMatchesEvidence(extractNumericFigures(text)[0]!, evidence);
+  assert.equal(grounded("four percent", 0.04), true);
+  assert.equal(grounded("four percent", 0.07), false);
+  assert.equal(grounded("twelve million", 12_300_000), true, "rounded to the magnitude shown");
+  assert.equal(grounded("twelve million", 14_000_000), false);
+  assert.equal(grounded("one hundred and five", 105), true);
+  assert.equal(grounded("two point five percent", 2.5), true);
+  assert.equal(grounded("two point five percent", 2.7), false);
+  assert.equal(assessNumericGrounding("Revenue grew seven percent.", rows, undefined).grounded, false, "a spelled-out figure cannot bypass grounding");
+});
+
 const rows: PostgresRow[] = [
   { observation_id: "f1", value_number: 100, value_string: null, version: 7, fund_id: "fund-a9" },
   { observation_id: "f2", value_number: "2500000.00", value_string: null },

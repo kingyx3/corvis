@@ -1,7 +1,7 @@
 "use client";
 
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { aggregateComposition, type CompositionInput } from "@/core/chart-data";
+import { aggregateComposition, compositionOmissionNote, type CompositionInput } from "@/core/chart-data";
 import { ChartFigure, type ChartTableColumn, type ChartTableRow } from "./chart-figure";
 import { CHART_SERIES_OTHER_COLOR, CHART_SERIES_UNASSIGNED_COLOR, seriesColor } from "./chart-tokens";
 
@@ -55,6 +55,9 @@ export function CompositionChart({
     { key: "value", label: unitLabel ?? "Value", align: "end" },
     { key: "percent", label: "Share", align: "end" },
   ];
+  // Negative values cannot be drawn as a share, but they are never dropped silently:
+  // say how many were left out and reconcile the drawn total with the net total.
+  const note = compositionOmissionNote(aggregated, valueFormatter);
   const rows: ChartTableRow[] = segments.map((segment) => ({
     label: segment.label,
     value: valueFormatter(segment.value),
@@ -70,6 +73,7 @@ export function CompositionChart({
       columns={columns}
       rows={rows}
       emptyMessage="No composition data available yet."
+      note={note}
       legend={
         <ul className="chart-legend">
           {segments.map((segment, index) => (

@@ -43,37 +43,64 @@ export async function configureScim(identity:RequestIdentity,authMethod:HumanAut
  * Unauthenticated SCIM traffic is limited before it can cost a Postgres query.
  * These process-local limiters bound the work one instance does per client and
  * per targeted tenant (the same in-memory pattern as rate-limit.ts; each Cloud
- * Run instance enforces its own budget). The client key is best-effort: it is
- * the first x-forwarded-for hop the edge reports, which a caller can influence,
- * so the per-tenant budget is the bound that a rotating client address cannot
- * evade. Only requests with a well-formed token reach the tenant budget, since
- * malformed ones are rejected without touching the database.
+ * Run instance enforces its own budget).
+ *
+ * - The client key is Cloudflare's `cf-connecting-ip` (set by the edge, which
+ *   overwrites any caller-supplied value), falling back to the first
+ *   x-forwarded-for hop off-edge. It is best-effort; the tenant budget is the
+ *   bound a rotating client address cannot evade.
+ * - The tenant budget counts only failed authentications, so a tenant's own IdP
+ *   never spends it. While a tenant is over it, a token this instance verified
+ *   within VERIFIED_TOKEN_TTL_MS still authenticates without a query, so an
+ *   attacker who knows a tenant id cannot lock that tenant's IdP out. That cache
+ *   is consulted only during a lockout; normal requests always re-check Postgres,
+ *   so a rotated or disabled token stops working at once outside an attack.
  */
-export type ScimRateLimits={clientLimiter?:RateLimiter;tenantLimiter?:RateLimiter;now?:number};
-let sharedScimLimiters:{client:RateLimiter;tenant:RateLimiter}|undefined;
+export const VERIFIED_TOKEN_TTL_MS = 5 * 60_000;
+const VERIFIED_TOKEN_MAX = 1_000;
+type VerifiedTokens=Map<string,{config:ScimConfiguration;expiresAt:number}>;
+export type ScimRateLimits={clientLimiter?:RateLimiter;tenantLimiter?:RateLimiter;verifiedTokens?:VerifiedTokens;now?:number};
+let sharedScimLimiters:{client:RateLimiter;tenant:RateLimiter;verified:VerifiedTokens}|undefined;
 function scimLimiters(){
-  if(!sharedScimLimiters){const limit=getServerConfig().rateLimitRequestsPerMinute;sharedScimLimiters={client:new RateLimiter(limit,RATE_LIMIT_WINDOW_MS),tenant:new RateLimiter(limit,RATE_LIMIT_WINDOW_MS)};}
+  if(!sharedScimLimiters){const limit=getServerConfig().rateLimitRequestsPerMinute;sharedScimLimiters={client:new RateLimiter(limit,RATE_LIMIT_WINDOW_MS),tenant:new RateLimiter(limit,RATE_LIMIT_WINDOW_MS),verified:new Map()};}
   return sharedScimLimiters;
 }
 /** Test-only: drop the shared limiters so the next request rebuilds them from configuration. */
 export function resetScimRateLimiters():void{sharedScimLimiters=undefined;}
 function clientKey(request:Request):string{
+  const edge=request.headers.get("cf-connecting-ip")?.trim();
   const forwarded=request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return (forwarded||request.headers.get("x-real-ip")?.trim()||"unknown").slice(0,64);
+  return (edge||forwarded||request.headers.get("x-real-ip")?.trim()||"unknown").slice(0,64);
 }
-function enforceScimLimit(limiter:RateLimiter,key:string,now:number|undefined):void{
+function enforceScimLimit(limiter:RateLimiter,key:string,now:number):void{
   const decision=limiter.consume(key,now);if(!decision.allowed)throw new ScimError(429,"tooMany","SCIM rate limit exceeded",decision.retryAfterSeconds);
+}
+function rememberVerified(verified:VerifiedTokens,key:string,config:ScimConfiguration,now:number):void{
+  verified.delete(key);
+  // Map iteration is insertion order, so the first key is the least recently verified.
+  if(verified.size>=VERIFIED_TOKEN_MAX){const oldest=verified.keys().next().value;if(oldest!==undefined)verified.delete(oldest);}
+  verified.set(key,{config,expiresAt:now+VERIFIED_TOKEN_TTL_MS});
 }
 
 export async function authenticateScim(request:Request,db:PostgresSqlApi=postgres(getServerConfig().postgresDsn),limits:ScimRateLimits={}):Promise<ScimConfiguration>{
   const shared=limits.clientLimiter&&limits.tenantLimiter?undefined:scimLimiters();
-  const clientLimiter=limits.clientLimiter??shared!.client,tenantLimiter=limits.tenantLimiter??shared!.tenant;
-  enforceScimLimit(clientLimiter,clientKey(request),limits.now);
+  const clientLimiter=limits.clientLimiter??shared!.client,tenantLimiter=limits.tenantLimiter??shared!.tenant,verified=limits.verifiedTokens??shared?.verified??new Map();
+  const now=limits.now??Date.now();
+  enforceScimLimit(clientLimiter,clientKey(request),now);
   const tenantId=request.headers.get("x-corvis-tenant")?.trim()??"";const authorization=userBearerAuthorization(request)??"";const match=/^Bearer\s+([A-Za-z0-9_-]{40,100})$/.exec(authorization);
   if(!UUID.test(tenantId)||!match)throw new ScimError(401,"invalidToken","Valid SCIM bearer token and tenant are required");
-  enforceScimLimit(tenantLimiter,tenantId.toLowerCase(),limits.now);
-  const hash=createHash("sha256").update(match[1]).digest("hex");const rows=await db.query(`select auth_method,default_workspace_id::text,default_role_name from corvis_control.tenant_scim_configuration where tenant_id=$1::uuid and enabled=true and token_sha256=$2 limit 1`,[tenantId,hash]);const row=rows[0];if(!row)throw new ScimError(401,"invalidToken","SCIM bearer token is invalid");
-  return {tenantId,authMethod:text(row,"auth_method") as HumanAuthMethod,defaultWorkspaceId:text(row,"default_workspace_id"),defaultRoleName:text(row,"default_role_name") as IdentityLifecycleRole};
+  const tenantKey=tenantId.toLowerCase();const hash=createHash("sha256").update(match[1]).digest("hex");const verifiedKey=`${tenantKey}:${hash}`;
+  const budget=tenantLimiter.peek(tenantKey,now);
+  if(!budget.allowed){
+    const known=verified.get(verifiedKey);
+    if(known&&known.expiresAt>now)return known.config;
+    throw new ScimError(429,"tooMany","SCIM rate limit exceeded",budget.retryAfterSeconds);
+  }
+  const rows=await db.query(`select auth_method,default_workspace_id::text,default_role_name from corvis_control.tenant_scim_configuration where tenant_id=$1::uuid and enabled=true and token_sha256=$2 limit 1`,[tenantId,hash]);const row=rows[0];
+  if(!row){verified.delete(verifiedKey);tenantLimiter.consume(tenantKey,now);throw new ScimError(401,"invalidToken","SCIM bearer token is invalid");}
+  const config:ScimConfiguration={tenantId,authMethod:text(row,"auth_method") as HumanAuthMethod,defaultWorkspaceId:text(row,"default_workspace_id"),defaultRoleName:text(row,"default_role_name") as IdentityLifecycleRole};
+  rememberVerified(verified,verifiedKey,config,now);
+  return config;
 }
 
 export class ScimError extends Error{

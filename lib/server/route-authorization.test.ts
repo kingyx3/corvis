@@ -159,6 +159,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/webhooks/subscriptions/[webhookId]/route.ts", { PATCH: ADMIN }],
   ["admin/webhooks/subscriptions/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["capabilities/route.ts", { GET: null }],
+  ["client-errors/route.ts", { POST: null }],
   ["companies/route.ts", { GET: "observations:read" }],
   ["company-lifecycle-events/route.ts", { GET: "observations:read" }],
   ["company-sectors/route.ts", { GET: "observations:read", POST: "observations:review" }],
@@ -655,6 +656,28 @@ test("the health route is public and identity-only routes need just an authentic
       seedDatabase();
       assert.equal((await handlers.GET!(requestFor(pathFor(file), { roles: [role] }))).status, 200, `${file} as ${role}`);
     }
+  }
+});
+
+test("client error ingest accepts only the PII-free event shape from an authenticated identity", async () => {
+  const handlers = await load("client-errors/route.ts");
+  const event = { event: "corvis.client_error", source: "view-boundary", name: "TypeError", code: "research_timeout", view: "research", occurredAt: "2026-09-29T10:00:00.000Z" };
+  const lines: string[] = [];
+  console.warn = (line: unknown) => { lines.push(String(line)); };
+  try {
+    for (const role of ROLES) {
+      seedDatabase();
+      assert.equal((await handlers.POST!(requestFor("/client-errors", { roles: [role], method: "POST", body: event }))).status, 204, role);
+    }
+    const logged = JSON.parse(lines.find((line) => line.includes('"client.error"')) ?? "{}") as Record<string, unknown>;
+    assert.equal(logged.tenantId, TENANT);
+    assert.equal(logged.code, "research_timeout");
+    for (const body of [{ ...event, message: "Jane Doe's NAV is 12.5m" }, { ...event, code: "Free text with PII" }, { ...event, view: "/funds?id=secret" }, [event], "x"]) {
+      assert.equal((await handlers.POST!(requestFor("/client-errors", { method: "POST", body }))).status, 400, JSON.stringify(body));
+    }
+    assert.equal((await handlers.POST!(requestFor("/client-errors", { method: "POST", rawBody: `{"pad":"${"x".repeat(4096)}"}` }))).status, 413);
+  } finally {
+    console.warn = quiet;
   }
 });
 
