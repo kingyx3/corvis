@@ -3526,3 +3526,12 @@ button.snapshot-row:focus-visible {
 .invite-shell .panel {
   max-width: 520px;
 }
+.dialog-surface .modal-discard-confirm {
+  position: sticky;
+  bottom: 0;
+  margin: 0 24px 24px;
+  flex-wrap: wrap;
+}
+.dialog-surface .modal-discard-confirm > div {
+  flex: 1 1 200px;
+}

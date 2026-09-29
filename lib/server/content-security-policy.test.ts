@@ -37,9 +37,26 @@ test("other directives are unchanged from the prior static policy", () => {
   assert.equal(directive(csp, "form-action"), "form-action 'self'");
   assert.equal(directive(csp, "img-src"), "img-src 'self' data: blob:");
   assert.equal(directive(csp, "font-src"), "font-src 'self' data:");
-  assert.equal(directive(csp, "connect-src"), "connect-src 'self' https:");
   assert.equal(directive(csp, "worker-src"), "worker-src 'self' blob:");
   assert.ok(csp.includes("upgrade-insecure-requests"));
+});
+
+test("connect-src is an allowlist: self plus the GCS upload host, never a blanket https:", () => {
+  const csp = buildContentSecurityPolicy({ nonce: "n", isDev: false, apiBase: "" });
+  assert.equal(directive(csp, "connect-src"), "connect-src 'self' https://storage.googleapis.com");
+  assert.doesNotMatch(directive(csp, "connect-src")!, /(^|\s)(https?:|\*)(\s|$)/);
+});
+
+test("a cross-origin API base is allowed by origin only", () => {
+  const csp = buildContentSecurityPolicy({ nonce: "n", isDev: false, apiBase: "https://api.corvis.example/prefix/" });
+  assert.equal(directive(csp, "connect-src"), "connect-src 'self' https://storage.googleapis.com https://api.corvis.example");
+  const junk = buildContentSecurityPolicy({ nonce: "n", isDev: false, apiBase: "javascript:alert(1)" });
+  assert.equal(directive(junk, "connect-src"), "connect-src 'self' https://storage.googleapis.com");
+});
+
+test("development adds only the local HMR socket to connect-src", () => {
+  const csp = buildContentSecurityPolicy({ nonce: "n", isDev: true, apiBase: "" });
+  assert.equal(directive(csp, "connect-src"), "connect-src 'self' https://storage.googleapis.com ws://localhost:* ws://127.0.0.1:*");
 });
 
 test("generateNonce produces unique, non-empty values", () => {

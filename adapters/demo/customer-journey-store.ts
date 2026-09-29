@@ -1,6 +1,7 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
+import { UnauthenticatedError } from "@/lib/api-errors";
 import { documents as seedDocuments, fundSnapshots as seedSnapshots, observations as seedObservations } from "@/adapters/demo/catalog";
 
 function cloneDocument(value: DocumentRecord): DocumentRecord { return { ...value }; }
@@ -30,7 +31,10 @@ export type DemoModuleName = "documents" | "snapshots" | "observations" | "resea
 
 export function assertDemoModuleAvailable(module: DemoModuleName): void {
   if (typeof window === "undefined") return;
-  if (window.sessionStorage.getItem(`corvis:demo:fail:${module}`) === "true") {
+  const fault = window.sessionStorage.getItem(`corvis:demo:fail:${module}`);
+  // "unauthenticated" simulates an expired session (HTTP 401) for this module.
+  if (fault === "unauthenticated") throw new UnauthenticatedError();
+  if (fault === "true") {
     throw new Error(`${module} module is intentionally unavailable in this demo session`);
   }
 }

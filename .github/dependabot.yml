@@ -16,3 +16,25 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+
+  - package-ecosystem: terraform
+    directories:
+      - /infra/terraform/environments/*
+      - /infra/terraform/modules/*
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
 import { uploads } from "@/lib/server/uploads";
+import { canAccessUpload } from "@/lib/server/upload-access";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
@@ -11,7 +12,7 @@ export async function POST(request: Request, context: { params: Promise<{ upload
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const current = await uploads().get(identity, uploadId);
-    if (current.actorSubject !== identity.subject && !identity.roles.includes("admin")) {
+    if (!canAccessUpload(identity, current.actorSubject)) {
       return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
     }
     // The body is optional: the key may come from the Idempotency-Key header instead.

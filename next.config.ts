@@ -19,6 +19,9 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   allowedDevOrigins: ["localhost", "127.0.0.1"],
+  // Always define the demo flag at build time (default "false"). When it is merely unset the bundler
+  // leaves a runtime `process.env` lookup, cannot fold the demo branches, and ships the demo fixtures.
+  env: { NEXT_PUBLIC_CORVIS_DEMO_MODE: process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE ?? "false" },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

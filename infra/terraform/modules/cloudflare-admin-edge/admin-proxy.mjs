@@ -24,6 +24,17 @@ function upstreamRequest(request, host, key, publicHostname) {
   return new Request(target.toString(), init);
 }
 
+// Content-hashed Next.js build assets are safe to cache. Everything else stays
+// private/no-store. Cache headers pass through only for successful, cookie-free
+// responses under /_next/static/ that the origin explicitly marked cacheable.
+function keepsOriginCaching(pathname, response) {
+  if (!pathname.startsWith("/_next/static/")) return false;
+  if (response.status !== 200 && response.status !== 304) return false;
+  if (response.headers.has("set-cookie")) return false;
+  const cacheControl = response.headers.get("cache-control");
+  return Boolean(cacheControl) && !/\b(?:no-store|private)\b/i.test(cacheControl);
+}
+
 const adminProxyWorker = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -49,7 +60,7 @@ const adminProxyWorker = {
     const key = apiRequest ? env.API_GATEWAY_API_KEY : env.ADMIN_GATEWAY_API_KEY;
     const upstream = await fetch(upstreamRequest(request, host, key, env.PUBLIC_HOSTNAME));
     const headers = new Headers(upstream.headers);
-    headers.set("cache-control", "private, no-store");
+    if (!keepsOriginCaching(url.pathname, upstream)) headers.set("cache-control", "private, no-store");
     headers.set("x-content-type-options", "nosniff");
     headers.set("referrer-policy", "no-referrer");
     headers.set("x-frame-options", "DENY");

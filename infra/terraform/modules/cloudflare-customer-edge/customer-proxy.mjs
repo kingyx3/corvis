@@ -26,6 +26,17 @@ function gatewayTarget(request, env) {
   return new Request(target.toString(), init);
 }
 
+// Content-hashed Next.js build assets are safe to cache. Everything else stays
+// private/no-store. Cache headers pass through only for successful, cookie-free
+// responses under /_next/static/ that the origin explicitly marked cacheable.
+function keepsOriginCaching(pathname, response) {
+  if (!pathname.startsWith("/_next/static/")) return false;
+  if (response.status !== 200 && response.status !== 304) return false;
+  if (response.headers.has("set-cookie")) return false;
+  const cacheControl = response.headers.get("cache-control");
+  return Boolean(cacheControl) && !/\b(?:no-store|private)\b/i.test(cacheControl);
+}
+
 const customerProxyWorker = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -41,7 +52,7 @@ const customerProxyWorker = {
 
     const response = await fetch(gatewayTarget(request, env));
     const headers = new Headers(response.headers);
-    headers.set("cache-control", "private, no-store");
+    if (!keepsOriginCaching(url.pathname, response)) headers.set("cache-control", "private, no-store");
     headers.set("x-content-type-options", "nosniff");
     headers.set("referrer-policy", "strict-origin-when-cross-origin");
     headers.set("x-corvis-edge-proxy", "cloudflare-worker");

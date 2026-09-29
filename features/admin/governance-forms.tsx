@@ -1,5 +1,6 @@
 "use client";
 
+import { copyToClipboard } from "@/lib/clipboard";
 import { useState, type ReactNode } from "react";
 import { Modal } from "@/components/ui/modal";
 
@@ -73,6 +74,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
   // Apply sends, including the endpoint (which may carry target ids).
   const [preview, setPreview] = useState<{ endpoint: string; body: CommandBody } | null>(null);
   const [state, setState] = useState<SubmitState>({ sending: false });
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const openPreview = () => setPreview({ endpoint, body: typeof body === "function" ? body() : body });
 
@@ -110,7 +112,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
       {!valid && !state.error && !state.status && <span className="field-hint">Complete the required fields to review.</span>}
     </div>
     {state.result != null && <details><summary>Operation receipt</summary><pre className="code-block">{JSON.stringify(state.result, null, 2)}</pre></details>}
-    {state.invitationUrl && <div className="lineage-note tone-success" role="status"><div><strong>Initial organization admin invited</strong><span>The invitation is single-use and expires after seven days. It was not sent automatically.</span><label className="form-field"><span>One-time invitation link</span><input className="input-control" readOnly value={state.invitationUrl} onFocus={(event) => event.currentTarget.select()}/></label><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(state.invitationUrl!).catch(() => {})}>Copy invitation link</button>{initialAdminEmail(state.result) && <a className="secondary-button" href={`mailto:${encodeURIComponent(initialAdminEmail(state.result)!)}?subject=${encodeURIComponent("Your Corvis organization invitation")}&body=${encodeURIComponent(`Accept your invitation using this single-use link:\n${state.invitationUrl}\n\nThis link is confidential and should only be used by ${initialAdminEmail(state.result)}.`)}`}>Open email draft</a>}</div></div>}
+    {state.invitationUrl && <div className="lineage-note tone-success" role="status"><div><strong>Initial organization admin invited</strong><span>The invitation is single-use and expires after seven days. It was not sent automatically.</span><label className="form-field"><span>One-time invitation link</span><input className="input-control" readOnly value={state.invitationUrl} onFocus={(event) => event.currentTarget.select()}/></label><button className="secondary-button" type="button" onClick={() => void copyToClipboard(state.invitationUrl!).then((copied) => setCopyFailed(!copied))}>Copy invitation link</button>{copyFailed && <span role="alert">Clipboard access was unavailable; select and copy the invitation link.</span>}{initialAdminEmail(state.result) && <a className="secondary-button" href={`mailto:${encodeURIComponent(initialAdminEmail(state.result)!)}?subject=${encodeURIComponent("Your Corvis organization invitation")}&body=${encodeURIComponent(`Accept your invitation using this single-use link:\n${state.invitationUrl}\n\nThis link is confidential and should only be used by ${initialAdminEmail(state.result)}.`)}`}>Open email draft</a>}</div></div>}
     {preview && <Modal label={`Confirm ${title}`} onClose={() => setPreview(null)}><div className="dialog-body">
       <h2>{destructive ? "Confirm destructive change" : "Confirm privileged change"}</h2>
       <p>The exact command below will be re-authorized and audited by the server.</p>

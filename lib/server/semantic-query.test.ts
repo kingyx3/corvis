@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { GovernedSemanticQueryService } from "./semantic-query.ts";
+import { GovernedSemanticQueryService, rowFactIds } from "./semantic-query.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -176,4 +176,12 @@ test("ambiguous metric aliases fail closed instead of selecting an arbitrary met
   assert.equal(result.shape.reason, "ambiguous_metric");
   assert.deepEqual(result.rows, []);
   assert.equal(db.calls.length, 1);
+});
+
+test("rowFactIds returns a value row's own observation id and an aggregate row's member ids, deduplicated", () => {
+  assert.deepEqual(rowFactIds({ observation_id: "o1", value_number: 1 }), ["o1"]);
+  assert.deepEqual(rowFactIds({ result_value: 3, source_observation_ids: ["a", "b", "a", ""] }).sort(), ["a", "b"]);
+  assert.deepEqual(rowFactIds({ observation_id: "o1", source_observation_ids: ["o1", "o2"] }).sort(), ["o1", "o2"]);
+  assert.deepEqual(rowFactIds({ result_value: 1, source_observation_ids: "not-an-array" }), []);
+  assert.deepEqual(rowFactIds({}), []);
 });

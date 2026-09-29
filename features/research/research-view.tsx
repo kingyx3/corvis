@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ResearchAnswer, ResearchPin, ResearchProgressPhase } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
+import { MalformedStreamError, SESSION_EXPIRED_MESSAGE, isUnauthenticatedError } from "@/lib/api-errors";
 import { Icon } from "@/components/ui/icon";
 import { PageHeading } from "@/components/ui/page-heading";
 
@@ -34,6 +35,8 @@ function phaseLabel(phase: ResearchProgressPhase | null): string {
 
 function researchError(error: unknown): string {
   if (!(error instanceof Error)) return "Unable to answer this question";
+  if (isUnauthenticatedError(error)) return SESSION_EXPIRED_MESSAGE;
+  if (error instanceof MalformedStreamError) return "Ask Corvis sent a response that could not be read. Try asking again.";
   if (error.name === "AbortError") return "Request cancelled.";
   if (error.message === "research_timeout") return "Ask Corvis timed out before a governed answer completed. Try a narrower question.";
   if (error.message === "research_cancelled") return "Request cancelled.";
@@ -219,7 +222,7 @@ export function ResearchView({ suggestions, canReadSources, onOpenReviewObservat
           </div>)}
         </div>
         {suggestions.length > 0 && <div className="suggestion-wrap"><span id="suggestions-label">Try asking</span><div role="group" aria-labelledby="suggestions-label">{suggestions.filter((x) => x !== lastQuestion).slice(0,3).map((suggestion) => <button key={suggestion} disabled={pending} onClick={() => void ask(suggestion)}>{suggestion}<Icon name="arrow" size={14}/></button>)}</div></div>}
-        <form className="ask-box" onSubmit={(event) => { event.preventDefault(); void ask(input); }}><textarea aria-label="Ask Corvis a question" value={input} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(input); } }} onChange={(event) => setInput(event.target.value)} placeholder="Ask about a fund, company, metric, change or source document…" rows={2} disabled={pending}/><div className="ask-footer"><span><Icon name="shield" size={14}/>Uses only data you can access<span className="ask-hint"> · Enter to send, Shift+Enter for a new line</span></span>{pending ? <button type="button" className="text-button" onClick={cancel}>Cancel</button> : <button type="submit" disabled={!input.trim()} aria-label="Send question"><Icon name="send" size={17}/></button>}</div></form>
+        <form className="ask-box" onSubmit={(event) => { event.preventDefault(); void ask(input); }}><textarea aria-label="Ask Corvis a question" value={input} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(input); } }} onChange={(event) => setInput(event.target.value)} placeholder="Ask about a fund, company, metric, change or source document…" rows={2} readOnly={pending} aria-busy={pending}/><div className="ask-footer"><span><Icon name="shield" size={14}/>Uses only data you can access<span className="ask-hint"> · Enter to send, Shift+Enter for a new line</span></span>{pending ? <button type="button" className="text-button" onClick={cancel}>Cancel</button> : <button type="submit" disabled={!input.trim()} aria-label="Send question"><Icon name="send" size={17}/></button>}</div></form>
       </div>
       <aside className={`evidence-panel${evidence || evidenceError ? " evidence-open" : ""}`} aria-live="polite" aria-label="Source evidence"><p className="eyebrow">Evidence</p><h3>Sources used</h3>
         <div ref={evidenceRef}>

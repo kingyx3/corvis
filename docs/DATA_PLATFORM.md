@@ -178,10 +178,13 @@ Before an activated Snowflake replica serves analytics/sharing:
 `CORVIS_POSTGRES_DSN` accepts the provider's `postgresql://` (or `postgres://`)
 connection string. The application now uses the PostgreSQL wire protocol for
 these bindings, including the migration CLI; it does not POST them to an HTTP
-endpoint. Existing explicit HTTPS SQL gateway bindings remain compatible.
+endpoint. Explicit HTTPS SQL gateway bindings remain accepted outside production
+only: the HTTPS transport has no transactions, so `withTransaction` would run
+non-atomically (a mutation could commit without its audit row), and production
+startup fails unless the DSN is `postgres://` or `postgresql://`.
 
 Each process shares a five-connection pool per configured DSN, with bounded
-connection/query timeouts, idle eviction and five-minute connection rotation.
+connection/query timeouts, a 60-second `idle_in_transaction_session_timeout`, idle eviction and five-minute connection rotation.
 Queries remain parameterized. Failed transactions destroy their connection;
 queries are never automatically retried because their commit outcome may be
 unknown. Migration files must keep their existing single-call BEGIN/COMMIT

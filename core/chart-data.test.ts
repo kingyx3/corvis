@@ -61,3 +61,18 @@ test("trendDelta handles a zero previous value without dividing by zero", () => 
   assert.equal(delta?.percent, null);
   assert.equal(delta?.direction, "up");
 });
+
+test("aggregateComposition surfaces omitted negative values so the total reconciles with the headline", () => {
+  const { segments, total, omitted, netTotal } = aggregateComposition([
+    { key: "a", label: "A", value: 100 },
+    { key: "b", label: "B", value: 50 },
+    { key: "c", label: "Not attributed", value: -30 },
+  ]);
+  assert.deepEqual(segments.map((segment) => segment.key), ["a", "b"]);
+  assert.equal(total, 150);
+  assert.deepEqual(omitted, { count: 1, value: -30 });
+  assert.equal(netTotal, 120);
+  assert.equal(total + omitted.value, netTotal);
+  assert.equal(aggregateComposition([{ key: "a", label: "A", value: -5 }]).netTotal, -5);
+  assert.deepEqual(aggregateComposition([{ key: "a", label: "A", value: 5 }]).omitted, { count: 0, value: 0 });
+});

@@ -1,5 +1,6 @@
 import type { ProcessingStage } from "@/core/enterprise";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { redactErrorText } from "./processing-error-text.ts";
 
 export type ProcessingStageDelivery = {
   tenantId: string;
@@ -145,7 +146,7 @@ export class PostgresProcessingStageRepository {
   }): Promise<ProcessingStageFailure | undefined> {
     const rows = await this.db.query(`select * from corvis_control.fail_processing_stage_delivery(
       $1::uuid,$2,$3::uuid,$4::uuid,$5,$6)`, [
-      input.tenantId,input.consumerName,input.eventId,input.leaseToken,input.jobId,input.error.slice(0,2000),
+      input.tenantId,input.consumerName,input.eventId,input.leaseToken,input.jobId,redactErrorText(input.error,2000),
     ]);
     const row = rows[0];
     if (!row) return undefined;

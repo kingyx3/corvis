@@ -7,12 +7,11 @@ import {
 import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { MAX_VERSION } from "@/lib/server/request-validation";
 import { withIdempotency } from "@/lib/server/idempotency";
 import { PostgresProductionPlatform, platform } from "@/lib/server/platform";
 
 const actions: ReconciliationResolutionAction[] = ["select_source", "mark_immaterial", "accept_reconciliation"];
-/** Versions are Postgres `integer` columns; anything above 2^31-1 is malformed input, not a conflict. */
-const MAX_VERSION = 2_147_483_647;
 
 export async function POST(request: Request) {
   const id = correlationId(request);

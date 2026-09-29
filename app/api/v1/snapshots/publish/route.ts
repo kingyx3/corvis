@@ -4,10 +4,8 @@ import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { PostgresProductionPlatform, platform } from "@/lib/server/platform";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { MAX_VERSION } from "@/lib/server/request-validation";
 import { logEvent } from "@/lib/server/telemetry";
-
-/** Versions are Postgres `integer` columns; anything outside 1..2^31-1 is malformed input, not a conflict. */
-const MAX_VERSION = 2_147_483_647;
 
 export async function POST(request: Request) {
   const id = correlationId(request);

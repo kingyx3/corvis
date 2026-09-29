@@ -3,8 +3,9 @@ import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.
 import { getServerConfig } from "./config.ts";
 import { neutraliseSpreadsheetFormula } from "../csv.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
-import { INVITATION_TTL_DAYS, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { logEvent } from "./telemetry.ts";
+import { createTenantInvitation, INVITATION_TTL_DAYS, normalizeTenantInvitation, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
 
 export const SUPPORT_ACK_THRESHOLD_HOURS = 4;
 export const ROLE_EXPLANATIONS: Record<string, string> = {
@@ -44,7 +45,8 @@ export async function listTenantAccessAudit(identity: RequestIdentity, db: Postg
     from corvis_control.audit_event
     where tenant_id=$1::uuid and (
       action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
-      or action like 'identity.lifecycle.%' or target_type in ('membership','tenant_invitation','support_access_grant')
+      or action like 'identity.lifecycle.%' or action like 'access.scim.%'
+      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration')
     )
     order by occurred_at desc,audit_event_id desc limit 2000`, [identity.tenantId]);
   return rows.map((row) => ({
@@ -150,4 +152,47 @@ export function parseBulkInviteCsv(csv:string): { rows:BulkInviteRow[]; errors:A
   const rows:BulkInviteRow[]=[]; const errors:Array<{row:number;error:string}>=[];
   for(let i=1;i<lines.length;i++){const rowNumber=i+1;try{const values=parseCsvLine(lines[i]);const email=(values[emailIndex]??"").trim().toLowerCase(),roleName=(values[roleIndex]??"").trim(),workspaceId=(values[workspaceIndex]??"").trim(),name=nameIndex>=0?(values[nameIndex]??"").trim():"",reason=reasonIndex>=0?(values[reasonIndex]??"").trim():"Bulk enterprise onboarding";if(!EMAIL.test(email)||!BULK_ROLES.has(roleName)||!UUID.test(workspaceId)||reason.length<3||reason.length>1000){errors.push({row:rowNumber,error:"Invalid email, role, workspaceId, or reason"});continue;}rows.push({row:rowNumber,name,email,roleName,workspaceId,reason});}catch{errors.push({row:rowNumber,error:"Invalid CSV row"});}}
   return {rows,errors};
+}
+
+export type BulkInviteOutcome = {
+  created: Array<Record<string, unknown>>;
+  errors: Array<{ row: number; error: string }>;
+};
+
+/**
+ * Creates one invitation per parsed CSV row, each in its own transaction.
+ *
+ * A `tenant_admin` row grants organization-wide administration, so it is never
+ * confirmed implicitly from the CSV: the caller must pass an explicit
+ * `confirmTenantAdmin` for the whole request, otherwise those rows fail with
+ * `tenant_admin_confirmation_required`. Per-row failures report only a stable
+ * code (the `TenantInvitationError` code or `invitation_failed`), never the raw
+ * error message, which can carry SQL or identity details; the cause is logged.
+ */
+export async function createBulkInvitations(
+  identity: RequestIdentity,
+  rows: BulkInviteRow[],
+  options: { confirmTenantAdmin: boolean; correlationId: string; db: PostgresSqlApi },
+): Promise<BulkInviteOutcome> {
+  const created: Array<Record<string, unknown>> = [];
+  const errors: Array<{ row: number; error: string }> = [];
+  for (const row of rows) {
+    if (row.roleName === "tenant_admin" && options.confirmTenantAdmin !== true) {
+      errors.push({ row: row.row, error: "tenant_admin_confirmation_required" });
+      continue;
+    }
+    const command = normalizeTenantInvitation({ tenantId: identity.tenantId, workspaceId: row.workspaceId, email: row.email, roleName: row.roleName, reason: row.reason, confirmTenantAdmin: options.confirmTenantAdmin === true });
+    if (!command) { errors.push({ row: row.row, error: "invalid_invitation" }); continue; }
+    try {
+      const data = await withTransaction(options.db, (tx) => createTenantInvitation(identity, command, `${options.correlationId}:${row.row}`, tx));
+      created.push({ row: row.row, name: row.name, ...data });
+    } catch (error) {
+      const code = error instanceof TenantInvitationError ? error.code : "invitation_failed";
+      if (!(error instanceof TenantInvitationError)) {
+        logEvent("error", "tenant_admin.bulk_invitation_failed", { correlationId: options.correlationId }, { row: row.row, errorName: error instanceof Error ? error.name : typeof error });
+      }
+      errors.push({ row: row.row, error: code });
+    }
+  }
+  return { created, errors };
 }

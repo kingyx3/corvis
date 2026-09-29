@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PostgresDriverError } from "./postgres-native.ts";
-import { SQL_APPLICATION_ERRORS, matchSqlApplicationError, sqlApplicationErrorOf } from "./sql-application-errors.ts";
+import { SQL_APPLICATION_ERRORS, adminSqlErrorClassification, matchSqlApplicationError, sqlApplicationErrorOf } from "./sql-application-errors.ts";
 
 test("only an allowlisted fragment of a raised SQL message is surfaced", () => {
   assert.equal(matchSqlApplicationError(new Error("invitation_expired")), "invitation_expired");
@@ -30,4 +30,23 @@ test("every allowlisted fragment is authored in the SQL migrations", async () =>
   const dir = new URL("../../db/postgres/migrations/", import.meta.url);
   const sql = readdirSync(dir).filter((name) => name.endsWith(".sql")).map((name) => readFileSync(new URL(name, dir), "utf8")).join("\n");
   for (const fragment of SQL_APPLICATION_ERRORS) assert.ok(sql.includes(fragment), `no migration raises "${fragment}"`);
+});
+
+test("every allowlisted fragment is matched as itself, never shadowed by a shorter earlier fragment", () => {
+  // The first contained fragment wins, so a fragment that contains another must come first.
+  for (const fragment of SQL_APPLICATION_ERRORS) assert.equal(matchSqlApplicationError(new Error(fragment)), fragment);
+});
+
+test("admin identity, access-policy and support-access fragments classify to a client error status", () => {
+  const adminFragments = SQL_APPLICATION_ERRORS.filter((fragment) => adminSqlErrorClassification(new Error(fragment)));
+  assert.ok(adminFragments.length >= 30);
+  for (const fragment of adminFragments) {
+    const outcome = adminSqlErrorClassification(new Error(fragment))!;
+    assert.ok(outcome.status >= 400 && outcome.status < 500, fragment);
+    assert.match(outcome.code, /^[a-z_]+$/);
+  }
+  // Invitation and dead-letter fragments are mapped by their own callers.
+  assert.equal(adminSqlErrorClassification(new Error("invitation_expired")), undefined);
+  assert.equal(adminSqlErrorClassification(new PostgresDriverError("query", "P0001")), undefined);
+  assert.equal(adminSqlErrorClassification(new Error("something unrelated")), undefined);
 });

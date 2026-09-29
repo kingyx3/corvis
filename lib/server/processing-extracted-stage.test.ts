@@ -512,7 +512,7 @@ test("extraction provider configuration is optional and bounded", () => {
     endpoint: "https://extraction.example/",
     audience: "https://extraction.example/",
     outputBucket,
-    timeoutMs: 25_000,
+    timeoutMs: 20_000,
   });
 });
 

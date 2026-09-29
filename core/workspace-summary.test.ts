@@ -226,3 +226,45 @@ test("sector uses governed holding classifications over a GP fund-level breakdow
   ]);
   assert.equal(summary.exposure.bySector.reduce((sum, row) => sum + row.value, 0), summary.exposure.total);
 });
+
+test("two published snapshots for one fund and period resolve identically in the trend and the exposure headline", () => {
+  const facts = [
+    fact({ snapshotId: "early", period: "Q2 2026", value: 100, publishedAt: "2026-07-01T00:00:00Z" }),
+    fact({ snapshotId: "late", period: "Q2 2026", value: 130, publishedAt: "2026-08-01T00:00:00Z" }),
+  ];
+  for (const valueFacts of [facts, [...facts].reverse()]) {
+    const summary = buildWorkspaceSummary({ ...empty, valueFacts });
+    assert.equal(summary.exposure.items.length, 1);
+    assert.equal(summary.exposure.items[0]!.snapshotId, "late", "the restatement published last wins regardless of input order");
+    assert.equal(summary.exposure.total, 130);
+    assert.equal(summary.valueTrend.at(-1)!.value, summary.exposure.total, "headline and trend agree");
+    assert.deepEqual(summary.valueTrend.at(-1)!.snapshotIds, ["late"]);
+  }
+});
+
+test("attention counts come from SQL aggregates, not from the capped lists", () => {
+  const summary = buildWorkspaceSummary({
+    ...empty,
+    // The capped lists contain none of the old, stuck work.
+    observations: [], documents: [],
+    attentionAggregates: {
+      needsReview: [{ fund: "Fund A", count: 1234, observationId: "obs-old", company: "Old Co", metric: "Revenue" }],
+      stuckDocuments: [document({ id: "stuck-1", processingState: "failed" }), document({ id: "stuck-2", processingState: "running" })],
+      stuckDocumentTotal: 60,
+    },
+  });
+  assert.equal(summary.attention.counts.needs_review, 1234);
+  assert.equal(summary.attention.counts.stuck_document, 60, "the exact total, not the listed 2");
+  assert.equal(summary.attention.omittedStuckDocuments, 58);
+  assert.equal(summary.attention.counts.total, 1234 + 60);
+  assert.equal(summary.attention.items.filter((item) => item.kind === "stuck_document").length, 2);
+  const review = summary.attention.items.find((item) => item.kind === "needs_review")!;
+  assert.equal(review.target.view, "review");
+  assert.equal((review.target as { observationId?: string }).observationId, "obs-old");
+});
+
+test("without aggregates the list-derived attention behaves as before", () => {
+  const summary = buildWorkspaceSummary({ ...empty, observations: [observation({ id: "o1" }), observation({ id: "o2" })] });
+  assert.equal(summary.attention.counts.needs_review, 2);
+  assert.equal(summary.attention.omittedStuckDocuments, undefined);
+});

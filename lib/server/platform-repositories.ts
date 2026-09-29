@@ -11,7 +11,7 @@ import {
 import { SECTOR_TAXONOMY_VERSION } from "../../core/sector-taxonomy.ts";
 import { MIXED_INSTRUMENT_TYPES } from "../../core/workspace-summary.ts";
 import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "./pagination.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }
 
@@ -57,6 +57,65 @@ export class PostgresWorkspaceRepository {
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
         and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))${keyset.where}
       ${keyset.tail}`, parameters);
+  }
+
+  /**
+   * Overview attention computed in SQL over the caller's full entitled scope.
+   * The unpaged lists are capped (1000 documents / 5000 observations, newest
+   * first), so counts taken from them lose exactly the oldest, stuck items.
+   *
+   * needsReview: one row per fund with the exact count of waiting observations
+   * and the most recently updated one as the deep link. The predicate mirrors
+   * the list mapping: everything the serving view exposes that is not
+   * approved or rejected is "Needs review".
+   *
+   * stuckDocuments: the same rule as core isStuck (not Published/Review; a
+   * blocked/failed/dead-letter job, or a job other than succeeded with no
+   * progress for stuckAfterHours), failed first then longest-idle, bounded by
+   * `limit` with the exact total in `stuck_total`.
+   */
+  async attentionAggregates(
+    identity: RequestIdentity,
+    options: { includeDocuments: boolean; stuckAfterHours: number; stuckLimit: number },
+  ): Promise<{ needsReview: PostgresRow[]; stuckDocuments: PostgresRow[] }> {
+    const fundIds = identity.entitlements.fundIds ?? [];
+    const documentIds = identity.entitlements.documentIds ?? [];
+    const needsReview = fundIds.length === 0 || documentIds.length === 0 ? [] : await this.db.query(`select x.fund_id,x.fund_name,x.review_count,x.observation_id,x.company_id,x.company_name,x.metric_code
+      from (
+        select o.fund_id,
+          -- The serving observations view carries no fund name; use the fund's snapshot name so the
+          -- attention item lines up with (and can deep-link to) its snapshot, else the fund id.
+          coalesce((select max(fs.fund_name) from corvis_serving.fund_period_snapshots fs
+                    where fs.tenant_id=o.tenant_id and fs.fund_id=o.fund_id), o.fund_id) as fund_name,
+          o.observation_id,o.company_id,o.company_name,o.metric_code,
+          count(*) over (partition by o.fund_id) as review_count,
+          row_number() over (partition by o.fund_id order by o.updated_at desc, o.observation_id) as rn
+        from corvis_serving.observations o
+        join corvis_source.source_reference r
+          on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+        where o.tenant_id=$1
+          and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
+          and r.document_id::text in (select jsonb_array_elements_text($3::jsonb))
+          and lower(o.review_state) not in ('approved','rejected')
+      ) x
+      where x.rn=1
+      order by x.fund_name nulls last, x.fund_id`, [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
+    const stuckDocuments = !options.includeDocuments || documentIds.length === 0 ? [] : await this.db.query(`select d.*, count(*) over () as stuck_total
+      from corvis_serving.documents d
+      where d.tenant_id=$1
+        and d.document_id::text in (select jsonb_array_elements_text($2::jsonb))
+        and lower(coalesce(d.status,'queued')) <> 'published'
+        and lower(coalesce(d.status,'queued')) not like '%review%'
+        and (
+          lower(coalesce(d.processing_state,'')) in ('blocked','failed','dead_letter')
+          or (lower(coalesce(d.processing_state,'')) <> 'succeeded'
+              and d.processing_updated_at is not null
+              and d.processing_updated_at < now() - make_interval(hours => $3::integer))
+        )
+      order by (lower(coalesce(d.processing_state,'')) in ('failed','dead_letter')) desc,
+               d.processing_updated_at asc nulls last, d.document_id
+      limit $4::integer`, [identity.tenantId, jsonIds(documentIds), options.stuckAfterHours, options.stuckLimit]);
+    return { needsReview, stuckDocuments };
   }
 
   /**
@@ -340,22 +399,54 @@ export class PostgresReviewPublicationRepository {
     return rows[0];
   }
 
-  async publicationCounts(tenantId: string, fundId: string): Promise<PostgresRow> {
-    const rows = await this.db.query(`select
-      count(*) filter (where review_state<>'approved') as needs_review_count,
-      count(*) filter (where risk_tier='critical' and review_state='approved') as critical_count,
-      count(*) filter (where source_reference_id is not null) as lineage_count,
-      count(*) as total_count
-      from corvis_facts.observation where tenant_id=$1 and fund_id=$2`, [tenantId,fundId]);
+  /**
+   * Publication pre-flight counts, scoped to the exact snapshot version being
+   * published: the source observations of that snapshot's consolidated facts,
+   * which is the same set `assert_snapshot_publishable` evaluates. (It used to
+   * count every observation of the fund, so one rejected candidate or another
+   * period's pending row blocked every publish.) Terminal review states
+   * (rejected, superseded) are excluded from every count: they are never
+   * publishable inputs and must not block or dilute lineage coverage. A source
+   * observation id that no longer resolves to a row counts as needing review,
+   * so the pre-flight is never more lenient than the DB gate for a dangling
+   * reference. The DB gate stays authoritative and is strictly a superset.
+   */
+  async publicationCounts(tenantId: string, snapshotId: string, snapshotVersion: number): Promise<PostgresRow> {
+    if (!isUuid(snapshotId)) return {};
+    const rows = await this.db.query(`with snapshot_observation as (
+        select distinct src.observation_id
+        from corvis_consolidated.fund_period_snapshot s
+        join corvis_consolidated.consolidated_fact cf
+          on cf.tenant_id=s.tenant_id and cf.consolidated_fact_id=any(s.fact_ids)
+        cross join lateral unnest(cf.source_observation_ids) as src(observation_id)
+        where s.tenant_id=$1 and s.snapshot_id=$2::uuid and s.version=$3
+      )
+      select
+        count(*) filter (where o.observation_id is null or o.review_state not in ('approved','rejected','superseded')) as needs_review_count,
+        count(*) filter (where o.risk_tier='critical' and o.review_state='approved') as critical_count,
+        count(*) filter (where o.review_state not in ('rejected','superseded') and o.source_reference_id is not null) as lineage_count,
+        count(*) filter (where o.observation_id is null or o.review_state not in ('rejected','superseded')) as total_count
+      from snapshot_observation so
+      left join corvis_facts.observation o
+        on o.tenant_id=$1 and o.observation_id=so.observation_id`, [tenantId,snapshotId,snapshotVersion]);
     return rows[0] ?? {};
   }
 
-  async independentlyReviewedCriticalCount(tenantId: string, fundId: string): Promise<number> {
+  async independentlyReviewedCriticalCount(tenantId: string, snapshotId: string, snapshotVersion: number): Promise<number> {
+    if (!isUuid(snapshotId)) return 0;
     const rows = await this.db.query(`select count(*) as independently_reviewed from (
       select o.observation_id
       from corvis_facts.observation o
       join corvis_facts.review_event r on r.tenant_id=o.tenant_id and r.observation_id=o.observation_id
-      where o.tenant_id=$1 and o.fund_id=$2 and o.risk_tier='critical' and o.review_state='approved'
+      where o.tenant_id=$1 and o.risk_tier='critical' and o.review_state='approved'
+        and o.observation_id in (
+          select distinct src.observation_id
+          from corvis_consolidated.fund_period_snapshot s
+          join corvis_consolidated.consolidated_fact cf
+            on cf.tenant_id=s.tenant_id and cf.consolidated_fact_id=any(s.fact_ids)
+          cross join lateral unnest(cf.source_observation_ids) as src(observation_id)
+          where s.tenant_id=$1 and s.snapshot_id=$2::uuid and s.version=$3
+        )
         and r.decision='approve'
         and r.observation_version > coalesce((
           select max(c.observation_version)
@@ -363,7 +454,7 @@ export class PostgresReviewPublicationRepository {
           where c.tenant_id=o.tenant_id and c.observation_id=o.observation_id and c.decision='correct'
         ),0)
       group by o.observation_id having count(distinct r.actor_subject)>=2
-    ) reviewed`, [tenantId,fundId]);
+    ) reviewed`, [tenantId,snapshotId,snapshotVersion]);
     return Number(rows[0]?.independently_reviewed ?? 0);
   }
 
@@ -463,14 +554,21 @@ export class PostgresOperationsRepository {
     return { snapshots, observationCount: Number(counts[0]?.row_count ?? 0) };
   }
 
+  /**
+   * The export job and its `ExportRequested` outbox event commit together: a
+   * failure between the two inserts must not leave a queued export whose event
+   * is never emitted (nothing would ever pick the job up).
+   */
   async enqueueExport(identity: RequestIdentity, manifest: ExportManifest): Promise<void> {
-    await this.db.execute(`insert into corvis_serving.export_job
-        (tenant_id,export_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
-      values ($1,$2::uuid,$3,$4,array(select jsonb_array_elements_text($5::jsonb)::uuid),'queued',$6,$7::jsonb,now())`,
-    [identity.tenantId,manifest.exportId,identity.subject,manifest.format,JSON.stringify(manifest.snapshotIds),manifest.checksumSha256,JSON.stringify(manifest)]);
-    await this.db.execute(`insert into corvis_control.outbox_event
-        (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
-      values ($1,gen_random_uuid(),'ExportRequested','export',$2,$3::jsonb,now())`,
-    [identity.tenantId,manifest.exportId,JSON.stringify(manifest)]);
+    await withTransaction(this.db, async (tx) => {
+      await tx.execute(`insert into corvis_serving.export_job
+          (tenant_id,export_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
+        values ($1,$2::uuid,$3,$4,array(select jsonb_array_elements_text($5::jsonb)::uuid),'queued',$6,$7::jsonb,now())`,
+      [identity.tenantId,manifest.exportId,identity.subject,manifest.format,JSON.stringify(manifest.snapshotIds),manifest.checksumSha256,JSON.stringify(manifest)]);
+      await tx.execute(`insert into corvis_control.outbox_event
+          (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
+        values ($1,gen_random_uuid(),'ExportRequested','export',$2,$3::jsonb,now())`,
+      [identity.tenantId,manifest.exportId,JSON.stringify(manifest)]);
+    });
   }
 }

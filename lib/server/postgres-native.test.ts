@@ -12,6 +12,13 @@ test("provider URLs always verify TLS even when sslmode=require is supplied", ()
   }
 });
 
+test("the pool bounds statements, queries and idle-in-transaction sessions", () => {
+  const config = nativePostgresConfig("postgresql://user:dummy@database.example.test/db", true);
+  assert.equal(config.statement_timeout, 30_000);
+  assert.equal(config.idle_in_transaction_session_timeout, 60_000);
+  assert.ok(config.query_timeout! > config.statement_timeout!, "the client-side timeout must outlast the server-side one");
+});
+
 test("TLS downgrades and connection-string option overrides are rejected", () => {
   for (const option of ["sslmode=disable", "sslmode=no-verify", "sslmode=prefer", "sslrootcert=/secret", "host=localhost", "options=-c%20statement_timeout=0"]) {
     assert.throws(() => nativePostgresConfig(`postgres://user:dummy@database.example.test/db?${option}`, true));

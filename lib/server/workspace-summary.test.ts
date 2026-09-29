@@ -129,3 +129,64 @@ test("the summary composes customer-safe source health and per-user personalizat
   assert.deepEqual(allocator.sourceHealth.map((row) => [row.connectionLabel, row.health]), [["Room", "action_required"]]);
   assert.deepEqual(allocator.digest, { since: null, items: [], newPublishes: 0, exceptionChanges: 0, valueDeltas: 0 });
 });
+
+test("Overview attention counts use the SQL aggregates when the platform offers them, not the capped lists", async () => {
+  const seen: Array<{ includeDocuments: boolean }> = [];
+  const platform = {
+    listSnapshots: async () => [],
+    listObservations: async () => [],
+    listDocuments: async () => [],
+    portfolioValueFacts: async () => [],
+    exposureDimensionFacts: async () => [],
+    attentionAggregates: async (_identity: RequestIdentity, options: { includeDocuments: boolean }) => {
+      seen.push(options);
+      return {
+        needsReview: [{ fund: "Fund A", count: 7000, observationId: "o-oldest", company: "Old Co", metric: "Revenue" }],
+        stuckDocuments: [],
+        stuckDocumentTotal: 3,
+      };
+    },
+  } as unknown as PlatformPort;
+  const result = await workspaceSummary(identity, {
+    platform, sourceHealth: async () => [], personalization: async () => ({ pinnedFundIds: [], lastSeenAt: null }), now: new Date("2026-09-25T00:00:00Z"),
+  });
+  assert.equal(result.attention.counts.needs_review, 7000, "beyond the 5000-row observation list cap");
+  assert.equal(result.attention.counts.stuck_document, 3);
+  assert.deepEqual(seen, [{ includeDocuments: true }], "document attention follows the caller documents:read permission");
+});
+
+test("the attention aggregate queries are entitlement-scoped, unbounded by list caps and mirror the isStuck rule", async () => {
+  const calls: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
+  const db: PostgresSqlApi = {
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes("corvis_serving.observations")) {
+        return [
+          { fund_id: "fund-a", fund_name: "Fund A", review_count: "5001", observation_id: "o-1", company_id: "c-1", company_name: "Co", metric_code: "revenue" },
+          { fund_id: "fund-b", fund_name: "Fund A", review_count: "2", observation_id: "o-2", company_id: "c-2", company_name: "Co2", metric_code: "ebitda" },
+        ];
+      }
+      return [{ document_id: "d-1", display_name: "Old.pdf", status: "queued", processing_state: "failed", processing_updated_at: new Date("2026-01-01T00:00:00Z"), stuck_total: "51" }];
+    },
+    async execute() {},
+    async health() { return true; },
+  };
+  const aggregates = await new PostgresProductionPlatform(db).attentionAggregates!(identity, { includeDocuments: true });
+  assert.deepEqual(aggregates.needsReview, [{ fund: "Fund A", count: 5003, observationId: "o-1", company: "Co", metric: "revenue" }]);
+  assert.equal(aggregates.stuckDocumentTotal, 51);
+  assert.equal(aggregates.stuckDocuments[0]!.processingState, "failed");
+  const [observationsCall, documentsCall] = calls;
+  assert.doesNotMatch(observationsCall!.sql, /limit\s+\d+/i, "counts must not be capped");
+  assert.match(observationsCall!.sql, /count\(\*\) over \(partition by o\.fund_id\)/);
+  assert.match(observationsCall!.sql, /not in \('approved','rejected'\)/);
+  assert.match(observationsCall!.sql, /o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.match(documentsCall!.sql, /count\(\*\) over \(\) as stuck_total/);
+  assert.match(documentsCall!.sql, /in \('blocked','failed','dead_letter'\)/);
+  assert.match(documentsCall!.sql, /d\.document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+
+  calls.length = 0;
+  const withoutDocuments = await new PostgresProductionPlatform(db).attentionAggregates!(identity, { includeDocuments: false });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(withoutDocuments.stuckDocuments, []);
+  assert.equal(withoutDocuments.stuckDocumentTotal, 0);
+});

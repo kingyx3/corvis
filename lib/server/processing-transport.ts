@@ -3,6 +3,8 @@ import type { ProcessingStage } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
+import { safeErrorText } from "./processing-error-text.ts";
+import { countMetric, logEvent } from "./telemetry.ts";
 
 type TransportEvent = {
   tenantId: string;
@@ -30,12 +32,21 @@ export interface ProcessingTransportAdapter {
   schedule(delivery: ProcessingStageDelivery, scheduleTime: string): Promise<void>;
 }
 
+export type TransportFailOutcome = { deadLettered: boolean };
+
 type TransportRepository = {
   claim(limit: number): Promise<TransportEvent[]>;
   describe(event: TransportEvent): Promise<ProcessingStageDelivery>;
   complete(event: TransportEvent): Promise<void>;
-  fail(event: TransportEvent, error: unknown): Promise<void>;
+  fail(event: TransportEvent, error: unknown): Promise<TransportFailOutcome | void>;
+  /** Hands back a claimed-but-unattempted event so it neither waits out its lease nor burns a retry attempt. */
+  release?(event: TransportEvent): Promise<void>;
 };
+
+/** Lease taken by `claim` (seconds). The batch must finish, including the last publish, inside it. */
+export const TRANSPORT_LEASE_SECONDS = 60;
+/** Terminal attempt count for `fail_processing_transport_event` (migration 021). */
+export const TRANSPORT_MAX_ATTEMPTS = 8;
 
 function object(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
@@ -50,7 +61,6 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 function sha256(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
-function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function text(row: PostgresRow, key: string): string { return row[key] == null ? "" : String(row[key]); }
 
 export class PostgresProcessingTransportRepository implements TransportRepository {
@@ -59,7 +69,7 @@ export class PostgresProcessingTransportRepository implements TransportRepositor
   constructor(db: PostgresSqlApi) { this.db = db; }
 
   async claim(limit = 50): Promise<TransportEvent[]> {
-    const rows = await this.db.query("select * from corvis_control.claim_processing_transport_events($1,$2)", [limit,60]);
+    const rows = await this.db.query("select * from corvis_control.claim_processing_transport_events($1,$2)", [limit,TRANSPORT_LEASE_SECONDS]);
     return rows.map((row) => ({
       tenantId: text(row,"tenant_id"), eventId: text(row,"event_id"), eventType: text(row,"event_type"),
       aggregateType: text(row,"aggregate_type"), aggregateId: text(row,"aggregate_id"), payload: object(row.payload),
@@ -102,8 +112,15 @@ export class PostgresProcessingTransportRepository implements TransportRepositor
     if (rows[0]?.completed !== true && rows[0]?.completed !== "true") throw new Error("processing transport lease was lost before completion");
   }
 
-  async fail(event: TransportEvent, error: unknown): Promise<void> {
-    await this.db.query("select * from corvis_control.fail_processing_transport_event($1::uuid,$2::uuid,$3::uuid,$4,$5)", [event.tenantId,event.eventId,event.leaseToken,errorText(error),8]);
+  async fail(event: TransportEvent, error: unknown): Promise<TransportFailOutcome> {
+    // Persist a stable class plus a redacted, truncated message: provider error bodies can carry secrets.
+    const rows = await this.db.query("select * from corvis_control.fail_processing_transport_event($1::uuid,$2::uuid,$3::uuid,$4,$5)", [event.tenantId,event.eventId,event.leaseToken,safeErrorText(error),TRANSPORT_MAX_ATTEMPTS]);
+    const deadLettered = rows[0]?.dead_lettered;
+    return { deadLettered: deadLettered === true || deadLettered === "true" };
+  }
+
+  async release(event: TransportEvent): Promise<void> {
+    await this.db.query("select corvis_control.release_processing_transport_event($1::uuid,$2::uuid,$3::uuid) as released", [event.tenantId,event.eventId,event.leaseToken]);
   }
 }
 
@@ -184,16 +201,43 @@ export function processingTransportConfig(env: NodeJS.ProcessEnv = process.env, 
   return Object.values(values).every(Boolean) ? values : undefined;
 }
 
+/**
+ * One publish can take a metadata-token call plus the publish itself, each up to
+ * DEFAULT_FETCH_TIMEOUT_MS. No new event is started once the remaining lease
+ * could not cover that worst case, so a slow batch never outlives its lease
+ * (which would let another dispatcher re-claim and double-publish, and make
+ * `complete` fail with "lease lost").
+ */
+const WORST_CASE_EVENT_MS = 2 * DEFAULT_FETCH_TIMEOUT_MS;
+const LEASE_SAFETY_MARGIN_MS = 5_000;
+export const TRANSPORT_BATCH_BUDGET_MS = TRANSPORT_LEASE_SECONDS * 1000 - WORST_CASE_EVENT_MS - LEASE_SAFETY_MARGIN_MS;
+
+export type TransportBatchResult = { claimed: number; dispatched: number; failed: number; deferred: number; deadLettered: number };
+
 export async function dispatchProcessingTransportBatch(input: {
   repository: TransportRepository;
   adapter: ProcessingTransportAdapter;
   limit?: number;
   now?: Date;
-}): Promise<{ claimed: number; dispatched: number; failed: number }> {
+  /** Wall-clock source for the lease budget; injectable for tests. */
+  clock?: () => number;
+  budgetMs?: number;
+}): Promise<TransportBatchResult> {
+  const clock = input.clock ?? Date.now;
+  const startedAt = clock();
+  const budgetMs = input.budgetMs ?? TRANSPORT_BATCH_BUDGET_MS;
   const events = await input.repository.claim(input.limit ?? 50);
-  let dispatched = 0; let failed = 0;
+  let dispatched = 0; let failed = 0; let deferred = 0; let deadLettered = 0;
   const now = input.now ?? new Date();
   for (const event of events) {
+    const context = { correlationId: event.eventId, tenantId: event.tenantId };
+    if (clock() - startedAt >= budgetMs) {
+      // Out of lease budget: give the event back untouched instead of publishing on a lease about to expire.
+      deferred += 1;
+      try { await input.repository.release?.(event); }
+      catch (releaseError) { logEvent("warn", "processing.transport.release_failed", context, { error: safeErrorText(releaseError) }); }
+      continue;
+    }
     try {
       const delivery = await input.repository.describe(event);
       const retryAt = typeof event.payload.nextAttemptAt === "string" ? event.payload.nextAttemptAt : undefined;
@@ -202,16 +246,29 @@ export async function dispatchProcessingTransportBatch(input: {
       await input.repository.complete(event);
       dispatched += 1;
     } catch (error) {
-      await input.repository.fail(event, error);
       failed += 1;
+      // A bookkeeping failure here (database blip) must not abort the remaining events: the
+      // lease simply expires and this event is retried by a later tick.
+      try {
+        const outcome = await input.repository.fail(event, error);
+        if (outcome && outcome.deadLettered) {
+          deadLettered += 1;
+          // Dead-lettered transport events leave the document `registered` forever; make that visible.
+          countMetric("processing.transport.dead_letter", 1, context, { eventType: event.eventType, attempts: event.attempt });
+          logEvent("error", "processing.transport.dead_lettered", context, { eventType: event.eventType, aggregateId: event.aggregateId, attempts: event.attempt, error: safeErrorText(error) });
+        }
+      } catch (failError) {
+        countMetric("processing.transport.fail_bookkeeping_error", 1, context, { eventType: event.eventType });
+        logEvent("error", "processing.transport.fail_bookkeeping_error", context, { error: safeErrorText(failError) });
+      }
     }
   }
-  return { claimed: events.length, dispatched, failed };
+  return { claimed: events.length, dispatched, failed, deferred, deadLettered };
 }
 
-export async function dispatchConfiguredProcessingTransport(workerUrlOverride?: string): Promise<{ configured: boolean; claimed: number; dispatched: number; failed: number }> {
+export async function dispatchConfiguredProcessingTransport(workerUrlOverride?: string): Promise<{ configured: boolean } & TransportBatchResult> {
   const config = processingTransportConfig(process.env, workerUrlOverride);
-  if (!config) return { configured: false, claimed: 0, dispatched: 0, failed: 0 };
+  if (!config) return { configured: false, claimed: 0, dispatched: 0, failed: 0, deferred: 0, deadLettered: 0 };
   const repository = new PostgresProcessingTransportRepository(postgres(getServerConfig().postgresDsn));
   const result = await dispatchProcessingTransportBatch({ repository, adapter: new GcpProcessingTransportAdapter(config) });
   return { configured: true, ...result };

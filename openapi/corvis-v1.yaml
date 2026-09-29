@@ -13,6 +13,10 @@ paths:
       operationId: getSession
       responses:
         '200': { description: Authenticated tenant/workspace session }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /capabilities:
     get:
       operationId: getCapabilities
@@ -28,6 +32,10 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/WorkspaceCapabilities' }
                   correlationId: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /my-workspaces:
     get:
       operationId: listMyWorkspaces
@@ -45,6 +53,10 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/WorkspaceMembership' }
                   correlationId: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /documents:
     get:
       operationId: listDocuments
@@ -54,6 +66,10 @@ paths:
       responses:
         '200': { description: 'Entitled documents. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /funds:
     get:
       operationId: listFunds
@@ -64,6 +80,10 @@ paths:
       responses:
         '200': { description: Paginated entitled fund identities and governed name/identifier history. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /companies:
     get:
       operationId: listCompanies
@@ -74,6 +94,10 @@ paths:
       responses:
         '200': { description: Paginated tenant-visible company identities and governed name/identifier history. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /holdings:
     get:
       operationId: listHoldings
@@ -84,6 +108,10 @@ paths:
       responses:
         '200': { description: Paginated approved holdings with polymorphic company/fund targets and source lineage. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /instruments:
     get:
       operationId: listInstruments
@@ -94,6 +122,10 @@ paths:
       responses:
         '200': { description: Paginated approved instruments with exact source security descriptions and normalized instrument attributes. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /company-lifecycle-events:
     get:
       operationId: listCompanyLifecycleEvents
@@ -104,6 +136,10 @@ paths:
       responses:
         '200': { description: Paginated visible company lifecycle events with durable participant identities. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /metric-definitions:
     get:
       operationId: listMetricDefinitions
@@ -114,6 +150,10 @@ paths:
       responses:
         '200': { description: Paginated active metric definitions. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /observations:
     get:
       operationId: listObservations
@@ -123,6 +163,10 @@ paths:
       responses:
         '200': { description: 'Entitled reviewed observations. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /consolidated-facts:
     get:
       operationId: listConsolidatedFacts
@@ -133,6 +177,10 @@ paths:
       responses:
         '200': { description: Paginated published consolidated facts with contributing observation lineage. }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /reconciliations:
     get:
       operationId: listReconciliations
@@ -141,8 +189,12 @@ paths:
         - $ref: '#/components/parameters/limit'
         - $ref: '#/components/parameters/cursor'
       responses:
-        '200': { description: Paginated reconciliation runs with snapshot, period, readiness and blocking-exception counts. }
+        '200': { description: 'Paginated reconciliation runs with snapshot, period, readiness and blocking-exception counts.' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /snapshots:
     get:
       operationId: listSnapshots
@@ -152,6 +204,10 @@ paths:
       responses:
         '200': { description: 'Versioned fund-period snapshots. Omitting both limit and cursor returns the full unpaginated list, for backward compatibility with existing callers; passing either activates cursor pagination.' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /review:
     post:
       operationId: reviewObservation
@@ -163,7 +219,11 @@ paths:
               $ref: '#/components/schemas/ReviewDecision'
       responses:
         '202': { description: Review event accepted }
-        '409': { description: Version conflict }
+        '409': { description: 'Version conflict', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /snapshots/publish:
     post:
       operationId: publishSnapshot
@@ -175,6 +235,10 @@ paths:
               $ref: '#/components/schemas/SnapshotPublication'
       responses:
         '202': { description: Publication command accepted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /research:
     post:
       operationId: research
@@ -189,6 +253,10 @@ paths:
                 question: { type: string, minLength: 1, maxLength: 4000 }
       responses:
         '200': { description: Semantic and source-grounded answer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /research/stream:
     post:
       operationId: researchStream
@@ -207,12 +275,20 @@ paths:
           description: Newline-delimited JSON stream of progress/result/error events
           content:
             application/x-ndjson: { schema: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /research/pins:
     get:
       operationId: listResearchPins
       description: Lists this caller's saved Ask Corvis answers (#182 D7), newest first. Requires research:query.
       responses:
         '200': { description: Saved Ask Corvis answers }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
     post:
       operationId: pinResearchAnswer
       description: Saves the exact Ask Corvis answer already returned by /research or /research/stream for later reference; the server never re-runs the question. Requires research:query.
@@ -229,7 +305,11 @@ paths:
                 askedAt: { type: string, format: date-time }
       responses:
         '201': { description: Saved answer created }
-        '409': { description: Per-subject saved-answer limit reached }
+        '409': { description: 'Per-subject saved-answer limit reached', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /research/pins/{pinId}:
     delete:
       operationId: unpinResearchAnswer
@@ -241,7 +321,11 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200': { description: Saved answer removed }
-        '404': { description: No matching saved answer for this caller }
+        '404': { description: 'No matching saved answer for this caller', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /source-references/{sourceReferenceId}:
     get:
       operationId: getSourceReference
@@ -271,8 +355,11 @@ paths:
                       cellRange: { type: string }
                       excerpt: { type: string }
                   correlationId: { type: string }
-        '403': { description: Missing sources:read permission or document access }
-        '404': { description: Source reference not found or not entitled }
+        '403': { description: 'Missing sources:read permission or document access', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Source reference not found or not entitled', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /exports:
     get:
       operationId: listExports
@@ -281,7 +368,8 @@ paths:
         - name: limit
           in: query
           required: false
-          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+          description: Maximum exports to return. Values outside 1-50 are clamped into that range rather than rejected; a non-numeric value falls back to the default of 20.
+          schema: { type: integer, default: 20 }
       responses:
         '200':
           description: Export history for the signed-in user
@@ -295,10 +383,19 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/ExportStatus' }
                   correlationId: { type: string }
-        '403': { description: Missing exports:create permission or redistribution rights }
+        '403': { description: 'Missing exports:create permission or redistribution rights', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
     post:
       operationId: createExport
-      description: Creates a governed export job. Without `scope`, the export covers every currently entitled published snapshot (as before). With `scope.snapshotId`, the export is restricted to that one already-entitled published snapshot (e.g. "export this view" from Review) — the caller must already be entitled to it. `source` records which product surface requested the export, for delivery-history display; it defaults to `delivery` when omitted.
+      description: Creates a governed export job. Without `scope`, the export covers every currently entitled published snapshot (as before). With `scope.snapshotId`, the export is restricted to that one already-entitled published snapshot (e.g. "export this view" from Review) — the caller must already be entitled to it. With `scope.positionFinancials`, the export is the exact Position Financials view (fund, holding, company, periodicity and optional client portfolio) and is pinned to the published snapshots behind it. A scope that resolves to nothing the caller is entitled to is refused rather than widened. `source` records which product surface requested the export, for delivery-history display; it defaults to `delivery` when omitted. Requires exports:create and redistribution rights. Retries are made safe with an idempotency key, supplied as the `Idempotency-Key` header or the `idempotencyKey` body field (the body field wins when both are present). Replaying the same key with the same request returns the original 202 response and creates no second job, while reusing a key with a different request is rejected with 422 `idempotency_key_reused`. Keys are at most 255 characters.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: Optional retry-safety key; equivalent to the `idempotencyKey` body field.
       requestBody:
         required: true
         content:
@@ -309,15 +406,54 @@ paths:
               properties:
                 format: { type: string, enum: [parquet, csv, xlsx] }
                 scope:
-                  type: object
-                  required: [snapshotId]
-                  properties:
-                    snapshotId: { type: string, format: uuid }
+                  oneOf:
+                    - type: object
+                      required: [snapshotId]
+                      properties:
+                        snapshotId: { type: string, format: uuid }
+                    - type: object
+                      required: [positionFinancials]
+                      properties:
+                        positionFinancials:
+                          type: object
+                          required: [fundId, holdingId, companyId, periodicity]
+                          properties:
+                            fundId: { type: string, minLength: 1 }
+                            holdingId: { type: string, minLength: 1 }
+                            companyId: { type: string, minLength: 1 }
+                            periodicity: { type: string, enum: [reported, quarterly, annual] }
+                            portfolioId: { type: string, minLength: 1, description: Optional client portfolio the view is attributed to. }
                 source: { type: string, enum: [delivery, review], default: delivery }
+                idempotencyKey: { type: string, maxLength: 255, description: Optional retry-safety key; equivalent to the Idempotency-Key header. }
       responses:
-        '202': { description: Export job accepted }
-        '400': { description: Invalid format, scope or source }
-        '403': { description: The requested scope is not one of the caller's currently entitled published snapshots }
+        '202':
+          description: Export job accepted (or, for a replayed idempotency key, the original response)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data: { $ref: '#/components/schemas/ExportManifest' }
+                  correlationId: { type: string }
+        '400':
+          description: Invalid format (`invalid_export_format`), scope (`invalid_export_scope`), source (`invalid_export_source`), idempotency key (`invalid_idempotency_key`) or a body that is not a JSON object (`invalid_request`, `invalid_json`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Missing exports:create permission or redistribution rights; the requested scope is not one of the caller's currently entitled published data (`forbidden`); or parquet delivery is disabled for this tenant (`feature_disabled`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: The Idempotency-Key was already used for a different request (`idempotency_key_reused`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /exports/{exportId}:
     get:
       operationId: getExport
@@ -338,9 +474,12 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/ExportStatus' }
                   correlationId: { type: string }
-        '400': { description: Malformed exportId }
-        '403': { description: Missing exports:create permission or redistribution rights }
-        '404': { description: Export not found or not owned by the caller }
+        '400': { description: 'Malformed exportId', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '403': { description: 'Missing exports:create permission or redistribution rights', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Export not found or not owned by the caller', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /exports/{exportId}/download:
     get:
       operationId: downloadExport
@@ -359,14 +498,40 @@ paths:
           description: Export file bytes
           content:
             application/octet-stream: { schema: { type: string, format: binary } }
-        '400': { description: Malformed exportId }
-        '403': { description: Missing exports:create permission or redistribution rights }
-        '404': { description: Export not found, grant invalid/expired, or artifact unavailable }
+        '400': { description: 'Malformed exportId', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '403': { description: 'Missing exports:create permission or redistribution rights', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Export not found, grant invalid/expired, or artifact unavailable', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /jobs:
     get:
       operationId: listProcessingJobs
+      description: Lists the tenant's processing jobs. Omitting both `limit` and `cursor` returns the full unpaginated list with `nextCursor` null, for backward compatibility; passing either activates keyset pagination (default page 50, at most 200). Requires documents:read.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/cursor'
       responses:
-        '200': { description: Tenant-scoped processing jobs }
+        '200':
+          description: Tenant-scoped processing jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, nextCursor, correlationId]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProcessingJob' }
+                  nextCursor:
+                    type: [string, 'null']
+                    description: Opaque token for the next page, or null when there are no more pages (always null when pagination was not requested).
+                  correlationId: { type: string }
+        '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /uploads/initiate:
     post:
       operationId: initiateUpload
@@ -396,6 +561,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadSession'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /uploads/{uploadId}:
     parameters:
       - in: path
@@ -404,12 +573,25 @@ paths:
         schema: { type: string }
     get:
       operationId: getUpload
+      description: Requires documents:write. An upload is visible only to the identity that initiated it (or a workspace admin) within the same tenant.
       responses:
         '200': { description: Authorized upload session state and active resumable session URL when applicable }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
     delete:
       operationId: abortUpload
+      description: Requires documents:write, with the same visibility rule as GET. A completed upload cannot be aborted.
       responses:
         '204': { description: Upload aborted and incomplete GCS session/object cleaned up where possible }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'The upload has already completed (`upload_not_active`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /uploads/{uploadId}/complete:
     post:
       operationId: completeUpload
@@ -434,16 +616,31 @@ paths:
                 idempotencyKey: { type: string, maxLength: 255 }
       responses:
         '200': { description: Artifact verified and registered/quarantined }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'The idempotency key does not match the session (`upload_idempotency_mismatch`), the upload is not active (`upload_not_active`) or the object is incomplete (`upload_incomplete`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 'The uploaded content failed file-signature validation (`invalid_file_content`) or integrity verification (`upload_integrity_failed`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /admin/readiness:
     get:
       operationId: getReadiness
       responses:
         '200': { description: Admin-only production binding readiness }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /admin/webhooks/subscriptions:
     get:
       operationId: listWebhookSubscriptions
       responses:
         '200': { description: Tenant-scoped webhook subscriptions (metadata only; never includes a signing secret) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
     post:
       operationId: createWebhookSubscription
       requestBody:
@@ -473,6 +670,10 @@ paths:
                   data:
                     $ref: '#/components/schemas/WebhookSubscriptionCreated'
                   correlationId: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /admin/webhooks/subscriptions/{webhookId}:
     parameters:
       - in: path
@@ -492,8 +693,12 @@ paths:
                 action: { type: string, enum: [pause, resume, revoke] }
       responses:
         '200': { description: 'Subscription transitioned. revoke is terminal; pause/resume are reversible.' }
-        '400': { description: Invalid or unrecognized action }
-        '409': { description: The requested transition is not valid from the subscription's current status }
+        '400': { description: 'Invalid or unrecognized action', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: "The requested transition is not valid from the subscription's current status", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /admin/webhooks/subscriptions/{webhookId}/rotate-signing-key:
     parameters:
       - in: path
@@ -515,7 +720,11 @@ paths:
                   data:
                     $ref: '#/components/schemas/WebhookSigningKeyRotated'
                   correlationId: { type: string }
-        '404': { description: Subscription not found or already revoked }
+        '404': { description: 'Subscription not found or already revoked', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /admin/webhooks/subscriptions/{webhookId}/deliveries:
     parameters:
       - in: path
@@ -528,8 +737,12 @@ paths:
       operationId: listWebhookDeliveries
       description: Customer-visible delivery diagnostics for one subscription. This endpoint has no unpaginated caller, so pagination is its only mode.
       responses:
-        '200': { description: Paginated delivery attempts (state, attempt, status code, last error) }
+        '200': { description: 'Paginated delivery attempts (state, attempt, status code, last error)' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
 components:
   securitySchemes:
     enterpriseSession:
@@ -549,6 +762,50 @@ components:
       schema: { type: string }
       description: Opaque continuation token from a previous page's `nextCursor`. Presence of this parameter (or `limit`) activates pagination.
   responses:
+    Unauthorized:
+      description: The request has no valid authenticated identity, or its tenant/workspace membership is no longer active.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - type: object
+                properties:
+                  error: { enum: [authentication_required] }
+    Forbidden:
+      description: The caller's role lacks the required permission, the resource is outside its entitlements, or a tenant-administrator-only action was attempted.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - type: object
+                properties:
+                  error: { type: string, description: 'Usually `forbidden`; `feature_disabled` when a governed feature is off and `tenant_admin_required` for tenant-administrator-only actions.' }
+    RateLimited:
+      description: The per-tenant, per-subject request budget is exhausted. Retry after the number of seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying (1-60).
+          schema: { type: integer, minimum: 1, maximum: 60 }
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - type: object
+                properties:
+                  error: { enum: [rate_limited] }
+    InternalError:
+      description: Unexpected server failure. The body is deliberately opaque; quote `correlationId` when contacting support.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - type: object
+                properties:
+                  error: { enum: [internal_error] }
     InvalidCursor:
       description: The `cursor` was malformed, tampered with, or `limit` was not a positive integer.
       content:
@@ -559,6 +816,33 @@ components:
               error: { type: string, enum: [invalid_cursor] }
               correlationId: { type: string }
   schemas:
+    ErrorResponse:
+      type: object
+      required: [error, correlationId]
+      properties:
+        error: { type: string, description: Stable machine-readable error code. }
+        correlationId: { type: string, description: "Echoes the caller's `x-correlation-id` when it is a bounded log-safe token, otherwise a server-generated id." }
+    ProcessingJob:
+      type: object
+      required: [id, documentId, tenantId, stage, state, attempt, maxAttempts, correlationId, version, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        documentId: { type: string }
+        tenantId: { type: string }
+        stage: { type: string }
+        state: { type: string, enum: [queued, running, blocked, retryable, failed, dead_letter, succeeded] }
+        attempt: { type: integer }
+        maxAttempts: { type: integer }
+        correlationId: { type: string }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        blockedReason: { type: string }
+        nextAttemptAt: { type: string, format: date-time }
+        recoveryCount: { type: integer }
+        lastRecoveryAt: { type: string, format: date-time }
+        lastRecoveryReasonCode: { type: string }
+        lastError: { type: string }
     WorkspaceCapabilities:
       type: object
       required: [permissions, sourceDocumentAccessAllowed, redistributionAllowed]

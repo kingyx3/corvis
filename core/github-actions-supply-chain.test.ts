@@ -38,3 +38,24 @@ test("external GitHub Actions are pinned to immutable commits", () => {
 
   assert.deepEqual(violations, [], `mutable external action references:\n${violations.join("\n")}`);
 });
+
+test("Dependabot covers every dependency ecosystem the repository ships", () => {
+  const source = readFileSync(".github/dependabot.yml", "utf8");
+  const blocks = source.split(/^  - package-ecosystem: /m).slice(1);
+  const byEcosystem = new Map(blocks.map((block) => [block.split("\n", 1)[0].trim(), block]));
+
+  for (const ecosystem of ["npm", "github-actions", "docker", "terraform"]) {
+    const block = byEcosystem.get(ecosystem);
+    assert.ok(block, `${ecosystem} ecosystem must be configured`);
+    assert.match(block, /interval: weekly/, ecosystem);
+    assert.match(block, /open-pull-requests-limit: \d+/, ecosystem);
+  }
+
+  const docker = byEcosystem.get("docker")!;
+  assert.match(docker, /directory: \/\n/);
+  assert.match(docker, /groups:\n\s+docker-base-images:\n\s+patterns:\n\s+- "\*"/);
+
+  const terraform = byEcosystem.get("terraform")!;
+  assert.match(terraform, /directories:\n\s+- \/infra\/terraform\/environments\/\*\n\s+- \/infra\/terraform\/modules\/\*/);
+  assert.match(terraform, /groups:\n\s+terraform-providers:\n\s+patterns:\n\s+- "\*"/);
+});

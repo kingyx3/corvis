@@ -252,6 +252,12 @@ export type ResearchAnswer = {
   computedResults?: SemanticComputedResult[];
   modelVersion?: string;
   uncertainty?: string;
+  /**
+   * "no_grounded_figures" marks an answer whose generated text was withheld because it stated figures the governed
+   * semantic result does not support (#233); `computedResults` remains the authoritative content. Absent on
+   * answers created before this field existed, which are treated as "grounded".
+   */
+  grounding?: "grounded" | "no_grounded_figures";
 };
 export type ResearchProgressPhase = "planning" | "retrieval" | "generation";
 export type ResearchStreamEvent =

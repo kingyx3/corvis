@@ -1,10 +1,10 @@
-import { createHash, randomUUID } from "crypto";
+import { createHash } from "crypto";
 import type { PositionFinancialStatementRow } from "../../core/contracts.ts";
 import type { ExportScope, PositionFinancialsExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, type RequestIdentity } from "../../core/enterprise.ts";
 import { PostgresMembershipAuthorizationRepository } from "./authorization.ts";
 import { getServerConfig } from "./config.ts";
-import { renderExport, type ExportRow } from "./export-renderer.ts";
+import { assertExportRowLimit, EXPORT_MAX_ROWS, renderExport, type ExportRow } from "./export-renderer.ts";
 import { gcs, type GcsControlClient } from "./gcs.ts";
 import { rowsForPeriodicity } from "./position-financial-statements.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -135,8 +135,11 @@ async function loadArtifactRows(
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
     where o.fund_id in (select jsonb_array_elements_text($3::jsonb))
       and r.document_id::text in (select jsonb_array_elements_text($4::jsonb))
-    order by o.fund_id,o.report_date,o.metric_code,o.observation_id`,
+    order by o.fund_id,o.report_date,o.metric_code,o.observation_id
+    limit ${EXPORT_MAX_ROWS + 1}`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds), jsonIds(documentIds)]);
+  // One row past the cap proves the export is too large without ever loading it all.
+  assertExportRowLimit(rows.length);
 
   return rows.map((row) => ({
     observation_id: cell(row.observation_id),
@@ -145,7 +148,8 @@ async function loadArtifactRows(
     holding_id: cell(row.holding_id),
     instrument_id: cell(row.instrument_id),
     metric_code: cell(row.metric_code),
-    value_number: row.value_number == null ? null : Number(row.value_number),
+    // numeric(38,10) stays a decimal string end to end; Number() would lose digits beyond ~15.
+    value_number: row.value_number == null ? null : String(row.value_number),
     value_string: cell(row.value_string),
     currency: cell(row.currency),
     economic_period: cell(row.economic_period),
@@ -226,7 +230,9 @@ async function loadPositionFinancialRows(
             where newer.tenant_id=ps.tenant_id and newer.snapshot_id=ps.snapshot_id and newer.version>ps.version
           )
       )
-    order by v.source_document_period_end nulls last,v.report_period,v.display_order,v.line_id,v.period_end nulls last,v.value_id nulls first`, parameters);
+    order by v.source_document_period_end nulls last,v.report_period,v.display_order,v.line_id,v.period_end nulls last,v.value_id nulls first
+    limit ${EXPORT_MAX_ROWS + 1}`, parameters);
+  assertExportRowLimit(raw.length);
   const rows = rowsForPeriodicity(raw.map(mapPositionRow), p.periodicity);
   return rows.map((position) => ({
     statement_id: position.statementId,
@@ -242,7 +248,7 @@ async function loadPositionFinancialRows(
     display_order: position.displayOrder,
     depth: position.depth,
     value_raw: position.valueRaw,
-    value_number: position.valueNumber == null ? null : Number(position.valueNumber),
+    value_number: position.valueNumber,
     value_string: position.valueString,
     currency: position.currency,
     unit: position.unit,
@@ -261,10 +267,41 @@ async function loadPositionFinancialRows(
   }));
 }
 
+/**
+ * Deterministic key for one delivery attempt. It contains no random component:
+ * the same (export, attempt) always maps to the same object, and the attempt
+ * number isolates a stale worker (reclaimed after a crash) from the attempt that
+ * replaced it. Failed attempts delete their own object and a successful attempt
+ * deletes its predecessors, so retries never leave orphans behind.
+ */
+export function exportAttemptObjectKey(input: { tenantId: string; exportId: string; attempt: number; scoped: boolean; extension: string }): string {
+  const basename = input.scoped ? "position-financials" : "observations";
+  return `exports/${input.tenantId}/${input.exportId}/attempt-${input.attempt}/${basename}.${input.extension}`;
+}
+
+function attemptKeys(row: QueuedExportRow, attempts: readonly number[]): string[] {
+  const format = String(row.format ?? "");
+  if (format !== "csv" && format !== "xlsx" && format !== "parquet") return [];
+  const manifest = row.manifest && typeof row.manifest === "object" ? row.manifest as Record<string, unknown> : {};
+  const scoped = positionScope(manifest.scope as ExportScope | undefined) !== undefined;
+  return attempts.map((attempt) => exportAttemptObjectKey({ tenantId: String(row.tenant_id), exportId: String(row.export_id), attempt, scoped, extension: format }));
+}
+
+/** Best-effort removal of the objects the given attempts may have written. Never throws for a missing object. */
+export async function deleteExportAttemptArtifacts(
+  row: QueuedExportRow,
+  attempts: number | readonly number[],
+  objectStore: Pick<GcsControlClient, "deleteObject"> = gcs(),
+): Promise<void> {
+  const list = typeof attempts === "number" ? [attempts] : attempts;
+  for (const key of attemptKeys(row, list)) await objectStore.deleteObject(key);
+}
+
 export async function deliverExportArtifact(
   row: QueuedExportRow,
   store: PostgresSqlApi,
   objectStore: Pick<GcsControlClient, "bucket" | "putObject"> = gcs(),
+  options: { attempt?: number } = {},
 ): Promise<{ objectUri: string; checksumSha256: string; expiresAt: string; manifest: unknown }> {
   const identity = await resolveRequestIdentity(row, store);
   assertRedistributionAllowed(identity);
@@ -279,8 +316,7 @@ export async function deliverExportArtifact(
   const rendered = renderExport(format, rows);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");
-  const basename = scopedPosition ? "position-financials" : "observations";
-  const key = `exports/${identity.tenantId}/${exportId}/${randomUUID()}/${basename}.${rendered.extension}`;
+  const key = exportAttemptObjectKey({ tenantId: identity.tenantId, exportId, attempt: options.attempt ?? 1, scoped: scopedPosition !== undefined, extension: rendered.extension });
   await objectStore.putObject(key, rendered.bytes, rendered.contentType);
   const ttlSeconds = getServerConfig().exportArtifactTtlSeconds;
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();

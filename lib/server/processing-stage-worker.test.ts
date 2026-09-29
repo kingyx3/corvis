@@ -278,5 +278,5 @@ test("handler failure delegates authoritative retry/dead-letter transition", asy
     handler: { async execute() { throw new Error("permanent stage failure"); } },
   });
   assert.deepEqual(result, { outcome: "dead_letter" });
-  assert.equal(failedError, "permanent stage failure");
+  assert.equal(failedError, "Error: permanent stage failure");
 });

@@ -21,7 +21,7 @@ Before promoting a production-like UAT/prod runtime, also configure:
 
 `CORVIS_AUTH_JWKS_URL` is optional; standards-based OIDC discovery is preferred.
 
-Optional cost/alert inputs are `GCP_BILLING_ACCOUNT_ID` and `MONITORING_NOTIFICATION_CHANNEL_IDS`.
+Optional cost/alert inputs are `GCP_BILLING_ACCOUNT_ID` and `MONITORING_NOTIFICATION_CHANNEL_IDS` (a JSON array of Cloud Monitoring notification channel ids). `MONITORING_NOTIFICATION_CHANNEL_IDS` is optional for `dev` and `uat` but required for a fresh `prod` runtime deploy (a `rollback_known_good` apply is exempt so an incident rollback is never blocked): `terraform-deploy.yml` fails an apply that deploys an API image to `prod` while it is empty, `[]` or not a JSON array of non-empty strings.
 
 ## Single shared Cloudflare domain
 
@@ -113,6 +113,8 @@ Steps 1-4 require no domain, Cloudflare, Postgres or IdP.
 - Environment deploys own only their own DNS/Workers/routes; they cannot own zone-wide rulesets/settings.
 - Shared-zone mutations are serialized by a dedicated workflow concurrency group and apply only from `main` after release-governance verification.
 - Shared Cloudflare state is stored in its own protected bucket and is not deleted by UAT environment decommission.
+- Every Terraform-touching workflow (deploy, bootstrap, decommission) uses the `terraform-<environment>` concurrency group with `cancel-in-progress: false`.
+- Bootstrap refuses to delete or replace existing resources; the `allow_destroy` input is honoured for `dev`/`uat` only, never `prod`.
 - Normal Terraform deploy never doubles as decommission; `gcp-decommission.yml` owns environment idle/full transitions.
 
 ## Checklist

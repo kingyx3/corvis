@@ -6,9 +6,8 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { companySectors, PostgresCompanySectorRepository } from "@/lib/server/company-sectors";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { withIdempotency } from "@/lib/server/idempotency";
+import { MAX_VERSION } from "@/lib/server/request-validation";
 
-/** Versions are Postgres `integer` columns; anything above 2^31-1 is malformed input, not a conflict. */
-const MAX_VERSION = 2_147_483_647;
 const MAX_REASON_LENGTH = 1000;
 
 export async function GET(request: Request) {

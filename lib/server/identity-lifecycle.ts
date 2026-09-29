@@ -1,5 +1,7 @@
+import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { TenantInvitationError } from "./tenant-invitations.ts";
 
 export type IdentityLifecycleRole = "tenant_admin" | "accountadmin" | "reviewer" | "analyst" | "viewer";
 export type HumanAuthMethod = "oidc" | "saml";
@@ -92,6 +94,52 @@ export class PostgresIdentityLifecycleRepository implements IdentityLifecycleRep
       disabledSubjects: number(raw.disabledSubjects),
       disabledServiceGrants: number(raw.disabledServiceGrants),
     };
+  }
+}
+
+/**
+ * Operator-side guard for `/admin/identity-lifecycle`, mirroring
+ * `deactivateTenantAccessMember`: an administrator cannot disable (or strip
+ * the tenant_admin role from) their own identity, and the last active tenant
+ * administrator can never be disabled or demoted, which would lock the tenant
+ * out of its own administration. Reactivation and any sync that keeps a
+ * tenant_admin membership only add or preserve access and are not guarded.
+ *
+ * Run it on the same transaction handle as the apply. It locks the tenant row
+ * (the same lock `changeTenantMemberRole` takes) so two concurrent demotions
+ * cannot each see the other admin still present.
+ */
+export async function guardIdentityLifecycleCommand(
+  identity: RequestIdentity,
+  command: Pick<IdentityLifecycleCommand, "operation" | "authMethod" | "subject" | "userId" | "memberships">,
+  db: PostgresSqlApi,
+): Promise<void> {
+  const keepsTenantAdmin = command.operation === "sync" && command.memberships.some((entry) => entry.roleName === "tenant_admin");
+  if (keepsTenantAdmin) return;
+
+  await db.query("select tenant_id from corvis_control.tenant where tenant_id=$1::uuid for update", [identity.tenantId]);
+  const actorRows = identity.authMethod === "oidc" || identity.authMethod === "saml"
+    ? await db.query(`select user_id::text from corvis_control.identity_subject
+        where tenant_id=$1::uuid and auth_method=$2 and subject=$3 and status='active' limit 1`,
+      [identity.tenantId, identity.authMethod, identity.subject])
+    : [];
+  const actorUserId = actorRows[0]?.user_id == null ? "" : String(actorRows[0].user_id);
+  const targetsActor = (actorUserId !== "" && actorUserId === command.userId)
+    || (identity.authMethod === command.authMethod && identity.subject === command.subject);
+
+  const admins = await db.query(`select distinct m.user_id::text as user_id
+    from corvis_control.membership m
+    join corvis_control.identity_subject s
+      on s.tenant_id=m.tenant_id and s.user_id=m.user_id and s.status='active' and s.auth_method in ('oidc','saml')
+    where m.tenant_id=$1::uuid and m.role_name='tenant_admin' and m.status='active'
+      and m.valid_from<=now() and (m.valid_until is null or m.valid_until>now())`, [identity.tenantId]);
+  const adminIds = admins.map((row) => String(row.user_id));
+
+  if (targetsActor && (command.operation === "disable" || adminIds.includes(command.userId) || identity.isTenantAdmin === true)) {
+    throw new TenantInvitationError(command.operation === "disable" ? "cannot_deactivate_current_user" : "cannot_change_current_user", 409);
+  }
+  if (adminIds.includes(command.userId) && !adminIds.some((id) => id !== command.userId)) {
+    throw new TenantInvitationError("last_tenant_admin", 409);
   }
 }
 

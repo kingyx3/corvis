@@ -1,11 +1,8 @@
-import { assertPermission, type RequestIdentity } from "@/core/enterprise";
+import { assertPermission } from "@/core/enterprise";
+import { canAccessUpload } from "@/lib/server/upload-access";
 import { uploads } from "@/lib/server/uploads";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
-
-function canAccessUpload(identity: RequestIdentity, actorSubject: string): boolean {
-  return actorSubject === identity.subject || identity.roles.includes("admin");
-}
 
 export async function GET(request: Request, context: { params: Promise<{ uploadId: string }> }) {
   const id = correlationId(request);

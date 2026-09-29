@@ -1,10 +1,11 @@
 import { timingSafeEqual } from "crypto";
-import { processQueuedExports, processWebhookDeliveries, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
+import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
+import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
@@ -29,10 +30,17 @@ export async function POST(request:Request){
     // URL from the authenticated request instead of hard-coding a run.app host
     // or introducing a self-referential Terraform environment variable.
     const processingWorkerUrl = new URL("/api/internal/processing-stage", request.url).toString();
-    const [exportsResult,webhooksResult,processingResult,webhookFanoutSweep,idempotencyKeySweep,uploadRelease]=await Promise.all([
-      processQueuedExports(),processWebhookDeliveries(),dispatchConfiguredProcessingTransport(processingWorkerUrl),
-      sweepUnsubscribedWebhookFanoutEvents(),sweepExpiredIdempotencyKeys(),releaseScannedUploads().catch(()=>({scanned:0,released:0,threats:0,integrityFailed:0,pending:0,errors:1})),
-    ]);
-    return json({data:{exports:exportsResult,webhooks:webhooksResult,processing:processingResult,webhookFanoutSweep,idempotencyKeySweep,uploadRelease},correlationId:id});
+    // allSettled: one rejected task must not hide the others' results (their side effects already happened).
+    const {results,failed}=await settleDeliveryTasks({
+      exports:()=>processQueuedExports(),
+      webhooks:()=>processWebhookDeliveries(),
+      processing:()=>dispatchConfiguredProcessingTransport(processingWorkerUrl),
+      webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
+      idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
+      uploadRelease:()=>releaseScannedUploads(),
+    });
+    for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
+    // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
+    return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});
   }catch(error){return apiError(error,id);}
 }

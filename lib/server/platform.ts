@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
 import { demoCompanySectorStore } from "../../adapters/demo/company-sector-store.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
-import type { ExposureDimension, ExposureDimensionFact, PortfolioValueFact } from "../../core/workspace-summary.ts";
+import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT, type AttentionAggregates, type ExposureDimension, type ExposureDimensionFact, type NeedsReviewAggregate, type PortfolioValueFact } from "../../core/workspace-summary.ts";
 import {
   assertRedistributionAllowed,
   type AuditEvent,
@@ -49,6 +49,12 @@ export interface PlatformPort {
   portfolioValueFacts(identity: RequestIdentity): Promise<PortfolioValueFact[]>;
   /** Asset-type and sector classification of the same published fair values. */
   exposureDimensionFacts(identity: RequestIdentity): Promise<ExposureDimensionFact[]>;
+  /**
+   * Exact Overview attention (needs-review and stuck-document counts) computed
+   * with SQL aggregates instead of from the capped lists. Optional: a port that
+   * does not implement it makes the summary fall back to list-derived counts.
+   */
+  attentionAggregates?(identity: RequestIdentity, options: { includeDocuments: boolean }): Promise<AttentionAggregates>;
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
@@ -81,6 +87,14 @@ function documentStatus(value: string): DocumentRecord["status"] {
   return "Queued";
 }
 function quality(value: string): DocumentRecord["quality"] { const q = value.toLowerCase(); return q === "high" ? "High" : q === "medium" ? "Medium" : "Pending"; }
+function documentRecord(row: PostgresRow): DocumentRecord {
+  return {
+    id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
+    type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
+    progress: text(row,"processing_state") === "running" ? 50 : undefined, uploaded: text(row,"created_at","—"), quality: quality(text(row,"quality","pending")), observations: num(row,"observation_count"),
+    processingState: text(row,"processing_state") || undefined, processingUpdatedAt: isoText(row,"processing_updated_at"),
+  };
+}
 function reviewState(value: string): ObservationRecord["state"] {
   const state = value.toLowerCase();
   if (state === "approved") return "Approved";
@@ -196,12 +210,28 @@ export class PostgresProductionPlatform implements PlatformPort {
 
   async listDocuments(identity: RequestIdentity, page?: KeysetPage): Promise<DocumentRecord[]> {
     const rows = await this.workspace.listDocuments(identity, page);
-    return rows.map((row) => ({
-      id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
-      type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
-      progress: text(row,"processing_state") === "running" ? 50 : undefined, uploaded: text(row,"created_at","—"), quality: quality(text(row,"quality","pending")), observations: num(row,"observation_count"),
-      processingState: text(row,"processing_state") || undefined, processingUpdatedAt: isoText(row,"processing_updated_at"),
-    }));
+    return rows.map(documentRecord);
+  }
+
+  async attentionAggregates(identity: RequestIdentity, options: { includeDocuments: boolean }): Promise<AttentionAggregates> {
+    const { needsReview, stuckDocuments } = await this.workspace.attentionAggregates(identity, {
+      includeDocuments: options.includeDocuments, stuckAfterHours: STUCK_DOCUMENT_AFTER_HOURS, stuckLimit: STUCK_DOCUMENT_ITEM_LIMIT,
+    });
+    const byFund = new Map<string, NeedsReviewAggregate>();
+    for (const row of needsReview) {
+      const fund = text(row,"fund_name") || "Unassigned fund";
+      const existing = byFund.get(fund);
+      if (existing) { existing.count += num(row,"review_count"); continue; }
+      byFund.set(fund, {
+        fund, count: num(row,"review_count"), observationId: text(row,"observation_id"),
+        company: text(row,"company_name",text(row,"company_id","Unknown company")), metric: text(row,"metric_code"),
+      });
+    }
+    return {
+      needsReview: [...byFund.values()],
+      stuckDocuments: stuckDocuments.map(documentRecord),
+      stuckDocumentTotal: stuckDocuments.length === 0 ? 0 : num(stuckDocuments[0]!,"stuck_total"),
+    };
   }
 
   async listObservations(identity: RequestIdentity, page?: KeysetPage): Promise<ObservationRecord[]> {
@@ -336,10 +366,11 @@ export class PostgresProductionPlatform implements PlatformPort {
       throw new ConflictError("snapshot_transition_not_allowed");
     }
     if (command.action === "publish") {
-      const fundId = text(snapshot,"fund_id");
+      // Scoped to this snapshot version (the set assert_snapshot_publishable evaluates), not the whole fund.
+      const snapshotVersion = command.expectedVersion;
       const [counts, independentlyReviewedCriticalCount] = await Promise.all([
-        this.reviewPublication.publicationCounts(identity.tenantId, fundId),
-        this.reviewPublication.independentlyReviewedCriticalCount(identity.tenantId, fundId),
+        this.reviewPublication.publicationCounts(identity.tenantId, command.snapshotId, snapshotVersion),
+        this.reviewPublication.independentlyReviewedCriticalCount(identity.tenantId, command.snapshotId, snapshotVersion),
       ]);
       const total = num(counts,"total_count");
       const gate = evaluatePublicationGate({

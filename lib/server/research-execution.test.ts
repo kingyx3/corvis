@@ -60,7 +60,7 @@ test("research reports deterministic execution phases in order", { concurrency: 
   const originalFetch = globalThis.fetch;
   process.env.CORVIS_AI_ENDPOINT = "https://ai.example.test";
   process.env.CORVIS_RESEARCH_TIMEOUT_MS = "30000";
-  globalThis.fetch = (async () => new Response(JSON.stringify({ answer: "Revenue was 100." }), {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ answer: "Revenue was 100.", usedFactIds: ["00000000-0000-0000-0000-000000000001"] }), {
     status: 200,
     headers: { "content-type": "application/json" },
   })) as typeof fetch;

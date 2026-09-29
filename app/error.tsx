@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/client-error-report";
 
 export default function ErrorBoundary({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
-    console.error("Corvis application error", { message: error.message, digest: error.digest });
+    reportClientError("error-boundary", error);
   }, [error]);
 
   return (

@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClientError } from "@/lib/client-error-report";
 
 // Replaces the root layout when it (or the tree above app/error.tsx) fails, so it must render its
 // own document. globals.css is not loaded here, hence the self-contained inline styles; they
 // follow the OS color scheme like the built-in error page.
 export default function GlobalError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
-    console.error("Corvis global application error", { message: error.message, digest: error.digest });
+    reportClientError("global-error", error);
   }, [error]);
 
   return (

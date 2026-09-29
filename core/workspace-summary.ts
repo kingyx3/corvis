@@ -160,6 +160,8 @@ export type WorkspaceSummary = {
   attention: {
     items: AttentionItem[];
     counts: Record<AttentionKind, number> & { total: number };
+    /** Stuck documents counted in `counts` but not listed in `items` (list is bounded). */
+    omittedStuckDocuments?: number;
   };
   freshness: {
     asOf: string | null;
@@ -169,7 +171,35 @@ export type WorkspaceSummary = {
   };
 };
 
+/**
+ * Attention data computed with SQL aggregates over the caller's full entitled
+ * scope. The unpaged lists behind `snapshots`/`observations`/`documents` are
+ * capped (newest first), so counts derived from them drop exactly the oldest
+ * items -- the stuck ones. When supplied, these replace the list-derived
+ * needs-review and stuck-document attention.
+ */
+export type NeedsReviewAggregate = {
+  fund: string;
+  /** Exact number of observations awaiting review for this fund. */
+  count: number;
+  /** Most recently updated waiting observation, used as the deep link. */
+  observationId: string;
+  company: string;
+  metric: string;
+};
+export type AttentionAggregates = {
+  needsReview: NeedsReviewAggregate[];
+  /** Up to STUCK_DOCUMENT_ITEM_LIMIT stuck documents, worst first (failed, then longest without progress). */
+  stuckDocuments: DocumentRecord[];
+  /** Exact number of stuck documents, which may exceed `stuckDocuments.length`. */
+  stuckDocumentTotal: number;
+};
+
+/** Upper bound on individually listed stuck documents; the count beyond it is still exact. */
+export const STUCK_DOCUMENT_ITEM_LIMIT = 50;
+
 export type WorkspaceSummaryInput = {
+  attentionAggregates?: AttentionAggregates;
   snapshots: FundSnapshot[];
   observations: ObservationRecord[];
   documents: DocumentRecord[];
@@ -222,6 +252,22 @@ export function comparePeriods(left: string, right: string): number {
   if (a) return -1;
   if (b) return 1;
   return left.localeCompare(right);
+}
+
+/**
+ * Total order over published snapshot values of one fund: chronological by
+ * period, then the later `publishedAt`, then snapshot id. Two published
+ * snapshots can share a fund and period (a restatement); every consumer (the
+ * trend's "latest as of a period" and the exposure headline's "latest per
+ * fund") must pick the same one, so both use this comparator.
+ */
+function compareSnapshotValues(a: { period: string; publishedAt: string | null; snapshotId: string }, b: { period: string; publishedAt: string | null; snapshotId: string }): number {
+  const byPeriod = comparePeriods(a.period, b.period);
+  if (byPeriod !== 0) return byPeriod;
+  const left = a.publishedAt ? Date.parse(a.publishedAt) : Number.NEGATIVE_INFINITY;
+  const right = b.publishedAt ? Date.parse(b.publishedAt) : Number.NEGATIVE_INFINITY;
+  if (left !== right && !(Number.isNaN(left) || Number.isNaN(right))) return left < right ? -1 : 1;
+  return a.snapshotId.localeCompare(b.snapshotId);
 }
 
 type SnapshotValue = { snapshotId: string; fundId: string; fund: string; period: string; publishedAt: string | null; metricCode: PortfolioValueMetric; currency: string | null; value: number };
@@ -381,29 +427,36 @@ function attentionItems(input: WorkspaceSummaryInput): AttentionItem[] {
     });
   }
 
-  const reviewByFund = new Map<string, ObservationRecord[]>();
-  for (const observation of input.observations) {
-    if (observation.state !== "Needs review") continue;
-    const fund = observation.fund ?? "Unassigned fund";
-    reviewByFund.set(fund, [...(reviewByFund.get(fund) ?? []), observation]);
+  const reviewByFund = new Map<string, NeedsReviewAggregate & { snapshotId?: string }>();
+  if (input.attentionAggregates) {
+    for (const row of input.attentionAggregates.needsReview) reviewByFund.set(row.fund, row);
+  } else {
+    for (const observation of input.observations) {
+      if (observation.state !== "Needs review") continue;
+      const fund = observation.fund ?? "Unassigned fund";
+      const existing = reviewByFund.get(fund);
+      if (existing) { existing.count += 1; continue; }
+      reviewByFund.set(fund, { fund, count: 1, observationId: observation.id, company: observation.company, metric: observation.metric, snapshotId: observation.snapshotId });
+    }
   }
-  for (const [fund, rows] of reviewByFund) {
+  for (const [fund, row] of reviewByFund) {
     const snapshot = input.snapshots.find((candidate) => candidate.fund === fund && candidate.status === "Review")
       ?? input.snapshots.find((candidate) => candidate.fund === fund);
-    const snapshotId = rows[0]!.snapshotId ?? snapshot?.id;
+    const snapshotId = row.snapshotId ?? snapshot?.id;
     items.push({
       id: `needs_review:${fund}`,
       kind: "needs_review",
       severity: "high",
-      title: `${rows.length} ${plural(rows.length, "observation needs", "observations need")} review`,
-      detail: `${fund}${snapshot ? ` · ${snapshot.period}` : ""} · starting with ${rows[0]!.company} ${rows[0]!.metric}.`,
-      count: rows.length,
-      target: { view: "review", snapshotId, observationId: rows[0]!.id },
+      title: `${row.count} ${plural(row.count, "observation needs", "observations need")} review`,
+      detail: `${fund}${snapshot ? ` · ${snapshot.period}` : ""} · starting with ${row.company} ${row.metric}.`,
+      count: row.count,
+      target: { view: "review", snapshotId, observationId: row.observationId },
     });
   }
 
-  for (const document of input.documents) {
-    if (!isStuck(document, input.now)) continue;
+  // Aggregated stuck documents were already selected by SQL with the same rule as isStuck.
+  const stuckDocuments = input.attentionAggregates ? input.attentionAggregates.stuckDocuments : input.documents.filter((document) => isStuck(document, input.now));
+  for (const document of stuckDocuments) {
     const state = document.processingState?.toLowerCase();
     items.push({
       id: `stuck_document:${document.id}`,
@@ -470,11 +523,12 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
   const periods = [...new Set(inCurrency.map((value) => value.period))].sort(comparePeriods);
   const byFund = new Map<string, SnapshotValue[]>();
   for (const value of inCurrency) byFund.set(value.fundId, [...(byFund.get(value.fundId) ?? []), value]);
-  for (const rows of byFund.values()) rows.sort((a, b) => comparePeriods(a.period, b.period));
+  for (const rows of byFund.values()) rows.sort(compareSnapshotValues);
   const valueTrend: ValueTrendPoint[] = periods.map((period) => {
     const point: ValueTrendPoint = { period, value: 0, fundCount: 0, carriedForwardFunds: 0, snapshotIds: [] };
     const reported: SnapshotValue[] = [];
     for (const rows of byFund.values()) {
+      // Among several snapshots of the latest period, the same one the exposure headline uses.
       const latest = rows.filter((row) => comparePeriods(row.period, period) <= 0).at(-1);
       if (!latest) continue;
       point.value += latest.value;
@@ -490,7 +544,7 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
   const latestByFund = new Map<string, SnapshotValue>();
   for (const value of inCurrency) {
     const current = latestByFund.get(value.fundId);
-    if (!current || comparePeriods(value.period, current.period) > 0) latestByFund.set(value.fundId, value);
+    if (!current || compareSnapshotValues(value, current) > 0) latestByFund.set(value.fundId, value);
   }
   const exposureItems: ExposureItem[] = [...latestByFund.values()]
     .map((value) => ({ fundId: value.fundId, fund: value.fund, period: value.period, snapshotId: value.snapshotId, value: value.value, metricCode: value.metricCode }))
@@ -499,6 +553,12 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
   const items = attentionItems(input);
   const counts = { blocking_exception: 0, needs_review: 0, stuck_document: 0, unhealthy_source: 0, total: 0 };
   for (const item of items) { counts[item.kind] += item.count; counts.total += item.count; }
+  // The stuck list is bounded but its count is exact.
+  const omittedStuckDocuments = input.attentionAggregates
+    ? Math.max(0, input.attentionAggregates.stuckDocumentTotal - input.attentionAggregates.stuckDocuments.length)
+    : 0;
+  counts.stuck_document += omittedStuckDocuments;
+  counts.total += omittedStuckDocuments;
 
   return {
     generatedAt: input.now.toISOString(),
@@ -511,7 +571,7 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
       byAssetType: exposureBreakdown(exposureItems, input.dimensionFacts ?? [], "asset_type", currency),
       bySector: exposureBreakdown(exposureItems, input.dimensionFacts ?? [], "sector", currency),
     },
-    attention: { items, counts },
+    attention: omittedStuckDocuments > 0 ? { items, counts, omittedStuckDocuments } : { items, counts },
     freshness: freshness(input),
   };
 }

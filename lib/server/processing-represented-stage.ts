@@ -2,12 +2,11 @@ import { createHash } from "crypto";
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { boundedFetch, DEFAULT_PROVIDER_TIMEOUT_MS, MAX_PROVIDER_TIMEOUT_MS, METADATA_TIMEOUT_MS, withStageBudget } from "./processing-stage-http.ts";
 
 const REPRESENTATION_TYPE = "document_interpretation_v1";
 const REPRESENTATION_CONTRACT_VERSION = "1";
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
-const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
-const METADATA_TIMEOUT_MS = 5_000;
 const SHA256 = /^[0-9a-f]{64}$/i;
 const ALLOWED_METHODS = new Set(["native", "ocr", "vision", "hybrid"]);
 
@@ -272,40 +271,6 @@ export class PostgresDocumentRepresentationRepository implements DocumentReprese
   }
 }
 
-function boundedSignal(parent: AbortSignal, timeoutMs: number, label: string): {
-  signal: AbortSignal;
-  dispose(): void;
-} {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort(parent.reason);
-  parent.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error(`${label} timed out`)), timeoutMs);
-  if (parent.aborted) onAbort();
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-      parent.removeEventListener("abort", onAbort);
-    },
-  };
-}
-
-async function boundedFetch(
-  fetchImpl: typeof fetch,
-  url: string,
-  init: RequestInit,
-  parent: AbortSignal,
-  timeoutMs: number,
-  label: string,
-): Promise<Response> {
-  const execution = boundedSignal(parent, timeoutMs, label);
-  try {
-    return await fetchImpl(url, { ...init, signal: execution.signal, cache: "no-store" });
-  } finally {
-    execution.dispose();
-  }
-}
-
 async function googleIdentityToken(
   fetchImpl: typeof fetch,
   audience: string,
@@ -314,11 +279,11 @@ async function googleIdentityToken(
   const url = new URL("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity");
   url.searchParams.set("audience", audience);
   url.searchParams.set("format", "full");
-  const response = await boundedFetch(fetchImpl, url.toString(), {
+  const { response, value } = await boundedFetch(fetchImpl, url.toString(), {
     headers: { "Metadata-Flavor": "Google" },
-  }, parent, METADATA_TIMEOUT_MS, "GCP identity token request");
+  }, parent, METADATA_TIMEOUT_MS, "GCP identity token request", (res) => res.ok ? res.text() : Promise.resolve(""));
   if (!response.ok) throw new Error(`GCP representation identity token request failed (${response.status})`);
-  const token = (await response.text()).trim();
+  const token = value.trim();
   if (!token) throw new Error("GCP representation identity token response was empty");
   return token;
 }
@@ -337,7 +302,7 @@ export class HttpDocumentRepresentationProducer implements DocumentRepresentatio
 
   async produce(input: Parameters<DocumentRepresentationProducer["produce"]>[0]): Promise<ProducedRepresentation> {
     const token = await googleIdentityToken(this.fetchImpl, this.config.audience, input.signal);
-    const response = await boundedFetch(this.fetchImpl, `${this.config.endpoint.replace(/\/$/, "")}/v1/representations`, {
+    const { response, value: responseText } = await boundedFetch(this.fetchImpl, `${this.config.endpoint.replace(/\/$/, "")}/v1/representations`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -359,13 +324,16 @@ export class HttpDocumentRepresentationProducer implements DocumentRepresentatio
         },
         output: { objectUri: input.outputObjectUri, contentType: "application/json" },
       }),
-    }, input.signal, this.config.timeoutMs, "document representation provider");
+    }, input.signal, this.config.timeoutMs, "document representation provider", async (res) => {
+      if (!res.ok) return "";
+      const declaredLength = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > RESPONSE_LIMIT_BYTES) {
+        throw new Error("document representation provider response exceeds metadata limit");
+      }
+      // Read while the provider timeout is still armed.
+      return res.text();
+    });
     if (!response.ok) throw new Error(`document representation provider failed (${response.status})`);
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > RESPONSE_LIMIT_BYTES) {
-      throw new Error("document representation provider response exceeds metadata limit");
-    }
-    const responseText = await response.text();
     if (Buffer.byteLength(responseText, "utf8") > RESPONSE_LIMIT_BYTES) {
       throw new Error("document representation provider response exceeds metadata limit");
     }
@@ -418,11 +386,11 @@ export class GcpRepresentationObjectVerifier implements RepresentationObjectVeri
   private async accessToken(signal: AbortSignal): Promise<string> {
     if (this.staticAccessToken) return this.staticAccessToken;
     if (this.cachedToken && this.cachedToken.expiresAt - Date.now() > 60_000) return this.cachedToken.value;
-    const response = await boundedFetch(this.fetchImpl,
+    const { response, value: body } = await boundedFetch(this.fetchImpl,
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-      { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP access token request");
+      { headers: { "Metadata-Flavor": "Google" } }, signal, METADATA_TIMEOUT_MS, "GCP access token request",
+      (res) => res.ok ? res.json() as Promise<GoogleAccessTokenResponse> : Promise.resolve({} as GoogleAccessTokenResponse));
     if (!response.ok) throw new Error(`GCP representation access token request failed (${response.status})`);
-    const body = await response.json() as GoogleAccessTokenResponse;
     if (!body.access_token) throw new Error("GCP representation access token response was empty");
     this.cachedToken = {
       value: body.access_token,
@@ -437,16 +405,13 @@ export class GcpRepresentationObjectVerifier implements RepresentationObjectVeri
     const token = await this.accessToken(input.signal);
     const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(parsed.bucket)}/o/${encodeURIComponent(parsed.key)}`);
     url.searchParams.set("fields", "generation,size,metadata");
-    const response = await boundedFetch(this.fetchImpl, url.toString(), {
+    const { response, value: metadata } = await boundedFetch(this.fetchImpl, url.toString(), {
       headers: { authorization: `Bearer ${token}` },
-    }, input.signal, METADATA_TIMEOUT_MS, "GCS representation metadata read");
+    }, input.signal, METADATA_TIMEOUT_MS, "GCS representation metadata read", (res) => res.ok
+      ? res.json() as Promise<{ generation?: string; size?: string; metadata?: Record<string, string> }>
+      : Promise.resolve({} as { generation?: string; size?: string; metadata?: Record<string, string> }));
     if (response.status === 404) throw new Error("representation object is missing from GCS");
     if (!response.ok) throw new Error(`GCS representation metadata read failed (${response.status})`);
-    const metadata = await response.json() as {
-      generation?: string;
-      size?: string;
-      metadata?: Record<string, string>;
-    };
     const custom = metadata.metadata ?? {};
     if (metadata.generation !== input.storageGeneration) throw new Error("representation GCS generation mismatch");
     if (Number(metadata.size) !== input.sizeBytes) throw new Error("representation GCS size mismatch");
@@ -469,7 +434,8 @@ export function createRepresentedDocumentStageHandler(input: {
   verifier: RepresentationObjectVerifier;
   outputBucket: string;
 }): ProcessingStageHandler {
-  return async (effect, signal) => {
+  // One budget for every provider/metadata/GCS call, strictly under the router's 30s.
+  return withStageBudget(async (effect, signal) => {
     if (effect.stage !== "represented") throw new Error(`represented document handler cannot execute stage ${effect.stage}`);
     assertNotAborted(signal);
     const predecessor = predecessorResult(effect);
@@ -560,13 +526,13 @@ export function createRepresentedDocumentStageHandler(input: {
       producerVersion: expected.producerVersion,
       method: expected.method,
     };
-  };
+  });
 }
 
 function positiveTimeout(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_PROVIDER_TIMEOUT_MS;
-  return Math.min(parsed, 25_000);
+  return Math.min(parsed, MAX_PROVIDER_TIMEOUT_MS);
 }
 
 export function configuredRepresentationProducerConfig(env: NodeJS.ProcessEnv = process.env): RepresentationProducerConfig | undefined {

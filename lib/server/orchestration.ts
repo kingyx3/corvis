@@ -1,4 +1,5 @@
 import type { ProcessingJob, ProcessingStage } from "@/core/enterprise";
+import { redactErrorText } from "./processing-error-text.ts";
 
 const STAGE_ORDER: ProcessingStage[] = ["registered","represented","extracted","reviewed","canonicalized","reconciled","consolidated","published"];
 
@@ -16,7 +17,7 @@ export function startAttempt(job: ProcessingJob, now = new Date().toISOString())
 export function failAttempt(job: ProcessingJob, error: string, now = new Date().toISOString()): ProcessingJob {
   if (job.state !== "running") throw new Error(`Job ${job.id} cannot fail from ${job.state}`);
   const exhausted = job.attempt >= job.maxAttempts;
-  return { ...job, state: exhausted ? "dead_letter" : "retryable", lastError: error.slice(0, 2000), updatedAt: now, version: job.version + 1 };
+  return { ...job, state: exhausted ? "dead_letter" : "retryable", lastError: redactErrorText(error, 2000), updatedAt: now, version: job.version + 1 };
 }
 
 export function succeedAttempt(job: ProcessingJob, now = new Date().toISOString()): ProcessingJob {

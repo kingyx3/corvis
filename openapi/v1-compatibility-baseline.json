@@ -5,18 +5,28 @@
   "publishedOperations": {
     "/me": ["get"],
     "/capabilities": ["get"],
+    "/my-workspaces": ["get"],
     "/documents": ["get"],
     "/funds": ["get"],
     "/companies": ["get"],
+    "/holdings": ["get"],
+    "/instruments": ["get"],
     "/company-lifecycle-events": ["get"],
     "/metric-definitions": ["get"],
     "/observations": ["get"],
     "/consolidated-facts": ["get"],
+    "/reconciliations": ["get"],
     "/snapshots": ["get"],
     "/review": ["post"],
     "/snapshots/publish": ["post"],
     "/research": ["post"],
+    "/research/stream": ["post"],
+    "/research/pins": ["get", "post"],
+    "/research/pins/{pinId}": ["delete"],
+    "/source-references/{sourceReferenceId}": ["get"],
     "/exports": ["get", "post"],
+    "/exports/{exportId}": ["get"],
+    "/exports/{exportId}/download": ["get"],
     "/jobs": ["get"],
     "/uploads/initiate": ["post"],
     "/uploads/{uploadId}": ["get", "delete"],
@@ -30,6 +40,9 @@
   "stableConventions": [
     "correlationId",
     "invalid_cursor",
-    "enterpriseSession"
+    "enterpriseSession",
+    "authentication_required",
+    "rate_limited",
+    "idempotency_key_reused"
   ]
 }
