@@ -35,3 +35,28 @@ test("workspace selector and access management dialog pass accessibility checks"
   await expect(dialog).toBeHidden();
   await expect(page.getByRole("button", { name: "Change Primary Workspace role for jordan.lee@example.test", exact: true })).toBeFocused();
 });
+
+// Tablet/phone widths hide the sidebar section, so the rail/tab bar carries a Workspace button (#245).
+test("the workspace switcher and tenant-admin link are reachable from the mobile navigation @matrix", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "admin"));
+  await page.goto("/");
+  const open = page.getByRole("button", { name: "Workspace and access" });
+  await expect(open).toBeVisible();
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "Workspace and access" });
+  await expect(dialog.getByRole("combobox", { name: "Current workspace" })).toHaveValue("demo-workspace");
+  await expect(dialog.getByRole("link", { name: /audit, bulk onboarding/i })).toHaveAttribute("href", "/access-self-service");
+  const results = await new AxeBuilder({ page }).include('[role="dialog"]').withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(results.violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(open).toBeFocused();
+});
+
+test("the mobile Workspace button stays out of the desktop sidebar", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect(page.getByRole("combobox", { name: "Current workspace" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Workspace and access" })).toBeHidden();
+});

@@ -9,7 +9,11 @@ import { WORKSPACE_CONTEXT_KEY } from "@/lib/workspace-context";
 
 type SwitcherMembership=WorkspaceMembershipSummary&{supportAccess?:{supportGrantId:string;roleName:string;purpose:string;expiresAt:string}};
 
-export function WorkspaceSwitcher({ identity }: { identity: WorkspaceIdentity | null }) {
+/**
+ * `sidebar` renders inside the desktop sidebar; `panel` renders the same controls on a light
+ * surface for the mobile workspace dialog, since the sidebar section is hidden at <=960px (#245).
+ */
+export function WorkspaceSwitcher({ identity, variant = "sidebar" }: { identity: WorkspaceIdentity | null; variant?: "sidebar" | "panel" }) {
   const [memberships, setMemberships] = useState<SwitcherMembership[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +44,7 @@ export function WorkspaceSwitcher({ identity }: { identity: WorkspaceIdentity | 
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Workspace could not be selected."); setBusy(false); }
   };
   const current=memberships.find((item)=>item.workspaceId===identity?.workspaceId);
-  return <div className="sidebar-section"><p>WORKSPACE</p>
+  return <div className={variant === "panel" ? "workspace-panel" : "sidebar-section"}><p>WORKSPACE</p>
     {memberships.length > 1 && identity?.tenantId ? <div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity.workspaceDisplayName ?? identity.tenantDisplayName ?? "W")[0].toUpperCase()}</span><div className="form-field"><select aria-label="Current workspace" disabled={busy} value={identity.workspaceId ?? ""} onChange={(event) => void select(event.target.value)}>{memberships.map((item) => <option key={item.workspaceId} value={item.workspaceId}>{item.workspaceDisplayName ?? item.workspaceId}</option>)}</select><small>{identity.tenantDisplayName}</small></div></div>
       : <div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? "W")[0].toUpperCase()}</span><span><strong>{identity?.workspaceDisplayName ?? "Current workspace"}</strong><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div>}
     {current?.supportAccess&&<div className="lineage-note tone-warning" role="status" aria-label="Active Corvis support access"><strong>Corvis support session active</strong><span>{current.supportAccess.purpose} · expires {new Date(current.supportAccess.expiresAt).toLocaleString()}</span></div>}
