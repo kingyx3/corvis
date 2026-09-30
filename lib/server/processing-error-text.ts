@@ -18,8 +18,13 @@ const RULES: Array<[RegExp, string]> = [
   // JWTs (three base64url segments).
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, REDACTED],
   // Credentials embedded in URLs, then any query string / fragment (signed URLs).
-  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, "$1"],
+  // Userinfo runs to the last "@" of the token: passwords are routinely pasted into DSNs unencoded, with "/" or "@" in them.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s"'<>]*@/gi, "$1"],
   [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"']+)[?#][^\s"']*/gi, "$1"],
+  // Cookie headers carry session ids; drop the whole header value.
+  [/\b((?:set-)?cookie\s*:\s*)[^\r\n]*/gi, `$1${REDACTED}`],
+  // Vendor token formats that are not caught by the generic opaque-token rule below (short, or all letters).
+  [/\b(?:xox[abprs]|sk_live|rk_live|sk_test|pk_live|github_pat|glpat)[-_][A-Za-z0-9_-]{8,}/g, REDACTED],
   // An embedded JSON object is an upstream response body: keep the prefix, drop the body.
   [/\{\s*["'][\s\S]*$/, "{body omitted}"],
   // key=value / "key": "value" pairs whose key names a secret.
