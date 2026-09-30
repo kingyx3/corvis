@@ -13,26 +13,9 @@ locals {
   runtime_enabled                = trimspace(var.api_image) != ""
   service_name                   = "corvis-cost-guard-${var.environment}"
   service_account_id             = "corvis-cost-guard-${var.environment}"
-  service_account_email          = "${local.service_account_id}@${var.project_id}.iam.gserviceaccount.com"
   audience                       = "https://${local.service_name}.internal"
   budget_display_name            = "corvis-${var.environment}-monthly-budget"
-  budget_topic_name              = "corvis-budget-updates-${var.environment}"
   deployer_service_account_email = "corvis-deploy@${var.project_id}.iam.gserviceaccount.com"
-}
-
-# This topic exists even before a runtime image is selected so the Billing
-# Budget resource can be connected during the foundation bootstrap. Until the
-# first runtime promotion there is intentionally no push subscription: the
-# foundation has no scheduled application consumption to pause yet.
-resource "google_pubsub_topic" "budget_updates" {
-  project = var.project_id
-  name    = local.budget_topic_name
-
-  labels = {
-    service     = "corvis-cost-guard"
-    environment = var.environment
-    managed_by  = "terraform"
-  }
 }
 
 resource "google_service_account" "cost_guard" {
@@ -204,7 +187,7 @@ resource "google_pubsub_subscription" "budget_guard" {
 
   project = var.project_id
   name    = "corvis-budget-guard-${var.environment}"
-  topic   = google_pubsub_topic.budget_updates.id
+  topic   = var.budget_pubsub_topic
 
   ack_deadline_seconds       = 60
   message_retention_duration = "86400s"
