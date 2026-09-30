@@ -23,8 +23,12 @@ export class ResearchPinError extends Error {
 
 const MAX_PINS = 50;
 const MAX_QUESTION_LENGTH = 2000;
-/** A pinned answer is the payload the caller already received; bound it so a client cannot store arbitrary blobs. */
-const MAX_ANSWER_JSON_LENGTH = 64 * 1024;
+/**
+ * A pinned answer is the payload the caller already received; bound it so a client cannot store arbitrary blobs.
+ * A semantic query returns up to 200 rows and the answer carries them all, so the bound must admit a full result
+ * (a 64 KiB cap refused to pin any answer with more than ~150 realistic rows).
+ */
+const MAX_ANSWER_JSON_LENGTH = 512 * 1024;
 
 function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 

@@ -97,6 +97,33 @@ test("pinResearchAnswer rejects an oversized answer payload", async () => {
     pinResearchAnswer(identity, { question: "Q", askedAt: "2026-05-01T00:00:00.000Z", answer: { ...answer, answer: "x".repeat(70_000) } }, db),
     (error: unknown) => error instanceof ResearchPinError && error.code === "invalid_answer",
   );
+  const bulky = { semanticQueryId: "sq_0123456789abcdef01234567", status: "executed", metricCode: "revenue", operation: "values", rows: Array.from({ length: 2000 }, (_, i) => ({ value_number: i, note: "n".repeat(400) })) };
+  await assert.rejects(
+    pinResearchAnswer(identity, { question: "Q", askedAt: "2026-05-01T00:00:00.000Z", answer: { ...answer, computedResults: [bulky] } as ResearchAnswer }, db),
+    (error: unknown) => error instanceof ResearchPinError && error.code === "invalid_answer",
+  );
+});
+
+test("a full 200-row semantic result is small enough to pin", async () => {
+  const db = new FakeDb();
+  // Same columns as the semantic executeRows query.
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const rows = Array.from({ length: 200 }, (_, i) => ({
+    observation_id: uuid(i), fund_id: uuid(1000), company_id: uuid(2000 + i), holding_id: uuid(3000 + i), instrument_id: null, metric_code: "net_asset_value",
+    value_number: 1000 + i, value_string: null, currency: "USD", economic_period: "2026-Q2", report_date: "2026-06-30",
+    source_reference_id: uuid(4000 + i), version: 3, updated_at: "2026-07-01T00:00:00.000Z", subject_type: "holding",
+  }));
+  const big = {
+    answer: "Net asset value by holding.", citations: [], semanticQueryIds: ["sq_0123456789abcdef01234567"],
+    computedResults: [{ semanticQueryId: "sq_0123456789abcdef01234567", status: "executed", metricCode: "nav", operation: "values", rows }],
+  } as ResearchAnswer;
+  assert.ok(JSON.stringify(big).length > 64 * 1024, "the fixture must exceed the old cap");
+  db.queryQueue = [
+    [{ semantic_query_id: "sq_0123456789abcdef01234567", result_rows_sha256: computedRowsDigest(rows) }],
+    [], [{ count: 0 }], [{ pin_id: "pin-3", question: "Q", answer: big, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") }],
+  ];
+  const pinned = await pinResearchAnswer(readerIdentity, { question: "Q", answer: big, askedAt: "2026-09-20T00:00:00Z" }, db);
+  assert.equal(pinned.pinId, "pin-3");
 });
 
 // ---------------------------------------------------------------------------
