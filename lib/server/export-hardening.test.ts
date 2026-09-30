@@ -13,6 +13,7 @@ import {
   decimalToUnscaled,
   EXPORT_MAX_ROWS,
   ExportRowLimitError,
+  POSITION_EXPORT_COLUMNS,
   renderCsv,
   renderExport,
   renderParquet,
@@ -156,4 +157,41 @@ test("one rejected delivery task no longer hides the others", async () => {
   const failure = results.webhooks as { error: string; message: string };
   assert.equal(failure.error, "ECONNRESET");
   assert.equal(failure.message.includes("ya29"), false);
+});
+
+test("a Position Financials export renders its own columns instead of the observation columns", async () => {
+  const position: ExportRow = {
+    statement_id: "st-1", document_id: "d-1", fund_id: "fund-1", holding_id: "h-1", company_id: "c-1", statement_type: "income_statement",
+    report_period: "2026-Q2", source_label: "Revenue, net", metric_code: null, line_role: "line", display_order: 1, depth: 0,
+    value_raw: "1,000", value_number: "1000.0000000000", value_string: null, currency: "USD", unit: "thousands", period_type: "quarter",
+    period_start: "2026-04-01", period_end: "2026-06-30", as_of_date: null, fiscal_year: 2026, fiscal_quarter: 2, source_column_label: "Q2 2026",
+    preliminary: false, is_restatement: false, is_derived: true, derivation_formula: "a+b", source_reference_ids: "[\"s-1\"]",
+  };
+  const csv = renderExport("csv", [position], POSITION_EXPORT_COLUMNS).bytes.toString("utf8").split("\r\n");
+  assert.equal(csv[0], POSITION_EXPORT_COLUMNS.join(","));
+  assert.ok(csv[1]!.includes('"Revenue, net"') && csv[1]!.includes("2026-Q2") && csv[1]!.includes("a+b"), "line label, period and derivation survive");
+  assert.ok(csv[1]!.includes(",1000.0000000000,"), "value_number stays an exact decimal");
+  const xlsx = renderExport("xlsx", [position], POSITION_EXPORT_COLUMNS).bytes.toString("utf8");
+  assert.ok(xlsx.includes("source_label") && xlsx.includes("Revenue, net"));
+  const parquet = renderExport("parquet", [position], POSITION_EXPORT_COLUMNS).bytes;
+  const file = parquet.buffer.slice(parquet.byteOffset, parquet.byteOffset + parquet.byteLength) as ArrayBuffer;
+  const [read] = await parquetReadObjects({ file });
+  assert.equal(read!.source_label, "Revenue, net");
+  assert.equal(read!.report_period, "2026-Q2");
+  assert.equal(read!.fiscal_year, "2026");
+  assert.equal(Object.keys(read!).length, POSITION_EXPORT_COLUMNS.length);
+});
+
+test("the default column set is unchanged for observation exports", () => {
+  const csv = renderExport("csv", [row]).bytes.toString("utf8").split("\r\n");
+  assert.ok(csv[0]!.startsWith("observation_id,fund_id,company_id"));
+  assert.equal(csv[0]!.split(",").length, 16);
+});
+
+test("POSITION_EXPORT_COLUMNS lists exactly the keys the position loader emits (no silently dropped or blank columns)", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("./export-delivery.ts", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("return rows.map((position) => ({"));
+  const emitted = [...block.slice(0, block.indexOf("}));")).matchAll(/^\s{4}([a-z_]+):/gm)].map((match) => match[1]);
+  assert.deepEqual(emitted, [...POSITION_EXPORT_COLUMNS]);
 });

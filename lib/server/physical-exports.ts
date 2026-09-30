@@ -135,12 +135,16 @@ export async function createPhysicalExport(
     positionRowCount = rows.length;
     snapshots = await positionFinancialSnapshots(identity, positionScope, store);
   } else {
-    snapshots = fundIds.length === 0 ? [] : await store.query(`select snapshot_id,schema_version,taxonomy_version,fund_id,version,blocking_exception_count
-      from corvis_serving.fund_period_snapshots
-      where tenant_id=$1 and status='published'
-        and fund_id in (select jsonb_array_elements_text($2::jsonb))
-        ${snapshotScope ? "and snapshot_id::text=$3" : ""}
-      order by published_at desc`,
+    snapshots = fundIds.length === 0 ? [] : await store.query(`select s.snapshot_id,s.schema_version,s.taxonomy_version,s.fund_id,s.version,s.blocking_exception_count
+      from corvis_serving.fund_period_snapshots s
+      where s.tenant_id=$1 and s.status='published'
+        and not exists (
+          select 1 from corvis_serving.fund_period_snapshots newer
+          where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+        )
+        and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        ${snapshotScope ? "and s.snapshot_id::text=$3" : ""}
+      order by s.published_at desc`,
     snapshotScope ? [identity.tenantId, jsonIds(fundIds), snapshotScope.snapshotId] : [identity.tenantId, jsonIds(fundIds)]);
   }
   // Any scoped export must resolve to the exact already-entitled published data
@@ -212,14 +216,32 @@ async function assertCurrentArtifactAccess(
     if (!covers(identity.entitlements.fundIds, artifact.fundIds) || !covers(identity.entitlements.documentIds, artifact.documentIds)) {
       throw new AuthorizationError("exports:current_data_rights");
     }
+    // A withdrawn or superseded snapshot must stop being downloadable, not only
+    // stop being exportable: the artifact's bytes outlive the publication.
+    if (snapshotIds.length > 0) {
+      const current = await store.query(`select count(distinct s.snapshot_id) as snapshot_count
+        from corvis_consolidated.fund_period_snapshot s
+        where s.tenant_id=$1 and s.status='published'
+          and not exists (
+            select 1 from corvis_consolidated.fund_period_snapshot newer
+            where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+          )
+          and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`,
+      [identity.tenantId, jsonIds(snapshotIds)]);
+      if (Number(current[0]?.snapshot_count ?? 0) !== snapshotIds.length) throw new AuthorizationError("exports:current_data_rights");
+    }
     return;
   }
   if (snapshotIds.length === 0) return;
   const fundIds = identity.entitlements.fundIds ?? [];
   if (fundIds.length === 0) throw new AuthorizationError("exports:current_data_rights");
-  const rows = await store.query(`select count(*) as snapshot_count
+  const rows = await store.query(`select count(distinct s.snapshot_id) as snapshot_count
     from corvis_consolidated.fund_period_snapshot s
     where s.tenant_id=$1 and s.status='published'
+      and not exists (
+        select 1 from corvis_consolidated.fund_period_snapshot newer
+        where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+      )
       and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);

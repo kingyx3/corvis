@@ -4,7 +4,7 @@ import type { ExportScope, PositionFinancialsExportScope } from "../../core/deli
 import { assertRedistributionAllowed, type RequestIdentity } from "../../core/enterprise.ts";
 import { PostgresMembershipAuthorizationRepository } from "./authorization.ts";
 import { getServerConfig } from "./config.ts";
-import { assertExportRowLimit, EXPORT_MAX_ROWS, renderExport, type ExportRow } from "./export-renderer.ts";
+import { assertExportRowLimit, EXPORT_COLUMNS, EXPORT_MAX_ROWS, POSITION_EXPORT_COLUMNS, renderExport, type ExportRow } from "./export-renderer.ts";
 import { gcs, type GcsControlClient } from "./gcs.ts";
 import { rowsForPeriodicity } from "./position-financial-statements.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -105,9 +105,10 @@ async function loadArtifactRows(
   const documentIds = identity.entitlements.documentIds ?? [];
   if (fundIds.length === 0 || documentIds.length === 0) throw new Error("export_authorization_expired");
 
-  const snapshotCheck = await store.query(`select count(*) as snapshot_count
+  const snapshotCheck = await store.query(`select count(distinct s.snapshot_id) as snapshot_count
     from corvis_consolidated.fund_period_snapshot s
     where s.tenant_id=$1 and s.status='published'
+      and not exists (select 1 from corvis_consolidated.fund_period_snapshot newer where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version)
       and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
       and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
   [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);
@@ -117,6 +118,7 @@ async function loadArtifactRows(
       select s.snapshot_id,s.fund_id,s.fact_ids
       from corvis_consolidated.fund_period_snapshot s
       where s.tenant_id=$1 and s.status='published'
+        and not exists (select 1 from corvis_consolidated.fund_period_snapshot newer where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version)
         and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     ), artifact_observation as (
       select distinct fact_observation.observation_id
@@ -313,7 +315,7 @@ export async function deliverExportArtifact(
   const rows = scopedPosition
     ? await loadPositionFinancialRows(identity, snapshotIds, scopedPosition, store)
     : await loadArtifactRows(identity, snapshotIds, store);
-  const rendered = renderExport(format, rows);
+  const rendered = renderExport(format, rows, scopedPosition ? POSITION_EXPORT_COLUMNS : EXPORT_COLUMNS);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");
   const key = exportAttemptObjectKey({ tenantId: identity.tenantId, exportId, attempt: options.attempt ?? 1, scoped: scopedPosition !== undefined, extension: rendered.extension });

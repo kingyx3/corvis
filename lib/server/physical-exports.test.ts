@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExportScope } from "../../core/delivery.ts";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { createPhysicalExport, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "./physical-exports.ts";
+import { createPhysicalExport, exportStatusFromJob, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
@@ -59,7 +59,7 @@ test("without a scope, every entitled fund's published snapshots are exported (e
 test("a scoped export (e.g. 'export this view' from Review) is restricted to exactly the requested, already-entitled snapshot", async () => {
   const db = new FakeDb((sql, parameters) => {
     if (sql.includes("from corvis_serving.fund_period_snapshots")) {
-      assert.match(sql, /and snapshot_id::text=\$3/);
+      assert.match(sql, /and s\.snapshot_id::text=\$3/);
       assert.deepEqual(parameters, [identity.tenantId, JSON.stringify(identity.entitlements.fundIds), "snap-a"]);
       return [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a", version: 2, blocking_exception_count: 1 }];
     }
@@ -145,4 +145,34 @@ test("a consumed grant is restored only for the same tenant, export, subject and
   await restorePhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "", db);
   await restorePhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "x".repeat(257), db);
   assert.equal(db.queries.length, before, "a missing or oversized token never reaches the database");
+});
+
+const NEWER_VERSION_GUARD = /not exists \(\s*select 1 from corvis_(?:serving\.fund_period_snapshots|consolidated\.fund_period_snapshot) newer\s*where newer\.tenant_id=s\.tenant_id and newer\.snapshot_id=s\.snapshot_id and newer\.version>s\.version\s*\)/;
+
+test("a new export only picks the current version of each snapshot, so withdrawn and superseded snapshots are never exported", async () => {
+  const db = new FakeDb((sql) => {
+    if (sql.includes("from corvis_serving.fund_period_snapshots")) assert.match(sql, NEWER_VERSION_GUARD);
+    return [];
+  });
+  await createPhysicalExport(identity, "csv", undefined, db).catch(() => undefined);
+  assert.ok(db.queries.some((call) => call.sql.includes("from corvis_serving.fund_period_snapshots")), "the snapshot listing ran");
+});
+
+test("a finished export stops being visible once a newer snapshot version (withdrawal or supersession) exists", async () => {
+  let checked = false;
+  const db = new FakeDb((sql) => {
+    if (!sql.includes("from corvis_consolidated.fund_period_snapshot s")) return [];
+    checked = true;
+    assert.match(sql, NEWER_VERSION_GUARD);
+    assert.match(sql, /count\(distinct s\.snapshot_id\)/);
+    return [{ snapshot_count: 0 }];
+  });
+  const artifactRow: PostgresRow = {
+    export_id: "00000000-0000-4000-8000-000000000001", format: "csv", state: "complete",
+    snapshot_ids: ["00000000-0000-4000-8000-0000000000aa"],
+    manifest: { snapshotIds: ["00000000-0000-4000-8000-0000000000aa"], artifact: { fundIds: ["fund-a"], documentIds: ["doc-1"] } },
+    created_at: "2026-09-01T00:00:00Z",
+  };
+  await assert.rejects(exportStatusFromJob(identity, artifactRow, db), (error: unknown) => error instanceof Error && error.name === "AuthorizationError");
+  assert.ok(checked, "an artifact-bearing manifest still re-checks snapshot currency");
 });
