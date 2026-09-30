@@ -25,6 +25,7 @@ When the same subject appears in both systems:
 - [`QUALITY_BUDGETS.md`](QUALITY_BUDGETS.md) — accessibility, browser/responsive matrix and performance gates in `e2e/`.
 - [`API_CONVENTIONS.md`](API_CONVENTIONS.md) — `/api/v1` envelope, error codes, cursor pagination and idempotency conventions.
 - [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) — required GitHub Environments, variables/secrets, bootstrap exceptions and configuration propagation.
+- [`GCP_PRE_BOOTSTRAP.md`](GCP_PRE_BOOTSTRAP.md) — one-time Cloud Shell trust-anchor setup for `corvis-deploy`, GitHub OIDC/WIF, exact UAT subject/ref restrictions, IAM verification and handoff to the first GitHub Actions bootstrap plan/apply.
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — GitHub-centric deployment flow, environment promotion, secret propagation and rollback.
 - [`ENTERPRISE_IMPLEMENTATION.md`](ENTERPRISE_IMPLEMENTATION.md) — current implementation status and open technical gaps.
 - [`SOC1_READINESS.md`](SOC1_READINESS.md) — repository-side SOC 1 ICFR readiness boundary, technical evidence contract and remaining audit gates.
