@@ -222,10 +222,29 @@ resource "google_monitoring_dashboard" "slo_overview" {
   })
 }
 
+# The Billing Budget API requires the Pub/Sub topic to exist before attaching it
+# to a budget. Keeping the topic in the observability module makes that graph
+# dependency explicit; the production-like cost guard consumes this topic.
+resource "google_pubsub_topic" "budget_updates" {
+  project = var.project_id
+  name    = "corvis-budget-updates-${var.environment}"
+
+  labels = merge(
+    {
+      service     = "corvis-cost-guard"
+      environment = var.environment
+      managed_by  = "terraform"
+    },
+    var.labels,
+  )
+}
+
 # Cost telemetry/budget (issue #9's "Cloud Run, GCS, Pub/Sub/Tasks,
 # Supabase/Postgres and Cloudflare health/cost attribution and budgets").
 # Billing-account access is bootstrap-level (docs/GITHUB_ENVIRONMENTS.md), so
-# this stays optional until that access exists.
+# this stays optional until that access exists. Programmatic notifications are
+# deliberately non-destructive: the UAT cost guard pauses automated work at 85%
+# rather than disabling billing or deleting the project.
 resource "google_billing_budget" "monthly" {
   count = local.budget_enabled ? 1 : 0
 
@@ -244,7 +263,7 @@ resource "google_billing_budget" "monthly" {
   }
 
   dynamic "threshold_rules" {
-    for_each = [0.5, 0.8, 1.0]
+    for_each = [0.5, 0.75, 0.85, 1.0]
     content {
       threshold_percent = threshold_rules.value
       spend_basis       = "CURRENT_SPEND"
@@ -252,6 +271,8 @@ resource "google_billing_budget" "monthly" {
   }
 
   all_updates_rule {
+    pubsub_topic                     = google_pubsub_topic.budget_updates.id
+    schema_version                   = "1.0"
     monitoring_notification_channels = var.notification_channel_ids
     disable_default_iam_recipients   = false
   }
