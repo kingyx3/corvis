@@ -68,7 +68,7 @@ export const SQL_APPLICATION_ERRORS = [
   "requested support role is already active outside this grant",
   "support grant id required",
   "support grant not found",
-  // corvis_source.release_clean_artifact (071)
+  // corvis_source.release_clean_artifact (072)
   "artifact was purged and cannot be released",
 ] as const;
 
