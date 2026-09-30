@@ -23,7 +23,11 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-RUN addgroup -S corvis && adduser -S corvis -G corvis
+# The runtime only runs `node server.js`. The npm/npx/corepack CLIs bundled in the
+# base image are unused and carry their own dependency CVEs (#236), so remove them.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+  && addgroup -S corvis && adduser -S corvis -G corvis
 COPY --from=build --chown=corvis:corvis /app/.next/standalone ./
 COPY --from=build --chown=corvis:corvis /app/.next/static ./.next/static
 USER corvis

@@ -38,7 +38,7 @@ After the domain has been selected and activated in Cloudflare:
 
 1. Set one repository-level `CLOUDFLARE_ZONE_NAME` so UAT and prod cannot drift to different root zones.
 2. Put `CLOUDFLARE_ZONE_POLICY_TOKEN` in the protected `uat` GitHub Environment.
-3. Run **Cloudflare shared zone policy** with `plan`, review it, then `apply` from `main`.
+3. Run **Cloudflare shared zone policy** with `plan`, review it, then `apply` from `main`. An apply first waits for the **prod** environment's required reviewers (the policy governs the prod hostnames too), then runs with the UAT-anchored state credentials.
 4. Configure the environment-specific `CLOUDFLARE_API_TOKEN` in UAT and/or prod.
 5. Deploy UAT or prod through the normal immutable-release Terraform path.
 6. Run Security acceptance against the deployed environment.
@@ -72,7 +72,7 @@ Cloudflare DNS token scope is zone-level rather than record-name-level, so provi
 The shared root enforces:
 
 - Full/strict origin TLS;
-- TLS 1.3 enabled;
+- TLS 1.3 enabled and a minimum of TLS 1.2 (1.0/1.1 are refused);
 - Always Use HTTPS;
 - Automatic HTTPS rewrites.
 
@@ -83,6 +83,8 @@ Universal SSL is sufficient for the six first-level Corvis hostnames on a normal
 ## WAF, cache and marketing-site isolation
 
 Application-specific shared rules are scoped to the six Corvis application hostnames. This prevents a future apex/marketing site from inheriting product-specific custom/managed WAF behavior or authenticated-application cache bypass.
+
+With `CLOUDFLARE_ADMIN_ALLOWED_CIDRS` set, a custom WAF rule blocks both admin hostnames (`admin`, `admin-uat`) for any source outside the operator allowlist, before requests reach application authentication.
 
 The deterministic WAF acceptance path is also host-scoped. An identically named path on an unrelated hostname in the same zone must not be blocked merely because Corvis uses it for security acceptance.
 
@@ -96,6 +98,8 @@ Cloudflare plan capabilities differ:
 
 - **Free:** one rate-limit rule and no Host field in the rate-limit match expression. The shared root therefore uses one `/api/` path + source-IP rule. A source IP exercising both environments can share that edge counter, which can cause conservative over-blocking but cannot bypass Corvis's environment-specific application limit.
 - **Pro with `CLOUDFLARE_MANAGED_WAF_ENABLED=true`:** Cloudflare provides two rate-limit rules and Host matching. The shared ruleset creates one production API rule and one UAT API rule, giving the two environments independent edge counters while keeping the application limiter authoritative.
+
+Every rule counts per source IP **per Cloudflare data center** (`cf.colo.id`), because Cloudflare requires that characteristic on Free, Pro and Business; only Enterprise can count one IP globally. A client that reaches many data centers therefore gets a budget in each; the per-identity Postgres limit is the bound that cannot be spread.
 
 If strict edge-counter separation becomes a contractual requirement, use at least the Cloudflare capability that provides two host-scoped rules. Do not solve it by giving UAT a second ad-hoc root domain unless a broader isolation requirement justifies a separate zone.
 

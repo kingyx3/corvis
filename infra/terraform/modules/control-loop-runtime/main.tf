@@ -50,6 +50,30 @@ resource "google_service_account_iam_member" "cloud_scheduler_token_creator" {
   member             = "serviceAccount:${google_project_service_identity.cloud_scheduler[0].email}"
 }
 
+# Anonymous GitHub API calls are limited to 60 requests an hour, which the issue
+# snapshot can exhaust (#235). Terraform owns the empty container and the job
+# identity's read access; the token value is added out of band (a read-only,
+# fine-grained token for this repository) and never enters Terraform state.
+resource "google_secret_manager_secret" "github_token" {
+  project   = var.project_id
+  secret_id = "corvis-control-loop-github-token-${var.environment}"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "github_token_accessor" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.github_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
 resource "google_cloud_run_v2_job" "control_loop" {
   for_each = local.runtime_enabled ? local.schedules : {}
 
@@ -95,6 +119,18 @@ resource "google_cloud_run_v2_job" "control_loop" {
         env {
           name  = "GITHUB_REPOSITORY_OWNER"
           value = "kingyx3"
+        }
+        dynamic "env" {
+          for_each = var.github_token_configured ? [google_secret_manager_secret.github_token.secret_id] : []
+          content {
+            name = "GITHUB_TOKEN"
+            value_source {
+              secret_key_ref {
+                secret  = env.value
+                version = "latest"
+              }
+            }
+          }
         }
 
         resources {
