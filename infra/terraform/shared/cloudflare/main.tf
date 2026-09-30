@@ -35,9 +35,10 @@ resource "terraform_data" "zone_guard" {
 module "zone_policy" {
   source = "../../modules/cloudflare-zone-policy"
 
-  zone_id            = data.cloudflare_zones.corvis.result[0].id
-  zone_name          = local.zone_name
-  enable_managed_waf = var.enable_cloudflare_managed_waf
+  zone_id             = data.cloudflare_zones.corvis.result[0].id
+  zone_name           = local.zone_name
+  enable_managed_waf  = var.enable_cloudflare_managed_waf
+  admin_allowed_cidrs = var.admin_allowed_cidrs
 
   depends_on = [terraform_data.zone_guard]
 }

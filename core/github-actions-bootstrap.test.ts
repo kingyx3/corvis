@@ -20,9 +20,11 @@ test("GCP bootstrap remains keyless and environment scoped", () => {
 test("bootstrap verifies the external WIF trust anchor before Terraform", () => {
   assert.match(workflow, /bash \.github\/scripts\/verify-gcp-trust-anchor\.sh/);
   assert.match(trustVerifier, /EXPECTED_REPOSITORY="kingyx3\/corvis"/);
+  assert.match(trustVerifier, /EXPECTED_REF="refs\/heads\/main"/);
   assert.match(trustVerifier, /attributeCondition/);
   assert.match(trustVerifier, /assertion\.repository/);
   assert.match(trustVerifier, /assertion\.environment/);
+  assert.match(trustVerifier, /assertion\.ref/);
   assert.match(trustVerifier, /google\.subject/);
   assert.match(trustVerifier, /roles\/iam\.workloadIdentityUser/);
   assert.match(trustVerifier, /attribute\.repository/);
@@ -52,4 +54,5 @@ test("operator documentation keeps the zero-credential trust boundary explicit",
   assert.match(docs, /cannot securely create its own first GCP trust relationship/);
   assert.match(docs, /service-account JSON key/);
   assert.match(docs, /Bootstrap GCP foundation/);
+  assert.match(docs, /refs\/heads\/main/);
 });

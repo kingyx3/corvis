@@ -29,6 +29,12 @@ variable "processing_queue_name" {
   default     = ""
 }
 
+variable "uptime_check_host" {
+  description = "Public API hostname for the external uptime check of /api/v1/health/ready (through Cloudflare and API Gateway). Empty disables the check."
+  type        = string
+  default     = ""
+}
+
 variable "notification_channel_ids" {
   description = "Existing Cloud Monitoring notification channel IDs. Channel creation itself is one-time external bootstrap (docs/GITHUB_ENVIRONMENTS.md), not managed here."
   type        = list(string)

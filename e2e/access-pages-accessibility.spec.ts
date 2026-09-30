@@ -98,14 +98,19 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: /admin console/i })).toBeVisible();
     const card = page.locator("section.admin-card").filter({ has: page.getByRole("heading", { name: "Client tenant provisioning" }) });
-    await card.getByLabel("Tenant slug").fill("acme-capital");
-    await card.getByLabel("Tenant display name").fill("Acme Capital Partners");
-    await card.getByLabel("Initial workspace slug").fill("primary");
-    await card.getByLabel("Initial workspace display name").fill("Primary Workspace");
-    await card.getByLabel("First organization admin email").fill("admin@example.org");
-    await card.getByLabel("Reason", { exact: true }).fill("Contracted onboarding");
     const trigger = card.getByRole("button", { name: /review change/i });
-    await expect(trigger).toBeEnabled();
+    // The admin console is server-rendered, so the fields exist before React hydrates. Input typed
+    // before hydration is reset to the (empty) controlled state, leaving the button disabled; that
+    // race only showed on WebKit, which hydrates slower. Refill until the hydrated form accepts it.
+    await expect(async () => {
+      await card.getByLabel("Tenant slug").fill("acme-capital");
+      await card.getByLabel("Tenant display name").fill("Acme Capital Partners");
+      await card.getByLabel("Initial workspace slug").fill("primary");
+      await card.getByLabel("Initial workspace display name").fill("Primary Workspace");
+      await card.getByLabel("First organization admin email").fill("admin@example.org");
+      await card.getByLabel("Reason", { exact: true }).fill("Contracted onboarding");
+      await expect(trigger).toBeEnabled({ timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
     await trigger.click();
     const dialog = page.getByRole("dialog", { name: /confirm client tenant provisioning/i });
     await expect(dialog).toBeVisible();

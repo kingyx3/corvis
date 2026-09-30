@@ -7,6 +7,7 @@ set -euo pipefail
 : "${CORVIS_ENVIRONMENT:?CORVIS_ENVIRONMENT is required}"
 
 EXPECTED_REPOSITORY="kingyx3/corvis"
+EXPECTED_REF="refs/heads/main"
 
 if [[ ! "${CORVIS_ENVIRONMENT}" =~ ^(dev|uat|prod)$ ]]; then
   echo "CORVIS_ENVIRONMENT must be dev, uat, or prod."
@@ -42,11 +43,11 @@ gcloud iam service-accounts get-iam-policy "${GCP_DEPLOY_SERVICE_ACCOUNT}" \
   --project="${GCP_PROJECT_ID}" \
   --format=json > "${policy_json}"
 
-python3 - "${provider_json}" "${policy_json}" "${actual_project_number}" "${pool_id}" "${CORVIS_ENVIRONMENT}" "${EXPECTED_REPOSITORY}" <<'PY'
+python3 - "${provider_json}" "${policy_json}" "${actual_project_number}" "${pool_id}" "${CORVIS_ENVIRONMENT}" "${EXPECTED_REPOSITORY}" "${EXPECTED_REF}" <<'PY'
 import json
 import sys
 
-provider_path, policy_path, project_number, pool_id, environment, repository = sys.argv[1:]
+provider_path, policy_path, project_number, pool_id, environment, repository, expected_ref = sys.argv[1:]
 with open(provider_path, encoding="utf-8") as handle:
     provider = json.load(handle)
 with open(policy_path, encoding="utf-8") as handle:
@@ -64,10 +65,11 @@ environment_scoped = (
     (f"environment:{environment}" in condition and "assertion.sub" in condition)
     or (environment in condition and "assertion.environment" in condition)
 )
-if not repo_scoped or not environment_scoped:
+main_ref_scoped = expected_ref in condition and "assertion.ref" in condition
+if not repo_scoped or not environment_scoped or not main_ref_scoped:
     raise SystemExit(
         "WIF provider attributeCondition must restrict GitHub OIDC to "
-        f"repository {repository!r} and environment {environment!r}."
+        f"repository {repository!r}, environment {environment!r}, and ref {expected_ref!r}."
     )
 
 role_members = []
@@ -99,7 +101,7 @@ if not scoped_member:
     )
 
 print(
-    "Verified WIF trust anchor: provider is project/repository/environment scoped and "
+    "Verified WIF trust anchor: provider is project/repository/environment/main-ref scoped and "
     "corvis-deploy impersonation is repository scoped."
 )
 PY

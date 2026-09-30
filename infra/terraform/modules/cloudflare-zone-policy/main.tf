@@ -25,6 +25,8 @@ locals {
 
   quoted_corvis_hostnames     = join(" ", [for hostname in local.corvis_hostnames : "\"${hostname}\""])
   corvis_host_expression      = "(http.host in {${local.quoted_corvis_hostnames}})"
+  admin_host_expression       = "(http.host in {\"${local.prod_admin_hostname}\" \"${local.uat_admin_hostname}\"})"
+  admin_allowed_cidrs         = [for cidr in var.admin_allowed_cidrs : trimspace(cidr)]
   api_requests_per_10_seconds = max(1, ceil(var.api_requests_per_minute / 6))
 }
 
@@ -41,6 +43,14 @@ resource "cloudflare_zone_setting" "tls_1_3" {
   zone_id    = var.zone_id
   setting_id = "tls_1_3"
   value      = "on"
+}
+
+# TLS 1.0/1.1 are deprecated (RFC 8996); refuse them at the edge for every
+# hostname in the zone, consistent with the strict zone-wide posture here (#235).
+resource "cloudflare_zone_setting" "min_tls_version" {
+  zone_id    = var.zone_id
+  setting_id = "min_tls_version"
+  value      = var.min_tls_version
 }
 
 resource "cloudflare_zone_setting" "always_use_https" {
@@ -65,7 +75,7 @@ resource "cloudflare_ruleset" "custom_waf" {
   kind        = "zone"
   phase       = "http_request_firewall_custom"
 
-  rules = [
+  rules = concat([
     {
       ref         = "block_corvis_non_standard_ports"
       description = "Block non-standard public HTTP(S) ports on Corvis application hostnames"
@@ -78,13 +88,24 @@ resource "cloudflare_ruleset" "custom_waf" {
       expression  = "(${local.corvis_host_expression} and http.request.method in {\"TRACE\" \"CONNECT\"})"
       action      = "block"
     },
+    # The admin consoles are operator-only. When admin_allowed_cidrs is set,
+    # requests to either admin hostname from any other address are blocked at
+    # the edge before they reach application authentication (#235).
+    ], [
+    for allowlist in(length(local.admin_allowed_cidrs) == 0 ? [] : [join(" ", local.admin_allowed_cidrs)]) : {
+      ref         = "block_corvis_admin_outside_allowlist"
+      description = "Block Corvis admin hostnames outside the operator IP allowlist"
+      expression  = "(${local.admin_host_expression} and not ip.src in {${allowlist}})"
+      action      = "block"
+    }
+    ], [
     {
       ref         = "security_acceptance_waf_probe"
       description = "Deterministic Corvis-host-only path probe proving custom-WAF execution"
       expression  = "(${local.corvis_host_expression} and http.request.uri.path eq \"/__corvis/security/waf-block\")"
       action      = "block"
     },
-  ]
+  ])
 }
 
 resource "cloudflare_ruleset" "managed_waf" {
@@ -123,6 +144,10 @@ resource "cloudflare_ruleset" "managed_waf" {
 # a Postgres-backed per-identity limit inside each environment, so the shared edge
 # counter is defense-in-depth rather than the tenant/environment authorization limit.
 # Pro exposes two rules plus Host matching, allowing independent prod/UAT edge counters.
+# Counting characteristics include cf.colo.id because Cloudflare requires it on
+# Free, Pro and Business plans (only Enterprise may count globally per IP), so a
+# client spread across data centers gets a budget per colo (#235). The per-identity
+# Postgres limit inside each environment is the bound that cannot be spread.
 resource "cloudflare_ruleset" "rate_limits" {
   zone_id     = var.zone_id
   name        = "Corvis shared API rate limits"

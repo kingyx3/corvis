@@ -71,6 +71,7 @@ jobs:
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
       TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
+      TF_VAR_control_loop_github_token_configured: ${{ vars.CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED || 'false' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
       TF_ROOT: infra/terraform/environments/${{ inputs.environment }}

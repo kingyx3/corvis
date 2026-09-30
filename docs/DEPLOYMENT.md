@@ -54,6 +54,8 @@ The current builder publishes into the selected environment registry. If UAT and
 
 The workflow itself must be dispatched from `main`.
 
+If a `prod` promotion of a new `release_sha` deploys but then **fails security acceptance**, the workflow automatically redeploys the last acceptance-approved release set (`rollback_known_good`, which skips migrations) and the run ends red with the rollback's outcome in its summary. A failed rollback is reported, never retried; follow `ops/RUNBOOK.md`. UAT failures are left deployed for diagnosis.
+
 The lower-level `terraform-deploy.yml` remains directly dispatchable for plans/diagnostics and `security-acceptance.yml` remains directly rerunnable for acceptance. Both are reusable workflows consumed by the governed promotion path.
 
 Runtime removal is never an accidental side effect of an empty release input; use `gcp-decommission.yml` for lifecycle changes.

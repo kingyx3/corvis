@@ -35,3 +35,9 @@ variable "decommission_mode" {
   type        = bool
   default     = false
 }
+
+variable "github_token_configured" {
+  description = "True once an operator has added an enabled version to the corvis-control-loop-github-token-<env> secret. Only then do the jobs receive GITHUB_TOKEN (a job referencing a secret with no version cannot start)."
+  type        = bool
+  default     = false
+}
