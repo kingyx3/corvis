@@ -51,6 +51,11 @@ class FakeWebhookDb implements PostgresSqlApi {
       this.signingKeys.push({ tenant_id: tenantId, webhook_id: webhookId, key_id: newKeyId, secret: newSecret, status: "active", retire_by: null });
       return [];
     }
+    if (sql.includes("select event_types from corvis_control.webhook_subscription")) {
+      const [tenantId, webhookId] = parameters as string[];
+      const row = this.subscriptions.find((s) => s.tenant_id === tenantId && s.webhook_id === webhookId && s.status === "paused");
+      return row ? [{ event_types: [...row.event_types] }] : [];
+    }
     if (sql.includes("select status from corvis_control.webhook_subscription")) {
       const [tenantId, webhookId] = parameters as string[];
       const row = this.subscriptions.find((s) => s.tenant_id === tenantId && s.webhook_id === webhookId);
@@ -147,6 +152,18 @@ test("pause/resume/revoke enforce valid transitions and revoke is terminal", asy
 
   await assert.rejects(() => resumeWebhookSubscription(identity(TENANT_A), created.webhookId, db), WebhookSubscriptionError, "revoked is terminal");
   await assert.rejects(() => pauseWebhookSubscription(identity(TENANT_A), created.webhookId, db), WebhookSubscriptionError);
+});
+
+test("a paused subscription with no event types cannot be resumed and reports a client error", async () => {
+  const db = new FakeWebhookDb();
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: ["SnapshotPublicationChanged"] }, db);
+  await pauseWebhookSubscription(identity(TENANT_A), created.webhookId, db);
+  db.subscriptions[0]!.event_types = [];
+  await assert.rejects(
+    () => resumeWebhookSubscription(identity(TENANT_A), created.webhookId, db),
+    (error: unknown) => error instanceof WebhookSubscriptionError && error.code === "event_types_required",
+  );
+  assert.equal(db.subscriptions[0]!.status, "paused");
 });
 
 test("rotateWebhookSigningKey retires the old key and activates exactly one new key; revoked subscriptions cannot rotate", async () => {

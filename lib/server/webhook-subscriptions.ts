@@ -162,6 +162,12 @@ export async function pauseWebhookSubscription(identity: RequestIdentity, webhoo
 }
 
 export async function resumeWebhookSubscription(identity: RequestIdentity, webhookId: string, db: PostgresSqlApi = controlDb()): Promise<WebhookSubscriptionRecord> {
+  assertWebhookId(webhookId);
+  // Migration 064 force-paused subscriptions that held no customer-facing event types, and its check
+  // constraint refuses to activate one. Report that as a client error instead of a database failure (500).
+  const existing = await db.query(`select event_types from corvis_control.webhook_subscription
+    where tenant_id=$1 and webhook_id=$2::uuid and status='paused' limit 1`, [identity.tenantId, webhookId]);
+  if (existing[0] && (!Array.isArray(existing[0].event_types) || existing[0].event_types.length === 0)) throw new WebhookSubscriptionError("event_types_required");
   return transitionStatus(identity, webhookId, ["paused"], "active", null, db);
 }
 
