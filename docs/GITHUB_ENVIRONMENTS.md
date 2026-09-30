@@ -8,7 +8,7 @@ Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow r
 
 | Name | Kind | Scope | Required | Read by | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `GCP_PROJECT_ID` | variable | `dev`, `uat`, `prod` | yes | build-release, cloudflare-zone-policy, copy-release-to-prod, gcp-bootstrap, gcp-decommission, runtime-secrets, security-acceptance, terraform-deploy | Externally owned GCP project for the environment. |
+| `GCP_PROJECT_ID` | variable | `dev`, `uat`, `prod` | yes | build-release, cloudflare-zone-policy, copy-release-to-prod, gcp-bootstrap, gcp-cost-control, gcp-cost-hygiene, gcp-decommission, runtime-secrets, security-acceptance, terraform-deploy | Externally owned GCP project for the environment. |
 | `GCP_WIF_PROVIDER` | variable | `dev`, `uat`, `prod` | yes | same as `GCP_PROJECT_ID` | Environment-scoped GitHub Workload Identity Provider resource name. |
 | `CORVIS_AUTH_ISSUER` | variable | `uat`, `prod` (and `dev` with a runtime) | before a runtime deploy | terraform-deploy, gcp-decommission | Approved HTTPS OIDC issuer. |
 | `CORVIS_AUTH_AUDIENCE` | variable | as above | no (default `corvis`) | terraform-deploy, gcp-decommission | Approved OIDC audience/client identifier. |
@@ -16,6 +16,7 @@ Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow r
 | `CORVIS_CONTROL_TENANT_ID` | variable | `uat`, `prod` | for security acceptance | security-acceptance | Tenant used for retained sanitized control evidence. |
 | `CORVIS_POSTGRES_CA_CERT` | variable | `dev`, `uat`, `prod` | when the provider uses a private CA (Supabase) | terraform-deploy, security-acceptance | Public PEM CA bundle for verified Postgres TLS (not a secret; see RUNTIME_SECRETS.md). |
 | `GCP_BILLING_ACCOUNT_ID` | variable | `dev`, `uat`, `prod` | no | gcp-bootstrap, gcp-decommission, terraform-deploy | Attaches a monthly budget. |
+| `GCP_MONTHLY_BUDGET_USD` | variable | `dev`, `uat`, `prod` | no | gcp-bootstrap, terraform-deploy | Positive USD monthly budget amount. UAT defaults to `5` when unset; prod/dev retain their higher environment defaults. |
 | `MONITORING_NOTIFICATION_CHANNEL_IDS` | variable | `dev`, `uat`, `prod` | yes for a fresh `prod` runtime deploy | gcp-bootstrap, gcp-decommission, terraform-deploy | JSON array of Cloud Monitoring notification channel ids for every alert policy. |
 | `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` | variable | `uat`, `prod` | no (default `false`) | terraform-deploy | `true` once `corvis-control-loop-github-token-<env>` has an enabled version, so the control-loop jobs authenticate to GitHub. |
 | `CLOUDFLARE_ZONE_NAME` | variable | repository | once a domain exists | cloudflare-zone-policy, gcp-decommission, security-acceptance, terraform-deploy | Bare lowercase root zone shared by UAT and prod. |
@@ -51,7 +52,7 @@ Before promoting a production-like UAT/prod runtime, also configure:
 
 `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` (per environment, default `false`): set `true` after adding an enabled version to the Terraform-managed `corvis-control-loop-github-token-<env>` secret (a read-only, fine-grained token for this repository); only then do the control-loop jobs receive `GITHUB_TOKEN` instead of the 60-requests-per-hour anonymous GitHub API budget.
 
-Optional cost/alert inputs are `GCP_BILLING_ACCOUNT_ID` and `MONITORING_NOTIFICATION_CHANNEL_IDS` (a JSON array of Cloud Monitoring notification channel ids). `MONITORING_NOTIFICATION_CHANNEL_IDS` is optional for `dev` and `uat` but required for a fresh `prod` runtime deploy (a `rollback_known_good` apply is exempt so an incident rollback is never blocked): `terraform-deploy.yml` fails an apply that deploys an API image to `prod` while it is empty, `[]` or not a JSON array of non-empty strings.
+Cost/alert inputs are `GCP_BILLING_ACCOUNT_ID`, `GCP_MONTHLY_BUDGET_USD`, and `MONITORING_NOTIFICATION_CHANNEL_IDS`. For the UAT GitHub Environment set `GCP_MONTHLY_BUDGET_USD=5`; code also defaults UAT to `5` so a missing variable does not accidentally raise the guardrail. The project-wide budget sends alerts at 50%, 75%, 85%, and 100%; UAT programmatic notifications invoke the non-destructive cost guard at 85%. `MONITORING_NOTIFICATION_CHANNEL_IDS` is optional for `dev` and `uat` but required for a fresh `prod` runtime deploy (a `rollback_known_good` apply is exempt so an incident rollback is never blocked).
 
 ## Single shared Cloudflare domain
 
@@ -128,7 +129,7 @@ Runtime secret values belong in GCP Secret Manager or the relevant provider-mana
 
 1. Create the billed GCP project.
 2. Create `corvis-deploy` plus the repository/environment-scoped WIF provider and impersonation binding.
-3. Create GitHub Environments and configure `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`.
+3. Create GitHub Environments and configure `GCP_PROJECT_ID` + `GCP_WIF_PROVIDER`; set UAT `GCP_MONTHLY_BUDGET_USD=5` when environment-variable administration is available.
 4. Run **Bootstrap GCP foundation** plan then apply from `main`.
 5. Before runtime promotion, activate Postgres and the approved IdP contract.
 6. When a domain is selected, activate it as the single Cloudflare zone and set repository `CLOUDFLARE_ZONE_NAME`.
@@ -147,10 +148,13 @@ Steps 1-4 require no domain, Cloudflare, Postgres or IdP.
 - Every Terraform-touching workflow (deploy, bootstrap, decommission) uses the `terraform-<environment>` concurrency group with `cancel-in-progress: false`.
 - Bootstrap refuses to delete or replace existing resources; the `allow_destroy` input is honoured for `dev`/`uat` only, never `prod`.
 - Normal Terraform deploy never doubles as decommission; `gcp-decommission.yml` owns environment idle/full transitions.
+- UAT cost hibernation is non-destructive: it pauses Scheduler jobs and the processing queue, retains data/state/secrets/images, and is manually resumable through `gcp-cost-control.yml`.
+- Artifact Registry cleanup and `gcp-cost-hygiene.yml` prune low-value historical versions while preserving active and known-good rollback artifacts.
 
 ## Checklist
 
 - [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured for each environment.
+- [ ] UAT `GCP_MONTHLY_BUDGET_USD` is set to `5` (or intentionally overridden); the code fallback is also `5`.
 - [ ] `RELEASE_GOVERNANCE_TOKEN` is configured for each environment.
 - [ ] GCP foundation bootstrap succeeds before runtime activation.
 - [ ] production-like Postgres/IdP roots are configured before runtime promotion.
