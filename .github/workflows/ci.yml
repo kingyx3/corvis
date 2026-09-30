@@ -195,7 +195,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -rlE "Nordic Capital Fund V|corvis:demo:fail:" .next/static; then
+          # Every fixture string from adapters/demo/catalog.ts, plus the demo failure-injection marker.
+          node scripts/check-bundle-demo-free.ts .next/static
+          if grep -rl "corvis:demo:fail:" .next/static; then
             echo "::error::demo fixtures were bundled into a non-demo build (see files above)"
             exit 1
           fi
