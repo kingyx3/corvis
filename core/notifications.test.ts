@@ -70,9 +70,11 @@ test("every email links back to the app, and optional ones link to notification 
 });
 
 test("templates escape and bound untrusted names and never render figures they were not given", () => {
-  const email = renderEmail("export_ready", {}, { appUrl, workspaceName: "<script>alert(1)</script>\r\nBcc: x@evil.test" });
-  assert.doesNotMatch(email.html, /<script>/);
-  assert.match(email.html, /&lt;script&gt;/);
+  const email = renderEmail("export_ready", {}, { appUrl, workspaceName: "<SCRIPT>alert(1)</SCRIPT><img src=x onerror=alert(1)>\r\nBcc: x@evil.test" });
+  const body = email.html.slice(email.html.indexOf("<body"));
+  // Only the template's own tags may appear: no markup from the untrusted name survives, in any case.
+  assert.ok(!body.toLowerCase().includes("<script") && !body.toLowerCase().includes("<img"), "untrusted markup is escaped");
+  assert.ok(body.includes("&lt;SCRIPT&gt;") && body.includes("&lt;img src=x onerror=alert(1)&gt;"));
   assert.doesNotMatch(email.text, /\r|\nBcc/);
   assert.equal(safeInline("a\u0000b\nc", 3), "a b");
   const role = renderEmail("role_changed", { roleName: null }, { appUrl, workspaceName: "W" });
