@@ -82,7 +82,7 @@ jobs:
       # push-to-registry reads only `auths` from ~/.docker/config.json, and
       # BuildKit pushes use the same short-lived WIF access token.
       - name: Log in to Artifact Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.GCP_REGION }}-docker.pkg.dev
           username: oauth2accesstoken
