@@ -15,6 +15,8 @@ export type GcsObject = {
 type GcsOptions = {
   bucket?: string;
   accessToken?: string;
+  /** Overrides GCS_REQUEST_TIMEOUT_MS (tests). */
+  requestTimeoutMs?: number;
 };
 
 export type JsonWithGeneration<T> = { value: T; generation: string };
@@ -102,11 +104,13 @@ export class GcsControlClient implements UploadObjectStore {
   readonly bucket: string;
   private staticToken?: string;
   private cachedToken?: { value: string; expiresAt: number };
+  private readonly requestTimeoutMs: number;
 
   constructor(options: GcsOptions = {}) {
     const config = getServerConfig();
     this.bucket = options.bucket ?? config.objectStoreBucket ?? "";
     this.staticToken = options.accessToken ?? config.gcpAccessToken;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? GCS_REQUEST_TIMEOUT_MS;
     if (!this.bucket) throw new Error("GCS production adapter is not configured");
   }
 
@@ -132,7 +136,7 @@ export class GcsControlClient implements UploadObjectStore {
     const token = await this.accessToken();
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${token}`);
-    return fetch(url, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(GCS_REQUEST_TIMEOUT_MS) });
+    return fetch(url, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(this.requestTimeoutMs) });
   }
 
   private metadataUrl(key: string): string {
@@ -253,7 +257,14 @@ export class GcsControlClient implements UploadObjectStore {
 
   /** Streams an object's bytes instead of buffering them (export downloads, #231). */
   async getObjectStream(key: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string; contentLength?: string } | null> {
-    const response = await this.authorizedFetch(this.mediaUrl(key));
+    // An `AbortSignal.timeout` also aborts the response body, which would truncate any download that takes
+    // longer than the request timeout. Bound only the wait for response headers; the client's own
+    // disconnect (or the platform request limit) bounds the transfer.
+    const controller = new AbortController();
+    const headerTimer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let response: Response;
+    try { response = await this.authorizedFetch(this.mediaUrl(key), { signal: controller.signal }); }
+    finally { clearTimeout(headerTimer); }
     if (response.status === 404) { await response.body?.cancel().catch(() => undefined); return null; }
     if (!response.ok || !response.body) { await response.body?.cancel().catch(() => undefined); throw new Error(`GCS object read failed (${response.status})`); }
     return {
