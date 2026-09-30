@@ -49,9 +49,6 @@ resource "google_secret_manager_secret_iam_member" "cost_janitor_secret_versions
   member    = "serviceAccount:${google_service_account.cost_janitor.email}"
 }
 
-# A purpose-built role avoids broad Scheduler/Cloud Tasks administration. Resume
-# is included so the guarded GitHub recovery workflow can restore UAT through
-# this same identity; the runtime endpoint itself only invokes pause operations.
 resource "google_project_iam_custom_role" "cost_guard" {
   project     = var.project_id
   role_id     = "corvisCostGuard_${var.environment}"
@@ -74,8 +71,6 @@ resource "google_project_iam_member" "cost_guard_control" {
   member  = "serviceAccount:${google_service_account.cost_guard.email}"
 }
 
-# The deploy identity may impersonate only the two narrow maintenance identities
-# used by the guarded manual resume and scheduled hygiene workflows.
 resource "google_service_account_iam_member" "deployer_impersonates_cost_guard" {
   service_account_id = google_service_account.cost_guard.name
   role               = "roles/iam.serviceAccountTokenCreator"
@@ -116,12 +111,14 @@ resource "google_cloud_run_v2_service" "cost_guard" {
   project  = var.project_id
   name     = local.service_name
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  ingress          = "INGRESS_TRAFFIC_ALL"
+  custom_audiences = [local.audience]
 
   deletion_protection = var.environment == "prod" && !var.decommission_mode
 
   template {
-    service_account                 = google_service_account.cost_guard.email
+    service_account                  = google_service_account.cost_guard.email
     max_instance_request_concurrency = 4
 
     scaling {
