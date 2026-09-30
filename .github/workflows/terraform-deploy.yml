@@ -70,6 +70,7 @@ jobs:
       TF_VAR_postgres_ca_cert: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
+      TF_VAR_monthly_budget_amount_usd: ${{ vars.GCP_MONTHLY_BUDGET_USD || (inputs.environment == 'uat' && '5' || inputs.environment == 'prod' && '2000' || '500') }}
       TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
       TF_VAR_control_loop_github_token_configured: ${{ vars.CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED || 'false' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -106,6 +107,10 @@ jobs:
             echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
             exit 1
           fi
+          if [[ ! "${TF_VAR_monthly_budget_amount_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN { exit !(${TF_VAR_monthly_budget_amount_usd} > 0) }"; then
+            echo "GCP_MONTHLY_BUDGET_USD must be a positive numeric amount."
+            exit 1
+          fi
           if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
             echo "Choose either release_sha or rollback_known_good, not both."
             exit 1
@@ -136,11 +141,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Full history so the release commit can be compared with HEAD.
           fetch-depth: 0
 
-      # Migrations and Terraform run from this checkout while the image comes
-      # from release_sha, so db/ and infra/ must be identical between the two.
       - name: Assert release matches deployment checkout
         if: inputs.action == 'apply' && inputs.release_sha != ''
         shell: bash
@@ -151,8 +153,6 @@ jobs:
       - name: Verify effective release governance
         if: inputs.action == 'apply'
         env:
-          # Ruleset bypass_actors are only returned to callers with ruleset
-          # write access, which the workflow GITHUB_TOKEN can never hold.
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
           RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
         run: node .github/scripts/release-governance.mjs
@@ -240,6 +240,7 @@ jobs:
               echo "- Control-loop image: \`${control_loop_image}\`"
             fi
             echo "- Rollback source: \`${ROLLBACK_KNOWN_GOOD}\`"
+            echo "- Monthly budget: \`$${TF_VAR_monthly_budget_amount_usd}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Validate runtime activation
@@ -270,8 +271,6 @@ jobs:
             fi
           fi
 
-      # A known-good rollback is an incident response: it must never be blocked by
-      # missing alert channels, so the guard covers fresh releases only.
       - name: Require prod alerting channels
         if: inputs.action == 'apply' && inputs.environment == 'prod' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
         shell: bash
@@ -297,8 +296,6 @@ jobs:
         run: |
           set -euo pipefail
           terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
-          # Render the exact plan that apply will consume into the job summary,
-          # capped well below the 1 MiB step-summary limit.
           terraform -chdir="${TF_ROOT}" show -no-color tfplan > "${RUNNER_TEMP}/tfplan.txt"
           {
             echo "### Terraform plan (${{ inputs.environment }}, ${{ inputs.action }})"
@@ -311,11 +308,6 @@ jobs:
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      # The dev root is foundation-only (no Cloud Run runtime, no Postgres DSN
-      # secret), so runtime secret checks and migrations apply to uat/prod only.
-      # Migrations are forward-only: a known-good rollback redeploys an older
-      # image and must never migrate the database from the current checkout.
-      # They still run before apply for a fresh release_sha (the new image needs them).
       - name: Require enabled Postgres runtime secret
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
         shell: bash
@@ -363,11 +355,23 @@ jobs:
           name: postgres-migration-${{ inputs.environment }}-${{ github.run_id }}
           path: migration-evidence.json
           if-no-files-found: error
-          retention-days: 90
+          retention-days: ${{ inputs.environment == 'prod' && 90 || 30 }}
 
       - name: Terraform apply
         if: inputs.action == 'apply'
         run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Protect active release images from registry cleanup
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${API_IMAGE_NAME}"
+          gcloud artifacts docker tags add "${TF_VAR_api_image}" "${api_repo}:active-${{ inputs.environment }}" --project="${TF_VAR_project_id}" --quiet
+          if [[ -n "${TF_VAR_control_loop_image}" ]]; then
+            control_loop_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${CONTROL_LOOP_IMAGE_NAME}"
+            gcloud artifacts docker tags add "${TF_VAR_control_loop_image}" "${control_loop_repo}:active-${{ inputs.environment }}" --project="${TF_VAR_project_id}" --quiet
+          fi
 
       - name: Verify public health after apply
         if: inputs.action == 'apply' && env.TF_VAR_cloudflare_zone_name != '' && env.TF_VAR_api_image != ''
