@@ -121,7 +121,7 @@ resource "google_cloud_run_v2_service" "cost_guard" {
   deletion_protection = var.environment == "prod" && !var.decommission_mode
 
   template {
-    service_account = google_service_account.cost_guard.email
+    service_account                 = google_service_account.cost_guard.email
     max_instance_request_concurrency = 4
 
     scaling {
@@ -132,20 +132,52 @@ resource "google_cloud_run_v2_service" "cost_guard" {
     containers {
       image = var.api_image
 
-      ports { container_port = 3000 }
+      ports {
+        container_port = 3000
+      }
 
-      env { name = "NODE_ENV" value = "production" }
-      env { name = "CORVIS_ENVIRONMENT" value = var.environment }
-      env { name = "CORVIS_GCP_PROJECT_ID" value = var.project_id }
-      env { name = "CORVIS_GCP_REGION" value = var.region }
-      env { name = "CORVIS_BUDGET_DISPLAY_NAME" value = local.budget_display_name }
-      env { name = "CORVIS_BUDGET_GUARD_THRESHOLD" value = tostring(var.guard_threshold) }
-      env { name = "CORVIS_BUDGET_GUARD_AUDIENCE" value = local.audience }
-      env { name = "CORVIS_BUDGET_GUARD_SERVICE_ACCOUNT" value = google_service_account.cost_guard.email }
-      env { name = "CORVIS_MONTHLY_BUDGET_USD" value = tostring(var.monthly_budget_amount_usd) }
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "CORVIS_ENVIRONMENT"
+        value = var.environment
+      }
+      env {
+        name  = "CORVIS_GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "CORVIS_GCP_REGION"
+        value = var.region
+      }
+      env {
+        name  = "CORVIS_BUDGET_DISPLAY_NAME"
+        value = local.budget_display_name
+      }
+      env {
+        name  = "CORVIS_BUDGET_GUARD_THRESHOLD"
+        value = tostring(var.guard_threshold)
+      }
+      env {
+        name  = "CORVIS_BUDGET_GUARD_AUDIENCE"
+        value = local.audience
+      }
+      env {
+        name  = "CORVIS_BUDGET_GUARD_SERVICE_ACCOUNT"
+        value = google_service_account.cost_guard.email
+      }
+      env {
+        name  = "CORVIS_MONTHLY_BUDGET_USD"
+        value = tostring(var.monthly_budget_amount_usd)
+      }
 
       resources {
-        limits = { cpu = "1", memory = "512Mi" }
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
       }
     }
   }
@@ -157,11 +189,15 @@ resource "google_cloud_run_v2_service" "cost_guard" {
     }
   }
 
-  depends_on = [terraform_data.image_guard, google_project_iam_member.cost_guard_control]
+  depends_on = [
+    terraform_data.image_guard,
+    google_project_iam_member.cost_guard_control,
+  ]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "cost_guard_invoker" {
   count = local.runtime_enabled ? 1 : 0
+
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.cost_guard[0].name
@@ -171,22 +207,34 @@ resource "google_cloud_run_v2_service_iam_member" "cost_guard_invoker" {
 
 resource "google_pubsub_subscription" "budget_guard" {
   count = local.runtime_enabled ? 1 : 0
+
   project = var.project_id
   name    = "corvis-budget-guard-${var.environment}"
   topic   = var.budget_pubsub_topic
+
   ack_deadline_seconds       = 60
   message_retention_duration = "86400s"
 
   push_config {
     push_endpoint = "${google_cloud_run_v2_service.cost_guard[0].uri}/api/internal/budget-guard"
+
     oidc_token {
       service_account_email = google_service_account.cost_guard.email
       audience              = local.audience
     }
   }
 
-  retry_policy { minimum_backoff = "10s" maximum_backoff = "600s" }
-  expiration_policy { ttl = "" }
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
 
-  depends_on = [google_cloud_run_v2_service_iam_member.cost_guard_invoker, google_service_account_iam_member.pubsub_token_creator]
+  expiration_policy {
+    ttl = ""
+  }
+
+  depends_on = [
+    google_cloud_run_v2_service_iam_member.cost_guard_invoker,
+    google_service_account_iam_member.pubsub_token_creator,
+  ]
 }
