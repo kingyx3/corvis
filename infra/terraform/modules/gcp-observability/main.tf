@@ -14,6 +14,7 @@ locals {
   dlq_monitoring_enabled   = trimspace(var.dead_letter_subscription_name) != ""
   queue_monitoring_enabled = trimspace(var.processing_queue_name) != ""
   budget_enabled           = trimspace(var.billing_account_id) != ""
+  uptime_enabled           = trimspace(var.uptime_check_host) != ""
 }
 
 # ops/slos.yaml: "api_5xx_rate > 0.02 for 10m", severity SEV2.
@@ -253,5 +254,74 @@ resource "google_billing_budget" "monthly" {
   all_updates_rule {
     monitoring_notification_channels = var.notification_channel_ids
     disable_default_iam_recipients   = false
+  }
+}
+
+# ops/slos.yaml web_api availability 99.9%: an external probe of the public API
+# path (Cloudflare -> API Gateway -> Cloud Run) that also requires configuration
+# and Postgres to be healthy (/api/v1/health/ready), from several regions (#235).
+resource "google_monitoring_uptime_check_config" "api_ready" {
+  count = local.uptime_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-api-ready"
+  timeout      = "10s"
+  period       = "60s"
+
+  http_check {
+    path         = "/api/v1/health/ready"
+    port         = 443
+    use_ssl      = true
+    validate_ssl = true
+
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = trimspace(var.uptime_check_host)
+    }
+  }
+}
+
+resource "google_monitoring_alert_policy" "api_uptime" {
+  count = local.uptime_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-api-uptime"
+  combiner     = "OR"
+  severity     = "CRITICAL"
+
+  conditions {
+    display_name = "Public API readiness failing from multiple regions for 5m"
+
+    condition_threshold {
+      filter          = "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"${google_monitoring_uptime_check_config.api_ready[0].uptime_check_id}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 1
+      duration        = "300s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_NEXT_OLDER"
+        cross_series_reducer = "REDUCE_COUNT_FALSE"
+        group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "The public API readiness probe (https://${trimspace(var.uptime_check_host)}/api/v1/health/ready) is failing from more than one checker region. Check Cloudflare, API Gateway, Cloud Run revisions and Postgres (ops/RUNBOOK.md)."
+    mime_type = "text/markdown"
   }
 }

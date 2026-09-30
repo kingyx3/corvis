@@ -31,7 +31,8 @@ test("shared Cloudflare zone policy has one Terraform owner and environment root
   assert.match(sharedRoot, /module "zone_policy"/);
   assert.match(sharedRoot, /source\s*=\s*"\.\.\/\.\.\/modules\/cloudflare-zone-policy"/);
   assert.equal((sharedPolicy.match(/resource "cloudflare_ruleset"/g) ?? []).length, 4);
-  assert.equal((sharedPolicy.match(/resource "cloudflare_zone_setting"/g) ?? []).length, 4);
+  assert.equal((sharedPolicy.match(/resource "cloudflare_zone_setting"/g) ?? []).length, 5);
+  assert.match(sharedPolicy, /setting_id = "min_tls_version"/);
 
   assert.doesNotMatch(uat, /enable_managed_waf\s*=/);
   assert.doesNotMatch(prod, /enable_managed_waf\s*=/);
@@ -67,7 +68,12 @@ test("Cloudflare shared policy scopes application behavior and preserves Free or
   const rateLimits = ruleset(policy, "rate_limits", "cache");
   const cache = ruleset(policy, "cache");
 
-  assert.equal((customWaf.match(/\bref\s*=/g) ?? []).length, 3);
+  // Three fixed rules plus the admin allowlist rule, which exists only when operator CIDRs are configured.
+  assert.equal((customWaf.match(/\bref\s*=/g) ?? []).length, 4);
+  assert.match(customWaf, /block_corvis_admin_outside_allowlist/);
+  assert.match(customWaf, /length\(local\.admin_allowed_cidrs\) == 0 \? \[\]/);
+  assert.match(variables, /variable "admin_allowed_cidrs"[\s\S]*?default\s*=\s*\[\]/);
+  assert.match(variables, /variable "min_tls_version"[\s\S]*?default\s*=\s*"1\.2"/);
   assert.match(customWaf, /local\.corvis_host_expression/);
   assert.match(managedWaf, /expression\s*=\s*local\.corvis_host_expression/);
   assert.match(cache, /expression\s*=\s*local\.corvis_host_expression/);

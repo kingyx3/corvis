@@ -7,6 +7,7 @@ GitHub is the deployment control plane; GCP Secret Manager is the runtime secret
 Terraform owns the Secret Manager container and workload IAM bindings needed by the baseline runtime:
 
 - `corvis-postgres-dsn-${environment}` — authoritative Supabase/Postgres runtime DSN.
+- `corvis-control-loop-github-token-${environment}` (UAT/prod) — optional read-only GitHub token for the control-loop jobs. Terraform creates the empty container and grants the control-loop identity read access; the jobs reference it only after `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED=true` (a job referencing a secret with no version cannot start).
 
 Cloud Run consumes the latest enabled version through its service identity. The DSN value is not a Terraform input.
 

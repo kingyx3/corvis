@@ -37,3 +37,25 @@ variable "enable_managed_waf" {
   type        = bool
   default     = false
 }
+
+variable "min_tls_version" {
+  description = "Minimum TLS version the edge accepts for every hostname in the zone."
+  type        = string
+  default     = "1.2"
+
+  validation {
+    condition     = contains(["1.2", "1.3"], var.min_tls_version)
+    error_message = "min_tls_version must be 1.2 or 1.3."
+  }
+}
+
+variable "admin_allowed_cidrs" {
+  description = "Operator source CIDRs allowed to reach the prod and UAT admin hostnames. Empty leaves the admin hosts reachable from anywhere (application authentication still applies)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.admin_allowed_cidrs : can(cidrhost(trimspace(cidr), 0))])
+    error_message = "admin_allowed_cidrs must contain only valid IPv4 or IPv6 CIDR blocks."
+  }
+}

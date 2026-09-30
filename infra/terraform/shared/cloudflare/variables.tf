@@ -21,3 +21,9 @@ variable "enable_cloudflare_managed_waf" {
   type        = bool
   default     = false
 }
+
+variable "admin_allowed_cidrs" {
+  description = "Operator CIDRs allowed to reach the admin hostnames (GitHub variable CLOUDFLARE_ADMIN_ALLOWED_CIDRS, a JSON list). Empty disables the edge allowlist."
+  type        = list(string)
+  default     = []
+}

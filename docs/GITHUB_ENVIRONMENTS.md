@@ -21,6 +21,8 @@ Before promoting a production-like UAT/prod runtime, also configure:
 
 `CORVIS_AUTH_JWKS_URL` is optional; standards-based OIDC discovery is preferred.
 
+`CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` (per environment, default `false`): set `true` after adding an enabled version to the Terraform-managed `corvis-control-loop-github-token-<env>` secret (a read-only, fine-grained token for this repository); only then do the control-loop jobs receive `GITHUB_TOKEN` instead of the 60-requests-per-hour anonymous GitHub API budget.
+
 Optional cost/alert inputs are `GCP_BILLING_ACCOUNT_ID` and `MONITORING_NOTIFICATION_CHANNEL_IDS` (a JSON array of Cloud Monitoring notification channel ids). `MONITORING_NOTIFICATION_CHANNEL_IDS` is optional for `dev` and `uat` but required for a fresh `prod` runtime deploy (a `rollback_known_good` apply is exempt so an incident rollback is never blocked): `terraform-deploy.yml` fails an apply that deploys an API image to `prod` while it is empty, `[]` or not a JSON array of non-empty strings.
 
 ## Single shared Cloudflare domain
@@ -30,7 +32,8 @@ UAT and production use one configurable root zone. Set these as repository-level
 | Variable | Purpose |
 | --- | --- |
 | `CLOUDFLARE_ZONE_NAME` | Bare lowercase root zone, such as `example.com`; leave unset until a domain is acquired. |
-| `CLOUDFLARE_MANAGED_WAF_ENABLED` | Defaults to `false`; set `true` only when the selected Cloudflare plan supports the Pro+ managed-WAF/host-scoped rate-limit path. |
+| `CLOUDFLARE_MANAGED_WAF_ENABLED` | **Required** for the shared zone policy workflow: `true` when the zone's plan supports the Pro+ managed-WAF/host-scoped rate-limit path, `false` on Free. There is no silent default; `false` is reported as a warning on every run. |
+| `CLOUDFLARE_ADMIN_ALLOWED_CIDRS` | Optional JSON array of operator CIDRs (for example `["203.0.113.0/24"]`). When set, the edge blocks the prod and UAT admin hostnames for every other source address; empty (the default) is reported as a warning. |
 
 Derived hostnames are:
 
