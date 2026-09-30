@@ -324,6 +324,9 @@ export class GcsControlClient implements UploadObjectStore {
 }
 
 let singleton: GcsControlClient | undefined;
+/** Test-only: drop the shared client so the next `gcs()` reads configuration again. */
+export function resetGcsClient(): void { singleton = undefined; }
+
 export function gcs(): GcsControlClient {
   if (!singleton) singleton = new GcsControlClient();
   return singleton;

@@ -602,6 +602,38 @@ test("download grants are issued to the owner only, hashed at rest, and redeemed
   assert.equal(queries.length, 0, "HEAD must not touch the grant");
 });
 
+test("a download whose object cannot be read gives the single-use grant back, so the caller can retry it", async () => {
+  const download = await load("exports/[exportId]/download/route.ts");
+  const ctx = paramsFor("exports/[exportId]/route.ts");
+  const previous = { bucket: process.env.CORVIS_OBJECT_STORE_BUCKET, token: process.env.CORVIS_GCP_ACCESS_TOKEN, fetch: globalThis.fetch };
+  process.env.CORVIS_OBJECT_STORE_BUCKET = "test-bucket";
+  process.env.CORVIS_GCP_ACCESS_TOKEN = "test-token";
+  const dbFetch = globalThis.fetch;
+  let storageStatus = 503;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith("https://storage.googleapis.com/")) return new Response("unavailable", { status: storageStatus });
+    return dbFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const row = { object_uri: "gs://test-bucket/exports/t/e/attempt-1/observations.csv", format: "csv", checksum_sha256: "a".repeat(64), snapshot_ids: [], manifest: { snapshotIds: [], artifact: { fundIds: [], documentIds: [] } } };
+    for (const status of [503, 404]) {
+      storageStatus = status;
+      seedDatabase((query) => (query.sql.startsWith("update corvis_serving.export_download_grant") && query.sql.includes("consumed_at=now()") ? [row] : []));
+      const response = await download.GET!(requestFor(`/exports/${SOME_UUID}/download?grant=${"g".repeat(40)}`, { roles: ["analyst"], subject: "owner", redistribution: true }), ctx);
+      assert.equal(response.status, status === 404 ? 404 : 500, `storage ${status}`);
+      const restore = queries.find((query) => query.sql.includes("set consumed_at=null"));
+      assert.ok(restore, `the grant is restored when storage answers ${status}`);
+      assert.equal(restore.parameters[2], "owner");
+    }
+  } finally {
+    (await import("@/lib/server/gcs")).resetGcsClient();
+    globalThis.fetch = previous.fetch;
+    if (previous.bucket === undefined) delete process.env.CORVIS_OBJECT_STORE_BUCKET; else process.env.CORVIS_OBJECT_STORE_BUCKET = previous.bucket;
+    if (previous.token === undefined) delete process.env.CORVIS_GCP_ACCESS_TOKEN; else process.env.CORVIS_GCP_ACCESS_TOKEN = previous.token;
+  }
+});
+
 // ------------------------------------------------------------------ internal routes
 test("internal/delivery rejects unauthenticated, wrongly-authenticated and shared-secret-less callers with 403", async () => {
   const handlers = await load("../internal/delivery/route.ts").catch(async () => await import("@/app/api/internal/delivery/route") as Record<string, Handler>);
