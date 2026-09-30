@@ -130,12 +130,12 @@ export function sumDecimalStrings(values: Array<string | null | undefined>): str
     parsed.push({ negative: match[1] === "-", digits: `${match[2]}${match[3] ?? ""}`, scale: (match[3] ?? "").length });
   }
   const scale = Math.max(0, ...parsed.map((entry) => entry.scale));
-  let sum = 0n;
+  let sum = BigInt(0);
   for (const entry of parsed) {
-    const scaled = BigInt(entry.digits) * 10n ** BigInt(scale - entry.scale);
+    const scaled = BigInt(entry.digits) * BigInt(`1${"0".repeat(scale - entry.scale)}`);
     sum += entry.negative ? -scaled : scaled;
   }
-  const negative = sum < 0n;
+  const negative = sum < BigInt(0);
   const digits = (negative ? -sum : sum).toString().padStart(scale + 1, "0");
   const whole = digits.slice(0, digits.length - scale);
   const fraction = digits.slice(digits.length - scale).replace(/0+$/, "");

@@ -62,8 +62,8 @@ test("Parquet stores a value beyond double precision as the exact 16-byte unscal
   const parquet = renderParquet([{ ...row, value_number: big }]);
   const unscaled = decimalToUnscaled(big)!;
   const twosComplement = Buffer.alloc(16);
-  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) >> 64n, 0);
-  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) & 0xffff_ffff_ffff_ffffn, 8);
+  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) >> BigInt(64), 0);
+  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) & BigInt("0xffffffffffffffff"), 8);
   assert.ok(Buffer.from(parquet).includes(twosComplement), "the file must contain the exact big-endian decimal, not a rounded double");
 });
 
