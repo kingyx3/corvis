@@ -69,6 +69,12 @@ variable "upload_allowed_origins" {
   default     = []
 }
 
+variable "public_app_url" {
+  description = "Public https origin of the customer app, used only to build links in notification emails. Empty disables email links (emails are then suppressed, never sent without a link)."
+  type        = string
+  default     = ""
+}
+
 variable "browser_allowed_origins" {
   description = "Public customer/admin browser origins allowed to issue state-changing API requests (CSRF Origin allow-list)."
   type        = list(string)

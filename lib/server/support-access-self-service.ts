@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import type { PostgresSqlApi } from "./postgres.ts";
 import { SUPPORT_ACK_THRESHOLD_HOURS } from "./tenant-admin-self-service.ts";
+import { bestEffortNotification, enqueueForRoleAudience, supportAccessAudienceRoles } from "./notifications.ts";
 
 export type SupportAccessGrantCommand = {
   supportGrantId: string | null;
@@ -39,6 +40,9 @@ async function notify(db:PostgresSqlApi,tenantId:string,supportGrantId:string,ki
   const message=`Corvis support access for ${command.subject} (${command.roleName}) — ${command.purpose}. Starts ${command.validFrom}; expires ${command.validUntil}.`;
   await db.execute(`insert into corvis_control.tenant_access_notification(tenant_id,kind,support_grant_id,title,message)
     values($1::uuid,$2,$3::uuid,$4,$5) on conflict (tenant_id,support_grant_id,kind) do nothing`,[tenantId,kind,supportGrantId,title,message]);
+  // The same notice by email to every Organization Admin (mandatory; carries no purpose or subject detail).
+  const status=kind==="support_access_pending_ack"?"pending_ack":"active";
+  await bestEffortNotification(db,`support_access:${supportGrantId}`,()=>enqueueForRoleAudience(db,{tenantId,workspaceId:null,roles:supportAccessAudienceRoles(),category:"support_access",params:{status},dedupeBase:`support_access:${supportGrantId}:${status}`}),{inTransaction:true});
 }
 
 export async function grantSupportAccess(identity:RequestIdentity,command:SupportAccessGrantCommand,correlationId:string,db:PostgresSqlApi):Promise<{operation:"grant";supportGrantId:string;status:"active"|"pending_ack";requiresTenantAck:boolean}> {

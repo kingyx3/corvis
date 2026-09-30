@@ -110,6 +110,8 @@ export type TenantInvitationCreated = {
   invitation: TenantInvitation;
   /** One-time bearer secret. The API never returns it from list/read operations. */
   token: string;
+  /** Whether Corvis emailed the invitation itself (#258). The link above stays the manual fallback either way. */
+  emailDelivery?: "sent" | "not_configured" | "failed";
 };
 
 export type AcceptedTenantInvitation = {

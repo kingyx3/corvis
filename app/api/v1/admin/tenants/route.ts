@@ -10,6 +10,7 @@ import {
   PostgresTenantProvisioningRepository,
 } from "@/lib/server/tenant-provisioning";
 import { createTenantInvitation } from "@/lib/server/tenant-invitations";
+import { deliverInvitationEmail } from "@/lib/server/notifications";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
@@ -36,7 +37,8 @@ export async function POST(request: Request) {
       }, id, tx);
       return { ...provisioned, initialAdminInvitation: invitation };
     });
-    return json({ data, correlationId: id }, { status: 201 });
+    const emailDelivery = await deliverInvitationEmail(data.initialAdminInvitation.invitation, data.initialAdminInvitation.token, { db });
+    return json({ data: { ...data, initialAdminInvitation: { ...data.initialAdminInvitation, emailDelivery } }, correlationId: id }, { status: 201 });
   } catch (error) {
     return apiError(error, id);
   }

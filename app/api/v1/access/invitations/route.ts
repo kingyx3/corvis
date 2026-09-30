@@ -4,6 +4,7 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { createTenantInvitation, listTenantInvitations, normalizeTenantInvitation, TenantInvitationError } from "@/lib/server/tenant-invitations";
 import { postgres, withTransaction } from "@/lib/server/postgres";
+import { deliverInvitationEmail } from "@/lib/server/notifications";
 import { getServerConfig } from "@/lib/server/config";
 
 export async function GET(request: Request) {
@@ -27,7 +28,9 @@ export async function POST(request: Request) {
     const command = normalizeTenantInvitation({ ...body, tenantId: identity.tenantId });
     if (!command) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const db = postgres(getServerConfig().postgresDsn);
-    const data = await withTransaction(db, (tx) => createTenantInvitation(identity, command, id, tx));
+    const created = await withTransaction(db, (tx) => createTenantInvitation(identity, command, id, tx));
+    // Sent only after the invitation committed; the one-time link is still returned for the manual fallback.
+    const data = { ...created, emailDelivery: await deliverInvitationEmail(created.invitation, created.token, { db }) };
     return json({ data, correlationId: id }, { status: 201 });
   } catch (error) {
     if (error instanceof TenantInvitationError) return json({ error: error.code, correlationId: id }, { status: error.status });

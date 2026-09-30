@@ -2,6 +2,7 @@
 // connectors (#31); `runConnectionSync` has no scheduler caller yet (see docs/SOURCE_CONNECTORS.md).
 import { createHash, randomUUID } from "crypto";
 import { getServerConfig } from "./config.ts";
+import { bestEffortNotification, enqueueForRoleAudience, sourceAttentionAudienceRoles } from "./notifications.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import {
   acquisitionKey,
@@ -238,6 +239,13 @@ export async function runConnectionSync(
         consecutive_failures=$3, last_error_class=$4, last_attempt_at=now(), status=$5, updated_at=now()
       where tenant_id=$1 and source_connection_id=$2::uuid`,
     [tenantId, sourceConnectionId, nextConsecutiveFailures, errorClass, nextStatus]);
+    if (nextStatus === "reauthorization_required" || nextStatus === "suspended") {
+      // The connection just stopped collecting: tell the workspace's admins (their preference applies).
+      await bestEffortNotification(db, `source_attention:${runId}`, () => enqueueForRoleAudience(db, {
+        tenantId, workspaceId: connection.workspaceId, roles: sourceAttentionAudienceRoles(), category: "source_attention",
+        params: { status: nextStatus }, dedupeBase: `source_attention:${runId}`,
+      }));
+    }
 
     return { runId, state, discoveredCount: counts.discovered, acceptedCount: counts.accepted, duplicateCount: counts.duplicate, rejectedCount: counts.rejected, errorClass, errorSummary: message };
   }
