@@ -20,7 +20,9 @@ The stable error codes today include `authentication_required` (401),
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
 `FeatureFlagGovernanceError`/`DeletionExecutionError`/`WebhookSubscriptionError`
 code, etc.), `invalid_cursor` (400), `invalid_json` (400, malformed request
-body), `invalid_idempotency_key` (400), `idempotency_key_reused` (422), `rate_limited`
+body), `invalid_idempotency_key` (400), `idempotency_key_reused` (422 from `apiError()` for request-level `Idempotency-Key` reuse; the dead-letter recovery and
+candidate-review routes return 409 instead, because there the key names an already-recorded command on a specific resource and
+reuse with different content is a state conflict), `rate_limited`
 (429 with `Retry-After`), the research-specific timeout/cancel/provider
 codes, and `internal_error` (500) as the fallback. `openapi/corvis-v1.yaml`
 declares 401, 403, 429 and 500 once as shared components and references them from
