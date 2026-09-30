@@ -1,10 +1,15 @@
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { captureVerifiedRecipient } from "@/lib/server/notifications";
+import { logEvent } from "@/lib/server/telemetry";
 
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
+    // The app calls /me on every load, so this keeps the notification address in
+    // step with the verified identity claim. Best effort: never fails the request.
+    await captureVerifiedRecipient(identity).catch((error: unknown) => logEvent("warn", "notifications.recipient_capture_failed", { correlationId: id, tenantId: identity.tenantId }, { errorName: error instanceof Error ? error.name : typeof error }));
     return json({
       data: {
         subject: identity.subject,

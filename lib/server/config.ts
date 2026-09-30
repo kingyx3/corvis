@@ -39,6 +39,12 @@ export type ServerConfig = {
   // Unset by default: cross-tenant tenant creation is disabled until an
   // operator deliberately designates their internal operations tenant.
   operationsTenantId?: string;
+  // Email notifications (#258). Delivery stays off until a reviewed provider
+  // adapter is selected here; preferences and the outbox work regardless.
+  emailProvider?: string;
+  emailFromAddress?: string;
+  // Public origin of the customer app, used only to build links in emails.
+  publicAppUrl?: string;
 };
 
 function truthy(value?: string) { return value === "1" || value === "true"; }
@@ -49,6 +55,16 @@ function positiveInteger(value?: string): number | undefined {
 }
 function csv(value?: string): string[] {
   return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+/** Accepts only an https origin (or http://localhost for development); anything else is treated as unset. */
+function publicOrigin(value?: string): string | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "localhost")) return undefined;
+    return url.origin;
+  } catch { return undefined; }
 }
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -83,6 +99,9 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     exportArtifactTtlSeconds,
     workerSecret: env.CORVIS_WORKER_SECRET,
     operationsTenantId: env.CORVIS_OPERATIONS_TENANT_ID,
+    emailProvider: (env.CORVIS_EMAIL_PROVIDER ?? "disabled").trim().toLowerCase() || "disabled",
+    emailFromAddress: env.CORVIS_EMAIL_FROM?.trim() || undefined,
+    publicAppUrl: publicOrigin(env.CORVIS_PUBLIC_APP_URL),
   };
 
   if (config.gcsChunkSizeBytes % (256 * 1024) !== 0) {

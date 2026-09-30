@@ -6,6 +6,7 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { MAX_VERSION } from "@/lib/server/request-validation";
 import { logEvent } from "@/lib/server/telemetry";
+import { bestEffortNotification, enqueuePinnedFundPublished } from "@/lib/server/notifications";
 
 export async function POST(request: Request) {
   const id = correlationId(request);
@@ -23,7 +24,14 @@ export async function POST(request: Request) {
       return json({ error: "invalid_snapshot_command", correlationId: id }, { status: 400 });
     }
     const data = await runAuditedMutation({
-      mutate: (db) => db ? new PostgresProductionPlatform(db).publish(identity, command) : platform().publish(identity, command),
+      mutate: async (db) => {
+        if (!db) return platform().publish(identity, command);
+        const published = await new PostgresProductionPlatform(db).publish(identity, command);
+        if (command.action === "publish") {
+          await bestEffortNotification(db, `pinned_fund_published:${command.snapshotId}`, () => enqueuePinnedFundPublished(db, { tenantId: identity.tenantId, snapshotId: command.snapshotId }), { inTransaction: true });
+        }
+        return published;
+      },
       audit: () => ({ id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId, actorSubject: identity.subject, sessionId: identity.sessionId, action: `snapshot.${command.action}`, targetType: "fund_period_snapshot", targetId: command.snapshotId, outcome: "success", correlationId: id }),
     });
     logEvent("info", "snapshot.publication_transition_succeeded", {

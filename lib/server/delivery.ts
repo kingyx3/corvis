@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { deleteExportAttemptArtifacts, deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import type { GcsControlClient } from "./gcs.ts";
+import { bestEffortNotification, enqueueExportReady } from "./notifications.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { errorClassOf, safeErrorText } from "./processing-error-text.ts";
 import { countMetric, durationValueMetric } from "./telemetry.ts";
@@ -139,6 +140,10 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         durationValueMetric("delivery.export",completedAt-startedAt,context,{format:String(row.format)});
       }
       countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
+      if(completed[0]) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
+        tenantId,exportId,workspaceId:row.workspace_id==null?null:String(row.workspace_id),
+        authMethod:String(row.auth_method??""),subject:String(row.requested_by??""),format:String(row.format),
+      }));
       // Objects written by earlier (failed or abandoned) attempts are no longer referenced.
       if(attempt>1&&completed[0]) await deleteExportAttemptArtifacts(row,Array.from({length:attempt-1},(_,i)=>i+1),objectStore).catch(()=>undefined);
       processed++;

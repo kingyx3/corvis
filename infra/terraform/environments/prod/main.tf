@@ -97,6 +97,7 @@ module "api_runtime" {
   auth_jwks_url                     = var.auth_jwks_url
   postgres_ca_cert                  = var.postgres_ca_cert
   upload_allowed_origins            = local.edge_enabled ? ["https://${local.customer_hostname}"] : []
+  public_app_url                    = local.edge_enabled ? "https://${local.customer_hostname}" : ""
   browser_allowed_origins           = local.edge_enabled ? ["https://${local.customer_hostname}", "https://${local.admin_hostname}"] : []
   decommission_mode                 = var.decommission_mode
 

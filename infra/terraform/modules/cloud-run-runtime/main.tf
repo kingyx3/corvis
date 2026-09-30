@@ -220,6 +220,10 @@ resource "google_cloud_run_v2_service" "worker" {
         value = join(",", var.upload_allowed_origins)
       }
       env {
+        name  = "CORVIS_PUBLIC_APP_URL"
+        value = var.public_app_url
+      }
+      env {
         name  = "CORVIS_GCP_PROJECT_ID"
         value = var.project_id
       }
@@ -475,6 +479,10 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "CORVIS_UPLOAD_ALLOWED_ORIGINS"
         value = join(",", var.upload_allowed_origins)
+      }
+      env {
+        name  = "CORVIS_PUBLIC_APP_URL"
+        value = var.public_app_url
       }
       env {
         # Public customer/admin origins accepted by the proxy CSRF boundary.
