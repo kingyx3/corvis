@@ -5,6 +5,7 @@ import { resolveRuntimeSurface, runtimeSurfaceAllows } from "./runtime-surface.t
 test("production runtime surface derives from the Cloud Run service name", () => {
   assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", serviceName: "corvis-api-uat" }), "api");
   assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", serviceName: "corvis-worker-prod" }), "worker");
+  assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", serviceName: "corvis-cost-guard-uat" }), "cost_guard");
   assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", serviceName: "corvis-admin-uat" }), "admin");
   assert.equal(resolveRuntimeSurface(undefined, { nodeEnv: "production", serviceName: "corvis-customer-prod" }), "customer");
 });
@@ -42,6 +43,16 @@ test("worker runtime exposes only internal endpoints plus health", () => {
   assert.equal(runtimeSurfaceAllows("worker", "/api/v1/health/ready"), true, "the worker's startup probe");
   assert.equal(runtimeSurfaceAllows("worker", "/api/v1/funds"), false);
   assert.equal(runtimeSurfaceAllows("worker", "/"), false);
+});
+
+test("cost guard runtime exposes only its budget endpoint plus health", () => {
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/internal/budget-guard"), true);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/v1/health"), true);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/v1/health/ready"), true);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/internal/delivery"), false);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/internal/processing-stage"), false);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/api/v1/funds"), false);
+  assert.equal(runtimeSurfaceAllows("cost_guard", "/"), false);
 });
 
 test("admin and customer presentation runtimes cannot serve API routes", () => {
