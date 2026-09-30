@@ -94,6 +94,7 @@ test("budget guard rejects malformed and non-USD notifications", async () => {
 
 test("budgetGuardConfig derives only the known low-cost UAT automation targets", () => {
   const actual = budgetGuardConfig({
+    NODE_ENV: "test",
     CORVIS_ENVIRONMENT: "uat",
     CORVIS_GCP_PROJECT_ID: "corvis-uat-123",
     CORVIS_GCP_REGION: "asia-southeast1",
