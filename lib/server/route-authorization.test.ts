@@ -573,6 +573,13 @@ test("download grants are issued to the owner only, hashed at rest, and redeemed
   assert.equal((await download.GET!(requestFor(`/exports/${SOME_UUID}/download`, { roles: ["analyst"], redistribution: true }), ctx)).status, 404);
   assert.equal((await download.GET!(requestFor(`/exports/${SOME_UUID}/download?grant=${"x".repeat(257)}`, { roles: ["analyst"], redistribution: true }), ctx)).status, 404);
   assert.equal(queries.length, 0);
+
+  // A HEAD probe must never redeem (and so burn) the single-use grant.
+  seedDatabase();
+  const head = await download.HEAD!(new Request(`https://corvis.test/api/v1/exports/${SOME_UUID}/download?grant=${token}`, { method: "HEAD" }), ctx);
+  assert.equal(head.status, 405);
+  assert.equal(head.headers.get("allow"), "GET");
+  assert.equal(queries.length, 0, "HEAD must not touch the grant");
 });
 
 // ------------------------------------------------------------------ internal routes
