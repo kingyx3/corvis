@@ -120,6 +120,11 @@ async function processArtifact(
   const seal = await sealArtifactIntegrity(store, db, { tenantId, artifactVersionId, documentId, objectKey, generation });
   if (seal.outcome === "integrity_failed") return "integrityFailed";
   if (seal.outcome === "blocked") return "pending";
+  // Already released by another path (the interactive poll, or a prior tick):
+  // release_clean_artifact is not safe to call again, since it unconditionally
+  // resets document.status to 'queued' regardless of how far the pipeline has
+  // since progressed.
+  if (seal.outcome === "released") return "released";
 
   const released = await db.query(`select corvis_source.release_clean_artifact($1::uuid,$2::uuid,$3::uuid,$4,$5) as job_id`,
     [tenantId, documentId, artifactVersionId, generation, String(row.ingestion_id)]);
