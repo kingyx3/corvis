@@ -61,6 +61,8 @@ class FlowParser {
       this.ws();
       if (this.src[this.pos] !== ":") this.fail("expected ':' in flow map");
       this.pos += 1;
+      // Standard YAML loaders reject a repeated key; silently keeping the last one hid a broken contract.
+      if (Object.hasOwn(result, String(key))) this.fail(`duplicate key ${String(key)} in flow map`);
       result[String(key)] = this.value();
       this.ws();
       if (this.src[this.pos] === ",") { this.pos += 1; continue; }
