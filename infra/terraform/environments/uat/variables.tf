@@ -57,8 +57,14 @@ variable "billing_account_id" {
 }
 
 variable "monthly_budget_amount_usd" {
-  type    = number
-  default = 500
+  description = "UAT monthly GCP budget in USD. GitHub Actions overrides this from GCP_MONTHLY_BUDGET_USD; the safe UAT fallback is $5."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.monthly_budget_amount_usd > 0
+    error_message = "monthly_budget_amount_usd must be greater than zero"
+  }
 }
 
 variable "decommission_mode" {
