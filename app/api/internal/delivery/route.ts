@@ -5,6 +5,7 @@ import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
+import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
 import { sweepUploadSessions } from "@/lib/server/upload-sweep";
@@ -40,6 +41,8 @@ export async function POST(request:Request){
       idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
       uploadRelease:()=>releaseScannedUploads(),
       uploadSweep:()=>sweepUploadSessions(),
+      emailDigests:()=>processEmailDigests(),
+      emailOutbox:()=>processEmailOutbox(),
     });
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.

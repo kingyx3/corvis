@@ -375,6 +375,8 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
+          # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/email-notifications.mjs
       - name: Exercise RLS tenant-isolation negatives as a non-owner role
         shell: bash
         run: |

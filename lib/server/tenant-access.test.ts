@@ -176,11 +176,16 @@ test("role change preserves expiry and unrelated workspace access, with one audi
   const db = new RoleDb();
   const result = await changeTenantMemberRole(identity, roleCommand, "role-test", db);
   assert.equal(result.roleName, "viewer");
-  assert.equal(db.committed.length, 3);
-  assert.ok(db.calls.every((call) => call.parameters[0] === TENANT));
+  const business = db.committed.filter((sql) => !/savepoint|email_outbox/.test(sql));
+  assert.equal(business.length, 3);
+  assert.ok(db.calls.filter((call) => !/savepoint/.test(call.sql)).every((call) => call.parameters[0] === TENANT));
   const insert = db.calls.find((call) => call.sql.includes("insert into corvis_control.membership"))!;
   assert.deepEqual(insert.parameters, [TENANT, TARGET_USER, WORKSPACE, "viewer", "2027-01-01T00:00:00Z"]);
-  assert.ok(db.committed.at(-1)?.includes("audit_event"));
+  assert.ok(business.at(-1)?.includes("audit_event"));
+  // The affected member's mandatory "your access changed" email commits with the change.
+  const email = db.calls.find((call) => call.sql.includes("insert into corvis_control.email_outbox"))!;
+  assert.deepEqual(email.parameters.slice(0, 4), [TENANT, "role_changed", TARGET_USER, WORKSPACE]);
+  assert.ok(db.committed.some((sql) => sql.includes("email_outbox")));
 });
 
 test("removing the last workspace role expires only that workspace's entitlements", async () => {

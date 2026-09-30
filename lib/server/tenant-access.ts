@@ -12,6 +12,7 @@ import {
   type HumanAuthMethod,
   type IdentityLifecycleRepository,
 } from "./identity-lifecycle.ts";
+import { bestEffortNotification, enqueueForUser } from "./notifications.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export class TenantAccessError extends Error {
@@ -241,6 +242,10 @@ export async function changeTenantMemberRole(
       (tenant_id,audit_event_id,workspace_id,actor_subject,action,target_type,target_id,outcome,correlation_id,metadata)
       values ($1::uuid,$2::uuid,$3::uuid,$4,'access.membership.change','membership',$5,'success',$6,$7::jsonb)`,
     [identity.tenantId, auditEventId, identity.workspaceId, identity.subject, command.userId, correlationId, JSON.stringify({ ...command, reason: command.reason.trim() })]);
+    await bestEffortNotification(tx, `role_changed:${auditEventId}`, () => enqueueForUser(tx, {
+      tenantId: identity.tenantId, userId: command.userId, category: "role_changed", workspaceId: command.workspaceId,
+      params: { roleName: command.roleName }, dedupeKey: `role_changed:${auditEventId}`,
+    }), { inTransaction: true });
     return { auditEventId, userId: command.userId, workspaceId: command.workspaceId, roleName: command.roleName };
   });
 }

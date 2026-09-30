@@ -47,6 +47,7 @@ When the same subject appears in both systems:
 - [`SERVICE_IDENTITY_HARDENING.md`](SERVICE_IDENTITY_HARDENING.md) — service identity authorization and lifecycle.
 - [`STAGE_WORKER_IDEMPOTENCY.md`](STAGE_WORKER_IDEMPOTENCY.md) — processing stage worker idempotency contract.
 - [`tenant-self-service.md`](tenant-self-service.md) — customer tenant self-service.
+- [`NOTIFICATIONS.md`](NOTIFICATIONS.md) — email notifications: categories, recipient addresses, outbox delivery and provider activation.
 - [`../ops/RUNBOOK.md`](../ops/RUNBOOK.md) — incident/recovery operations.
 - [`../ops/slos.yaml`](../ops/slos.yaml) — machine-readable SLO/RPO/RTO implementation targets.
 

@@ -17,6 +17,7 @@
     { "pattern": "/jobs/{jobId}/recover", "visibility": "operator", "reason": "Tenant operator dead-letter recovery command; requires tenant_admin scope." },
     { "pattern": "/document-lifecycle", "visibility": "workspace_control", "reason": "Document provenance/lifecycle read composed for the Corvis Documents view; not part of the stable integration contract." },
     { "pattern": "/position-financials", "visibility": "workspace_control", "reason": "Position financial-statement analytics read composed for the Corvis Analytics view; versioned with the product rather than the stable integration contract." },
+    { "pattern": "/notification-preferences", "visibility": "workspace_control", "reason": "The signed-in person's own email notification settings for the Corvis product UI; not a data-integration surface." },
     { "pattern": "/workspace-preferences", "visibility": "workspace_control", "reason": "Per-user workspace personalization (saved views, dashboard layout) for the Corvis product UI." },
     { "pattern": "/scim/v2/**", "visibility": "identity_control", "reason": "SCIM 2.0 user provisioning for tenant identity providers; authenticated by a tenant SCIM bearer token and governed by the SCIM protocol, not the Corvis JSON envelope contract." },
     { "pattern": "/client-errors", "visibility": "workspace_control", "reason": "Browser error-report ingest for the Corvis product UI; accepts only the PII-free client error event and writes it to server logs." },

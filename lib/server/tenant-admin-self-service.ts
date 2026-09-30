@@ -6,6 +6,7 @@ import { neutraliseSpreadsheetFormula } from "../csv.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { logEvent } from "./telemetry.ts";
+import { deliverInvitationEmail } from "./notifications.ts";
 import { ConflictError } from "./platform.ts";
 import { createTenantInvitation, INVITATION_TTL_DAYS, normalizeTenantInvitation, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
 
@@ -169,7 +170,8 @@ export async function createBulkInvitations(
     if (!command) { errors.push({ row: row.row, error: "invalid_invitation" }); continue; }
     try {
       const data = await withTransaction(options.db, (tx) => createTenantInvitation(identity, command, `${options.correlationId}:${row.row}`, tx));
-      created.push({ row: row.row, name: row.name, ...data });
+      const emailDelivery = await deliverInvitationEmail(data.invitation, data.token, { db: options.db });
+      created.push({ row: row.row, name: row.name, ...data, emailDelivery });
     } catch (error) {
       const expected = error instanceof TenantInvitationError || error instanceof ConflictError;
       const code = expected ? error.code : "invitation_failed";

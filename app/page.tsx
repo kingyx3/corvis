@@ -21,6 +21,7 @@ import { DashboardDepthSections } from "@/features/overview/dashboard-depth-sect
 import { PositionFinancialsView, type PositionFinancialsFocusRequest } from "@/features/analytics/position-financials-view";
 import { DocumentsView } from "@/features/documents/documents-view";
 import { UploadModal } from "@/features/documents/upload-modal";
+import { NotificationSettingsDialog } from "@/features/notifications/notification-settings-dialog";
 import { DocumentDrawer } from "@/features/documents/document-drawer";
 import { ReviewView, type ReviewFocusRequest } from "@/features/review/review-view";
 import { DeliveryView } from "@/features/delivery/delivery-view";
@@ -61,6 +62,7 @@ export default function CorvisApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   // The sidebar workspace section is hidden at <=960px; this dialog carries it on tablets and phones (#245).
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeResult, setActiveResult] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
@@ -69,6 +71,18 @@ export default function CorvisApp() {
   const [sessionExpired, setSessionExpired] = useState(false);
   const [demoFixtures, setDemoFixtures] = useState<DemoUiFixtures>(NO_DEMO_FIXTURES);
   const [announcement, setAnnouncement] = useState("");
+
+  // Optional emails link to /?notifications=settings; open the dialog once and drop the parameter.
+  useEffect(() => {
+    const openFromEmailLink = () => {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("notifications") !== "settings") return;
+      url.searchParams.delete("notifications");
+      window.history.replaceState(window.history.state, "", url.toString());
+      setNotificationsOpen(true);
+    };
+    openFromEmailLink();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -282,6 +296,7 @@ export default function CorvisApp() {
     const commands: CommandResult[] = [
       ...nav.map((item) => ({ kind: "command" as const, category: "Navigation" as const, key: `nav:${item.id}`, title: item.label, detail: `Go to ${item.label}`, keywords: `navigate open go ${item.label}`, run: () => { closeSearch(); navigate(item.id); } })),
       { kind: "command", category: "Action", key: "action:refresh", title: "Refresh workspace", detail: "Re-fetch entitled workspace data", keywords: "reload refresh sync data", run: () => { closeSearch(); void refreshWorkspace(); } },
+      { kind: "command", category: "Action", key: "action:notifications", title: "Notification settings", detail: "Choose which events email you", keywords: "notifications email alerts preferences digest settings", run: () => { closeSearch(); setNotificationsOpen(true); } },
       ...(canUpload ? [{ kind: "command" as const, category: "Action" as const, key: "action:upload", title: "Upload documents", detail: "Open the governed document upload flow", keywords: "upload add document files", run: () => { closeSearch(); setUploadOpen(true); } }] : []),
       ...(canReview && canReadObservations ? [{ kind: "command" as const, category: "Action" as const, key: "action:review", title: "Review data", detail: "Open observations that need review", keywords: "review approve observations exceptions", run: () => { closeSearch(); navigate("review"); } }] : []),
     ];
@@ -319,7 +334,7 @@ export default function CorvisApp() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
-    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}<button type="button" className="sidebar-workspace-button" aria-label="Workspace and access" aria-haspopup="dialog" onClick={() => setWorkspaceOpen(true)}><Icon name="shield"/><span>Workspace</span></button></nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div></div></aside>
+    <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}<button type="button" className="sidebar-workspace-button" aria-label="Workspace and access" aria-haspopup="dialog" onClick={() => setWorkspaceOpen(true)}><Icon name="shield"/><span>Workspace</span></button></nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div><button type="button" className="sidebar-notifications-button" aria-haspopup="dialog" onClick={() => setNotificationsOpen(true)}><Icon name="send" size={15}/><span>Notification settings</span></button></div></aside>
     <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {sessionExpired && <div className="lineage-note tone-warning" role="alert" aria-label="Session expired"><Icon name="alert"/><div><strong>Your session has expired</strong><span>Sign in again to continue. Data that was already saved is not affected.</span></div><button className="primary-button" onClick={() => window.location.reload()}>Sign in again</button></div>}
       {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
@@ -334,8 +349,9 @@ export default function CorvisApp() {
       {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
       </ViewErrorBoundary>
     </div><div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{announcement}</div></main>
-    {workspaceOpen && <Modal label="Workspace and access" onClose={() => setWorkspaceOpen(false)} width="min(460px, 100%)"><div className="dialog-body"><h2>Workspace and access</h2><WorkspaceSwitcher identity={identity} variant="panel"/><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setWorkspaceOpen(false)}>Close</button></div></div></Modal>}
+    {workspaceOpen && <Modal label="Workspace and access" onClose={() => setWorkspaceOpen(false)} width="min(460px, 100%)"><div className="dialog-body"><h2>Workspace and access</h2><WorkspaceSwitcher identity={identity} variant="panel"/><button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => { setWorkspaceOpen(false); setNotificationsOpen(true); }}>Notification settings</button><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setWorkspaceOpen(false)}>Close</button></div></div></Modal>}
     {searchOpen && <Modal label="Workspace command palette" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={paletteResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={paletteResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search or run a command" aria-label="Search workspace or run a command"/><kbd>Esc</kbd></label><div className="search-palette-results">{searchQuery.trim() && paletteResults.length === 0 && <p role="status" className="search-palette-empty">No commands or entitled workspace data match “{searchQuery}”.</p>}{paletteResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Commands and search results">{paletteResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => choosePaletteResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind === "command" ? result.category : result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Run/open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
+    {notificationsOpen && <NotificationSettingsDialog onClose={() => setNotificationsOpen(false)}/>}
     {uploadOpen && canUpload && <UploadModal onClose={() => { setUploadOpen(false); navigate("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>}
     {selectedDoc && <DocumentDrawer doc={selectedDoc} onClose={() => setSelectedDoc(null)} canOpenTrustedData={canReadObservations} onReview={() => { const match = snapshots.find((snapshot) => snapshot.fund === selectedDoc.fund && snapshot.period === selectedDoc.period); if (match?.id) setSelectedSnapshotId(match.id); setSelectedDoc(null); navigate("review"); }}/>} 
   </div>;

@@ -180,6 +180,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["me/route.ts", { GET: null }],
   ["metric-definitions/route.ts", { GET: "observations:read" }],
   ["my-workspaces/route.ts", { GET: null }],
+  ["notification-preferences/route.ts", { GET: null, PUT: null }],
   ["observations/route.ts", { GET: "observations:read" }],
   ["portfolio-holdings/route.ts", { GET: "observations:read" }],
   ["portfolios/route.ts", { GET: "observations:read" }],
@@ -430,6 +431,21 @@ test("research pins are scoped to the caller's own tenant, workspace and subject
 });
 
 // -------------------------------------------------------------- workspace preferences
+test("notification-preferences refuses service identities and never lets a mandatory notice be turned off", async () => {
+  const handlers = await load("notification-preferences/route.ts");
+  seedDatabase();
+  const service = await handlers.GET!(requestFor("/notification-preferences", { roles: ["api_client"], authMethod: "service_account" }));
+  assert.equal(service.status, 403);
+  assert.equal(await errorOf(service), "human_identity_required");
+  seedDatabase((query) => /from corvis_control\.identity_subject/.test(query.sql) ? [{ user_id: SOME_UUID }] : []);
+  const mandatory = await handlers.PUT!(requestFor("/notification-preferences", { roles: ["analyst"], authMethod: "oidc", method: "PUT", body: { categories: [{ id: "role_changed", enabled: false, delivery: "immediate" }] } }));
+  assert.equal(mandatory.status, 400);
+  assert.equal(await errorOf(mandatory), "category_not_configurable");
+  const hidden = await handlers.PUT!(requestFor("/notification-preferences", { roles: ["analyst"], authMethod: "oidc", method: "PUT", body: { categories: [{ id: "source_attention", enabled: false, delivery: "immediate" }] } }));
+  assert.equal(await errorOf(hidden), "unknown_category", "admin-only categories are not configurable by analysts");
+  assert.ok(queries.every((query) => !/notification_preference/.test(query.sql) || /^select/.test(query.sql)), "rejected changes write nothing");
+});
+
 test("workspace-preferences only lets a caller pin funds they are entitled to", async () => {
   const handlers = await load("workspace-preferences/route.ts");
   seedDatabase();
