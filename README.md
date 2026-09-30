@@ -151,4 +151,9 @@ npm run verify
 npm run test:e2e
 ```
 
+Unit tests rely on `node --test`'s default one-process-per-file isolation: many files set `process.env`, replace
+`globalThis.fetch` or seed module-level caches at import time. Running them in a shared process
+(`--experimental-test-isolation=none`) fails about 130 tests, so do not use it. New tests must still restore anything
+they change inside a test.
+
 CI also runs dependency audit, CodeQL and Terraform validation for implemented Terraform roots.
