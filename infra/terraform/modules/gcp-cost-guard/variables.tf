@@ -17,9 +17,14 @@ variable "region" {
 }
 
 variable "api_image" {
-  description = "Immutable Corvis API image used by the tiny IAM-private cost-guard service. Empty keeps only the budget topic provisioned during foundation bootstrap."
+  description = "Immutable Corvis API image used by the tiny IAM-private cost-guard service. Empty keeps the hibernation runtime unprovisioned during foundation bootstrap."
   type        = string
   default     = ""
+}
+
+variable "budget_pubsub_topic" {
+  description = "Fully-qualified Pub/Sub topic owned by gcp-observability and connected to the Cloud Billing budget."
+  type        = string
 }
 
 variable "monthly_budget_amount_usd" {
