@@ -100,6 +100,27 @@ jobs:
             terraform -chdir="${root}" init -backend=false
             terraform -chdir="${root}" validate
           done
+      # Provider versions and hashes are pinned in committed lockfiles (#236), for
+      # every platform a contributor or runner uses. A missing or stale lockfile
+      # fails here and the regenerated file is printed so it can be committed.
+      - name: Terraform provider lockfiles are committed and current
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t roots < <( (find infra/terraform/environments -mindepth 1 -maxdepth 1 -type d; echo infra/terraform/shared/cloudflare) | sort)
+          stale=0
+          for root in "${roots[@]}"; do
+            terraform -chdir="${root}" init -backend=false -input=false >/dev/null
+            terraform -chdir="${root}" providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64 >/dev/null
+            if [[ -n "$(git status --porcelain -- "${root}/.terraform.lock.hcl")" ]]; then
+              stale=1
+              echo "::error file=${root}/.terraform.lock.hcl::Provider lockfile is missing or stale; commit the file below."
+              echo "----- BEGIN ${root}/.terraform.lock.hcl -----"
+              cat "${root}/.terraform.lock.hcl"
+              echo "----- END ${root}/.terraform.lock.hcl -----"
+            fi
+          done
+          exit "${stale}"
 
   build:
     runs-on: ubuntu-latest
@@ -240,6 +261,16 @@ jobs:
           echo "${body:-}"
           echo "${body:-}" | grep -q '"status":"ok"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)" = "404"
+      # Known-fixable HIGH/CRITICAL vulnerabilities in the released image (OS
+      # packages and bundled npm modules) fail the build (#236).
+      - name: Image vulnerability scan (Trivy, pinned by digest)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "corvis-ci:${GITHUB_SHA}"
       - name: Build control-loop container
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
