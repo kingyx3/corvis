@@ -30,6 +30,46 @@ export const EXPORT_COLUMNS = [
 ] as const;
 
 /**
+ * Columns of a scoped Position Financials export. The loader
+ * (`loadPositionFinancialRows`) emits exactly these keys; rendering them with
+ * {@link EXPORT_COLUMNS} would silently drop every one that is not an
+ * observation column (line label, period, unit, derivation, ...).
+ */
+export const POSITION_EXPORT_COLUMNS = [
+  "statement_id",
+  "document_id",
+  "fund_id",
+  "holding_id",
+  "company_id",
+  "statement_type",
+  "report_period",
+  "source_label",
+  "metric_code",
+  "line_role",
+  "display_order",
+  "depth",
+  "value_raw",
+  "value_number",
+  "value_string",
+  "currency",
+  "unit",
+  "period_type",
+  "period_start",
+  "period_end",
+  "as_of_date",
+  "fiscal_year",
+  "fiscal_quarter",
+  "source_column_label",
+  "preliminary",
+  "is_restatement",
+  "is_derived",
+  "derivation_formula",
+  "source_reference_ids",
+] as const;
+
+export type ExportColumns = readonly string[];
+
+/**
  * Documented row cap. Exports are rendered fully in memory (a streaming rewrite
  * is out of scope), so the cap bounds worst-case memory: XLSX text and the
  * stored zip are held alongside the row objects. It is also far below XLSX's
@@ -113,10 +153,10 @@ function csvCell(value: ExportCell | undefined, column?: string): string {
   return raw;
 }
 
-export function renderCsv(rows: readonly ExportRow[]): Buffer {
+export function renderCsv(rows: readonly ExportRow[], columns: ExportColumns = EXPORT_COLUMNS): Buffer {
   const lines = [
-    EXPORT_COLUMNS.join(","),
-    ...rows.map((row) => EXPORT_COLUMNS.map((column) => csvCell(row[column], column)).join(",")),
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => csvCell(row[column], column)).join(",")),
   ];
   return Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8");
 }
@@ -145,7 +185,7 @@ function excelColumn(index: number): string {
   return result;
 }
 
-function worksheetXml(rows: readonly ExportRow[]): string {
+function worksheetXml(rows: readonly ExportRow[], columns: ExportColumns): string {
   const renderCell = (value: ExportCell | undefined, reference: string, column?: string) => {
     if (value == null) return `<c r="${reference}" t="inlineStr"><is><t></t></is></c>`;
     // Decimal strings become numeric cells only when a double holds them exactly; otherwise the
@@ -156,10 +196,10 @@ function worksheetXml(rows: readonly ExportRow[]): string {
     return `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(String(value))}</t></is></c>`;
   };
 
-  const header = `<row r="1">${EXPORT_COLUMNS.map((column, index) => renderCell(column, `${excelColumn(index)}1`)).join("")}</row>`;
+  const header = `<row r="1">${columns.map((column, index) => renderCell(column, `${excelColumn(index)}1`)).join("")}</row>`;
   const body = rows.map((row, rowIndex) => {
     const number = rowIndex + 2;
-    return `<row r="${number}">${EXPORT_COLUMNS.map((column, index) => renderCell(row[column], `${excelColumn(index)}${number}`, column)).join("")}</row>`;
+    return `<row r="${number}">${columns.map((column, index) => renderCell(row[column], `${excelColumn(index)}${number}`, column)).join("")}</row>`;
   }).join("");
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
@@ -236,7 +276,7 @@ function zipStored(entries: readonly ZipEntry[]): Buffer {
   return Buffer.concat([...locals, directoryBytes, end]);
 }
 
-export function renderXlsx(rows: readonly ExportRow[]): Buffer {
+export function renderXlsx(rows: readonly ExportRow[], columns: ExportColumns = EXPORT_COLUMNS): Buffer {
   const files: ZipEntry[] = [
     {
       name: "[Content_Types].xml",
@@ -268,16 +308,16 @@ export function renderXlsx(rows: readonly ExportRow[]): Buffer {
         `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
         `</Relationships>`),
     },
-    { name: "xl/worksheets/sheet1.xml", bytes: Buffer.from(worksheetXml(rows)) },
+    { name: "xl/worksheets/sheet1.xml", bytes: Buffer.from(worksheetXml(rows, columns)) },
   ];
   return zipStored(files);
 }
 
-export function renderParquet(rows: readonly ExportRow[]): Buffer {
+export function renderParquet(rows: readonly ExportRow[], columns: ExportColumns = EXPORT_COLUMNS): Buffer {
   // value_number is numeric(38,10): write it as an exact Parquet DECIMAL(38,10)
   // (16-byte fixed-length, unscaled bigint), never as a lossy DOUBLE.
-  const schema: SchemaElement[] = [{ name: "root", num_children: EXPORT_COLUMNS.length }];
-  const columnData = EXPORT_COLUMNS.map((name) => {
+  const schema: SchemaElement[] = [{ name: "root", num_children: columns.length }];
+  const columnData = columns.map((name) => {
     if (name === "value_number") {
       schema.push({ name, type: "FIXED_LEN_BYTE_ARRAY", type_length: 16, converted_type: "DECIMAL", scale: DECIMAL_SCALE, precision: DECIMAL_PRECISION, repetition_type: "OPTIONAL" });
       return { name, data: rows.map((row) => decimalToUnscaled(row[name])) };
@@ -293,13 +333,13 @@ export function renderParquet(rows: readonly ExportRow[]): Buffer {
   return Buffer.from(arrayBuffer);
 }
 
-export function renderExport(format: "csv" | "xlsx" | "parquet", rows: readonly ExportRow[]): RenderedExport {
+export function renderExport(format: "csv" | "xlsx" | "parquet", rows: readonly ExportRow[], columns: ExportColumns = EXPORT_COLUMNS): RenderedExport {
   assertExportRowLimit(rows.length);
-  if (format === "csv") return { bytes: renderCsv(rows), contentType: "text/csv; charset=utf-8", extension: "csv" };
+  if (format === "csv") return { bytes: renderCsv(rows, columns), contentType: "text/csv; charset=utf-8", extension: "csv" };
   if (format === "xlsx") return {
-    bytes: renderXlsx(rows),
+    bytes: renderXlsx(rows, columns),
     contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     extension: "xlsx",
   };
-  return { bytes: renderParquet(rows), contentType: "application/vnd.apache.parquet", extension: "parquet" };
+  return { bytes: renderParquet(rows, columns), contentType: "application/vnd.apache.parquet", extension: "parquet" };
 }
