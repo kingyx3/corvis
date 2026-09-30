@@ -66,3 +66,9 @@ variable "decommission_mode" {
   type        = bool
   default     = false
 }
+
+variable "control_loop_github_token_configured" {
+  description = "Set (GitHub variable CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED) once corvis-control-loop-github-token-<env> has an enabled version, so the control-loop jobs authenticate to GitHub."
+  type        = bool
+  default     = false
+}

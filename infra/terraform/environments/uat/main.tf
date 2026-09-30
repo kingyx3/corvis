@@ -120,13 +120,14 @@ module "admin_runtime" {
 }
 
 module "control_loop_runtime" {
-  source                = "../../modules/control-loop-runtime"
-  project_id            = var.project_id
-  environment           = "uat"
-  control_loop_image    = var.control_loop_image
-  service_account_email = module.foundation.control_loop_service_account
-  state_bucket_name     = module.foundation.control_loop_state_bucket
-  decommission_mode     = var.decommission_mode
+  source                  = "../../modules/control-loop-runtime"
+  project_id              = var.project_id
+  environment             = "uat"
+  control_loop_image      = var.control_loop_image
+  service_account_email   = module.foundation.control_loop_service_account
+  state_bucket_name       = module.foundation.control_loop_state_bucket
+  decommission_mode       = var.decommission_mode
+  github_token_configured = var.control_loop_github_token_configured
 
   depends_on = [module.foundation]
 }
@@ -235,6 +236,7 @@ module "observability" {
   dead_letter_subscription_name = module.foundation.dead_letter_subscription_name
   processing_queue_name         = module.foundation.processing_queue_name
   notification_channel_ids      = var.monitoring_notification_channel_ids
+  uptime_check_host             = local.api_hostname
   billing_account_id            = var.billing_account_id
   monthly_budget_amount_usd     = var.monthly_budget_amount_usd
 }

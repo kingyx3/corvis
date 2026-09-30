@@ -88,6 +88,46 @@ jobs:
       environment: ${{ inputs.environment }}
     secrets: inherit
 
+  # A prod release that fails acceptance must not stay live (#235): redeploy the
+  # last acceptance-approved release set. Migrations are forward-only and the
+  # rollback path skips them, so this restores the known-good images and
+  # Terraform-managed runtime against the current schema. Never chains: a failed
+  # known-good rollback is itself reported, not retried.
+  rollback-on-failed-acceptance:
+    needs: [deploy, acceptance]
+    if: ${{ always() && inputs.environment == 'prod' && inputs.rollback_known_good != true && needs.deploy.result == 'success' && needs.acceptance.result == 'failure' }}
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      environment: prod
+      action: apply
+      release_sha: ""
+      rollback_known_good: true
+    secrets: inherit
+
+  report-rollback:
+    needs: [acceptance, rollback-on-failed-acceptance]
+    if: ${{ always() && needs.rollback-on-failed-acceptance.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail the promotion and record the automatic rollback
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ROLLBACK_RESULT: ${{ needs.rollback-on-failed-acceptance.result }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Prod promotion failed acceptance"
+            echo "- Rejected release: \`${RELEASE_SHA}\`"
+            echo "- Automatic known-good rollback: \`${ROLLBACK_RESULT}\`"
+            if [[ "${ROLLBACK_RESULT}" != "success" ]]; then
+              echo "- **The rollback did not succeed: prod may be running the rejected release. Follow ops/RUNBOOK.md now.**"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+          # The promotion itself failed either way; the run must stay red.
+          exit 1
+
   complete:
     needs: acceptance
     runs-on: ubuntu-latest
