@@ -1,5 +1,6 @@
 import { workspaceContextHeaders, workspaceStorageKey } from "../../lib/workspace-context.ts";
 import type { UploadCallbacks, UploadPort, UploadResult } from "@/core/contracts";
+import { safeGetItem, safeRemoveItem, safeSetItem } from "../../lib/safe-storage.ts";
 
 type UploadSession = {
   uploadId: string;
@@ -117,20 +118,20 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
       const localKey = storageKey(file);
       let session: UploadSession | undefined;
 
-      const persisted = typeof window !== "undefined" ? window.localStorage.getItem(localKey) : null;
+      const persisted = safeGetItem("local", localKey);
       if (persisted) {
         try {
           const saved = JSON.parse(persisted) as { uploadId: string };
           const status = await requestJson<StatusResponse>(`/api/v1/uploads/${saved.uploadId}`);
           if (status.data.state === "complete" || status.data.state === "quarantined") {
-            window.localStorage.removeItem(localKey);
+            safeRemoveItem("local", localKey);
             callbacks.onProgress?.({ fileName: file.name, uploadedBytes: file.size, totalBytes: file.size, percent: 100, status: "complete", documentId: status.data.documentId });
             return { documentId: status.data.documentId };
           }
           if (status.data.state !== "aborted" && status.data.uploadUrl) session = status.data;
-          else window.localStorage.removeItem(localKey);
+          else safeRemoveItem("local", localKey);
         } catch {
-          window.localStorage.removeItem(localKey);
+          safeRemoveItem("local", localKey);
         }
       }
 
@@ -146,7 +147,7 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
             idempotencyKey: fingerprint(file),
           }),
         });
-        window.localStorage.setItem(localKey, JSON.stringify({ uploadId: session.uploadId }));
+        safeSetItem("local", localKey, JSON.stringify({ uploadId: session.uploadId }));
       }
 
       if (!session.uploadUrl) throw new Error("Upload API did not return a GCS resumable session URL");
@@ -159,7 +160,7 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
       } catch (error) {
         if (error instanceof ExpiredUploadSessionError) {
           await fetch(`${apiBase}/api/v1/uploads/${session.uploadId}`, { method: "DELETE", credentials: "include", headers: workspaceContextHeaders() }).catch(() => undefined);
-          window.localStorage.removeItem(localKey);
+          safeRemoveItem("local", localKey);
         }
         throw error;
       }
@@ -225,7 +226,7 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
         headers: { "idempotency-key": fingerprint(file) },
         body: JSON.stringify({ idempotencyKey: fingerprint(file) }),
       });
-      window.localStorage.removeItem(localKey);
+      safeRemoveItem("local", localKey);
       callbacks.onProgress?.({ fileName: file.name, uploadedBytes: file.size, totalBytes: file.size, percent: 100, status: "complete", documentId: completed.data.documentId });
       return { documentId: completed.data.documentId };
     },

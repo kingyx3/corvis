@@ -37,6 +37,8 @@ const code = (expected: string) => (error: unknown) => error instanceof TenantIn
 test("an administrator cannot disable their own identity through the lifecycle endpoint", async () => {
   const db = new GuardDb([actorUser, otherAdmin]);
   await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "disable", userId: actorUser }, db), code("cannot_deactivate_current_user"));
+  // An upper-case spelling of the same uuid is the same user.
+  await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "disable", userId: actorUser.toUpperCase() }, db), code("cannot_deactivate_current_user"));
   // The same subject on a different user id is still the actor.
   await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "disable", userId: member, subject: "actor-subject" }, db), code("cannot_deactivate_current_user"));
 });
@@ -50,6 +52,7 @@ test("the last active tenant administrator cannot be disabled or demoted", async
   const db = new GuardDb([otherAdmin]);
   await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "disable", userId: otherAdmin }, db), code("last_tenant_admin"));
   await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "sync", userId: otherAdmin, memberships: [{ workspaceId, roleName: "reviewer" }] }, db), code("last_tenant_admin"));
+  await assert.rejects(guardIdentityLifecycleCommand(identity, { ...base, operation: "disable", userId: otherAdmin.toUpperCase() }, db), code("last_tenant_admin"));
 });
 
 test("disabling one of several tenant administrators or an ordinary member is allowed", async () => {

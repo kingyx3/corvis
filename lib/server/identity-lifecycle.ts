@@ -116,6 +116,9 @@ export async function guardIdentityLifecycleCommand(
 ): Promise<void> {
   const keepsTenantAdmin = command.operation === "sync" && command.memberships.some((entry) => entry.roleName === "tenant_admin");
   if (keepsTenantAdmin) return;
+  // Postgres returns canonical lower-case uuids but `::uuid` accepts any case: compare like with like,
+  // or an upper-case spelling of the same user id slips past both checks below.
+  const targetUserId = command.userId.toLowerCase();
 
   await db.query("select tenant_id from corvis_control.tenant where tenant_id=$1::uuid for update", [identity.tenantId]);
   const actorRows = identity.authMethod === "oidc" || identity.authMethod === "saml"
@@ -124,7 +127,7 @@ export async function guardIdentityLifecycleCommand(
       [identity.tenantId, identity.authMethod, identity.subject])
     : [];
   const actorUserId = actorRows[0]?.user_id == null ? "" : String(actorRows[0].user_id);
-  const targetsActor = (actorUserId !== "" && actorUserId === command.userId)
+  const targetsActor = (actorUserId !== "" && actorUserId === targetUserId)
     || (identity.authMethod === command.authMethod && identity.subject === command.subject);
 
   const admins = await db.query(`select distinct m.user_id::text as user_id
@@ -135,10 +138,10 @@ export async function guardIdentityLifecycleCommand(
       and m.valid_from<=now() and (m.valid_until is null or m.valid_until>now())`, [identity.tenantId]);
   const adminIds = admins.map((row) => String(row.user_id));
 
-  if (targetsActor && (command.operation === "disable" || adminIds.includes(command.userId) || identity.isTenantAdmin === true)) {
+  if (targetsActor && (command.operation === "disable" || adminIds.includes(targetUserId) || identity.isTenantAdmin === true)) {
     throw new TenantInvitationError(command.operation === "disable" ? "cannot_deactivate_current_user" : "cannot_change_current_user", 409);
   }
-  if (adminIds.includes(command.userId) && !adminIds.some((id) => id !== command.userId)) {
+  if (adminIds.includes(targetUserId) && !adminIds.some((id) => id !== targetUserId)) {
     throw new TenantInvitationError("last_tenant_admin", 409);
   }
 }

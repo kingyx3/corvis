@@ -140,11 +140,14 @@ type DeactivateDependencies = {
 
 export async function deactivateTenantAccessMember(
   identity: RequestIdentity,
-  userId: string,
+  requestedUserId: string,
   reason: string,
   correlationId: string,
   dependencies: DeactivateDependencies = {},
 ): Promise<DeactivateTenantAccessResult> {
+  // Postgres returns canonical lower-case uuids while `::uuid` accepts any case, so the self-deactivation
+  // check below would be bypassed by an upper-case spelling of the caller's own user id.
+  const userId = requestedUserId.toLowerCase();
   const db = dependencies.db ?? postgres(getServerConfig().postgresDsn);
   const lifecycle = dependencies.lifecycle ?? identityLifecycleRepository();
   const rows = await db.query(`select user_id::text,auth_method,subject
@@ -211,7 +214,8 @@ export async function changeTenantMemberRole(
         and m.role_name='tenant_admin' and m.status='active' and m.valid_from<=now()
         and (m.valid_until is null or m.valid_until>now()) for update of s,m`, [identity.tenantId, identity.authMethod, identity.subject]);
     if (!actors.length) throw new TenantAccessError("tenant_admin_required", 403);
-    if (actors.some((row) => text(row, "user_id") === command.userId)) throw new TenantAccessError("cannot_change_current_user", 409);
+    // uuid text from the database is lowercase; an uppercase request id must not slip past the self-check.
+    if (actors.some((row) => text(row, "user_id") === command.userId.toLowerCase())) throw new TenantAccessError("cannot_change_current_user", 409);
     const subjects = await tx.query(`select user_id from corvis_control.identity_subject
       where tenant_id=$1::uuid and user_id=$2::uuid and status='active' and auth_method in ('oidc','saml')
       order by auth_method,subject for update`, [identity.tenantId, command.userId]);

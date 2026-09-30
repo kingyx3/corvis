@@ -150,3 +150,22 @@ test("a persistently failing upload still gives up after the retry budget", asyn
   for (let index = 1; index < 20; index += 1) failing[index] = (_request, committed) => ({ reply: "network-error", committed });
   await assert.rejects(runUpload(total, fakeGcs(total, failing), 2), /Network error/);
 });
+
+test("an upload still completes when Web Storage is blocked (private mode, blocked site data)", async () => {
+  const total = 2 * GCS_QUANTUM;
+  const gcs = fakeGcs(total);
+  const restore = installBrowserFakes(gcs);
+  // Reading or writing localStorage throws, exactly as Safari with all cookies blocked does.
+  const blocked = () => { throw new DOMException("The operation is insecure.", "SecurityError"); };
+  const fakeWindow = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+  Object.defineProperty(fakeWindow, "localStorage", { get: blocked, configurable: true });
+  Object.defineProperty(fakeWindow, "sessionStorage", { get: blocked, configurable: true });
+  try {
+    const port = createHttpGcsResumableUploadPort({ apiBase: "https://api.example", maxRetries: 2 });
+    const file = new File([new Uint8Array(total)], "fund-report.pdf", { type: "application/pdf", lastModified: 1 });
+    assert.deepEqual(await port.upload(file), { documentId: "doc_1" });
+    assert.equal(gcs.committed(), total);
+  } finally {
+    restore();
+  }
+});

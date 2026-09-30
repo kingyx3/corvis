@@ -132,6 +132,12 @@ test("deactivate everywhere refuses to deactivate the current tenant-admin sessi
     (error: unknown) => error instanceof TenantAccessError && error.code === "cannot_deactivate_current_user" && error.status === 409,
   );
   assert.equal(lifecycle.command, undefined);
+  // An upper-case spelling of the caller's own uuid is the same user.
+  await assert.rejects(
+    () => deactivateTenantAccessMember(identity, ACTOR_USER.toUpperCase(), "Self offboarding", "correlation-2", { db: new SelfDb(), lifecycle }),
+    (error: unknown) => error instanceof TenantAccessError && error.code === "cannot_deactivate_current_user" && error.status === 409,
+  );
+  assert.equal(lifecycle.command, undefined);
 });
 
 // The transactional fake records committed effects, so an audit failure must
@@ -202,6 +208,10 @@ test("member edits reject self changes, stale selections, missing tenant members
     await assert.rejects(changeTenantMemberRole(identity, roleCommand, "negative-test", db), new RegExp(code));
     assert.deepEqual(db.committed, []);
   }
+  // An upper-case spelling of the caller's own user id is still a self change.
+  const upper = new RoleDb(); upper.actor = TARGET_USER;
+  await assert.rejects(changeTenantMemberRole(identity, { ...roleCommand, userId: TARGET_USER.toUpperCase() }, "negative-test", upper), /cannot_change_current_user/);
+  assert.deepEqual(upper.committed, []);
 });
 
 test("role changes fail closed for privilege grants, invalid roles, workspace admins and nontransactional transports", async () => {
