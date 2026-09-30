@@ -103,7 +103,16 @@ const SUFFIXES: Array<[RegExp, Pick<NumericFigure, "multiplier" | "unit">]> = [
 // digits with optional thousands separators and decimals | plain digits with decimals | leading-dot decimals
 const NUMBER = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+`;
 const SUFFIX = String.raw`%|per\s?cent\b|pct\b|bps?\b|basis\s+points?\b|thousand\b|million\b|billion\b|trillion\b|mm\b|mn\b|bn\b|tn\b|[kKmMbBtTxX]\b`;
-const FIGURE = new RegExp(String.raw`(?<![\d.,])(${NUMBER})(?:\s?(${SUFFIX}))?(?![\w])`, "g");
+// Case-insensitive like SUFFIXES: "5 Billion" must scale to 5e9, not read as a bare 5 that a stored 5 would ground.
+const FIGURE = new RegExp(String.raw`(?<![\d.,])(${NUMBER})(?:\s?(${SUFFIX}))?(?![\w])`, "gi");
+// Day-of-month next to a capitalised month name ("30 September", "Sep 30", "March 3rd") is a date label, not a claim,
+// unless a unit follows ("May 5%").
+const MONTH = String.raw`(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?`;
+const NOT_A_UNIT = String.raw`(?![\d]|[.,]\d|\s?(?:%|per\s?cent|pct|bps?\b|basis|thousand|million|billion|trillion|mm\b|mn\b|bn\b|tn\b|[kmbtx]\b))`;
+const DAY_BEFORE_MONTH = new RegExp(String.raw`\b(?:[12]?\d|3[01])(?:st|nd|rd|th)?(?=\s+${MONTH}\b)`, "g");
+const DAY_AFTER_MONTH = new RegExp(String.raw`\b(${MONTH}\s+)(?:[12]?\d|3[01])(?:st|nd|rd|th)?${NOT_A_UNIT}(?![\w])`, "g");
+// "12-month", "30-day": a duration used as an adjective is a label.
+const HYPHENATED_DURATION = /\b\d+-(?=(?:day|week|month|quarter|year|hour|minute)s?\b)/gi;
 
 const WORD_UNITS: Record<string, number> = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
@@ -170,7 +179,7 @@ function extractSpelledFigures(text: string): NumericFigure[] {
 
 /**
  * Pulls the numeric claims out of free text. Deliberately NOT counted as figures (they are labels, not claims):
- * bare four-digit years 1900-2100, dates (ISO, uuids, urls are stripped first), list markers at the start of a
+ * bare four-digit years 1900-2100, dates (ISO, "30 September"/"Sep 30", uuids, urls are stripped first), hyphenated durations ("12-month"), list markers at the start of a
  * line, and digits glued to letters such as "Q2", "FY25", "H1", "fund-a2", "company-7" (a currency code such as "USD100" is
  * still a figure). Spelled-out numbers are parsed too (see `extractSpelledFigures`), so writing "four percent"
  * instead of "4%" does not bypass the grounding check.
@@ -181,7 +190,10 @@ export function extractNumericFigures(text: string): NumericFigure[] {
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, " ")
     .replace(/\b\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?z?)?\b/gi, " ")
-    .replace(/^[ \t]*(?:[-*•][ \t]*)?\d{1,2}[.)][ \t]/gm, " ");
+    .replace(/^[ \t]*(?:[-*•][ \t]*)?\d{1,2}[.)][ \t]/gm, " ")
+    .replace(DAY_AFTER_MONTH, "$1")
+    .replace(DAY_BEFORE_MONTH, " ")
+    .replace(HYPHENATED_DURATION, " ");
   const figures: NumericFigure[] = [];
   for (const match of cleaned.matchAll(FIGURE)) {
     const numberText = match[1] ?? "";

@@ -32,6 +32,12 @@ test("extractNumericFigures: what counts as a figure (table)", () => {
     ["1. First point\n2) Second point\n- 3. Third", []],
     ["see https://example.test/report/2024/12345 for detail", []],
     ["the 3rd quarter", []],
+    ["As of 30 September 2026 and Sep 30, 2026; March 3rd", []],
+    ["the 12-month return was 5% and a 30-day window", ["5 %"]],
+    // a unit after a month name is still a claim
+    ["in May 5% of funds", ["5 %"]],
+    // capitalised magnitude and unit words scale like their lower-case forms
+    ["5 Billion, 12 Million, 7 BPS, 4 Percent, 3 TN", ["5 Billion", "12 Million", "7 BPS", "4 Percent", "3 TN"]],
     // a four-digit number that is not a year-shaped label still counts when formatted or suffixed
     ["headcount 1,999 and 2020 units", ["1,999"]],
     ["1999k", ["1999 k"]],
@@ -39,6 +45,12 @@ test("extractNumericFigures: what counts as a figure (table)", () => {
   for (const [text, expected] of cases) {
     assert.deepEqual(extractNumericFigures(text).map((figure) => figure.raw), expected, text);
   }
+});
+
+test("a capitalised magnitude word is not grounded by the unscaled number", () => {
+  const figure = extractNumericFigures("Assets of 5 Billion")[0]!;
+  assert.equal(figureMatchesEvidence(figure, 5), false);
+  assert.equal(figureMatchesEvidence(figure, 5_000_000_000), true);
 });
 
 test("figureMatchesEvidence: formatting, rounding tolerance and units (table)", () => {
