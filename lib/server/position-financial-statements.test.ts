@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { PostgresSqlApi } from "./postgres.ts";
-import { PostgresPositionFinancialStatementRepository, rowsForPeriodicity, type PositionFinancialStatementRow } from "./position-financial-statements.ts";
+import { PostgresPositionFinancialStatementRepository, rowsForPeriodicity, sumDecimalStrings, type PositionFinancialStatementRow } from "./position-financial-statements.ts";
 
 function quarter(quarter: number, value: string, overrides: Partial<PositionFinancialStatementRow> = {}): PositionFinancialStatementRow {
   const startMonth = String((quarter - 1) * 3 + 1).padStart(2,"0");
@@ -30,6 +30,16 @@ test("annual mode safely derives a full year from four compatible quarterly flow
   assert.equal(rows[0]?.periodType,"annual");
   assert.equal(rows[0]?.isDerived,true);
   assert.equal(rows[0]?.sourceReferenceIds.length,4);
+});
+
+test("a derived annual value is the exact decimal sum, not a double sum", () => {
+  const derive = (values: string[]) => rowsForPeriodicity(values.map((value, index) => quarter(index + 1, value)), "annual")[0]?.valueNumber;
+  assert.equal(derive(["12.1", "3.3", "0.1", "0.2"]), "15.7");
+  assert.equal(derive(["0.0000000001", "0.0000000001", "0.0000000001", "0.0000000001"]), "0.0000000004");
+  assert.equal(derive(["12345678901234567890.1234567891", "1", "-2", "0.0000000009"]), "12345678901234567889.1234567900".replace(/0+$/, ""));
+  assert.equal(derive(["-5.50", "-4.5", "10", "0"]), "0");
+  assert.equal(derive(["1", "2", "3", "not-a-number"]), undefined);
+  assert.equal(sumDecimalStrings(["1e3", "1"]), null);
 });
 
 test("annual mode never sums stock values or incomplete quarters", () => {

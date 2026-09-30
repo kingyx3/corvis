@@ -118,6 +118,31 @@ function annualGroupKey(row: PositionFinancialStatementRow): string {
 }
 
 /**
+ * Exact sum of decimal strings (Postgres `numeric` text). Adding them as doubles yields values such as
+ * 15.399999999999999 for 12.1 + 3.3 and drops digits of large amounts; a derived figure must equal the arithmetic
+ * sum of the reported ones. Returns null when any input is not a plain decimal.
+ */
+export function sumDecimalStrings(values: Array<string | null | undefined>): string | null {
+  const parsed: Array<{ negative: boolean; digits: string; scale: number }> = [];
+  for (const value of values) {
+    const match = value == null ? null : /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(String(value).trim());
+    if (!match) return null;
+    parsed.push({ negative: match[1] === "-", digits: `${match[2]}${match[3] ?? ""}`, scale: (match[3] ?? "").length });
+  }
+  const scale = Math.max(0, ...parsed.map((entry) => entry.scale));
+  let sum = 0n;
+  for (const entry of parsed) {
+    const scaled = BigInt(entry.digits) * 10n ** BigInt(scale - entry.scale);
+    sum += entry.negative ? -scaled : scaled;
+  }
+  const negative = sum < 0n;
+  const digits = (negative ? -sum : sum).toString().padStart(scale + 1, "0");
+  const whole = digits.slice(0, digits.length - scale);
+  const fraction = digits.slice(digits.length - scale).replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
+/**
  * Annual mode never invents values from YTD/LTM columns. It prefers a reported
  * annual disclosure. Only when one is absent may it sum four explicit fiscal
  * quarters for the same semantic line, and only for compatible flow values.
@@ -144,8 +169,8 @@ export function rowsForPeriodicity(rows: PositionFinancialStatementRow[], period
   for (const [key, quarters] of quarterGroups) {
     if (![1,2,3,4].every((quarter) => quarters.has(quarter))) continue;
     const values = [1,2,3,4].map((quarter) => quarters.get(quarter)!);
-    const numbers = values.map((row) => Number(row.valueNumber));
-    if (numbers.some((value) => !Number.isFinite(value))) continue;
+    const total = sumDecimalStrings(values.map((row) => row.valueNumber));
+    if (total === null) continue;
     const base = values[3];
     const references = [...new Set(values.flatMap((row) => row.sourceReferenceIds))];
     derived.push({
@@ -156,7 +181,7 @@ export function rowsForPeriodicity(rows: PositionFinancialStatementRow[], period
       reportPeriod: `FY${base.fiscalYear}`,
       valueId: `derived:${key}`,
       valueRaw: null,
-      valueNumber: numbers.reduce((sum,value) => sum + value,0).toString(),
+      valueNumber: total,
       valueString: null,
       valueQualifier: "exact",
       periodType: "annual",
