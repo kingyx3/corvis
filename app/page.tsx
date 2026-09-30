@@ -213,7 +213,9 @@ export default function CorvisApp() {
     if (loading) return;
     const inUrl = parseViewHash(window.location.hash);
     if (inUrl !== null && inUrl !== activeView) window.history.replaceState(null, "", viewHash(activeView));
-  }, [activeView, loading]);
+    // `view` is in the deps because `activeView` stays "overview" while a later hashchange requests a
+    // view this user cannot open; without it that URL would never be corrected.
+  }, [view, activeView, loading]);
 
 
   useDocumentTitle(`${activeLabel} · Corvis`);

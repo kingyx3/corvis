@@ -53,6 +53,20 @@ test("security notices are always on, optional categories save, and delivery sta
   await expect(dialog).toBeHidden();
 });
 
+test("clicking the backdrop over an edited dialog keeps focus inside it so Escape only dismisses the prompt", async ({ page }) => {
+  const dialog = await openFromSidebar(page);
+  const exportReady = dialog.getByRole("listitem").filter({ hasText: "Export ready" });
+  await exportReady.getByRole("checkbox", { name: /email me about export ready/i }).uncheck();
+  // A click outside the dialog surface (top-left corner of the viewport is backdrop).
+  await page.mouse.click(2, 2);
+  const keepEditing = dialog.getByRole("button", { name: "Keep editing" });
+  await expect(keepEditing).toBeVisible();
+  await expect(keepEditing).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(keepEditing).toBeHidden();
+  await expect(dialog).toBeVisible();
+});
+
 test("the settings link in emails opens the dialog and a failed save is reported", async ({ page }) => {
   await page.goto("/?notifications=settings");
   const dialog = page.getByRole("dialog", { name: "Notification settings" });

@@ -367,8 +367,16 @@ export class ProductionUploadSessions implements UploadSessionPort {
         tenantId: session.tenantId, artifactVersionId: session.artifactVersionId, documentId: session.documentId,
         objectKey: session.objectKey, generation: session.storageVersionId,
       });
-      if (seal.outcome === "blocked") return;
-      if (seal.outcome === "integrity_failed") {
+      if (seal.outcome === "blocked" && seal.status === "threat") {
+        // The scheduled scan poll recorded a threat this session never saw; reflect it instead of polling forever.
+        session.malwareScanStatus = "threat";
+        await this.persist(session);
+        return;
+      }
+      if (seal.outcome === "blocked" && seal.status !== "integrity_failed" && seal.status !== "invalid_content") return;
+      if (seal.outcome === "integrity_failed" || seal.outcome === "blocked") {
+        // A blocked artifact can only be integrity_failed/invalid_content here: the scheduled path already
+        // rejected the bytes, so report that failure rather than leaving the session quarantined forever.
         session.malwareScanStatus = "error";
         session.contentValidated = false;
         await this.persist(session);
@@ -674,12 +682,31 @@ export class ProductionUploadSessions implements UploadSessionPort {
     if (session.purgedAt) { summary.skipped += 1; return; }
 
     if (session.state === "quarantined") {
+      // The scheduled release (upload-release.ts) updates only the registry: its identity has read-only
+      // bucket access, so it cannot rewrite this session object. A quarantined session can therefore
+      // already describe a RELEASED artifact. Released source evidence is retained, never purged: repair
+      // the session and stop before anything is deleted.
+      const registry = (await this.db.query(`select malware_scan_status, quarantine_status from corvis_source.document_artifact_version
+        where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId, session.artifactVersionId]))[0];
+      if (registry?.quarantine_status === "released") {
+        session.state = "complete";
+        session.malwareScanStatus = "clean";
+        session.releasedAt = session.releasedAt ?? new Date(now).toISOString();
+        await this.persist(session);
+        summary.retained += 1;
+        return;
+      }
       const unreleasable = session.malwareScanStatus === "threat" || session.contentValidated === false;
       if (!unreleasable && ageMs(session, now) <= quarantineRetentionMs) { summary.skipped += 1; return; }
-      await this.purgeObject(session, now);
-      await this.db.execute(`update corvis_source.document_artifact_version
+      // Claim the registry row first, atomically and only while it is still unreleased: that claim is
+      // what excludes a concurrent release (release_clean_artifact refuses a purged artifact), so the
+      // bytes are deleted only after the artifact can no longer be released.
+      const claimed = await this.db.query(`update corvis_source.document_artifact_version
         set quarantine_status='purged'
-        where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
+        where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')
+        returning 1 as claimed`, [session.tenantId, session.artifactVersionId]);
+      if (claimed.length === 0) { summary.skipped += 1; return; }
+      await this.purgeObject(session, now);
       await this.persist(session);
       summary.quarantinePurged += 1;
       return;

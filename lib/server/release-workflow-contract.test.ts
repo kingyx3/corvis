@@ -48,7 +48,7 @@ test("frontend ci runs with a read-only default token", async () => {
 
 test("frontend ci parallelizes independent gates behind the stable aggregate check", async () => {
   const workflow = await read(".github/workflows/ci.yml");
-  for (const job of ["quality", "terraform", "build", "e2e", "frontend"]) {
+  for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo", "frontend"]) {
     assert.match(workflow, new RegExp(`\\n  ${job}:\\n`), job);
   }
 
@@ -56,9 +56,10 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
   const end = workflow.indexOf("\n  container:\n", start);
   assert.ok(start > 0 && end > start);
   const frontend = workflow.slice(start, end);
-  assert.match(frontend, /needs:\s*\[quality, terraform, build, e2e\]/);
+  assert.match(frontend, /needs:\s*\[quality, dockerfile-lint, terraform, build, e2e, non-demo\]/);
   assert.match(frontend, /if:\s*always\(\)/);
-  for (const job of ["quality", "terraform", "build", "e2e"]) {
+  // Every job that can fail must feed the aggregate, or it stops being blocking.
+  for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo"]) {
     assert.match(frontend, new RegExp(`needs\\.${job}\\.result`), job);
   }
 

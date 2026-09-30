@@ -117,7 +117,7 @@ Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/fea
 | `module.portfolio_attribution` (`PORTFOLIO_ATTRIBUTION_FLAG`) | `GET /portfolios`, `GET /portfolio-holdings`, `GET /position-financials?portfolioId=…`, and the capability advertised by `GET /capabilities` |
 | `exports.parquet_delivery` | `POST /exports` with `format=parquet` |
 
-Uploads, review, publication, CSV/XLSX exports, research and every read of published data are **not** gated: engaging the emergency stop leaves them running. To stop a tenant entirely, revoke its sessions (`/admin/session-revocations`), disable its identities (`/admin/identity-lifecycle`) or block it at the edge; a new flag-gated capability must add its path to this table.
+Uploads, review, publication, CSV/XLSX exports, Ask Corvis research (apart from its `retrieval.hybrid_search` document search, which is flag-gated) and every read of published data are **not** gated: engaging the emergency stop leaves them running. To stop a tenant entirely, revoke its sessions (`/admin/session-revocations`), disable its identities (`/admin/identity-lifecycle`) or block it at the edge; a new flag-gated capability must add its path to this table.
 
 A non-critical module being unavailable must not make the entire application fail readiness. Production readiness should distinguish **required core dependencies** from **optional/degradable capabilities**.
 

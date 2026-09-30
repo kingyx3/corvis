@@ -42,3 +42,22 @@ test("redaction is idempotent so sinks may re-apply it safely", () => {
   const once = safeErrorText(new Error("token=abc123 Bearer xyz.abc"));
   assert.equal(redactErrorText(once), once);
 });
+
+test("redactErrorText drops unencoded DSN passwords, cookie headers and vendor token formats", () => {
+  // Assembled at runtime for push protection (see the first test).
+  const slack = ["xoxb", "1234567890", "abcdefghij"].join("-");
+  const stripe = ["sk", "live", "abcdefghijklmnop1234"].join("_");
+  const cases: Array<[string, string[]]> = [
+    ["connect postgres://app:p/ss@db.internal:5432/x failed", ["app", "p/ss", "ss@"]],
+    ["connect postgres://app:p@ss@db.internal:5432/x failed", ["app:", "p@ss", "ss@db"]],
+    ["upstream said Set-Cookie: session=abc123def; Path=/; HttpOnly", ["abc123def"]],
+    ["request Cookie: sid=abc123def", ["abc123def"]],
+    [`token ${slack} rejected`, [slack]],
+    [`key ${stripe} rejected`, [stripe]],
+  ];
+  for (const [input, leaks] of cases) {
+    const out = redactErrorText(input);
+    for (const leak of leaks) assert.equal(out.includes(leak), false, `${leak} leaked in: ${out}`);
+  }
+  assert.match(redactErrorText("connect postgres://app:p/ss@db.internal:5432/x failed"), /postgres:\/\/db\.internal:5432\/x failed/);
+});

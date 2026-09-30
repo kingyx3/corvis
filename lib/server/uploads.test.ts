@@ -90,8 +90,14 @@ class FakeDb implements PostgresSqlApi {
   artifact: PostgresRow | undefined;
   shaMatches = true;
   sealed: PostgresPrimitive[][] = [];
+  /** Simulates a release/abort winning between the sweep's registry read and its claim. */
+  loseClaimRace = false;
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
+    if (sql.includes("returning 1 as claimed")) {
+      const status = this.artifact?.quarantine_status;
+      return this.loseClaimRace || status === "released" || status === "purged" ? [] : [{ claimed: 1 }];
+    }
     if (sql.includes("select malware_scan_status, quarantine_status")) return this.artifact ? [this.artifact] : [];
     if (sql.includes("set sha256=lower(coalesce(sha256")) {
       this.sealed.push(parameters);
@@ -623,6 +629,23 @@ test("an artifact already blocked in the registry is not released by a later cle
   assert.equal(after.state, "quarantined");
   assert.equal(context.db.releases.length, 0);
   assert.deepEqual(context.store.hashed, [], "blocked artifacts are not even read");
+  assert.equal(after.malwareScanStatus, "threat", "the session reports the threat the scheduled poll recorded");
+  assert.equal(storedSession(context.store, session).malwareScanStatus, "threat");
+});
+
+test("an integrity failure recorded by the scheduled release is reported to the polling client", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.artifact = { malware_scan_status: "integrity_failed", quarantine_status: "quarantined" };
+  context.store.scan(session.objectKey ?? "", "clean");
+  await assert.rejects(context.uploads.get(actor, session.uploadId), (error: unknown) => error instanceof UploadRequestError && error.code === "upload_integrity_failed");
+  assert.equal(storedSession(context.store, session).contentValidated, false);
+  assert.equal(context.db.releases.length, 0);
+  // Later polls stop retrying: the rejected signature is terminal.
+  assert.equal((await context.uploads.get(actor, session.uploadId)).state, "quarantined");
 });
 
 test("an artifact another worker already released is not hashed or released again", async () => {
@@ -640,4 +663,50 @@ test("an artifact another worker already released is not hashed or released agai
   // document.status back to 'queued' regardless of how far the pipeline has
   // since progressed, so a second caller observing "released" must skip it.
   assert.equal(context.db.releases.length, 0, "an already-released artifact must not be re-released");
+});
+
+test("the sweep never deletes the bytes of an artifact the scheduled release already released", async () => {
+  // The scheduled release updates only the registry (its service account cannot write session objects),
+  // so the session JSON stays `quarantined` after a successful release. Past the retention window the
+  // sweep used to treat that stale session as abandoned, delete the source bytes and mark the RELEASED
+  // artifact purged.
+  const store = new FakeObjectStore();
+  const db = new FakeDb();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+  backdate(store, session, QUARANTINE_RETENTION_MS + 60_000);
+  assert.equal(storedSession(store, session).state, "quarantined", "precondition: the session JSON is stale");
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.quarantinePurged, 0);
+  assert.equal(result.retained, 1);
+  assert.deepEqual(store.deleted, [], "released source bytes must survive the sweep");
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+  assert.ok(!db.calls.some((call) => call.sql.includes("quarantine_status='purged'")), "a released artifact is never marked purged");
+  const repaired = storedSession(store, session);
+  assert.equal(repaired.state, "complete", "the stale session is repaired so it is retained from now on");
+  assert.equal(repaired.malwareScanStatus, "clean");
+});
+
+test("the sweep deletes nothing when a release wins the race for the registry row", async () => {
+  const store = new FakeObjectStore();
+  const db = new FakeDb();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  backdate(store, session, QUARANTINE_RETENTION_MS + 60_000);
+  db.loseClaimRace = true; // registry still reads 'quarantined', but the guarded claim matches no row
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.quarantinePurged, 0);
+  assert.equal(result.skipped, 1);
+  assert.deepEqual(store.deleted, [], "bytes are deleted only after the registry claim succeeds");
 });

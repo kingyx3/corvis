@@ -16,6 +16,8 @@ import { SortableDataTable, type SortableColumn } from "@/components/ui/sortable
 import { TableDensityToggle, type TableDensity } from "@/components/ui/table-density-toggle";
 import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
+import { apiUrl } from "@/lib/api-url";
+import { friendlyErrorMessage } from "@/lib/api-errors";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
@@ -119,7 +121,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
   useEffect(() => {
     if (!portfolioAttributionEnabled) return;
     const controller = new AbortController();
-    void fetch("/api/v1/portfolios?limit=100", { signal: controller.signal, headers: { ...workspaceContextHeaders(), accept: "application/json" } })
+    void fetch(apiUrl("/api/v1/portfolios?limit=100"), { signal: controller.signal, credentials: "include", headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => response.ok ? await response.json() as PortfolioEnvelope : { data: [] })
       .then((payload) => setPortfolios(payload.data ?? []))
       .catch(() => { if (!controller.signal.aborted) setPortfolios([]); });
@@ -130,14 +132,14 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     let active = true;
     const controller = new AbortController();
     const portfolio = portfolioAttributionEnabled && selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
-    void fetch(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`, { signal: controller.signal, headers: { ...workspaceContextHeaders(), accept: "application/json" } })
+    void fetch(apiUrl(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`), { signal: controller.signal, credentials: "include", headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => {
         const payload = await response.json() as ApiEnvelope;
         if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
         return payload.data ?? [];
       })
       .then((data) => { if (active) { setRows(data); setLoading(false); } })
-      .catch((reason: unknown) => { if (active && !controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "Financial statements are temporarily unavailable"); setLoading(false); } });
+      .catch((reason: unknown) => { if (active && !controller.signal.aborted) { setError(friendlyErrorMessage(reason, "Financial statements are temporarily unavailable")); setLoading(false); } });
     return () => { active = false; controller.abort(); };
   }, [periodicity, portfolioAttributionEnabled, selectedPortfolio]);
 

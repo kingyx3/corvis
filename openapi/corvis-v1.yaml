@@ -576,7 +576,7 @@ paths:
       description: Requires documents:write. An upload is visible only to the identity that initiated it (or a workspace admin) within the same tenant.
       responses:
         '200': { description: Authorized upload session state and active resumable session URL when applicable }
-        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -586,8 +586,8 @@ paths:
       description: Requires documents:write, with the same visibility rule as GET. A completed upload cannot be aborted.
       responses:
         '204': { description: Upload aborted and incomplete GCS session/object cleaned up where possible }
-        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '409': { description: 'The upload has already completed (`upload_not_active`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'The upload has already completed (`upload_not_active`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -616,9 +616,9 @@ paths:
                 idempotencyKey: { type: string, maxLength: 255 }
       responses:
         '200': { description: Artifact verified and registered/quarantined }
-        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '409': { description: 'The idempotency key does not match the session (`upload_idempotency_mismatch`), the upload is not active (`upload_not_active`) or the object is incomplete (`upload_incomplete`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '422': { description: 'The uploaded content failed file-signature validation (`invalid_file_content`) or integrity verification (`upload_integrity_failed`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'The idempotency key does not match the session (`upload_idempotency_mismatch`), the upload is not active (`upload_not_active`) or the object is incomplete (`upload_incomplete`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 'The uploaded content failed file-signature validation (`invalid_file_content`) or integrity verification (`upload_integrity_failed`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }

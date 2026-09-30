@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     const lifecycleOperation = operation(body.operation);
     const lifecycleAuthMethod = authMethod(body.authMethod);
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    const userId = typeof body.userId === "string" ? body.userId.trim().toLowerCase() : "";
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
     const desiredMemberships = memberships(body.memberships ?? []);
 

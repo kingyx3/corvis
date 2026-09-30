@@ -68,6 +68,8 @@ export const SQL_APPLICATION_ERRORS = [
   "requested support role is already active outside this grant",
   "support grant id required",
   "support grant not found",
+  // corvis_source.release_clean_artifact (072)
+  "artifact was purged and cannot be released",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -132,6 +134,8 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "requested support role is already active outside this grant": { code: "support_role_already_active", status: 409 },
   "support grant id required": { code: "invalid_request", status: 400 },
   "support grant not found": { code: "support_grant_not_found", status: 404 },
+  // A release that lost a race with abort/expiry/sweep: the session is no longer active.
+  "artifact was purged and cannot be released": { code: "upload_not_active", status: 409 },
 };
 
 /**

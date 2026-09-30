@@ -8,6 +8,7 @@ import { TimeSeriesChart } from "@/components/ui/charts/time-series-chart";
 import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
+import { apiUrl } from "@/lib/api-url";
 
 type DrillPoint = { fundId: string; fund: string; period: string; snapshotId: string };
 
@@ -91,9 +92,10 @@ export function DashboardDepthSections({
   useEffect(() => {
     if (!generatedAt) return;
     const controller = new AbortController();
-    void fetch("/api/v1/workspace-preferences", {
+    void fetch(apiUrl("/api/v1/workspace-preferences"), {
       method: "POST",
       signal: controller.signal,
+      credentials: "include",
       headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ seenAt: generatedAt }),
     }).catch(() => undefined);
@@ -118,8 +120,9 @@ export function DashboardDepthSections({
     setPinnedFundIds(next);
     setPreferenceError(null);
     try {
-      const response = await fetch("/api/v1/workspace-preferences", {
+      const response = await fetch(apiUrl("/api/v1/workspace-preferences"), {
         method: "PUT",
+        credentials: "include",
         headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ pinnedFundIds: next }),
       });

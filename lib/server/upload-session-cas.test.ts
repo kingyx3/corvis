@@ -247,3 +247,27 @@ test("GcsControlClient streams an object without buffering it and maps 404 to nu
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a streamed download is not cut off by the header-phase request timeout", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const encoder = new TextEncoder();
+    // Like undici, an aborted signal errors the response body as well as the pending request.
+    return new Response(new ReadableStream({
+      async start(controller) {
+        init?.signal?.addEventListener("abort", () => { try { controller.error(new Error("aborted")); } catch { /* already closed */ } });
+        controller.enqueue(encoder.encode("first,"));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        try { controller.enqueue(encoder.encode("second")); controller.close(); } catch { /* aborted */ }
+      },
+    }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const client = new GcsControlClient({ bucket: "b", accessToken: "t", requestTimeoutMs: 40 });
+    const object = await client.getObjectStream("exports/slow.csv");
+    assert.ok(object);
+    assert.equal(await new Response(object.body).text(), "first,second");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

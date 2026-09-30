@@ -51,7 +51,13 @@ export function Modal({
   return <div
     role="presentation"
     className={`dialog-backdrop${align === "top" ? " align-top" : ""}`}
-    onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}
+    onMouseDown={(event) => {
+      if (event.target !== event.currentTarget) return;
+      // The default action of a mousedown on a non-focusable backdrop is to blur the focused control to
+      // <body>, which would undo the focus the discard prompt just took and leave Escape/Tab outside the trap.
+      event.preventDefault();
+      requestClose();
+    }}
   >
     <section ref={ref} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} className="dialog-surface" style={{ width }}>
       {children}

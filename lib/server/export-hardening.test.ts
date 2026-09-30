@@ -57,6 +57,16 @@ test("Parquet writes value_number as an exact DECIMAL(38,10) column, not a DOUBL
   assert.equal(read[2]!.value_number, null);
 });
 
+test("Parquet stores a value beyond double precision as the exact 16-byte unscaled integer", () => {
+  const big = "12345678901234567890.1234567891";
+  const parquet = renderParquet([{ ...row, value_number: big }]);
+  const unscaled = decimalToUnscaled(big)!;
+  const twosComplement = Buffer.alloc(16);
+  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) >> BigInt(64), 0);
+  twosComplement.writeBigUInt64BE(BigInt.asUintN(128, unscaled) & BigInt("0xffffffffffffffff"), 8);
+  assert.ok(Buffer.from(parquet).includes(twosComplement), "the file must contain the exact big-endian decimal, not a rounded double");
+});
+
 test("exports over the documented row cap fail with a typed, non-retryable error before rendering", () => {
   const many = { length: EXPORT_MAX_ROWS + 1 } as unknown as ExportRow[];
   assert.throws(() => renderExport("csv", many), (error: unknown) =>

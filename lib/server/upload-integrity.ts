@@ -16,7 +16,7 @@ export type ArtifactIntegrityOutcome =
   /** Already released by an earlier pass; nothing to hash. */
   | { outcome: "released" }
   /** Threat, invalid content or a prior integrity failure: must not be released. */
-  | { outcome: "blocked" }
+  | { outcome: "blocked"; status?: string }
   /** The bytes do not match the digest declared at initiate; the artifact is now quarantined. */
   | { outcome: "integrity_failed" };
 
@@ -40,7 +40,7 @@ export async function sealArtifactIntegrity(
     [input.tenantId, input.artifactVersionId],
   ))[0];
   if (current?.quarantine_status === "released") return { outcome: "released" };
-  if (current && BLOCKED_STATUSES.has(String(current.malware_scan_status))) return { outcome: "blocked" };
+  if (current && BLOCKED_STATUSES.has(String(current.malware_scan_status))) return { outcome: "blocked", status: String(current.malware_scan_status) };
 
   const sha256 = await store.getObjectSha256(input.objectKey, input.generation);
 
