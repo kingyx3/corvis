@@ -10,12 +10,12 @@ The only provider-side bootstrap exception is the initial trust anchor for each 
 
 1. The GCP project exists and billing is attached.
 2. `corvis-deploy@<project-id>.iam.gserviceaccount.com` exists.
-3. A GitHub Workload Identity Pool/provider exists and is restricted to the `kingyx3/corvis` repository and the intended GitHub Environment subject.
+3. A GitHub Workload Identity Pool/provider exists and is restricted to the `kingyx3/corvis` repository, the intended GitHub Environment subject, and `assertion.ref == 'refs/heads/main'`.
 4. That GitHub WIF identity may impersonate `corvis-deploy`.
 5. `corvis-deploy` has the permissions required by the checked-in Terraform root. The current root manages project services, API Gateway/API Keys, Cloud Run, service accounts/IAM bindings, GCS/KMS/queues/secrets/observability and the provider resources already documented in `INFRASTRUCTURE.md`.
 6. The GitHub Environment contains `GCP_PROJECT_ID` and the provider's full resource name as `GCP_WIF_PROVIDER`.
 
-The bootstrap workflow now verifies the live trust anchor before Terraform executes. The provider must map `google.subject` to `assertion.sub`, its attribute condition must restrict both repository `kingyx3/corvis` and the selected `dev`/`uat`/`prod` GitHub Environment, and the deploy service account's `roles/iam.workloadIdentityUser` binding must be scoped either to the exact `repo:kingyx3/corvis:environment:<environment>` subject or to the repository attribute principal set in that pool. A pool-wide/unscoped impersonation grant is not an accepted Corvis bootstrap configuration.
+The bootstrap workflow verifies the live trust anchor before Terraform executes. The provider must map `google.subject` to `assertion.sub`, its attribute condition must restrict repository `kingyx3/corvis`, the selected `dev`/`uat`/`prod` GitHub Environment, and exact branch ref `refs/heads/main`, and the deploy service account's `roles/iam.workloadIdentityUser` binding must be scoped either to the exact `repo:kingyx3/corvis:environment:<environment>` subject or to the repository attribute principal set in that pool. A pool-wide/unscoped impersonation grant or a provider condition that allows non-`main` refs is not an accepted Corvis bootstrap configuration.
 
 This trust anchor can be established through the Google Cloud administrative UI or an organization-owned provisioning process. It must not be established by copying a long-lived Google credential into GitHub.
 
@@ -30,7 +30,7 @@ From **GitHub -> Actions -> Bootstrap GCP foundation**:
 3. Review the Terraform plan in the workflow log.
 4. Rerun from `main` with `action=apply`.
 
-The workflow authenticates with GitHub OIDC/WIF and the derived `corvis-deploy` identity. It verifies that the selected WIF provider belongs to the selected project, is repository/environment scoped, that the impersonation grant is repository/exact-subject scoped, and fails if the deploy service account has any user-managed keys.
+The workflow authenticates with GitHub OIDC/WIF and the derived `corvis-deploy` identity. It verifies that the selected WIF provider belongs to the selected project, is repository/environment/`main`-ref scoped, that the impersonation grant is repository/exact-subject scoped, and fails if the deploy service account has any user-managed keys.
 
 Bootstrap is the **only** workflow that may create the remote Terraform backend. It creates or hardens `${GCP_PROJECT_ID}-corvis-tf-state` with uniform bucket-level access, public-access prevention and object versioning. Soft delete is disabled because state recovery is provided by versioning; noncurrent versions are automatically deleted after 30 days or once more than 20 newer versions exist.
 
@@ -91,7 +91,7 @@ Bootstrap, deployment and decommissioning are fail-closed:
 
 - missing project/provider roots stop before authentication;
 - a provider resource from another GCP project is rejected;
-- a WIF provider that is not restricted to `kingyx3/corvis` and the selected GitHub Environment is rejected before Terraform;
+- a WIF provider that is not restricted to `kingyx3/corvis`, the selected GitHub Environment, and `refs/heads/main` is rejected before Terraform;
 - a deploy impersonation binding that is not repository- or exact-environment-subject scoped is rejected before Terraform;
 - a user-managed key on `corvis-deploy` blocks bootstrap;
 - normal deployment stops if bootstrap-owned Terraform state is missing;
