@@ -319,6 +319,24 @@ export async function redeemPhysicalExportGrant(
   };
 }
 
+/**
+ * Gives a consumed grant back when the download failed before a single byte was handed to the caller (the object
+ * store errored or the object is missing), so a transient failure does not force a fresh grant. Bound to the same
+ * tenant, export, subject and token hash as the redemption; it never revives an expired grant.
+ */
+export async function restorePhysicalExportGrant(
+  identity: RequestIdentity,
+  exportId: string,
+  token: string,
+  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+): Promise<void> {
+  if (!token || token.length > 256) return;
+  await store.execute(`update corvis_serving.export_download_grant
+    set consumed_at=null
+    where tenant_id=$1 and export_id=$2::uuid and subject=$3 and token_sha256=$4
+      and consumed_at is not null and expires_at>now()`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+}
+
 export function exportObjectKey(objectUri: string): string {
   const config = getServerConfig();
   const prefix = `gs://${config.objectStoreBucket ?? ""}/`;

@@ -64,7 +64,13 @@ export async function listResearchPins(identity: RequestIdentity, db?: PostgresS
       limit $5`,
     [identity.tenantId, identity.workspaceId, identity.authMethod, identity.subject, MAX_PINS],
   );
-  return rows.map(toPin);
+  const pins = rows.map(toPin);
+  // Access is re-checked on read, as it was when the answer was pinned: a caller who has since lost access to a
+  // cited document must not keep reading that document's figures out of an old pin.
+  const citations = pins.flatMap((pin) => pin.answer.citations ?? []);
+  if (citations.length === 0) return pins;
+  const readable = await entitledSourceReferenceIds(database, identity, citations);
+  return pins.filter((pin) => (pin.answer.citations ?? []).every((citation) => readable.has(citation.sourceReferenceId)));
 }
 
 export type PinResearchAnswerInput = { question: string; answer: ResearchAnswer; askedAt: string };

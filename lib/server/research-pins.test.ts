@@ -238,3 +238,30 @@ test("the rows digest ignores key order and matches Postgres timestamps after th
   );
   assert.notEqual(computedRowsDigest([{ a: 1 }]), computedRowsDigest([{ a: 2 }]));
 });
+
+test("listing pins re-checks access to every cited document, so lost access hides the pin", async () => {
+  const cited = groundedAnswer();
+  const rows = () => [
+    pinnedRow(answer),
+    { ...pinnedRow(cited), pin_id: "pin-cited" },
+  ];
+  const ids = (pins: Array<{ pinId: string }>) => pins.map((pin) => pin.pinId);
+
+  const stillAllowed = new FakeDb();
+  stillAllowed.queryQueue = [rows(), [{ source_reference_id: SRC, document_id: "doc-1" }]];
+  assert.deepEqual(ids(await listResearchPins(readerIdentity, stillAllowed)), ["pin-9", "pin-cited"]);
+  assert.match(stillAllowed.calls[1]!.sql, /corvis_serving\.source_references/);
+
+  const accessRevoked = new FakeDb();
+  accessRevoked.queryQueue = [rows(), [{ source_reference_id: SRC, document_id: "doc-1" }]];
+  assert.deepEqual(ids(await listResearchPins(identity, accessRevoked)), ["pin-9"], "an identity without source-document access no longer sees the cited pin");
+
+  const movedDocument = new FakeDb();
+  movedDocument.queryQueue = [rows(), [{ source_reference_id: SRC, document_id: "doc-other" }]];
+  assert.deepEqual(ids(await listResearchPins(readerIdentity, movedDocument)), ["pin-9"]);
+
+  const uncitedOnly = new FakeDb();
+  uncitedOnly.queryQueue = [[pinnedRow(answer)]];
+  await listResearchPins(identity, uncitedOnly);
+  assert.equal(uncitedOnly.calls.length, 1, "no extra query when nothing is cited");
+});

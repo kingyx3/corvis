@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { register } from "node:module";
 import test from "node:test";
 
@@ -274,6 +274,26 @@ test("every guarded route and method answers 403 forbidden to each role lacking 
     }
   }
   assert.ok(checked > 200, `expected a broad denial matrix, exercised only ${checked} cases`);
+});
+
+// The role matrix above cannot see a dropped check for a permission every role holds (`*:read`): the request just
+// succeeds. Pin the guard itself: each method's own body must call assertPermission with the permission the matrix names.
+test("each guarded method's handler calls assertPermission with exactly the permission the matrix names", async () => {
+  const problems: string[] = [];
+  for (const [file, methods] of MATRIX) {
+    const source = await readFile(new URL(`../../app/api/v1/${file}`, import.meta.url), "utf8");
+    for (const [method, permission] of Object.entries(methods)) {
+      if (!permission) continue;
+      const start = source.search(new RegExp(`export\\s+async\\s+function\\s+${method}\\b`));
+      if (start < 0) { problems.push(`${method} ${file}: handler not found`); continue; }
+      const next = source.slice(start + 1).search(/\nexport\s/);
+      const body = next < 0 ? source.slice(start) : source.slice(start, start + 1 + next);
+      const guards = [...body.matchAll(/assertPermission\(\s*\w+\s*,\s*"([^"]+)"/g)].map((match) => match[1]);
+      // Tenant-admin routes may use a dedicated helper; every other method must name the permission literally.
+      if (permission !== ADMIN && !guards.includes(permission)) problems.push(`${method} ${file}: expected assertPermission(..., "${permission}"), found [${guards.join(", ")}]`);
+    }
+  }
+  assert.deepEqual(problems, []);
 });
 
 test("the permission boundaries themselves are what the routes rely on (role/permission table sanity)", () => {
@@ -573,6 +593,45 @@ test("download grants are issued to the owner only, hashed at rest, and redeemed
   assert.equal((await download.GET!(requestFor(`/exports/${SOME_UUID}/download`, { roles: ["analyst"], redistribution: true }), ctx)).status, 404);
   assert.equal((await download.GET!(requestFor(`/exports/${SOME_UUID}/download?grant=${"x".repeat(257)}`, { roles: ["analyst"], redistribution: true }), ctx)).status, 404);
   assert.equal(queries.length, 0);
+
+  // A HEAD probe must never redeem (and so burn) the single-use grant.
+  seedDatabase();
+  const head = await download.HEAD!(new Request(`https://corvis.test/api/v1/exports/${SOME_UUID}/download?grant=${token}`, { method: "HEAD" }), ctx);
+  assert.equal(head.status, 405);
+  assert.equal(head.headers.get("allow"), "GET");
+  assert.equal(queries.length, 0, "HEAD must not touch the grant");
+});
+
+test("a download whose object cannot be read gives the single-use grant back, so the caller can retry it", async () => {
+  const download = await load("exports/[exportId]/download/route.ts");
+  const ctx = paramsFor("exports/[exportId]/route.ts");
+  const previous = { bucket: process.env.CORVIS_OBJECT_STORE_BUCKET, token: process.env.CORVIS_GCP_ACCESS_TOKEN, fetch: globalThis.fetch };
+  process.env.CORVIS_OBJECT_STORE_BUCKET = "test-bucket";
+  process.env.CORVIS_GCP_ACCESS_TOKEN = "test-token";
+  const dbFetch = globalThis.fetch;
+  let storageStatus = 503;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith("https://storage.googleapis.com/")) return new Response("unavailable", { status: storageStatus });
+    return dbFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const row = { object_uri: "gs://test-bucket/exports/t/e/attempt-1/observations.csv", format: "csv", checksum_sha256: "a".repeat(64), snapshot_ids: [], manifest: { snapshotIds: [], artifact: { fundIds: [], documentIds: [] } } };
+    for (const status of [503, 404]) {
+      storageStatus = status;
+      seedDatabase((query) => (query.sql.startsWith("update corvis_serving.export_download_grant") && query.sql.includes("consumed_at=now()") ? [row] : []));
+      const response = await download.GET!(requestFor(`/exports/${SOME_UUID}/download?grant=${"g".repeat(40)}`, { roles: ["analyst"], subject: "owner", redistribution: true }), ctx);
+      assert.equal(response.status, status === 404 ? 404 : 500, `storage ${status}`);
+      const restore = queries.find((query) => query.sql.includes("set consumed_at=null"));
+      assert.ok(restore, `the grant is restored when storage answers ${status}`);
+      assert.equal(restore.parameters[2], "owner");
+    }
+  } finally {
+    (await import("@/lib/server/gcs")).resetGcsClient();
+    globalThis.fetch = previous.fetch;
+    if (previous.bucket === undefined) delete process.env.CORVIS_OBJECT_STORE_BUCKET; else process.env.CORVIS_OBJECT_STORE_BUCKET = previous.bucket;
+    if (previous.token === undefined) delete process.env.CORVIS_GCP_ACCESS_TOKEN; else process.env.CORVIS_GCP_ACCESS_TOKEN = previous.token;
+  }
 });
 
 // ------------------------------------------------------------------ internal routes

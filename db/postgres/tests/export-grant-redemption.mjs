@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { getPhysicalExportStatus, redeemPhysicalExportGrant } from '../../../lib/server/physical-exports.ts';
+import { getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from '../../../lib/server/physical-exports.ts';
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
@@ -70,6 +70,15 @@ try {
     assert.equal(await redeemPhysicalExportGrant(identity('owner'), 'e9000000-0000-4000-8000-0000000000aa', bound, tx), null, 'a grant is bound to its export');
     assert.ok(await redeemPhysicalExportGrant(identity('owner'), exportId, bound, tx), 'the grant survived every failed attempt and still redeems for its owner');
 
+    // A download that failed before any byte was delivered gives the grant back, for its own subject only.
+    const restorable = await issueGrant();
+    assert.ok(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx));
+    await restorePhysicalExportGrant(identity('someone-else'), exportId, restorable, tx);
+    assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), null, 'another subject cannot restore the grant');
+    await restorePhysicalExportGrant(identity('owner'), exportId, restorable, tx);
+    assert.ok(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), 'the owner\'s restored grant redeems again');
+    assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), null, 'and is single use again');
+
     // Current data rights are re-checked at redemption, not only when the grant was issued.
     const rightsGrant = await issueGrant();
     await assert.rejects(
@@ -81,6 +90,8 @@ try {
     const expiredGrant = await issueGrant();
     await tx.execute(`update corvis_serving.export_download_grant set created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' where export_id=$1 and token_sha256=$2`, [exportId, sha(expiredGrant)]);
     assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, expiredGrant, tx), null, 'an expired grant must not redeem');
+    await restorePhysicalExportGrant(identity('owner'), exportId, expiredGrant, tx);
+    assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, expiredGrant, tx), null, 'restoring never revives an expired grant');
 
     // Nor does a live grant for an export that is not complete, or that has itself expired.
     const incompleteGrant = await issueGrant();

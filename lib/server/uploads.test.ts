@@ -710,3 +710,19 @@ test("the sweep deletes nothing when a release wins the race for the registry ro
   assert.equal(result.skipped, 1);
   assert.deepEqual(store.deleted, [], "bytes are deleted only after the registry claim succeeds");
 });
+
+test("an upload id that is not a server-issued UUID never reaches an object key", async () => {
+  const context = harness();
+  const reads: string[] = [];
+  const store = context.store as unknown as { getJson: (key: string) => Promise<unknown>; getJsonWithGeneration?: (key: string) => Promise<unknown> };
+  const getJson = store.getJson.bind(store);
+  store.getJson = async (key: string) => { reads.push(key); return getJson(key); };
+  if (store.getJsonWithGeneration) {
+    const withGeneration = store.getJsonWithGeneration.bind(store);
+    store.getJsonWithGeneration = async (key: string) => { reads.push(key); return withGeneration(key); };
+  }
+  for (const uploadId of ["../../tenant=other/session", "not-a-uuid", "", "00000000-0000-0000-0000-00000000000g", "/etc/passwd"]) {
+    await assert.rejects(context.uploads.get(identity(), uploadId), (error: unknown) => error instanceof UploadRequestError && error.code === "upload_not_found", uploadId);
+  }
+  assert.deepEqual(reads, [], "a malformed id is refused before any storage read");
+});

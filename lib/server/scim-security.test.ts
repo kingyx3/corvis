@@ -276,3 +276,46 @@ test("scimErrorResponse maps rate limits and database outages to retryable statu
   assert.equal((JSON.parse(lines[0]!) as Record<string, unknown>).event, "scim.database_unavailable");
   assert.equal(scimErrorResponse(new ScimError(404, "notFound", "SCIM user not found")).headers.get("retry-after"), null);
 });
+
+test("SCIM only accepts a token of an enabled configuration", async () => {
+  const db = new QueueDb();
+  db.queryQueue = [[VALID_ROW]];
+  await authenticateScim(scimRequest(), db, { clientLimiter: new RateLimiter(100), tenantLimiter: new RateLimiter(100), verifiedTokens: new Map(), now: 1_000 });
+  assert.match(db.calls[0]!.sql, /enabled=true/);
+  assert.match(db.calls[0]!.sql, /token_sha256=\$2/);
+});
+
+test("a token that stops verifying is dropped from the lockout cache and stays refused during a lockout", async () => {
+  const db = new QueueDb();
+  const verifiedTokens = new Map();
+  const limits = { clientLimiter: new RateLimiter(1000), tenantLimiter: new RateLimiter(2), verifiedTokens, now: 1_000 };
+  db.queryQueue = [[VALID_ROW]];
+  await authenticateScim(scimRequest(), db, limits);
+  assert.equal(verifiedTokens.size, 1);
+  // The token is now rotated/disabled: Postgres no longer knows it, so the failed check must evict the cached copy.
+  db.queryQueue = [[]];
+  await assert.rejects(authenticateScim(scimRequest(), db, limits), (error) => error instanceof ScimError && error.status === 401);
+  assert.equal(verifiedTokens.size, 0, "a failed authentication evicts the token's cached verification");
+  // Exhaust the tenant budget: the revoked token must not be honoured from the cache during the lockout.
+  db.queryQueue = [[], []];
+  const attacker = () => authenticateScim(scimRequest({ authorization: `Bearer ${"a".repeat(43)}`, "cf-connecting-ip": "203.0.113.66" }), db, limits);
+  await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 401);
+  await assert.rejects(authenticateScim(scimRequest(), db, limits), (error) => error instanceof ScimError && error.status === 429);
+});
+
+test("the lockout cache is bounded to 1000 verified tokens, evicting the least recently verified", async () => {
+  const db = new QueueDb();
+  const verifiedTokens = new Map();
+  const limits = { clientLimiter: new RateLimiter(100_000), tenantLimiter: new RateLimiter(100_000), verifiedTokens, now: 1_000 };
+  const request = (i: number) => scimRequest({ authorization: `Bearer ${String(i).padStart(43, "0")}` });
+  for (let i = 0; i < 1_005; i += 1) {
+    db.queryQueue = [[VALID_ROW]];
+    await authenticateScim(request(i), db, limits);
+  }
+  assert.equal(verifiedTokens.size, 1_000);
+  const keys = [...verifiedTokens.keys()];
+  const { createHash } = await import("node:crypto");
+  const keyFor = (i: number) => `${config.tenantId}:${createHash("sha256").update(String(i).padStart(43, "0")).digest("hex")}`;
+  assert.ok(!keys.includes(keyFor(0)) && !keys.includes(keyFor(4)), "the oldest entries were evicted");
+  assert.ok(keys.includes(keyFor(5)) && keys.includes(keyFor(1_004)));
+});

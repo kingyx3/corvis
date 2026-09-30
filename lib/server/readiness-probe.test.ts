@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { beforeEach } from "node:test";
+import test, { beforeEach, mock } from "node:test";
 import type { PostgresSqlApi } from "./postgres.ts";
 import { checkReadiness, resetReadinessCache } from "./readiness-probe.ts";
 
@@ -27,6 +27,17 @@ test("not ready when the database is down or hangs", async () => {
   assert.deepEqual(await checkReadiness({ db: () => db(async () => false) }), { ready: false });
   resetReadinessCache();
   assert.deepEqual(await checkReadiness({ db: () => db(async () => { throw new Error("ECONNREFUSED"); }) }), { ready: false });
+});
+
+test("a database health check that never answers makes the probe not ready instead of hanging it", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const pending = checkReadiness({ db: () => db(() => new Promise<boolean>(() => undefined)) });
+    mock.timers.tick(60_000);
+    assert.deepEqual(await pending, { ready: false });
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test("results are cached briefly so the public probe cannot load the database", async () => {
