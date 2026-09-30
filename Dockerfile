@@ -1,12 +1,12 @@
 # Base images are pinned by digest; Dependabot (docker ecosystem) proposes updates.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS deps
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # Install scripts stay off, as in CI deploy jobs: no dependency needs one to
 # build, and it keeps third-party code from running at image build time (#236).
 RUN npm ci --ignore-scripts
 
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
@@ -17,7 +17,7 @@ ENV NEXT_PUBLIC_CORVIS_API_BASE=$NEXT_PUBLIC_CORVIS_API_BASE
 ENV NEXT_PUBLIC_CORVIS_DEMO_MODE=$NEXT_PUBLIC_CORVIS_DEMO_MODE
 RUN npm run build
 
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
