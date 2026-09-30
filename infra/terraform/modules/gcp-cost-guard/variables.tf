@@ -43,6 +43,18 @@ variable "guard_threshold" {
   }
 }
 
+variable "artifact_registry_repository" {
+  description = "Repository whose active/known-good release tags the cost janitor may maintain."
+  type        = string
+  default     = "corvis"
+}
+
+variable "managed_secret_ids" {
+  description = "Exact Secret Manager secret IDs whose old versions the cost janitor may lifecycle-manage."
+  type        = set(string)
+  default     = []
+}
+
 variable "decommission_mode" {
   description = "Set only by the guarded environment decommission workflow."
   type        = bool
