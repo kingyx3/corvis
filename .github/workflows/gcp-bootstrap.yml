@@ -51,6 +51,7 @@ jobs:
       TF_VAR_enable_cloudflare_managed_waf: "false"
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
+      TF_VAR_monthly_budget_amount_usd: ${{ vars.GCP_MONTHLY_BUDGET_USD || (inputs.environment == 'uat' && '5' || inputs.environment == 'prod' && '2000' || '500') }}
       TF_VAR_monitoring_notification_channel_ids: ${{ vars.MONITORING_NOTIFICATION_CHANNEL_IDS || '[]' }}
 
     steps:
@@ -64,6 +65,10 @@ jobs:
           fi
           if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
             echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
+            exit 1
+          fi
+          if [[ ! "${TF_VAR_monthly_budget_amount_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN { exit !(${TF_VAR_monthly_budget_amount_usd} > 0) }"; then
+            echo "GCP_MONTHLY_BUDGET_USD must be a positive numeric amount."
             exit 1
           fi
           if [[ "${{ inputs.action }}" == "apply" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
@@ -183,6 +188,7 @@ jobs:
             echo "- Project: \`${GCP_PROJECT_ID}\`"
             echo "- WIF provider: \`${GCP_WIF_PROVIDER}\`"
             echo "- Deploy identity: \`${GCP_DEPLOY_SERVICE_ACCOUNT}\`"
+            echo "- Monthly budget: \`$${TF_VAR_monthly_budget_amount_usd}\`"
             echo "- Terraform state: \`gs://${TF_STATE_BUCKET}\` (versioned; stale noncurrent versions lifecycle-managed)"
             echo "- Retained KMS anchors: automatically re-adopted after a prior full decommission"
             echo "- Runtime image: intentionally disabled during bootstrap"

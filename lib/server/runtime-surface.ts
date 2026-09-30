@@ -1,12 +1,13 @@
-export type RuntimeSurface = "api" | "worker" | "customer" | "admin" | "combined" | "disabled";
+export type RuntimeSurface = "api" | "worker" | "cost_guard" | "customer" | "admin" | "combined" | "disabled";
 
-const VALID_SURFACES = new Set<RuntimeSurface>(["api", "worker", "customer", "admin", "combined", "disabled"]);
+const VALID_SURFACES = new Set<RuntimeSurface>(["api", "worker", "cost_guard", "customer", "admin", "combined", "disabled"]);
 
 function surfaceFromServiceName(serviceName: string | undefined): RuntimeSurface | null {
   const normalized = serviceName?.trim().toLowerCase();
   if (!normalized) return null;
   if (normalized.startsWith("corvis-api-")) return "api";
   if (normalized.startsWith("corvis-worker-")) return "worker";
+  if (normalized.startsWith("corvis-cost-guard-")) return "cost_guard";
   if (normalized.startsWith("corvis-customer-")) return "customer";
   if (normalized.startsWith("corvis-admin-")) return "admin";
   return null;
@@ -41,6 +42,8 @@ export function runtimeSurfaceAllows(surface: RuntimeSurface, pathname: string):
   if (isProbePath(pathname)) return true;
 
   if (surface === "worker") return pathname.startsWith("/api/internal/");
+
+  if (surface === "cost_guard") return pathname === "/api/internal/budget-guard";
 
   if (surface === "api") {
     return pathname === "/api/v1" || pathname.startsWith("/api/v1/");

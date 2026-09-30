@@ -1,0 +1,171 @@
+name: UAT GCP cost hygiene
+
+on:
+  schedule:
+    # 05:30 Asia/Singapore daily; gives cleanup a stable cadence without
+    # coupling it to deploys or acceptance runs.
+    - cron: "30 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: uat-gcp-cost-hygiene
+  cancel-in-progress: false
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: uat
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      COST_JANITOR_SERVICE_ACCOUNT: ${{ format('corvis-cost-janitor-uat@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      ARTIFACT_REPOSITORY: corvis
+    steps:
+      - name: Validate UAT trust roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${GCP_PROJECT_ID}" && -n "${GCP_WIF_PROVIDER}" ]] || {
+            echo "GCP_PROJECT_ID and GCP_WIF_PROVIDER are required."
+            exit 1
+          }
+
+      - name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Resolve protected release digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_image=""
+          control_loop_image=""
+          known_good_api=""
+          known_good_control_loop=""
+
+          if gcloud run services describe corvis-api-uat \
+            --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
+            api_image="$(gcloud run services describe corvis-api-uat \
+              --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
+              --format='value(template.containers[0].image)')"
+          fi
+
+          if gcloud run jobs describe corvis-control-loop-daily-uat \
+            --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
+            control_loop_image="$(gcloud run jobs describe corvis-control-loop-daily-uat \
+              --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
+              --format='value(template.template.containers[0].image)')"
+          fi
+
+          manifest="gs://${TF_STATE_BUCKET}/releases/uat/known-good.json"
+          if gcloud storage cat "${manifest}" > known-good.json 2>/dev/null; then
+            known_good_api="$(jq -r '.image // empty' known-good.json)"
+            known_good_control_loop="$(jq -r '.controlLoopImage // empty' known-good.json)"
+          fi
+          rm -f known-good.json
+
+          echo "ACTIVE_API_IMAGE=${api_image}" >> "${GITHUB_ENV}"
+          echo "ACTIVE_CONTROL_LOOP_IMAGE=${control_loop_image}" >> "${GITHUB_ENV}"
+          echo "KNOWN_GOOD_API_IMAGE=${known_good_api}" >> "${GITHUB_ENV}"
+          echo "KNOWN_GOOD_CONTROL_LOOP_IMAGE=${known_good_control_loop}" >> "${GITHUB_ENV}"
+
+      - name: Protect active and known-good artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
+          control_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
+          imp=(--impersonate-service-account="${COST_JANITOR_SERVICE_ACCOUNT}")
+
+          protect() {
+            local source="$1" target="$2"
+            [[ -z "${source}" ]] && return 0
+            if [[ ! "${source}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "Refusing to protect a non-digest artifact reference: ${source}"
+              exit 1
+            fi
+            gcloud "${imp[@]}" artifacts docker tags add "${source}" "${target}" \
+              --project="${GCP_PROJECT_ID}" --quiet
+          }
+
+          protect "${ACTIVE_API_IMAGE}" "${api_repo}:active-uat"
+          protect "${ACTIVE_CONTROL_LOOP_IMAGE}" "${control_repo}:active-uat"
+          protect "${KNOWN_GOOD_API_IMAGE}" "${api_repo}:known-good-uat"
+          protect "${KNOWN_GOOD_CONTROL_LOOP_IMAGE}" "${control_repo}:known-good-uat"
+
+      - name: Prune excess UAT secret versions safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          imp=(--impersonate-service-account="${COST_JANITOR_SERVICE_ACCOUNT}")
+          now="$(date +%s)"
+
+          prune_secret() {
+            local secret="$1"
+            if ! gcloud "${imp[@]}" secrets describe "${secret}" \
+              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "Secret ${secret}: not present"
+              return 0
+            fi
+
+            mapfile -t versions < <(gcloud "${imp[@]}" secrets versions list "${secret}" \
+              --project="${GCP_PROJECT_ID}" \
+              --filter='state!=DESTROYED' \
+              --sort-by='~createTime' \
+              --format='csv[no-heading](name,state,createTime)')
+
+            local index=0
+            for row in "${versions[@]}"; do
+              IFS=',' read -r version state created <<<"${row}"
+              index=$((index + 1))
+              # Keep the two newest non-destroyed versions as the recovery window.
+              if (( index <= 2 )); then
+                continue
+              fi
+
+              created_epoch="$(date -d "${created}" +%s)"
+              age_days=$(( (now - created_epoch) / 86400 ))
+
+              if [[ "${state}" == "ENABLED" ]]; then
+                gcloud "${imp[@]}" secrets versions disable "${version}" \
+                  --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
+                echo "Secret ${secret}: disabled excess version ${version}"
+              elif [[ "${state}" == "DISABLED" && "${age_days}" -ge 14 ]]; then
+                gcloud "${imp[@]}" secrets versions destroy "${version}" \
+                  --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
+                echo "Secret ${secret}: destroyed stale disabled version ${version} (${age_days}d old)"
+              fi
+            done
+          }
+
+          prune_secret corvis-postgres-dsn-uat
+          prune_secret corvis-control-loop-github-token-uat
+
+      - name: Hygiene summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### UAT GCP cost hygiene"
+            echo "- Active and known-good release digests: protected with cleanup-exempt tags when present"
+            echo "- Artifact deletion: handled by Terraform-managed Artifact Registry cleanup policies"
+            echo "- Secret versions: newest two retained; older enabled versions disabled; stale disabled versions destroyed after 14 days"
+            echo "- Source-connector secrets: not swept here; revoked connector secrets are deleted by the application"
+            echo "- KMS key versions: intentionally not pruned because retained GCS objects may require historical key versions for decryption"
+          } >> "${GITHUB_STEP_SUMMARY}"

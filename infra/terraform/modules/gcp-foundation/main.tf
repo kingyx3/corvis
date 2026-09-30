@@ -12,6 +12,7 @@ locals {
     "apigateway.googleapis.com",
     "apikeys.googleapis.com",
     "artifactregistry.googleapis.com",
+    "billingbudgets.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudscheduler.googleapis.com",
     "cloudtasks.googleapis.com",
@@ -171,13 +172,40 @@ resource "google_artifact_registry_repository" "containers" {
   labels        = local.labels
   depends_on    = [google_project_service.required]
 
+  # Untagged layers are low-value once no manifest references them. UAT/dev
+  # retain three days for debugging; prod retains seven.
   cleanup_policies {
     id     = "delete-untagged"
     action = "DELETE"
 
     condition {
       tag_state  = "UNTAGGED"
-      older_than = "604800s"
+      older_than = var.environment == "prod" ? "604800s" : "259200s"
+    }
+  }
+
+  # Release builds are tagged git-<sha>. Keep a useful recent window but age
+  # out old tagged build history that otherwise accumulates forever.
+  cleanup_policies {
+    id     = "delete-old-git-builds"
+    action = "DELETE"
+
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["git-"]
+      older_than   = var.environment == "prod" ? "7776000s" : "1209600s"
+    }
+  }
+
+  # The daily hygiene workflow moves these pointers before cleanup runs. Keep
+  # both active and security-accepted rollback digests regardless of age.
+  cleanup_policies {
+    id     = "keep-protected-release-tags"
+    action = "KEEP"
+
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["active-", "known-good-"]
     }
   }
 
@@ -186,7 +214,7 @@ resource "google_artifact_registry_repository" "containers" {
     action = "KEEP"
 
     most_recent_versions {
-      keep_count = 10
+      keep_count = var.environment == "prod" ? 10 : 5
     }
   }
 }
