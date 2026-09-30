@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BudgetGuardRequestError,
+  GcpBudgetControlClient,
   budgetGuardConfig,
   executeBudgetGuardRequest,
   type BudgetControlPort,
@@ -110,4 +111,47 @@ test("budgetGuardConfig derives only the known low-cost UAT automation targets",
     "corvis-control-loop-weekly-uat",
     "corvis-control-loop-monthly-uat",
   ]);
+});
+
+test("GcpBudgetControlClient.pause attempts every target even after one fails", async () => {
+  const hit = new Set<string>();
+  const fetchImpl = (async (url: string | URL) => {
+    const href = String(url);
+    if (href.includes("metadata.google.internal")) {
+      return new Response(JSON.stringify({ access_token: "token", expires_in: 3600 }), { status: 200 });
+    }
+    if (href.includes("corvis-delivery-uat")) {
+      // Simulates a persistent per-job problem (e.g. a renamed job): must not abort the rest.
+      hit.add("delivery-lookup");
+      return new Response("boom", { status: 500 });
+    }
+    if (href.includes("corvis-control-loop-daily-uat") && href.endsWith(":pause")) {
+      hit.add("daily-pause");
+      return new Response("{}", { status: 200 });
+    }
+    if (href.includes("corvis-control-loop-daily-uat")) {
+      hit.add("daily-lookup");
+      return new Response(JSON.stringify({ state: "ENABLED" }), { status: 200 });
+    }
+    if (href.includes("processing-uat") && href.endsWith(":pause")) {
+      hit.add("queue-pause");
+      return new Response("{}", { status: 200 });
+    }
+    if (href.includes("processing-uat")) {
+      hit.add("queue-lookup");
+      return new Response(JSON.stringify({ state: "RUNNING" }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as typeof fetch;
+
+  const client = new GcpBudgetControlClient({ fetchImpl });
+  await assert.rejects(
+    client.pause(config),
+    (error: unknown) => error instanceof Error && /1\/3 target/.test(error.message),
+  );
+  assert.deepEqual(
+    [...hit].sort(),
+    ["daily-lookup", "daily-pause", "delivery-lookup", "queue-lookup", "queue-pause"],
+    "the daily scheduler job and the queue must still be paused despite the delivery job failing",
+  );
 });

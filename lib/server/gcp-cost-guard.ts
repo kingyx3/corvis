@@ -257,9 +257,20 @@ export class GcpBudgetControlClient implements BudgetControlPort {
   }
 
   async pause(config: BudgetGuardConfig): Promise<CostGuardAction[]> {
+    // Each target is paused independently so one unreachable or unexpectedly
+    // stated job can't stop the rest from being paused during an active budget breach.
+    const targets = [...config.schedulerJobNames.map((job) => () => this.pauseScheduler(config, job)), () => this.pauseQueue(config)];
+    const results = await Promise.allSettled(targets.map((run) => run()));
     const actions: CostGuardAction[] = [];
-    for (const job of config.schedulerJobNames) actions.push(await this.pauseScheduler(config, job));
-    actions.push(await this.pauseQueue(config));
+    const errors: unknown[] = [];
+    for (const result of results) {
+      if (result.status === "fulfilled") actions.push(result.value);
+      else errors.push(result.reason);
+    }
+    if (errors.length > 0) {
+      const messages = errors.map((error) => (error instanceof Error ? error.message : String(error)));
+      throw new Error(`GCP budget guard pause failed for ${errors.length}/${results.length} target(s): ${messages.join("; ")}`);
+    }
     return actions;
   }
 }
