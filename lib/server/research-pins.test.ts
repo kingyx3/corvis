@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity, ResearchAnswer } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { NO_GROUNDED_FIGURES_ANSWER } from "./research-grounding.ts";
+import { computedRowsDigest, NO_GROUNDED_FIGURES_ANSWER } from "./research-grounding.ts";
 import { listResearchPins, pinResearchAnswer, ResearchPinError, unpinResearchAnswer } from "./research-pins.ts";
 
 // CI runs unit tests with CORVIS_DEMO_MODE=true (see .github/workflows/ci.yml),
@@ -125,7 +125,7 @@ test("a well-formed, entitled answer is pinned after its citations and query ids
   const db = new FakeDb();
   db.queryQueue = [
     [{ source_reference_id: SRC, document_id: "doc-1" }],
-    [{ semantic_query_id: SQ }],
+    [{ semantic_query_id: SQ, result_rows_sha256: computedRowsDigest(groundedAnswer().computedResults![0]!.rows) }],
     [], [{ count: 0 }], [pinnedRow(groundedAnswer())],
   ];
   const result = await pin(db, groundedAnswer());
@@ -190,4 +190,24 @@ test("demo identities still get shape and grounding validation but never touch t
   assert.equal(stored.answer.answer, "Demo response for: hi");
   await assert.rejects(pin(db, { answer: "x", citations: [], semanticQueryIds: [], extra: 1 }, demo), rejectedWith("invalid_answer"));
   assert.equal(db.calls.length, 0);
+});
+
+test("pinned computed rows must be exactly the rows the server logged for that query (#245)", async () => {
+  const logged = computedRowsDigest(groundedAnswer().computedResults![0]!.rows);
+  // Forged rows that stay internally consistent ("Revenue was 999." backed by a 999 row) are still rejected.
+  const forged: ResearchAnswer = { ...groundedAnswer(), answer: "Revenue was 999.", computedResults: [{ ...groundedAnswer().computedResults![0]!, rows: [{ value_number: 999 }] }] };
+  for (const digest of [logged, null]) {
+    const db = new FakeDb();
+    db.queryQueue = [[{ source_reference_id: SRC, document_id: "doc-1" }], [{ semantic_query_id: SQ, result_rows_sha256: digest }]];
+    await assert.rejects(pin(db, digest === null ? groundedAnswer() : forged), rejectedWith("answer_not_permitted", 403));
+    assert.ok(!db.calls.some((call) => /insert into/.test(call.sql)), "nothing is written");
+  }
+});
+
+test("the rows digest ignores key order and matches Postgres timestamps after the API's RFC 3339 rewrite", () => {
+  assert.equal(
+    computedRowsDigest([{ b: 1, a: "2026-09-29 10:11:12.5+00", c: ["x"] }]),
+    computedRowsDigest([{ a: "2026-09-29T10:11:12.5Z", c: ["x"], b: 1 }]),
+  );
+  assert.notEqual(computedRowsDigest([{ a: 1 }]), computedRowsDigest([{ a: 2 }]));
 });

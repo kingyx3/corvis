@@ -1,3 +1,5 @@
+// Not on a runtime request path (#239): intentional pre-wiring for the replay/recovery proof in UAT
+// (#79), which runs this reconciliation against retained state; exercised by its unit tests.
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 /**

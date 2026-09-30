@@ -15,11 +15,12 @@
     "test": "node --test core/*.test.ts lib/*.test.ts lib/server/*.test.ts control-loop/*.test.ts adapters/upload/*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/content-security-policy.spec.ts",
+    "test:e2e:non-demo": "CORVIS_E2E_TARGET=production CORVIS_E2E_DEMO=false playwright test e2e/non-demo-smoke.spec.ts --project=chromium",
     "customer:preflight": "node scripts/customer-implementation.ts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "hyparquet-writer": "^0.16.9",
+    "hyparquet-writer": "0.16.10",
     "next": "16.3.5",
     "pg": "8.23.0",
     "react": "19.3.0",

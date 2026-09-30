@@ -206,11 +206,9 @@ test("401 authentication_required and 429 rate_limited (with Retry-After) match 
   }
 });
 
-// Known gap (#239): the native adapter deliberately returns timestamptz as the raw Postgres text
-// ("2026-09-29 10:11:12.123456+00") and export status forwards it verbatim, so this response does
-// not satisfy its own `format: date-time` schema. Marked todo so the suite stays green but reports
-// the test as fixed as soon as the API boundary normalises timestamps.
-test("GET /exports emits RFC 3339 timestamps for Postgres-formatted rows", { todo: "#239: normalise timestamptz at the API boundary" }, async () => {
+// The native adapter returns timestamptz as raw Postgres text ("2026-09-29 10:11:12.123456+00"); the JSON
+// boundary (lib/server/http.ts json()) must emit it as RFC 3339 so responses satisfy `format: date-time` (#239).
+test("GET /exports emits RFC 3339 timestamps for Postgres-formatted rows", async () => {
   exportJobRows = [{
     export_id: "8f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f", format: "csv", state: "queued", created_at: "2026-09-29 10:11:12.123456+00",
     completed_at: null, expires_at: null, checksum_sha256: "a".repeat(64), snapshot_ids: [],

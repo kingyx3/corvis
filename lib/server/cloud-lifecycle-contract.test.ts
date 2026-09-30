@@ -20,7 +20,7 @@ test("bootstrap exclusively owns remote Terraform state creation and recovery", 
   assert.match(state, /--public-access-prevention/);
   assert.match(state, /--soft-delete-duration=0/);
   assert.match(state, /"dayssincenoncurrenttime": 30/);
-  assert.match(state, /"numnewerversions": 20/);
+  assert.match(state, /"numnewerversions": 100/);
 });
 
 test("idle and full teardown are separate guarded lifecycle operations", async () => {

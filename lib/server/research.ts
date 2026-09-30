@@ -12,6 +12,7 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
 import {
   assessNumericGrounding,
+  computedRowsDigest,
   entitledSourceReferenceIds,
   extractNumericFigures,
   NO_GROUNDED_FIGURES_ANSWER,
@@ -260,12 +261,14 @@ export class PermissionedResearchService {
       const semantic = await new GovernedSemanticQueryService(this.db).execute(identity, question);
       checkExecutionSignal(execution.signal);
       const semanticQueryId = queryId(question, semantic.shape, semantic.rows);
+      // The id hashes the rows, so one digest per (tenant, id) holds for every asker; pins are checked against it.
       await this.db.execute(`insert into corvis_control.semantic_query_log
-          (tenant_id,semantic_query_id,actor_subject,question_hash,result_fact_ids,result_row_count,query_shape,created_at,completed_at)
+          (tenant_id,semantic_query_id,actor_subject,question_hash,result_fact_ids,result_row_count,query_shape,result_rows_sha256,created_at,completed_at)
         values ($1,$2,$3,$4,
-          array(select jsonb_array_elements_text($5::jsonb)::uuid),$6,$7::jsonb,now(),now())
-        on conflict (tenant_id,semantic_query_id) do nothing`,
-      [identity.tenantId,semanticQueryId,identity.subject,questionHash(question),JSON.stringify(semantic.factIds),semantic.rows.length,JSON.stringify(semantic.shape)]);
+          array(select jsonb_array_elements_text($5::jsonb)::uuid),$6,$7::jsonb,$8,now(),now())
+        on conflict (tenant_id,semantic_query_id) do update
+          set result_rows_sha256=coalesce(corvis_control.semantic_query_log.result_rows_sha256,excluded.result_rows_sha256)`,
+      [identity.tenantId,semanticQueryId,identity.subject,questionHash(question),JSON.stringify(semantic.factIds),semantic.rows.length,JSON.stringify(semantic.shape),computedRowsDigest(semantic.rows)]);
       checkExecutionSignal(execution.signal);
 
       options.onProgress?.("retrieval");

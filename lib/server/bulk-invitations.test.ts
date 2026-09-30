@@ -43,3 +43,16 @@ test("per-row failures return a stable code, never the raw error message", async
   assert.deepEqual(outcome.errors, [{ row: 2, error: "invitation_failed" }, { row: 3, error: "invitation_failed" }]);
   assert.ok(!JSON.stringify(outcome).includes("victim@example.com"));
 });
+
+test("a row whose invitation is already pending reports its conflict code, not invitation_failed", async () => {
+  const uniqueViolation = Object.assign(new Error("duplicate key"), { code: "23505" });
+  const db: PostgresSqlApi = {
+    async query(): Promise<PostgresRow[]> { return [{ display_name: "Primary" }]; },
+    async execute(sql: string): Promise<void> {
+      if (/insert into corvis_control\.tenant_invitation/i.test(sql)) throw uniqueViolation;
+    },
+    async health(): Promise<boolean> { return true; },
+  };
+  const outcome = await createBulkInvitations(identity, [row(2, "viewer")], { confirmTenantAdmin: false, correlationId: "c", db });
+  assert.deepEqual(outcome.errors, [{ row: 2, error: "invitation_already_pending" }]);
+});

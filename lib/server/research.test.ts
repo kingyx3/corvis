@@ -113,6 +113,7 @@ test("research sends only the deterministic semantic result to the AI service an
     assert.equal(log.parameters[2], identity.subject);
     assert.match(String(log.parameters[6]), /"version":"v2"/);
     assert.match(String(log.parameters[6]), /"metricCode":"revenue"/);
+    assert.match(String(log.parameters[7]), /^[0-9a-f]{64}$/, "the result rows digest is logged for pin verification");
 
     const semanticQuery = aiBody?.semanticQuery as {
       status?: string;

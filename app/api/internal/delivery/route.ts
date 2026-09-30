@@ -7,6 +7,7 @@ import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-t
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
+import { sweepUploadSessions } from "@/lib/server/upload-sweep";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
 
@@ -38,6 +39,7 @@ export async function POST(request:Request){
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
       idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
       uploadRelease:()=>releaseScannedUploads(),
+      uploadSweep:()=>sweepUploadSessions(),
     });
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.

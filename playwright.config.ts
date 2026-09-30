@@ -15,6 +15,9 @@ function webkitInstalled(): boolean {
 
 const runWebkit = !!process.env.CI || webkitInstalled();
 const target = process.env.CORVIS_E2E_TARGET === "production" ? "production" : "development";
+// Every workflow spec runs against the in-memory demo port; CORVIS_E2E_DEMO=false serves the real
+// (non-demo) app for e2e/non-demo-smoke.spec.ts, which must be built the same way.
+const demo = process.env.CORVIS_E2E_DEMO === "false" ? "false" : "true";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -55,8 +58,18 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
-      CORVIS_DEMO_MODE: "true",
-      NEXT_PUBLIC_CORVIS_DEMO_MODE: "true",
+      CORVIS_DEMO_MODE: demo,
+      NEXT_PUBLIC_CORVIS_DEMO_MODE: demo,
+      // A non-demo production server serves nothing but /api/v1/health unless a surface is named.
+      // Its production configuration check also needs these; they are unreachable placeholders because
+      // the smoke only exercises unauthenticated paths, which are refused before any of them is used.
+      ...(demo === "false" ? {
+        CORVIS_RUNTIME_SURFACE: "combined",
+        CORVIS_AUTH_ISSUER: "https://issuer.invalid",
+        CORVIS_AUTH_AUDIENCE: "corvis-e2e-smoke",
+        CORVIS_POSTGRES_DSN: "postgres://smoke:smoke@127.0.0.1:1/smoke",
+        CORVIS_OBJECT_STORE_BUCKET: "corvis-e2e-smoke",
+      } : {}),
     },
   },
 });

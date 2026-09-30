@@ -13,17 +13,15 @@ import { TenantInvitationError } from "@/lib/server/tenant-invitations";
 import { adminSqlErrorClassification } from "@/lib/server/sql-application-errors";
 import { UploadRequestError } from "@/lib/server/uploads";
 import { logEvent } from "@/lib/server/telemetry";
+import { rfc3339Replacer } from "@/lib/server/timestamps";
 import { WebhookSubscriptionError } from "@/lib/server/webhook-subscriptions";
 
+/** JSON response; Postgres timestamptz text anywhere in `data` is emitted as RFC 3339 (see timestamps.ts). */
 export function json(data: unknown, init: ResponseInit = {}): Response {
-  return Response.json(data, {
-    ...init,
-    headers: {
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-      ...(init.headers || {}),
-    },
-  });
+  const headers = new Headers({ "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  for (const [key, value] of new Headers(init.headers)) headers.set(key, value);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  return new Response(JSON.stringify(data, rfc3339Replacer), { ...init, headers });
 }
 
 /** Seconds a client should wait before retrying after a transient database unavailability. */

@@ -280,6 +280,33 @@ h3 {
 .sidebar-section .form-field > small {
   color: var(--sidebar-muted);
 }
+/* Mobile workspace dialog (#245): the switcher on a light dialog surface. The
+   button that opens it only appears at <=960px, where .sidebar-section is hidden. */
+.sidebar nav .sidebar-workspace-button {
+  display: none;
+}
+.workspace-panel > p {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+.workspace-panel .profile {
+  padding: 10px 0;
+  color: var(--text);
+}
+.workspace-panel .profile strong {
+  color: var(--text-strong);
+}
+.workspace-panel .profile small,
+.workspace-panel .form-field > small {
+  color: var(--text-muted);
+}
+.workspace-panel .text-button {
+  display: inline-block;
+  margin-top: 8px;
+}
 .workspace-dot {
   width: 28px;
   height: 28px;
@@ -817,6 +844,12 @@ button.metric-card:hover,
   font-size: 12.5px;
   color: var(--text-muted);
   margin: 0 0 12px;
+  max-width: 60ch;
+}
+.chart-note {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 8px 0 0;
   max-width: 60ch;
 }
 .chart-plot {
@@ -3232,6 +3265,9 @@ button.snapshot-row:focus-visible {
   .sidebar nav button {
     justify-content: center;
     padding: 11px;
+  }
+  .sidebar nav .sidebar-workspace-button {
+    display: flex;
   }
   .sidebar nav button b {
     position: absolute;

@@ -18,6 +18,7 @@ export function ChartFigure({
   columns,
   rows,
   emptyMessage,
+  note,
   children,
 }: {
   eyebrow?: string;
@@ -28,6 +29,8 @@ export function ChartFigure({
   columns: ChartTableColumn[];
   rows: ChartTableRow[];
   emptyMessage?: string;
+  /** Visible reconciliation text (e.g. values left out of the plot); shown even when nothing can be drawn. */
+  note?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -45,6 +48,7 @@ export function ChartFigure({
       ) : (
         <p className="chart-empty">{emptyMessage ?? "Not enough data to chart yet."}</p>
       )}
+      {note && <p className="chart-note">{note}</p>}
       {rows.length > 0 && (
         <details className="chart-data-toggle">
           <summary>View as table</summary>

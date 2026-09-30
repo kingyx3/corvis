@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aggregateComposition, trendDelta } from "./chart-data.ts";
+import { aggregateComposition, compositionOmissionNote, trendDelta } from "./chart-data.ts";
 
 test("aggregateComposition sorts descending and computes percent of total", () => {
   const { segments, total } = aggregateComposition([
@@ -75,4 +75,14 @@ test("aggregateComposition surfaces omitted negative values so the total reconci
   assert.equal(total + omitted.value, netTotal);
   assert.equal(aggregateComposition([{ key: "a", label: "A", value: -5 }]).netTotal, -5);
   assert.deepEqual(aggregateComposition([{ key: "a", label: "A", value: 5 }]).omitted, { count: 0, value: 0 });
+});
+
+test("compositionOmissionNote reconciles drawn and net totals only when values were omitted", () => {
+  const format = (value: number) => String(value);
+  assert.equal(compositionOmissionNote(aggregateComposition([{ key: "a", label: "A", value: 5 }]), format), undefined);
+  assert.equal(
+    compositionOmissionNote(aggregateComposition([{ key: "a", label: "A", value: 10 }, { key: "b", label: "B", value: -3 }]), format),
+    "1 negative value totalling -3 is not drawn. Drawn total 10; net total 7.",
+  );
+  assert.match(compositionOmissionNote(aggregateComposition([{ key: "a", label: "A", value: -1 }, { key: "b", label: "B", value: -2 }]), format) ?? "", /^2 negative values totalling -3 are not drawn/);
 });

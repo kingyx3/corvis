@@ -4,7 +4,11 @@ export type LogLevel = "info" | "warn" | "error";
 export type TelemetryContext = { correlationId: string; tenantId?: string; workspaceId?: string; actorSubject?: string; jobId?: string; documentId?: string };
 
 function forward(record: Record<string, unknown>): void {
-  const config = getServerConfig();
+  // Logging must never throw: an incomplete production configuration makes
+  // getServerConfig() throw, which is exactly when the event must still be
+  // written (it already went to stdout above); it is just not forwarded.
+  let config: ReturnType<typeof getServerConfig>;
+  try { config = getServerConfig(); } catch { return; }
   if (!config.observabilityEndpoint || config.demoMode) return;
   void fetch(config.observabilityEndpoint, {
     method: "POST",

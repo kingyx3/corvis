@@ -182,7 +182,7 @@ test("the attention aggregate queries are entitlement-scoped, unbounded by list 
   assert.match(observationsCall!.sql, /o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
   assert.match(documentsCall!.sql, /count\(\*\) over \(\) as stuck_total/);
   assert.match(documentsCall!.sql, /in \('blocked','failed','dead_letter'\)/);
-  assert.match(documentsCall!.sql, /d\.document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.match(documentsCall!.sql, /d\.document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$2::jsonb\)/);
 
   calls.length = 0;
   const withoutDocuments = await new PostgresProductionPlatform(db).attentionAggregates!(identity, { includeDocuments: false });

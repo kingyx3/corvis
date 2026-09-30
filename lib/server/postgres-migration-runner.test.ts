@@ -11,6 +11,9 @@ import {
   manifestChecksum,
   migrationChecksum,
   migrationFromSource,
+  migrationLineForPosition,
+  MIGRATION_ADVISORY_LOCK_SQL,
+  LEDGER_DDL,
   planMigrations,
   transactionalMigrationSql,
   type AppliedMigration,
@@ -224,4 +227,23 @@ test("the repository's own migration directory produces a valid, gapless replay 
   assert.ok(plan.migrations.length >= 17);
   assert.deepEqual(plan.applied, []);
   assert.equal(plan.pending.length, plan.migrations.length);
+});
+
+test("a Postgres error position in the executed SQL maps back to the migration file's line (#229)", () => {
+  const source = "-- header\n\nbegin;\n\ncreate table t (id int);\nselect broken_here;\n\ncommit;\n";
+  const migration = migrationFromSource("001_migration.sql", source);
+  const executed = transactionalMigrationSql(migration, "ci");
+  const position = executed.indexOf("broken_here") + 1;
+  assert.equal(migrationLineForPosition(migration, "ci", position), 6);
+  assert.equal(migrationLineForPosition(migration, "ci", executed.indexOf("create table t") + 1), 5);
+  assert.equal(migrationLineForPosition(migration, "ci", executed.indexOf("insert into corvis_migration") + 1), undefined, "the runner's own ledger insert is not a migration line");
+});
+
+test("the ledger DDL and every migration take the runner's transaction-scoped advisory lock (#229)", () => {
+  assert.match(MIGRATION_ADVISORY_LOCK_SQL, /pg_advisory_xact_lock/);
+  assert.ok(LEDGER_DDL.startsWith("begin;") && LEDGER_DDL.trimEnd().endsWith("commit;"));
+  assert.ok(LEDGER_DDL.indexOf(MIGRATION_ADVISORY_LOCK_SQL) < LEDGER_DDL.indexOf("create schema"));
+  const spliced = transactionalMigrationSql(migration(3, "create table lock_marker (id int);"), "ci");
+  assert.ok(spliced.indexOf(MIGRATION_ADVISORY_LOCK_SQL) < spliced.indexOf("insert into corvis_migration.schema_migration"));
+  assert.ok(spliced.indexOf("insert into corvis_migration.schema_migration") < spliced.indexOf("lock_marker"));
 });

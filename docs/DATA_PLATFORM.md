@@ -183,8 +183,21 @@ only: the HTTPS transport has no transactions, so `withTransaction` would run
 non-atomically (a mutation could commit without its audit row), and production
 startup fails unless the DSN is `postgres://` or `postgresql://`.
 
-Each process shares a five-connection pool per configured DSN, with bounded
+Each process shares a five-connection pool per configured DSN (tunable with
+`CORVIS_POSTGRES_POOL_MAX`, 1-50; the provider's connection limit must cover
+max instances x pool size for every service, and the API and worker Cloud Run
+services cap request concurrency at 20 to match), with bounded
 connection/query timeouts, a 60-second `idle_in_transaction_session_timeout`, idle eviction and five-minute connection rotation.
+
+Behind a transaction-mode pooler (PgBouncer, Supavisor's transaction port) set
+`CORVIS_POSTGRES_POOLER=transaction`: the server-side timeouts are then applied
+with `SET LOCAL` at the start of every transaction instead of as startup
+parameters, which such poolers may reject and cannot pin to one server session.
+Single statements outside a transaction are then bounded by the client-side
+query timeout and the database role's defaults, so also run
+`alter role <app role> set statement_timeout = '30s'` there. Run migrations
+against a session-mode connection: they take a transaction-scoped advisory lock
+and hold one transaction per file.
 Queries remain parameterized. Failed transactions destroy their connection;
 queries are never automatically retried because their commit outcome may be
 unknown. Migration files must keep their existing single-call BEGIN/COMMIT

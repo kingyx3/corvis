@@ -11,7 +11,7 @@ export async function GET(request: Request, context: { params: Promise<{ uploadI
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const session = await uploads().get(identity, uploadId);
-    if (!canAccessUpload(identity, session.actorSubject)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
+    if (!canAccessUpload(identity, session)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
     return json({ data: {
       uploadId: session.uploadId,
       documentId: session.documentId,
@@ -31,7 +31,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ uplo
     assertPermission(identity, "documents:write");
     const { uploadId } = await context.params;
     const session = await uploads().get(identity, uploadId);
-    if (!canAccessUpload(identity, session.actorSubject)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
+    if (!canAccessUpload(identity, session)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
     await uploads().abort(identity, uploadId);
     return new Response(null, { status: 204 });
   } catch (error) { return apiError(error, id); }

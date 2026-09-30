@@ -30,10 +30,15 @@ function isStaticPath(pathname: string): boolean {
   return pathname.startsWith("/_next/") || pathname === "/favicon.ico" || pathname === "/robots.txt";
 }
 
+/** Liveness and readiness probes are served on every surface, including a disabled one. */
+function isProbePath(pathname: string): boolean {
+  return pathname === "/api/v1/health" || pathname === "/api/v1/health/ready";
+}
+
 export function runtimeSurfaceAllows(surface: RuntimeSurface, pathname: string): boolean {
   if (surface === "combined") return true;
-  if (surface === "disabled") return pathname === "/api/v1/health";
-  if (pathname === "/api/v1/health") return true;
+  if (surface === "disabled") return isProbePath(pathname);
+  if (isProbePath(pathname)) return true;
 
   if (surface === "worker") return pathname.startsWith("/api/internal/");
 

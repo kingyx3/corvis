@@ -227,3 +227,23 @@ test("GcsControlClient conditional write, generation read and paged listing spea
     globalThis.fetch = originalFetch;
   }
 });
+
+test("GcsControlClient streams an object without buffering it and maps 404 to null (#231)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("missing")) return new Response("gone", { status: 404 });
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("a,b\r\n")); controller.enqueue(new TextEncoder().encode("1,2\r\n")); controller.close(); } }), { status: 200, headers: { "content-type": "text/csv", "content-length": "10" } });
+  }) as typeof fetch;
+  try {
+    const client = new GcsControlClient({ bucket: "b", accessToken: "t" });
+    const object = await client.getObjectStream("exports/x.csv");
+    assert.ok(object);
+    assert.equal(object.contentType, "text/csv");
+    assert.equal(object.contentLength, "10");
+    assert.equal(await new Response(object.body).text(), "a,b\r\n1,2\r\n");
+    assert.equal(await client.getObjectStream("exports/missing.csv"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -17,7 +17,18 @@ export const LEDGER_SCHEMA = "corvis_migration";
 export const LEDGER_TABLE = `${LEDGER_SCHEMA}.schema_migration`;
 
 /** The ledger is runner-owned infrastructure, not tenant data: deny-by-default, no policies. */
-export const LEDGER_DDL = `create schema if not exists ${LEDGER_SCHEMA};
+/**
+ * Transaction-scoped advisory lock taken by the ledger DDL and by every
+ * migration transaction, so concurrent runners (a re-run deploy beside a manual
+ * apply) serialize instead of racing `create schema if not exists` or
+ * interleaving migrations. Transaction-scoped because the runner's pool may
+ * hand each statement a different session; it is released at commit/rollback.
+ */
+export const MIGRATION_ADVISORY_LOCK_SQL = "select pg_advisory_xact_lock(hashtext('corvis_migration.schema_migration'));";
+
+export const LEDGER_DDL = `begin;
+${MIGRATION_ADVISORY_LOCK_SQL}
+create schema if not exists ${LEDGER_SCHEMA};
 create table if not exists ${LEDGER_TABLE} (
   version integer primary key,
   name text not null,
@@ -27,7 +38,8 @@ create table if not exists ${LEDGER_TABLE} (
 );
 alter table ${LEDGER_TABLE} enable row level security;
 revoke all on ${LEDGER_TABLE} from public;
-revoke all on schema ${LEDGER_SCHEMA} from public;`;
+revoke all on schema ${LEDGER_SCHEMA} from public;
+commit;`;
 
 /**
  * Connection limits for the migration CLI. The shared API pool caps every
@@ -82,7 +94,9 @@ export class MigrationApplyError extends Error {
   readonly alreadyApplied: number[];
   readonly appliedThisRun: number[];
   readonly driverCode?: string;
-  constructor(migration: Pick<MigrationFile, "version" | "name">, alreadyApplied: number[], appliedThisRun: number[], cause: unknown) {
+  /** Line of the migration file containing the failing token, when Postgres reported a position. */
+  readonly failedLine?: number;
+  constructor(migration: Pick<MigrationFile, "version" | "name">, alreadyApplied: number[], appliedThisRun: number[], cause: unknown, failedLine?: number) {
     const driverCode = cause && typeof cause === "object" && typeof (cause as { code?: unknown }).code === "string"
       ? String((cause as { code: string }).code)
       : undefined;
@@ -94,6 +108,7 @@ export class MigrationApplyError extends Error {
     this.alreadyApplied = alreadyApplied;
     this.appliedThisRun = appliedThisRun;
     this.driverCode = driverCode;
+    if (failedLine !== undefined) this.failedLine = failedLine;
   }
 }
 
@@ -273,8 +288,8 @@ export async function readAppliedMigrations(client: MigrationSqlClient): Promise
  * Splices the ledger insert into the migration's own transaction so a version
  * can never be recorded without its DDL, or applied without being recorded.
  *
- * The ledger row is claimed first, straight after `begin;`, with no conflict
- * clause. Two runners that planned the same pending version concurrently (a
+ * The ledger row is claimed first, straight after `begin;` and the runner's
+ * advisory lock, with no conflict clause. Two runners that planned the same pending version concurrently (a
  * re-run deploy, a manual apply beside CI) therefore serialize on the ledger
  * primary key: the second blocks until the first commits and then fails with a
  * unique violation, rolling back before any of the migration's SQL runs,
@@ -289,8 +304,31 @@ export function transactionalMigrationSql(migration: MigrationFile, appliedBy: s
       `migration ${migration.name} must open with begin; and close with commit; so replay is atomic`,
     );
   }
-  const body = normalized.slice(opening[0].length).replace(trailingCommitPattern, "").trim();
-  return `${opening[0]}\n\n${ledgerInsertSql(migration, appliedBy)}\n\n${body}\n\ncommit;\n`;
+  const { prefix, body } = splicedParts(migration, appliedBy);
+  return `${prefix}${body}\n\ncommit;\n`;
+}
+
+function splicedParts(migration: MigrationFile, appliedBy: string): { prefix: string; body: string; bodyOffset: number } {
+  const normalized = normalizeSql(migration.sql).trimEnd();
+  const opening = leadingBeginPattern.exec(normalized)!;
+  const rest = normalized.slice(opening[0].length);
+  const body = rest.replace(trailingCommitPattern, "").trim();
+  const bodyOffset = opening[0].length + (rest.length - rest.trimStart().length);
+  return { prefix: `${opening[0]}\n\n${MIGRATION_ADVISORY_LOCK_SQL}\n${ledgerInsertSql(migration, appliedBy)}\n\n`, body, bodyOffset };
+}
+
+/**
+ * Maps Postgres's 1-based error `position` in the SQL the runner executed back to
+ * the line of the migration file it came from, so a failed deploy names the
+ * failing statement's line (#229). `undefined` when the position falls in the
+ * runner's own spliced lock/ledger statements or outside the body.
+ */
+export function migrationLineForPosition(migration: MigrationFile, appliedBy: string, position: number): number | undefined {
+  const { prefix, body, bodyOffset } = splicedParts(migration, appliedBy);
+  const offsetInBody = position - 1 - prefix.length;
+  if (offsetInBody < 0 || offsetInBody >= body.length) return undefined;
+  const normalized = normalizeSql(migration.sql);
+  return normalized.slice(0, bodyOffset + offsetInBody).split("\n").length;
 }
 
 export function ledgerInsertSql(migration: MigrationFile, appliedBy: string): string {
@@ -324,7 +362,9 @@ export async function applyMigrations(client: MigrationSqlClient, options: Apply
     try {
       await client.execute(transactionalMigrationSql(migration, options.appliedBy));
     } catch (error) {
-      throw new MigrationApplyError(migration, alreadyApplied, applied.map((record) => record.version), error);
+      const position = (error as { position?: unknown } | null)?.position;
+      const failedLine = typeof position === "number" ? migrationLineForPosition(migration, options.appliedBy, position) : undefined;
+      throw new MigrationApplyError(migration, alreadyApplied, applied.map((record) => record.version), error, failedLine);
     }
     applied.push({ ...pending, durationMs: Math.max(0, clock() - startedAt) });
   }

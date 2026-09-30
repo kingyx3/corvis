@@ -3,6 +3,7 @@ import { getServerConfig } from "./config.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import {
   assessNumericGrounding,
+  computedRowsDigest,
   entitledSourceReferenceIds,
   MAX_ANSWER_TEXT_LENGTH,
   NO_GROUNDED_FIGURES_ANSWER,
@@ -73,8 +74,8 @@ export type PinResearchAnswerInput = { question: string; answer: ResearchAnswer;
  *     must be one the server logged in this caller's tenant -> `answer_not_permitted` (403). The ids are content
  *     hashes and the log keeps the first asker, so two users with the same question and scope share an id;
  *     the check is therefore tenant-scoped, not per-actor.
- * Residual limit: `computedResults.rows` itself is still client-supplied (the query log stores ids and fact ids,
- * not rows), so step 2 proves internal consistency, not that the rows are the ones the server computed.
+ *  4. every computed result's rows must hash to the digest the server logged for its semantic query id when it
+ *     computed them (migration 070), so the pinned figures are the server's, not the client's -> `answer_not_permitted`.
  */
 async function verifiedAnswer(identity: RequestIdentity, raw: unknown, database: () => PostgresSqlApi, demo: boolean): Promise<ResearchAnswer> {
   const answer = parseResearchAnswerPayload(raw);
@@ -94,13 +95,17 @@ async function verifiedAnswer(identity: RequestIdentity, raw: unknown, database:
   }
   if (answer.semanticQueryIds.length > 0) {
     const rows = await database().query(
-      `select semantic_query_id from corvis_control.semantic_query_log
+      `select semantic_query_id,result_rows_sha256 from corvis_control.semantic_query_log
         where tenant_id=$1::uuid
           and semantic_query_id in (select jsonb_array_elements_text($2::jsonb))`,
       [identity.tenantId, JSON.stringify(answer.semanticQueryIds)],
     );
-    const known = new Set(rows.map((row) => String(row.semantic_query_id)));
-    if (answer.semanticQueryIds.some((id) => !known.has(id))) throw new ResearchPinError("answer_not_permitted", 403);
+    const digests = new Map(rows.map((row) => [String(row.semantic_query_id), row.result_rows_sha256 == null ? null : String(row.result_rows_sha256)]));
+    if (answer.semanticQueryIds.some((id) => !digests.has(id))) throw new ResearchPinError("answer_not_permitted", 403);
+    // A query logged before digests existed (null) cannot prove its rows, so it is not pinnable.
+    if ((answer.computedResults ?? []).some((result) => digests.get(result.semanticQueryId) !== computedRowsDigest(result.rows))) {
+      throw new ResearchPinError("answer_not_permitted", 403);
+    }
   }
   return answer;
 }

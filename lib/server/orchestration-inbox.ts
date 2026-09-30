@@ -1,3 +1,5 @@
+// Not on a runtime request path (#239): intentional pre-wiring for the durable event-inbox consumer
+// (migration 013) that the processing worker tracked in #79 will use; exercised by its unit tests.
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { redactErrorText } from "./processing-error-text.ts";
 

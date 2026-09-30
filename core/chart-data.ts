@@ -39,6 +39,20 @@ export function aggregateComposition(
   return { segments, total, omitted, netTotal };
 }
 
+/**
+ * Visible text reconciling a composition whose negative inputs were left out of
+ * the drawn segments; `undefined` when nothing was omitted.
+ */
+export function compositionOmissionNote(
+  result: { total: number; omitted: CompositionOmission; netTotal: number },
+  format: (value: number) => string,
+): string | undefined {
+  const { omitted, total, netTotal } = result;
+  if (omitted.count === 0) return undefined;
+  const one = omitted.count === 1;
+  return `${omitted.count} negative ${one ? "value" : "values"} totalling ${format(omitted.value)} ${one ? "is" : "are"} not drawn. Drawn total ${format(total)}; net total ${format(netTotal)}.`;
+}
+
 export type TrendPoint = { period: string; value: number | null };
 export type TrendDelta = { absolute: number; percent: number | null; direction: "up" | "down" | "flat" };
 

@@ -55,6 +55,8 @@ export type UploadSession = {
   artifactVersionId: string;
   ingestionId: string;
   tenantId: string;
+  /** Workspace the upload was initiated from; absent on sessions created before #238. */
+  workspaceId?: string;
   actorSubject: string;
   fileName: string;
   contentType: string;
@@ -133,6 +135,7 @@ const allowedMime = new Set([
 function safeName(value: string): string { return value.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 180) || "document"; }
 function keyHash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 function sessionPrefix(tenantId: string): string { return `_corvis/upload-sessions/tenant=${encodeURIComponent(tenantId)}/`; }
+const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function sessionKey(tenantId: string, uploadId: string): string { return `${sessionPrefix(tenantId)}${uploadId}.json`; }
 function idempotencyKey(tenantId: string, key: string): string { return `_corvis/upload-idempotency/tenant=${encodeURIComponent(tenantId)}/${keyHash(key)}.json`; }
 
@@ -238,7 +241,7 @@ class DemoUploadSessions implements UploadSessionPort {
     const config = getServerConfig();
     const session: UploadSession = {
       uploadId: randomUUID(), documentId: randomUUID(), artifactVersionId: randomUUID(), ingestionId: randomUUID(),
-      tenantId: identity.tenantId, actorSubject: identity.subject, fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
+      tenantId: identity.tenantId, workspaceId: identity.workspaceId, actorSubject: identity.subject, fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
       chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated", checksumSha256: input.checksumSha256,
       idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(), malwareScanStatus: "clean", contentValidated: true,
       resumableUploadUrl: `/api/v1/uploads/${randomUUID()}/demo`,
@@ -332,13 +335,15 @@ export class ProductionUploadSessions implements UploadSessionPort {
   }
 
   private async load(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
+    // Upload ids are server-issued UUIDs; anything else never reaches an object key (#238).
+    if (!UPLOAD_ID.test(uploadId)) throw new UploadRequestError("upload_not_found", "Upload not found");
     const session = await this.readSession(sessionKey(identity.tenantId, uploadId));
     if (!session || session.tenantId !== identity.tenantId) throw new UploadRequestError("upload_not_found", "Upload not found");
     return session;
   }
 
   private assertUploader(identity: RequestIdentity, session: UploadSession): void {
-    if (!canAccessUpload(identity, session.actorSubject)) throw new UploadRequestError("upload_not_found", "Upload not found");
+    if (!canAccessUpload(identity, session)) throw new UploadRequestError("upload_not_found", "Upload not found");
   }
 
   private async registerInitiated(session: UploadSession): Promise<void> {
@@ -531,7 +536,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
       },
     });
     const session: UploadSession = {
-      uploadId, documentId, artifactVersionId, ingestionId, tenantId: identity.tenantId, actorSubject: identity.subject,
+      uploadId, documentId, artifactVersionId, ingestionId, tenantId: identity.tenantId, workspaceId: identity.workspaceId, actorSubject: identity.subject,
       fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
       chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated",
       checksumSha256: input.checksumSha256, idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(),

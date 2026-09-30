@@ -30,31 +30,34 @@ export function Modal({
   const initialValues = useRef<string | null>(null);
   const keepEditingRef = useRef<HTMLButtonElement | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  useFocusTrap(ref, onClose);
 
   useEffect(() => {
     if (ref.current) initialValues.current = formValues(ref.current);
   }, []);
   useEffect(() => { if (confirmDiscard) keepEditingRef.current?.focus(); }, [confirmDiscard]);
 
-  // A stray click outside must not throw away what was typed into a form. Dialogs without a form
-  // (palette, evidence viewer, confirmations) still close immediately; Escape and the dialog's own
-  // Cancel button remain explicit, deliberate ways to leave.
-  const onBackdropMouseDown = () => {
+  // A stray click outside or a reflexive Escape must not throw away what was typed into a form.
+  // Dialogs without a form (palette, evidence viewer, confirmations) still close immediately; the
+  // dialog's own Cancel button remains the explicit way to leave. Escape while the prompt is shown
+  // dismisses the prompt and keeps editing.
+  const requestClose = () => {
     const dirty = ref.current != null && initialValues.current != null && formValues(ref.current) !== initialValues.current;
     if (dirty) setConfirmDiscard(true); else onClose();
   };
+  // Dismissing the prompt unmounts the focused "Keep editing" button; keep focus inside the dialog.
+  const keepEditing = () => { setConfirmDiscard(false); ref.current?.focus(); };
+  useFocusTrap(ref, () => { if (confirmDiscard) keepEditing(); else requestClose(); });
 
   return <div
     role="presentation"
     className={`dialog-backdrop${align === "top" ? " align-top" : ""}`}
-    onMouseDown={(event) => { if (event.target === event.currentTarget) onBackdropMouseDown(); }}
+    onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}
   >
     <section ref={ref} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} className="dialog-surface" style={{ width }}>
       {children}
       {confirmDiscard && <div className="lineage-note tone-warning modal-discard-confirm" role="alert">
         <div><strong>Discard what you entered?</strong><span>Closing this dialog will lose the changes you typed.</span></div>
-        <button type="button" className="secondary-button" ref={keepEditingRef} onClick={() => setConfirmDiscard(false)}>Keep editing</button>
+        <button type="button" className="secondary-button" ref={keepEditingRef} onClick={keepEditing}>Keep editing</button>
         <button type="button" className="danger-button" onClick={onClose}>Discard and close</button>
       </div>}
     </section>

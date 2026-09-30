@@ -144,6 +144,16 @@ resource "google_cloud_run_v2_service" "worker" {
   template {
     service_account = var.worker_service_account_email
 
+    # Pub/Sub push waits up to its 600s ack deadline; the default 300s request
+    # timeout would cut long stage handlers off before Pub/Sub gives up (#235).
+    timeout = "600s"
+
+    # Each instance shares one Postgres pool (CORVIS_POSTGRES_POOL_MAX, default
+    # 5). Cloud Run's default concurrency of 80 would queue most requests behind
+    # that pool until its 10s connection timeout (#229); 20 keeps the wait short
+    # while instances scale out instead.
+    max_instance_request_concurrency = 20
+
     scaling {
       min_instance_count = 0
       max_instance_count = var.environment == "prod" ? 20 : 5
@@ -154,6 +164,31 @@ resource "google_cloud_run_v2_service" "worker" {
 
       ports {
         container_port = 3000
+      }
+
+      # A revision takes traffic only once its production configuration is
+      # complete and Postgres answers (#235); a bad secret or DSN fails the
+      # deploy instead of going live. Liveness restarts a wedged instance.
+      startup_probe {
+        timeout_seconds   = 5
+        period_seconds    = 10
+        failure_threshold = 12
+
+        http_get {
+          path = "/api/v1/health/ready"
+          port = 3000
+        }
+      }
+
+      liveness_probe {
+        timeout_seconds   = 5
+        period_seconds    = 30
+        failure_threshold = 3
+
+        http_get {
+          path = "/api/v1/health"
+          port = 3000
+        }
       }
 
       env {
@@ -368,8 +403,16 @@ resource "google_cloud_run_v2_service" "api" {
   template {
     service_account = var.api_service_account_email
 
+    # Each instance shares one Postgres pool (CORVIS_POSTGRES_POOL_MAX, default
+    # 5). Cloud Run's default concurrency of 80 would queue most requests behind
+    # that pool until its 10s connection timeout (#229); 20 keeps the wait short
+    # while instances scale out instead.
+    max_instance_request_concurrency = 20
+
+    # One warm instance in prod keeps cold starts off the 750ms p95 API
+    # objective in ops/slos.yaml (#235); other environments scale to zero.
     scaling {
-      min_instance_count = 0
+      min_instance_count = var.environment == "prod" ? 1 : 0
       max_instance_count = var.environment == "prod" ? 20 : 5
     }
 
@@ -378,6 +421,31 @@ resource "google_cloud_run_v2_service" "api" {
 
       ports {
         container_port = 3000
+      }
+
+      # A revision takes traffic only once its production configuration is
+      # complete and Postgres answers (#235); a bad secret or DSN fails the
+      # deploy instead of going live. Liveness restarts a wedged instance.
+      startup_probe {
+        timeout_seconds   = 5
+        period_seconds    = 10
+        failure_threshold = 12
+
+        http_get {
+          path = "/api/v1/health/ready"
+          port = 3000
+        }
+      }
+
+      liveness_probe {
+        timeout_seconds   = 5
+        period_seconds    = 30
+        failure_threshold = 3
+
+        http_get {
+          path = "/api/v1/health"
+          port = 3000
+        }
       }
 
       env {

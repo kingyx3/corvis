@@ -148,6 +148,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/feature-flags/retire/route.ts", { POST: ADMIN }],
   ["admin/feature-flags/route.ts", { GET: ADMIN, PUT: ADMIN }],
   ["admin/identity-lifecycle/route.ts", { POST: ADMIN }],
+  ["admin/processing-transport/dead-letters/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["admin/readiness/route.ts", { GET: ADMIN }],
   ["admin/session-revocations/route.ts", { POST: ADMIN }],
   ["admin/support-access/route.ts", { POST: ADMIN }],
@@ -159,6 +160,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/webhooks/subscriptions/[webhookId]/route.ts", { PATCH: ADMIN }],
   ["admin/webhooks/subscriptions/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["capabilities/route.ts", { GET: null }],
+  ["client-errors/route.ts", { POST: null }],
   ["companies/route.ts", { GET: "observations:read" }],
   ["company-lifecycle-events/route.ts", { GET: "observations:read" }],
   ["company-sectors/route.ts", { GET: "observations:read", POST: "observations:review" }],
@@ -209,6 +211,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
 // Routes with their own (non-session) authentication, exercised in dedicated tests below.
 const OWN_AUTHENTICATION = new Set([
   "health/route.ts", // public
+  "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership
   "scim/v2/Users/route.ts", // tenant SCIM bearer token
   "scim/v2/Users/[id]/route.ts",
@@ -649,12 +652,62 @@ test("invitation acceptance needs an authenticated human identity, not a service
 test("the health route is public and identity-only routes need just an authenticated identity", async () => {
   const health = await load("health/route.ts");
   assert.equal((await health.GET!(requestFor("/health", { roles: null }))).status, 200);
+  const ready = await load("health/ready/route.ts");
+  const probe = await ready.GET!(requestFor("/health/ready", { roles: null }));
+  assert.ok([200, 503].includes(probe.status), "the readiness probe is public and detail-free");
+  assert.deepEqual(Object.keys(await probe.json() as object).sort(), ["service", "status"]);
   for (const file of ["me/route.ts", "capabilities/route.ts", "my-workspaces/route.ts"]) {
     const handlers = await load(file);
     for (const role of ROLES) {
       seedDatabase();
       assert.equal((await handlers.GET!(requestFor(pathFor(file), { roles: [role] }))).status, 200, `${file} as ${role}`);
     }
+  }
+});
+
+test("transport dead-letter recovery lists and requeues the tenant's dead letters with an audit row", async () => {
+  const handlers = await load("admin/processing-transport/dead-letters/route.ts");
+  const dead = { event_id: SOME_UUID, event_type: "DocumentRegistered", aggregate_type: "document", aggregate_id: "d1", attempt_count: 8, last_error: "boom", created_at: "2026-09-29 10:00:00+00", transport_dead_lettered_at: "2026-09-29 11:00:00+00" };
+  seedDatabase((query) => /from corvis_control\.outbox_event/.test(query.sql) ? [dead] : []);
+  const listed = await handlers.GET!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"] }));
+  assert.equal(listed.status, 200);
+  const body = await listed.json() as { data: Array<{ eventId: string; deadLetteredAt: string }> };
+  assert.equal(body.data[0]!.eventId, SOME_UUID);
+  assert.equal(body.data[0]!.deadLetteredAt, "2026-09-29T11:00:00Z", "timestamps are RFC 3339");
+  assert.ok(queries.every((query) => !/outbox_event/.test(query.sql) || query.parameters[0] === TENANT), "scoped to the caller's tenant");
+
+  seedDatabase((query) => /update corvis_control\.outbox_event/.test(query.sql) ? [dead] : []);
+  const requeued = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID, reason: "provider outage resolved" } }));
+  assert.equal(requeued.status, 202);
+  assert.ok(queries.some((query) => /insert into corvis_control\.audit_event/.test(query.sql) && JSON.stringify(query.parameters).includes("processing_transport.requeue_dead_letter")), "the requeue is audited");
+
+  seedDatabase();
+  const missing = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID, reason: "again" } }));
+  assert.equal(missing.status, 409);
+  assert.equal(await errorOf(missing), "event_not_dead_lettered");
+  const invalid = await handlers.POST!(requestFor("/admin/processing-transport/dead-letters", { roles: ["admin"], method: "POST", body: { eventId: SOME_UUID } }));
+  assert.equal(invalid.status, 400);
+});
+
+test("client error ingest accepts only the PII-free event shape from an authenticated identity", async () => {
+  const handlers = await load("client-errors/route.ts");
+  const event = { event: "corvis.client_error", source: "view-boundary", name: "TypeError", code: "research_timeout", view: "research", occurredAt: "2026-09-29T10:00:00.000Z" };
+  const lines: string[] = [];
+  console.warn = (line: unknown) => { lines.push(String(line)); };
+  try {
+    for (const role of ROLES) {
+      seedDatabase();
+      assert.equal((await handlers.POST!(requestFor("/client-errors", { roles: [role], method: "POST", body: event }))).status, 204, role);
+    }
+    const logged = JSON.parse(lines.find((line) => line.includes('"client.error"')) ?? "{}") as Record<string, unknown>;
+    assert.equal(logged.tenantId, TENANT);
+    assert.equal(logged.code, "research_timeout");
+    for (const body of [{ ...event, message: "Jane Doe's NAV is 12.5m" }, { ...event, code: "Free text with PII" }, { ...event, view: "/funds?id=secret" }, [event], "x"]) {
+      assert.equal((await handlers.POST!(requestFor("/client-errors", { method: "POST", body }))).status, 400, JSON.stringify(body));
+    }
+    assert.equal((await handlers.POST!(requestFor("/client-errors", { method: "POST", rawBody: `{"pad":"${"x".repeat(4096)}"}` }))).status, 413);
+  } finally {
+    console.warn = quiet;
   }
 });
 

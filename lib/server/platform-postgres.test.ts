@@ -139,7 +139,7 @@ test("workspace reads use the Postgres serving contract and explicit document al
   assert.equal(result.length, 1);
   assert.equal(result[0]?.name, "Q2 report.pdf");
   assert.match(db.calls[0]?.sql ?? "", /corvis_serving\.documents/);
-  assert.match(db.calls[0]?.sql ?? "", /document_id::text in/);
+  assert.match(db.calls[0]?.sql ?? "", /document_id in \(select entitled\.id::uuid/);
   assert.equal(db.calls[0]?.parameters[0], identity.tenantId);
   assert.equal(db.calls[0]?.parameters[1], JSON.stringify(identity.entitlements.documentIds));
 });
@@ -166,7 +166,7 @@ test("review returns the persistence-authoritative next state for four-eyes work
   assert.equal(result.newVersion, 3);
   assert.equal(result.nextState, "review_required");
   assert.match(db.calls[0]?.sql ?? "", /o\.fund_id in/);
-  assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
+  assert.match(db.calls[0]?.sql ?? "", /r\.document_id in \(select entitled\.id::uuid/);
   assert.match(db.calls[1]?.sql ?? "", /apply_review_decision/);
   assert.equal(db.calls.some((call) => /set\s+value_/i.test(call.sql)), false);
 });
@@ -194,7 +194,7 @@ test("reconciliation workbench returns only fund-scoped exceptions and entitled 
   assert.deepEqual(result[0]?.allowedActions, ["select_source"]);
   assert.equal(result[0]?.sourceReferences[0]?.sourceReferenceId, allowedSourceId);
   assert.match(db.calls[0]?.sql ?? "", /e\.fund_id in/);
-  assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
+  assert.match(db.calls[0]?.sql ?? "", /r\.document_id in \(select entitled\.id::uuid/);
   assert.equal(db.calls[0]?.parameters[3], JSON.stringify(identity.entitlements.fundIds));
   assert.equal(db.calls[0]?.parameters[4], JSON.stringify(identity.entitlements.sourceDocumentIds));
 });
@@ -211,7 +211,7 @@ test("source-authority resolution verifies the selected source against the sourc
   });
   assert.equal(result.status, "resolved");
   assert.match(db.calls[0]?.sql ?? "", /r\.source_reference_id=\$5::uuid/);
-  assert.match(db.calls[0]?.sql ?? "", /r\.document_id::text in/);
+  assert.match(db.calls[0]?.sql ?? "", /r\.document_id in \(select entitled\.id::uuid/);
   assert.equal(db.calls[0]?.parameters[4], allowedSourceId);
   assert.equal(db.calls[0]?.parameters[5], JSON.stringify(identity.entitlements.sourceDocumentIds));
   assert.match(db.calls[1]?.sql ?? "", /resolve_reconciliation_exception/);
@@ -505,7 +505,7 @@ test("/documents keyset-pages in SQL so documents past the old 1000-row cap are 
   const platform = new PostgresProductionPlatform(db);
   assertEveryKeySeenOnce(await walkAllPages((page) => platform.listDocuments(entitled, page), (document) => document.id), ids);
   const last = db.calls.at(-1)!;
-  assert.match(last.sql, /where tenant_id=\$1\s+and document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.match(last.sql, /where tenant_id=\$1\s+and document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$2::jsonb\)/);
   assert.deepEqual(last.parameters.slice(0, 2), [identity.tenantId, JSON.stringify(ids)]);
   assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1, "fetches limit + 1 rows");
 });
@@ -517,7 +517,7 @@ test("/jobs keyset-pages in SQL so jobs past the old 1000-row cap are reachable"
   const platform = new PostgresProductionPlatform(db);
   assertEveryKeySeenOnce(await walkAllPages((page) => platform.jobs(identity, page), (job) => job.id), ids);
   const last = db.calls.at(-1)!;
-  assert.match(last.sql, /where j\.tenant_id=\$1\s+and j\.document_id::text in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
+  assert.match(last.sql, /where j\.tenant_id=\$1\s+and j\.document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$2::jsonb\)/);
   assert.deepEqual(last.parameters.slice(0, 2), [identity.tenantId, JSON.stringify(identity.entitlements.documentIds)]);
   assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1);
 });
@@ -529,7 +529,7 @@ test("/observations keyset-pages in SQL so observations past the old 5000-row ca
   const platform = new PostgresProductionPlatform(db);
   assertEveryKeySeenOnce(await walkAllPages((page) => platform.listObservations(identity, page), (observation) => observation.id), ids);
   const last = db.calls.at(-1)!;
-  assert.match(last.sql, /where o\.tenant_id=\$1\s+and o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)\s+and r\.document_id::text in \(select jsonb_array_elements_text\(\$3::jsonb\)\)/);
+  assert.match(last.sql, /where o\.tenant_id=\$1\s+and o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)\s+and r\.document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$3::jsonb\)/);
   assert.deepEqual(last.parameters.slice(0, 3), [identity.tenantId, JSON.stringify(identity.entitlements.fundIds), JSON.stringify(identity.entitlements.documentIds)]);
   assert.equal(last.parameters.at(-1), MAX_PAGE_LIMIT + 1);
 });
