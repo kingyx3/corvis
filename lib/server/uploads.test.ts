@@ -625,7 +625,7 @@ test("an artifact already blocked in the registry is not released by a later cle
   assert.deepEqual(context.store.hashed, [], "blocked artifacts are not even read");
 });
 
-test("an artifact another worker already released is not hashed again", async () => {
+test("an artifact another worker already released is not hashed or released again", async () => {
   const context = harness();
   const actor = identity();
   const session = await context.uploads.initiate(actor, initiateInput());
@@ -636,5 +636,8 @@ test("an artifact another worker already released is not hashed again", async ()
   const after = await context.uploads.get(actor, session.uploadId);
   assert.equal(after.state, "complete");
   assert.deepEqual(context.store.hashed, []);
-  assert.equal(context.db.releases.length, 1, "release_clean_artifact is idempotent and still records the session as complete");
+  // release_clean_artifact is NOT safe to call again: it unconditionally resets
+  // document.status back to 'queued' regardless of how far the pipeline has
+  // since progressed, so a second caller observing "released" must skip it.
+  assert.equal(context.db.releases.length, 0, "an already-released artifact must not be re-released");
 });
