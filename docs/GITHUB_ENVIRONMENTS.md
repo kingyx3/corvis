@@ -2,6 +2,32 @@
 
 This is the canonical deployment-configuration contract. Corvis uses GitHub Environments `dev`, `uat`, and `prod`; deterministic resource names, hostnames and provider IDs are derived in code rather than copied into GitHub configuration.
 
+## Complete reference
+
+Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow reads. `lib/server/github-configuration-docs.test.ts` fails CI when a workflow reads one that is not listed here. Environment scope means the value is set on that GitHub Environment; repository scope means it is set once for the repository.
+
+| Name | Kind | Scope | Required | Read by | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| `GCP_PROJECT_ID` | variable | `dev`, `uat`, `prod` | yes | build-release, cloudflare-zone-policy, copy-release-to-prod, gcp-bootstrap, gcp-decommission, runtime-secrets, security-acceptance, terraform-deploy | Externally owned GCP project for the environment. |
+| `GCP_WIF_PROVIDER` | variable | `dev`, `uat`, `prod` | yes | same as `GCP_PROJECT_ID` | Environment-scoped GitHub Workload Identity Provider resource name. |
+| `CORVIS_AUTH_ISSUER` | variable | `uat`, `prod` (and `dev` with a runtime) | before a runtime deploy | terraform-deploy, gcp-decommission | Approved HTTPS OIDC issuer. |
+| `CORVIS_AUTH_AUDIENCE` | variable | as above | no (default `corvis`) | terraform-deploy, gcp-decommission | Approved OIDC audience/client identifier. |
+| `CORVIS_AUTH_JWKS_URL` | variable | as above | no | terraform-deploy, gcp-decommission | Explicit JWKS URL; OIDC discovery is preferred. |
+| `CORVIS_CONTROL_TENANT_ID` | variable | `uat`, `prod` | for security acceptance | security-acceptance | Tenant used for retained sanitized control evidence. |
+| `CORVIS_POSTGRES_CA_CERT` | variable | `dev`, `uat`, `prod` | when the provider uses a private CA (Supabase) | terraform-deploy, security-acceptance | Public PEM CA bundle for verified Postgres TLS (not a secret; see RUNTIME_SECRETS.md). |
+| `GCP_BILLING_ACCOUNT_ID` | variable | `dev`, `uat`, `prod` | no | gcp-bootstrap, gcp-decommission, terraform-deploy | Attaches a monthly budget. |
+| `MONITORING_NOTIFICATION_CHANNEL_IDS` | variable | `dev`, `uat`, `prod` | yes for a fresh `prod` runtime deploy | gcp-bootstrap, gcp-decommission, terraform-deploy | JSON array of Cloud Monitoring notification channel ids for every alert policy. |
+| `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` | variable | `uat`, `prod` | no (default `false`) | terraform-deploy | `true` once `corvis-control-loop-github-token-<env>` has an enabled version, so the control-loop jobs authenticate to GitHub. |
+| `CLOUDFLARE_ZONE_NAME` | variable | repository | once a domain exists | cloudflare-zone-policy, gcp-decommission, security-acceptance, terraform-deploy | Bare lowercase root zone shared by UAT and prod. |
+| `CLOUDFLARE_MANAGED_WAF_ENABLED` | variable | repository | yes for the shared zone policy | cloudflare-zone-policy, gcp-decommission, terraform-deploy | `true` on a Pro+ zone (managed WAF, host-scoped rate limits), `false` on Free; no silent default. |
+| `CLOUDFLARE_ADMIN_ALLOWED_CIDRS` | variable | repository | no (default `[]`) | cloudflare-zone-policy | JSON array of operator CIDRs allowed to reach the admin hostnames. |
+| `RELEASE_GOVERNANCE_TOKEN` | secret | `dev`, `uat`, `prod` | yes for governed builds/applies | build-release, cloudflare-zone-policy, terraform-deploy | Verifies the effective `main` ruleset before governed builds and applies (see below). |
+| `CLOUDFLARE_API_TOKEN` | secret | `uat`, `prod` when that edge is active | with a domain | terraform-deploy, gcp-decommission | Environment host resources: DNS, Workers, routes. |
+| `CLOUDFLARE_ZONE_POLICY_TOKEN` | secret | `uat` | with a domain | cloudflare-zone-policy | Shared zone settings and rulesets only. |
+| `GITHUB_TOKEN` | secret (built in) | automatic | n/a | public-repo-leak-guard | The workflow's own token; never configured by hand. |
+
+Runtime secrets (the Postgres DSN, the control-loop GitHub token) live in GCP Secret Manager, never in GitHub; see [`RUNTIME_SECRETS.md`](RUNTIME_SECRETS.md).
+
 ## Required environment variables
 
 Every environment requires:
@@ -20,6 +46,8 @@ Before promoting a production-like UAT/prod runtime, also configure:
 | `CORVIS_CONTROL_TENANT_ID` | Tenant used for retained sanitized control evidence. |
 
 `CORVIS_AUTH_JWKS_URL` is optional; standards-based OIDC discovery is preferred.
+
+`CORVIS_POSTGRES_CA_CERT` is optional: set the provider's public PEM CA bundle when its certificates chain to a private root (Supabase), so Postgres TLS stays verified.
 
 `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` (per environment, default `false`): set `true` after adding an enabled version to the Terraform-managed `corvis-control-loop-github-token-<env>` secret (a read-only, fine-grained token for this repository); only then do the control-loop jobs receive `GITHUB_TOKEN` instead of the 60-requests-per-hour anonymous GitHub API budget.
 

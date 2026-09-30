@@ -289,6 +289,14 @@ jobs:
           docker run --rm --entrypoint node "corvis-control-loop-ci:${GITHUB_SHA}" --version
           docker run --rm "corvis-control-loop-ci:${GITHUB_SHA}" --mode daily --evidence /tmp/control-loop-smoke.json >/tmp/control-loop-smoke.stdout
           grep -q '"schemaVersion"' /tmp/control-loop-smoke.stdout
+      - name: Control-loop image vulnerability scan (Trivy, pinned by digest)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "corvis-control-loop-ci:${GITHUB_SHA}"
 
   rate-limit-postgres:
     runs-on: ubuntu-latest
