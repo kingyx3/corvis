@@ -133,3 +133,16 @@ test("a download grant is single use: redemption consumes it atomically and a re
   assert.equal(await redeemPhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "token", db), null, "replaying the same token must fail");
   assert.equal(db.queries.filter((call) => call.sql.startsWith("select")).length, 0, "validation and consumption are one statement, not check-then-mark");
 });
+
+test("a consumed grant is restored only for the same tenant, export, subject and token, and never once expired", async () => {
+  const db = new FakeDb(() => []);
+  await restorePhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "token", db);
+  const restore = db.queries.find((call) => call.sql.startsWith("update corvis_serving.export_download_grant"))!;
+  assert.match(restore.sql, /set consumed_at=null/);
+  for (const predicate of [/tenant_id=\$1/, /subject=\$3/, /token_sha256=\$4/, /consumed_at is not null/, /expires_at>now\(\)/]) assert.match(restore.sql, predicate);
+  assert.equal(restore.parameters[2], identity.subject);
+  const before = db.queries.length;
+  await restorePhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "", db);
+  await restorePhysicalExportGrant(identity, "00000000-0000-4000-8000-000000000001", "x".repeat(257), db);
+  assert.equal(db.queries.length, before, "a missing or oversized token never reaches the database");
+});
