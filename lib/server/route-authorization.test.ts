@@ -758,6 +758,19 @@ test("uploads are tenant-isolated: another tenant cannot read, complete or abort
     assert.equal((await initiate.POST!(demo("/uploads/initiate", { roles: "analyst", method: "POST", body: { fileName: "x.pdf", contentType: "application/pdf", sizeBytes: 1 } }))).status, 403);
     // The owner's session is still intact after the failed cross-tenant abort.
     assert.equal((await status.GET!(demo(`/uploads/${data.uploadId}`, { subject: "uploader-owner" }), ctx)).status, 200);
+
+    // A client that omits the key at initiate cannot know the server-generated one, so completion without a key
+    // must still work (both keys are optional in the OpenAPI contract).
+    const keyless = await initiate.POST!(demo("/uploads/initiate", {
+      method: "POST", subject: "uploader-keyless", body: { fileName: "keyless.pdf", contentType: "application/pdf", sizeBytes: 2048 },
+    }));
+    assert.equal(keyless.status, 201);
+    const keylessId = (await keyless.json() as { uploadId: string }).uploadId;
+    const keylessComplete = await complete.POST!(demo(`/uploads/${keylessId}/complete`, { method: "POST", subject: "uploader-keyless" }), { params: Promise.resolve({ uploadId: keylessId }) });
+    assert.equal(keylessComplete.status, 200);
+    // An explicit but wrong key is still refused.
+    const wrongKey = await complete.POST!(demo(`/uploads/${data.uploadId}/complete`, { method: "POST", subject: "uploader-owner", body: { idempotencyKey: "someone-elses" } }), ctx);
+    assert.equal(wrongKey.status, 409);
   } finally {
     process.env.CORVIS_DEMO_MODE = "";
   }
