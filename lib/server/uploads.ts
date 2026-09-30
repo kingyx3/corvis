@@ -367,8 +367,16 @@ export class ProductionUploadSessions implements UploadSessionPort {
         tenantId: session.tenantId, artifactVersionId: session.artifactVersionId, documentId: session.documentId,
         objectKey: session.objectKey, generation: session.storageVersionId,
       });
-      if (seal.outcome === "blocked") return;
-      if (seal.outcome === "integrity_failed") {
+      if (seal.outcome === "blocked" && seal.status === "threat") {
+        // The scheduled scan poll recorded a threat this session never saw; reflect it instead of polling forever.
+        session.malwareScanStatus = "threat";
+        await this.persist(session);
+        return;
+      }
+      if (seal.outcome === "blocked" && seal.status !== "integrity_failed" && seal.status !== "invalid_content") return;
+      if (seal.outcome === "integrity_failed" || seal.outcome === "blocked") {
+        // A blocked artifact can only be integrity_failed/invalid_content here: the scheduled path already
+        // rejected the bytes, so report that failure rather than leaving the session quarantined forever.
         session.malwareScanStatus = "error";
         session.contentValidated = false;
         await this.persist(session);

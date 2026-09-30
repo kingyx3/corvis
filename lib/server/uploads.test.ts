@@ -629,6 +629,23 @@ test("an artifact already blocked in the registry is not released by a later cle
   assert.equal(after.state, "quarantined");
   assert.equal(context.db.releases.length, 0);
   assert.deepEqual(context.store.hashed, [], "blocked artifacts are not even read");
+  assert.equal(after.malwareScanStatus, "threat", "the session reports the threat the scheduled poll recorded");
+  assert.equal(storedSession(context.store, session).malwareScanStatus, "threat");
+});
+
+test("an integrity failure recorded by the scheduled release is reported to the polling client", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.artifact = { malware_scan_status: "integrity_failed", quarantine_status: "quarantined" };
+  context.store.scan(session.objectKey ?? "", "clean");
+  await assert.rejects(context.uploads.get(actor, session.uploadId), (error: unknown) => error instanceof UploadRequestError && error.code === "upload_integrity_failed");
+  assert.equal(storedSession(context.store, session).contentValidated, false);
+  assert.equal(context.db.releases.length, 0);
+  // Later polls stop retrying: the rejected signature is terminal.
+  assert.equal((await context.uploads.get(actor, session.uploadId)).state, "quarantined");
 });
 
 test("an artifact another worker already released is not hashed or released again", async () => {
