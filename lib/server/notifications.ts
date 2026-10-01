@@ -461,14 +461,19 @@ export async function deliverInvitationEmail(invitation: InvitationForEmail, tok
   const sender = dependencies.sender ?? configuredEmailSender(config);
   const appUrl = dependencies.appUrl === undefined ? config.publicAppUrl ?? null : dependencies.appUrl;
   let db: PostgresSqlApi | undefined;
+  // The outbox row is only a visibility record: failing to write it must never change what the send reported.
   const record = async (status: "sent" | "suppressed" | "dead_letter", extra: { reason?: string; providerMessageId?: string; errorClass?: string } = {}) => {
-    db ??= dependencies.db ?? dbDefault();
-    await db.execute(`insert into corvis_control.email_outbox
-        (tenant_id,category,recipient_email,workspace_id,template_params,dedupe_key,status,suppression_reason,attempts,sent_at,provider_message_id,last_error_class)
-      values ($1::uuid,'invitation',$2::text,$3::uuid,$4::jsonb,$5::text,$6::text,$7::text,1,case when $6::text='sent' then now() else null end,$8::text,$9::text)
-      on conflict (tenant_id,dedupe_key) do nothing`,
-    [invitation.tenantId, invitation.email, invitation.workspaceId, json({ roleName: invitation.roleName }),
-      `invitation:${invitation.invitationId}:${invitation.expiresAt}`, status, extra.reason ?? null, extra.providerMessageId ?? null, extra.errorClass ?? null]);
+    try {
+      db ??= dependencies.db ?? dbDefault();
+      await db.execute(`insert into corvis_control.email_outbox
+          (tenant_id,category,recipient_email,workspace_id,template_params,dedupe_key,status,suppression_reason,attempts,sent_at,provider_message_id,last_error_class)
+        values ($1::uuid,'invitation',$2::text,$3::uuid,$4::jsonb,$5::text,$6::text,$7::text,1,case when $6::text='sent' then now() else null end,$8::text,$9::text)
+        on conflict (tenant_id,dedupe_key) do nothing`,
+      [invitation.tenantId, invitation.email, invitation.workspaceId, json({ roleName: invitation.roleName }),
+        `invitation:${invitation.invitationId}:${invitation.expiresAt}`, status, extra.reason ?? null, extra.providerMessageId ?? null, extra.errorClass ?? null]);
+    } catch (error) {
+      logEvent("error", "notifications.invitation_record_failed", { correlationId: `invitation:${invitation.invitationId}`, tenantId: invitation.tenantId }, { status, errorName: error instanceof Error ? error.name : typeof error });
+    }
   };
   try {
     if (!sender.configured) { await record("suppressed", { reason: "provider_not_configured" }); return "not_configured"; }

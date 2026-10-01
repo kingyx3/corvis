@@ -102,7 +102,19 @@ test("invitation emails report their outcome, carry the one-time link, and never
 
   const broken = new RecordingDb();
   broken.failOn = /email_outbox/;
-  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new DisabledEmailSender(), appUrl: "https://app.corvis.test" }), "failed", "a recording failure never throws into the invitation flow");
+  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new DisabledEmailSender(), appUrl: "https://app.corvis.test" }), "not_configured", "a recording failure never throws into the invitation flow or changes its outcome");
+});
+
+test("an outbox insert failure after a successful send still reports the invitation as sent", async () => {
+  const broken = new RecordingDb();
+  broken.failOn = /email_outbox/;
+  const sender = new RecordingEmailSender();
+  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender, appUrl: "https://app.corvis.test" }), "sent");
+  assert.equal(sender.sent.length, 1, "the email went out exactly once");
+  assert.equal(broken.statements.length, 1, "the failed record is not retried");
+
+  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new RecordingEmailSender([{ status: "failed", retryable: false, errorClass: "rejected" }]), appUrl: "https://app.corvis.test" }), "failed");
+  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new RecordingEmailSender(), appUrl: null }), "not_configured");
 });
 
 /** In-memory outbox + preference store answering exactly the statements processEmailDigests issues. */
