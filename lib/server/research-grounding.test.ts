@@ -42,10 +42,21 @@ test("extractNumericFigures: what counts as a figure (table)", () => {
     // a four-digit number that is not a year-shaped label still counts when formatted or suffixed
     ["headcount 1,999 and 2020 units", ["1,999"]],
     ["1999k", ["1999 k"]],
+    // the upper bound of a unit range is a claim, not a hyphenated label
+    ["between 1.2m-9.9m", ["1.2 m", "9.9 m"]],
+    ["MOIC range 1.2x-9.9x", ["1.2 x", "9.9 x"]],
+    ["from 3 million-9 million", ["3 million", "9 million"]],
   ];
   for (const [text, expected] of cases) {
     assert.deepEqual(extractNumericFigures(text).map((figure) => figure.raw), expected, text);
   }
+});
+
+test("assessNumericGrounding: an ungrounded upper bound after a hyphenated unit range is rejected", () => {
+  const nav = [{ fact_id: "f1", value_number: 1_200_000 }];
+  assert.equal(assessNumericGrounding("NAV was between 1.2m-9.9m", nav, undefined).grounded, false);
+  assert.equal(assessNumericGrounding("NAV was 1.2m", nav, undefined).grounded, true);
+  assert.equal(assessNumericGrounding("MOIC range 1.2x-9.9x", [{ fact_id: "f1", value_number: 1.2 }], undefined).grounded, false);
 });
 
 test("extractNumericFigures: month names are exact, so words that merely start with a month prefix do not hide a count", () => {

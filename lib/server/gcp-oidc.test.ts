@@ -131,9 +131,55 @@ test("GoogleOidcVerifier unknown-kid refreshes are single-flight, rate limited a
   await Promise.allSettled(Array.from({ length: 10 }, () => verifyAt(forged, now + 31)));
   assert.equal(fetches, 2);
 
+  // Unexpired keys survive a failed unknown-kid refresh (and a known kid never refetches).
   failing = true;
-  assert.equal((await verifyAt(valid, now + 400)).email, email);
+  assert.equal((await verifyAt(valid, now + 200)).email, email);
+  assert.equal(fetches, 2);
+  await assert.rejects(() => verifyAt(forged, now + 232), /unknown/);
   assert.equal(fetches, 3);
-  await verifyAt(valid, now + 401);
+  assert.equal((await verifyAt(valid, now + 233)).email, email);
   assert.equal(fetches, 3);
+
+  // Once the cache expires, an outage must not keep old signing keys trusted.
+  await assert.rejects(() => verifyAt(valid, now + 400), /503/);
+  assert.equal(fetches, 4);
+  await assert.rejects(() => verifyAt(valid, now + 401), /expired/);
+  assert.equal(fetches, 4);
+
+  failing = false;
+  assert.equal((await verifyAt(valid, now + 431)).email, email);
+  assert.equal(fetches, 5);
+});
+
+test("GoogleOidcVerifier throttles cold-start JWKS failures and shares the in-flight refresh", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const kid = "worker-key";
+  const jwk = publicKey.export({ format: "jwk" });
+  let fetches = 0;
+  let failing = true;
+  const verifier = new GoogleOidcVerifier(async () => {
+    fetches += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    if (failing) return new Response("unavailable", { status: 503 });
+    return new Response(JSON.stringify({ keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] }), {
+      status: 200,
+      headers: { "cache-control": "public, max-age=300" },
+    });
+  });
+  const now = 1_800_000_000;
+  const audience = "https://worker.example/api/internal/processing-stage";
+  const email = "corvis-worker-prod@example.iam.gserviceaccount.com";
+  const valid = token({ privateKey, kid, audience, email, now });
+  const verifyAt = (seconds: number) => verifier.verify({
+    authorization: `Bearer ${valid}`, audience, serviceAccountEmail: email, now: new Date(seconds * 1000),
+  });
+
+  await Promise.allSettled(Array.from({ length: 5 }, () => verifyAt(now)));
+  assert.equal(fetches, 1);
+  for (let i = 1; i <= 5; i += 1) await assert.rejects(() => verifyAt(now + i));
+  assert.equal(fetches, 1);
+
+  failing = false;
+  await verifyAt(now + 31);
+  assert.equal(fetches, 2);
 });
