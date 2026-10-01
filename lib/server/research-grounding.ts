@@ -120,6 +120,11 @@ export type NumericFigure = {
   /** Digits after the decimal point as written; sets the rounding tolerance. */
   decimals: number;
   unit: "none" | "percent" | "bps" | "multiple";
+  /**
+   * Set when the token's reading is ambiguous ("12,5 million": a European decimal comma, or Indian lakh grouping
+   * "12,50,000"). Such a figure never grounds (fail closed): reading it as 12 or 12.5 could pass a wrong claim.
+   */
+  ambiguous?: true;
 };
 
 const SUFFIXES: Array<[RegExp, Pick<NumericFigure, "multiplier" | "unit">]> = [
@@ -132,14 +137,18 @@ const SUFFIXES: Array<[RegExp, Pick<NumericFigure, "multiplier" | "unit">]> = [
   [/^(?:t|tn|trillion)$/i, { multiplier: 1e12, unit: "none" }],
 ];
 
-// digits with optional thousands separators and decimals | plain digits with decimals | leading-dot decimals
-const NUMBER = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+`;
+// scientific notation | comma followed by 1-2 digits (decimal comma / lakh grouping; ambiguous, see `NumericFigure.ambiguous`)
+// | digits with optional thousands separators and decimals | plain digits with decimals | leading-dot decimals
+const NUMBER = String.raw`\d+(?:\.\d+)?[eE][+-]?\d+|\d+,\d{1,2}(?!\d)(?:,\d+)*|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+`;
+const SCIENTIFIC = /^(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/;
+const GROUPED = /^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
 const SUFFIX = String.raw`%|per\s?cent\b|pct\b|bps?\b|basis\s+points?\b|thousand\b|million\b|billion\b|trillion\b|mm\b|mn\b|bn\b|tn\b|[kKmMbBtTxX]\b`;
 // Case-insensitive like SUFFIXES: "5 Billion" must scale to 5e9, not read as a bare 5 that a stored 5 would ground.
 const FIGURE = new RegExp(String.raw`(?<![\d.,])(${NUMBER})(?:\s?(${SUFFIX}))?(?![\w])`, "gi");
 // Day-of-month next to a capitalised month name ("30 September", "Sep 30", "March 3rd") is a date label, not a claim,
-// unless a unit follows ("May 5%").
-const MONTH = String.raw`(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?`;
+// unless a unit follows ("May 5%"). Exact month names/abbreviations only: "3 Junior partners" or "12 Marketing
+// companies" must not read as dates (the trailing \b is applied where MONTH is used).
+const MONTH = String.raw`(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?`;
 const NOT_A_UNIT = String.raw`(?![\d]|[.,]\d|\s?(?:%|per\s?cent|pct|bps?\b|basis|thousand|million|billion|trillion|mm\b|mn\b|bn\b|tn\b|[kmbtx]\b))`;
 const DAY_BEFORE_MONTH = new RegExp(String.raw`\b(?:[12]?\d|3[01])(?:st|nd|rd|th)?(?=\s+${MONTH}\b)`, "g");
 const DAY_AFTER_MONTH = new RegExp(String.raw`\b(${MONTH}\s+)(?:[12]?\d|3[01])(?:st|nd|rd|th)?${NOT_A_UNIT}(?![\w])`, "g");
@@ -186,11 +195,19 @@ function extractSpelledFigures(text: string): NumericFigure[] {
     }
     let value = total + current;
     let decimals = 0;
+    let pointScaled = false;
     // "two point five": digit words after "point" are the decimal places.
     if (tokens[j]?.word === "point" && adjacent(last, tokens[j]!)) {
       let k = j + 1, fraction = "", prev = tokens[j]!;
       while (k < tokens.length && tokens[k]!.word in WORD_UNITS && WORD_UNITS[tokens[k]!.word]! < 10 && adjacent(prev, tokens[k]!)) { fraction += String(WORD_UNITS[tokens[k]!.word]); prev = tokens[k]!; k += 1; }
-      if (fraction) { value = Number(`${value}.${fraction}`); decimals = fraction.length; words += 1 + fraction.length; parts.push("point", fraction); last = prev; j = k; }
+      if (fraction) {
+        value = Number(`${value}.${fraction}`); decimals = fraction.length; words += 1 + fraction.length; parts.push("point", fraction); last = prev; j = k;
+        // "one point five million": the scale word after the decimals belongs to the figure (value stays 1.5).
+        const scaleToken = tokens[j];
+        if (scaleToken && scaleToken.word in WORD_SCALES && adjacent(last, scaleToken)) {
+          lastScale = WORD_SCALES[scaleToken.word]!; pointScaled = true; words += 1; parts.push(scaleToken.word); last = scaleToken; j += 1;
+        }
+      }
     }
     const unitMatch = WORD_UNIT_SUFFIX.exec(text.slice(last.end));
     const suffixText = unitMatch?.[1] ?? "";
@@ -198,7 +215,7 @@ function extractSpelledFigures(text: string): NumericFigure[] {
     if (suffix || lastScale > 1 || words >= 2) {
       figures.push({
         raw: `${parts.join(" ")}${suffixText ? ` ${suffixText}` : ""}`,
-        value: lastScale > 1 ? value / lastScale : value,
+        value: lastScale > 1 && !pointScaled ? value / lastScale : value,
         multiplier: lastScale,
         decimals,
         unit: suffix?.unit ?? "none",
@@ -214,7 +231,8 @@ function extractSpelledFigures(text: string): NumericFigure[] {
  * bare four-digit years 1900-2100, dates (ISO, "30 September"/"Sep 30", uuids, urls are stripped first), hyphenated durations ("12-month"), list markers at the start of a
  * line, and digits glued to letters such as "Q2", "FY25", "H1", "fund-a2", "company-7" (a currency code such as "USD100" is
  * still a figure). Spelled-out numbers are parsed too (see `extractSpelledFigures`), so writing "four percent"
- * instead of "4%" does not bypass the grounding check.
+ * instead of "4%" does not bypass the grounding check. Scientific notation ("1e6") is read as an exact value; a
+ * comma followed by one or two digits ("12,5 million", "12,50,000") is flagged `ambiguous` and never grounds.
  */
 export function extractNumericFigures(text: string): NumericFigure[] {
   const cleaned = text
@@ -232,17 +250,23 @@ export function extractNumericFigures(text: string): NumericFigure[] {
     const suffixText = (match[2] ?? "").trim();
     const before = cleaned.slice(0, match.index ?? 0);
     if (/[A-Za-z_]-?$/.test(before) && !/\b[A-Z]{3}$/.test(before)) continue;
-    const value = Number(numberText.replace(/,/g, ""));
+    const scientific = SCIENTIFIC.exec(numberText);
+    const ambiguous = numberText.includes(",") && !GROUPED.test(numberText);
+    // An ambiguous token is read with a decimal comma only to give it a value; it is flagged so it never grounds.
+    const value = Number(ambiguous ? numberText.replace(",", ".").replace(/,/g, "") : numberText.replace(/,/g, ""));
     if (!Number.isFinite(value)) continue;
     const suffix = suffixText ? SUFFIXES.find(([pattern]) => pattern.test(suffixText))?.[1] : undefined;
     if (!suffix && Number.isInteger(value) && !numberText.includes(",") && numberText.length === 4 && value >= 1900 && value <= 2100) continue;
     const dot = numberText.indexOf(".");
+    // Scientific notation ("1e6", "1.5e-3") is an exact value: precision is whatever the exponent leaves of the mantissa.
+    const decimals = scientific ? Math.max(0, (scientific[2]?.length ?? 0) - Number(scientific[3])) : dot === -1 ? 0 : numberText.length - dot - 1;
     figures.push({
       raw: `${numberText}${suffixText ? ` ${suffixText}` : ""}`,
       value,
       multiplier: suffix?.multiplier ?? 1,
-      decimals: dot === -1 ? 0 : numberText.length - dot - 1,
+      decimals,
       unit: suffix?.unit ?? "none",
+      ...(ambiguous ? { ambiguous: true as const } : {}),
     });
   }
   figures.push(...extractSpelledFigures(cleaned));
@@ -260,7 +284,7 @@ export function extractNumericFigures(text: string): NumericFigure[] {
  *  - nothing else is derived: a difference or ratio the model computed itself is NOT grounded.
  */
 export function figureMatchesEvidence(figure: NumericFigure, evidence: number): boolean {
-  if (!Number.isFinite(evidence)) return false;
+  if (!Number.isFinite(evidence) || figure.ambiguous) return false;
   const shown = Math.abs(figure.value * figure.multiplier);
   const tolerance = 0.5 * 10 ** -figure.decimals * figure.multiplier + 1e-9 * Math.max(1, shown);
   const target = Math.abs(evidence);
@@ -285,7 +309,7 @@ export function rowEvidenceNumbers(row: PostgresRow): number[] {
       // Postgres returns numeric/bigint as strings; a free-text value_string may embed figures ("12.5%", "$3m").
       const asNumber = Number(value.trim());
       if (Number.isFinite(asNumber)) numbers.push(asNumber);
-      else for (const figure of extractNumericFigures(value)) numbers.push(figure.value * figure.multiplier);
+      else for (const figure of extractNumericFigures(value)) if (!figure.ambiguous) numbers.push(figure.value * figure.multiplier);
     }
   }
   return numbers;

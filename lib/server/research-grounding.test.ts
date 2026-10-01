@@ -8,6 +8,7 @@ import {
   extractNumericFigures,
   figureMatchesEvidence,
   parseResearchAnswerPayload,
+  rowEvidenceNumbers,
   sanitizeLabel,
   sanitizeRetrievalText,
   sanitizeSnippet,
@@ -45,6 +46,73 @@ test("extractNumericFigures: what counts as a figure (table)", () => {
   for (const [text, expected] of cases) {
     assert.deepEqual(extractNumericFigures(text).map((figure) => figure.raw), expected, text);
   }
+});
+
+test("extractNumericFigures: month names are exact, so words that merely start with a month prefix do not hide a count", () => {
+  const cases: Array<[string, string[]]> = [
+    ["The fund holds 12 Marketing companies.", ["12"]],
+    ["3 Junior partners left", ["3"]],
+    ["5 Decision makers and 7 Novartis units", ["5", "7"]],
+    ["Marketing 12 and Junior 4", ["12", "4"]],
+    ["8 Augustine funds, 9 Octopus funds, 2 Sepal sensors, 6 Mayfair sites, 4 Julius staff", ["8", "9", "2", "6", "4"]],
+    // real dates are still labels
+    ["12 March 2026 and March 12", []],
+    ["on 5 Sept 2026, Sept. 5, 30 Sep, Dec 31, 1st Jan, 2nd February, 15 June, 4 July, 7 Aug.", []],
+    ["due 31 December and October 3rd", []],
+    ["in May 5% of funds", ["5 %"]],
+  ];
+  for (const [text, expected] of cases) {
+    assert.deepEqual(extractNumericFigures(text).map((figure) => figure.raw), expected, text);
+  }
+});
+
+test("extractNumericFigures: a decimal comma is ambiguous and fails closed rather than truncating to the integer part", () => {
+  const twelveFive = extractNumericFigures("AUM is 12,5 million")[0]!;
+  assert.equal(twelveFive.raw, "12,5 million");
+  assert.equal(twelveFive.ambiguous, true);
+  for (const evidence of [12, 12.5, 12_500_000, 12_000_000, 12_300_000]) assert.equal(figureMatchesEvidence(twelveFive, evidence), false, String(evidence));
+  assert.equal(assessNumericGrounding("AUM is 12,5 million", [{ observation_id: "f1", value_number: 12 }], undefined).grounded, false);
+  assert.equal(assessNumericGrounding("AUM is 12,5 million", [{ observation_id: "f1", value_number: 12_500_000 }], undefined).grounded, false);
+  const dollars = extractNumericFigures("$1,2 M")[0]!;
+  assert.equal(dollars.ambiguous, true);
+  assert.equal(figureMatchesEvidence(dollars, 1), false);
+  assert.equal(figureMatchesEvidence(dollars, 1_200_000), false);
+  // Indian lakh grouping is not silently read as 12
+  assert.equal(extractNumericFigures("12,50,000")[0]?.ambiguous, true);
+  assert.equal(assessNumericGrounding("revenue 12,50,000", [{ observation_id: "f1", value_number: 12 }], undefined).grounded, false);
+  // an ambiguous token in stored text is not evidence either
+  assert.deepEqual(rowEvidenceNumbers({ value_string: "12,5 million" }), []);
+  // properly grouped numbers are unaffected
+  for (const text of ["1,234", "12,345", "1,234,567.89", "$1,000"]) assert.equal(extractNumericFigures(text)[0]?.ambiguous, undefined, text);
+  assert.equal(extractNumericFigures("1,234")[0]?.value, 1234);
+  assert.equal(figureMatchesEvidence(extractNumericFigures("1,234,567")[0]!, 1234567), true);
+});
+
+test("extractNumericFigures: scientific notation is read as an exact value instead of being ignored", () => {
+  assert.deepEqual(extractNumericFigures("revenue 1e6 and 2.5E3").map((figure) => figure.raw), ["1e6", "2.5E3"]);
+  const million = extractNumericFigures("1e6")[0]!;
+  assert.equal(figureMatchesEvidence(million, 1_000_000), true);
+  assert.equal(figureMatchesEvidence(million, 1_500_000), false);
+  assert.equal(figureMatchesEvidence(million, 1), false);
+  assert.equal(figureMatchesEvidence(extractNumericFigures("1.5e-3")[0]!, 0.0015), true);
+  assert.equal(assessNumericGrounding("revenue was 1e6", [{ observation_id: "f1", value_number: 100 }], undefined).grounded, false);
+  assert.equal(assessNumericGrounding("revenue was 1e6", [{ observation_id: "f1", value_number: 1_000_000 }], undefined).grounded, true);
+  // identifiers glued to letters are still labels
+  assert.deepEqual(extractNumericFigures("fund-1e5 and Q1e2"), []);
+});
+
+test("spelled-out decimals consume a following scale word (\"one point five million\" is 1.5 million, not 1.5)", () => {
+  const figure = extractNumericFigures("AUM of one point five million")[0]!;
+  assert.equal(figure.raw, "one point 5 million");
+  assert.equal(figure.value, 1.5);
+  assert.equal(figure.multiplier, 1e6);
+  assert.equal(figureMatchesEvidence(figure, 1_500_000), true);
+  assert.equal(figureMatchesEvidence(figure, 1.5), false);
+  assert.equal(figureMatchesEvidence(extractNumericFigures("two point three billion")[0]!, 2_300_000_000), true);
+  assert.equal(extractNumericFigures("one point five million").length, 1);
+  // unchanged: no scale word, and a scale word that is not adjacent
+  assert.equal(extractNumericFigures("two point five percent")[0]?.value, 2.5);
+  assert.equal(figureMatchesEvidence(extractNumericFigures("two point five percent")[0]!, 2.5), true);
 });
 
 test("a capitalised magnitude word is not grounded by the unscaled number", () => {
