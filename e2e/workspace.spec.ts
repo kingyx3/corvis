@@ -192,7 +192,10 @@ test("customer can upload, review, publish and request structured delivery", asy
   await publishButton.click();
   await expect(page.getByText(/snapshot publication accepted/i)).toBeVisible();
   // The reviewer stays on the snapshot they published and cannot re-publish it.
-  await expect(page.getByText(/demo fund · q3 2026 · snapshot v2/i)).toBeVisible();
+  // The demo store labels an upload with the current UTC reporting quarter, not the quarter in the file name.
+  const now = new Date();
+  const reportingPeriod = `Q${Math.floor(now.getUTCMonth() / 3) + 1} ${now.getUTCFullYear()}`;
+  await expect(page.getByText(`Demo Fund · ${reportingPeriod} · Snapshot v2`)).toBeVisible();
   await expect(page.getByRole("button", { name: /^published$/i })).toBeDisabled();
   await page.getByRole("button", { name: /data delivery/i }).first().click();
   await expect(page.getByRole("heading", { name: /deliver structured data/i })).toBeVisible();
