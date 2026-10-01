@@ -49,3 +49,27 @@ test("listScimUsers falls back to startIndex 1 for an invalid startIndex", async
   const page = await listScimUsers(config, "https://x/scim/v2/Users", null, db, Number.NaN, 50);
   assert.equal(page.startIndex, 1);
 });
+
+test("listScimUsers matches userName filters case-insensitively against the lower-cased stored value", async () => {
+  const db = new FakeDb();
+  db.queryQueue = [[{ count: 1 }], []];
+  await listScimUsers(config, "https://x/scim/v2/Users", 'userName eq "  New.User@Example.COM "', db);
+  assert.match(db.calls[0]!.sql, /user_name=\$2/);
+  assert.equal(db.calls[0]!.parameters[1], "new.user@example.com");
+  // externalId is an opaque identifier and keeps its case.
+  const other = new FakeDb();
+  other.queryQueue = [[{ count: 0 }], []];
+  await listScimUsers(config, "https://x/scim/v2/Users", 'externalId eq "Ext-ABC"', other);
+  assert.equal(other.calls[0]!.parameters[1], "Ext-ABC");
+});
+
+test("listScimUsers clamps an out-of-range startIndex so the int offset cannot overflow", async () => {
+  const db = new FakeDb();
+  db.queryQueue = [[{ count: 3 }], []];
+  const page = await listScimUsers(config, "https://x/scim/v2/Users", null, db, 9_999_999_999_999, 10);
+  assert.equal(page.startIndex, 2147483647);
+  assert.deepEqual(page.resources, []);
+  assert.equal(page.totalResults, 3);
+  const offset = Number(db.calls[1]!.parameters.at(-1));
+  assert.ok(Number.isSafeInteger(offset) && offset <= 2147483647, "offset must fit in int4");
+});
