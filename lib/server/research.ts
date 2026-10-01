@@ -15,6 +15,9 @@ import {
   computedRowsDigest,
   entitledSourceReferenceIds,
   extractNumericFigures,
+  MAX_ANSWER_TEXT_LENGTH,
+  MAX_MODEL_VERSION_LENGTH,
+  MAX_UNCERTAINTY_TEXT_LENGTH,
   NO_GROUNDED_FIGURES_ANSWER,
   NO_GROUNDED_FIGURES_UNCERTAINTY,
   sanitizeLabel,
@@ -32,7 +35,8 @@ type SearchHit = {
 };
 
 type SearchResponse = { hits?: SearchHit[] };
-type AiResponse = { answer?: string; uncertainty?: string; usedFactIds?: string[]; modelVersion?: string };
+// Untyped on purpose: the body is external, so every field is validated before use.
+type AiResponse = { answer?: unknown; uncertainty?: unknown; usedFactIds?: unknown; modelVersion?: unknown };
 export type ResearchExecutionOptions = {
   signal?: AbortSignal;
   onProgress?: (phase: ResearchProgressPhase) => void;
@@ -318,15 +322,24 @@ export class PermissionedResearchService {
       }
       if (!response.ok) throw new ResearchProviderError("ai", response.status);
       const body = await providerJson<AiResponse>(response, "ai", execution.signal);
-      if (!body.answer) throw new ResearchProviderError("ai", response.status);
+      // The provider is external: anything other than a bounded string (a number, an object, an over-long text that
+      // could never be pinned later) is a provider contract violation (502), not an internal failure.
+      const answerText = body.answer;
+      const uncertaintyText = body.uncertainty ?? undefined;
+      const modelVersion = body.modelVersion ?? undefined;
+      if (typeof answerText !== "string" || answerText.length === 0 || answerText.length > MAX_ANSWER_TEXT_LENGTH
+        || (uncertaintyText !== undefined && (typeof uncertaintyText !== "string" || uncertaintyText.length > MAX_UNCERTAINTY_TEXT_LENGTH))
+        || (modelVersion !== undefined && (typeof modelVersion !== "string" || modelVersion.length > MAX_MODEL_VERSION_LENGTH))) {
+        throw new ResearchProviderError("ai", response.status);
+      }
       const usedFactIds = normalizeUsedFactIds(body.usedFactIds, semantic.factIds);
       // Figures in the generated text must be citable facts and must appear in the cited rows (research-grounding.ts).
       // A failing answer is downgraded, not thrown: the deterministic computedResults are still worth showing and the
       // user gets a clearly labelled "no grounded figures" answer instead of a provider error. Foreign fact ids above
       // still throw: that is a contract violation, not a weak answer.
-      const grounding = assessNumericGrounding(body.answer, semantic.rows, usedFactIds);
-      const uncertaintyGrounded = !body.uncertainty || extractNumericFigures(body.uncertainty).length === 0
-        || assessNumericGrounding(body.uncertainty, semantic.rows, usedFactIds).grounded;
+      const grounding = assessNumericGrounding(answerText, semantic.rows, usedFactIds);
+      const uncertaintyGrounded = !uncertaintyText || extractNumericFigures(uncertaintyText).length === 0
+        || assessNumericGrounding(uncertaintyText, semantic.rows, usedFactIds).grounded;
 
       const links = await this.citationLinks(identity.tenantId, hits.map((hit) => hit.sourceReferenceId));
       const citations: SourceCitation[] = grounding.grounded ? hits.map((hit) => {
@@ -354,18 +367,18 @@ export class PermissionedResearchService {
           citations,
           semanticQueryIds: [semanticQueryId],
           computedResults: [computed],
-          modelVersion: body.modelVersion,
+          modelVersion,
           uncertainty: NO_GROUNDED_FIGURES_UNCERTAINTY,
           grounding: "no_grounded_figures",
         };
       }
       return {
-        answer: body.answer,
+        answer: answerText,
         citations,
         semanticQueryIds: [semanticQueryId],
         computedResults: [computed],
-        modelVersion: body.modelVersion,
-        uncertainty: uncertaintyGrounded ? body.uncertainty : undefined,
+        modelVersion,
+        uncertainty: uncertaintyGrounded ? uncertaintyText : undefined,
       };
     } finally {
       execution.dispose();

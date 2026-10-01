@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity, ResearchAnswer } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { computedRowsDigest, NO_GROUNDED_FIGURES_ANSWER } from "./research-grounding.ts";
-import { PermissionedResearchService } from "./research.ts";
+import { computedRowsDigest, MAX_ANSWER_TEXT_LENGTH, NO_GROUNDED_FIGURES_ANSWER, parseResearchAnswerPayload } from "./research-grounding.ts";
+import { PermissionedResearchService, ResearchProviderError } from "./research.ts";
 
 type Call = { kind: "query" | "execute"; sql: string; parameters: PostgresPrimitive[] };
 
@@ -480,6 +480,28 @@ test("citation entitlement also honours documentIds (a document readable as a so
   const narrowed: RequestIdentity = { ...sourceScoped, entitlements: { ...sourceScoped.entitlements, documentIds: [DOC_102] } };
   const { result } = await runResearch(db, { caller: narrowed, hits: [{ sourceReferenceId: SRC_A, documentId: DOC_101, text: "x" }] });
   assert.deepEqual(result.citations, []);
+});
+
+test("malformed AI answer fields are a provider error (502), not an internal failure or an unpinnable answer", async () => {
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["numeric answer", { answer: 100, usedFactIds: [FACT_1] }],
+    ["object answer", { answer: { text: "Revenue was 100." }, usedFactIds: [FACT_1] }],
+    ["empty answer", { answer: "" }],
+    ["object uncertainty", { answer: "Revenue was 100.", usedFactIds: [FACT_1], uncertainty: { note: "x" } }],
+    ["numeric uncertainty", { answer: "Revenue was 100.", usedFactIds: [FACT_1], uncertainty: 5 }],
+    ["overlong uncertainty", { answer: "Revenue was 100.", usedFactIds: [FACT_1], uncertainty: "u".repeat(2001) }],
+    ["object modelVersion", { answer: "Revenue was 100.", usedFactIds: [FACT_1], modelVersion: { id: "m1" } }],
+    ["overlong modelVersion", { answer: "Revenue was 100.", usedFactIds: [FACT_1], modelVersion: "m".repeat(129) }],
+    ["overlong answer", { answer: "a".repeat(MAX_ANSWER_TEXT_LENGTH + 1) }],
+  ];
+  for (const [name, ai] of bad) {
+    await assert.rejects(() => runResearch(new FakeDb(), { ai }), (error) => error instanceof ResearchProviderError && error.provider === "ai", name);
+  }
+  const { result } = await runResearch(new FakeDb(), {
+    ai: { answer: "a".repeat(MAX_ANSWER_TEXT_LENGTH), uncertainty: "u".repeat(2000), modelVersion: "m".repeat(128) },
+  });
+  assert.equal(result.answer.length, MAX_ANSWER_TEXT_LENGTH, "answers at the limit are accepted");
+  assert.equal(parseResearchAnswerPayload(result)?.answer, result.answer, "an accepted answer can be pinned");
 });
 
 test("semantic rows are sanitized for the model but the original rows drive the digest, grounding and computedResults", async () => {

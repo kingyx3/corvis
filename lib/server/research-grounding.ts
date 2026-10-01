@@ -399,6 +399,9 @@ const MAX_ROWS = 200;
 const MAX_ROW_KEYS = 40;
 const MAX_STRING = 2000;
 const MAX_ID = 128;
+/** Limits the generated fields must respect to survive `parseResearchAnswerPayload` when the answer is pinned. */
+export const MAX_UNCERTAINTY_TEXT_LENGTH = MAX_STRING;
+export const MAX_MODEL_VERSION_LENGTH = MAX_ID;
 const SEMANTIC_QUERY_ID = /^sq_[0-9a-f]{24}$/;
 const STATUSES = ["executed", "unresolved", "unsupported"];
 const OPERATIONS = ["values", "sum", "average", "minimum", "maximum", "count"];
