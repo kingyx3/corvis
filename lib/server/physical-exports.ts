@@ -3,7 +3,7 @@ import type { ExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { PostgresPositionFinancialStatementRepository } from "./position-financial-statements.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export type ExportFormat = ExportManifest["format"];
 export type ExportSource = NonNullable<ExportManifest["source"]>;
@@ -192,15 +192,19 @@ export async function createPhysicalExport(
   };
   const manifest: DeliveryManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
 
-  await store.execute(`insert into corvis_serving.export_job
-      (tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
-    values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,array(select jsonb_array_elements_text($8::jsonb)::uuid),'queued',$9,$10::jsonb,now())`,
-  [identity.tenantId, exportId, identity.workspaceId, identity.authMethod, identity.sessionId, identity.subject,
-    format, JSON.stringify(manifest.snapshotIds), manifest.checksumSha256, JSON.stringify(manifest)]);
-  await store.execute(`insert into corvis_control.outbox_event
-      (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
-    values ($1,gen_random_uuid(),'ExportRequested','export',$2,$3::jsonb,now())`,
-  [identity.tenantId, exportId, JSON.stringify({ exportId, format, snapshotIds: manifest.snapshotIds })]);
+  // The job row and its ExportRequested event commit together: a job without the event is never
+  // picked up (it would sit 'queued' forever), and an event without the job has nothing to run.
+  await withTransaction(store, async (tx) => {
+    await tx.execute(`insert into corvis_serving.export_job
+        (tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
+      values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,array(select jsonb_array_elements_text($8::jsonb)::uuid),'queued',$9,$10::jsonb,now())`,
+    [identity.tenantId, exportId, identity.workspaceId, identity.authMethod, identity.sessionId, identity.subject,
+      format, JSON.stringify(manifest.snapshotIds), manifest.checksumSha256, JSON.stringify(manifest)]);
+    await tx.execute(`insert into corvis_control.outbox_event
+        (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
+      values ($1,gen_random_uuid(),'ExportRequested','export',$2,$3::jsonb,now())`,
+    [identity.tenantId, exportId, JSON.stringify({ exportId, format, snapshotIds: manifest.snapshotIds })]);
+  });
   return manifest;
 }
 
