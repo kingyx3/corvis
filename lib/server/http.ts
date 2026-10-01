@@ -89,7 +89,7 @@ export function apiError(error: unknown, correlationId: string): Response {
   }
   if (error instanceof WebhookSubscriptionError) {
     logEvent("warn", "webhook_subscription.denied", { correlationId }, { code: error.code });
-    const status = error.code === "webhook_subscription_not_found" ? 404 : error.code === "webhook_subscription_transition_denied" ? 409 : 400;
+    const status = error.code === "webhook_subscription_not_found" ? 404 : error.code === "webhook_subscription_transition_denied" || error.code === "webhook_subscription_limit_reached" ? 409 : 400;
     return json({ error: error.code, correlationId }, { status });
   }
   if (error instanceof ConnectorGovernanceError) {

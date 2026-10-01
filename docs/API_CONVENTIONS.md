@@ -156,7 +156,13 @@ Subscription administration and per-subscription signing-key rotation
   internal processing-transport signals such as `DocumentRegistered` are
   rejected with `event_type_not_supported`). Endpoints naming `localhost`,
   `*.internal`/metadata hosts or a loopback/private/link-local/reserved IP
-  literal are rejected with `endpoint_url_host_not_allowed`; at send time the
+  literal are rejected with `endpoint_url_host_not_allowed`; a URL longer than
+  2048 characters (as submitted or once normalized) is rejected with
+  `endpoint_url_too_long` (400), and a tenant may hold at most 25 non-revoked
+  (active or paused) subscriptions — the 26th create is rejected with
+  `webhook_subscription_limit_reached` (409) until one is revoked (the cap is
+  checked under a per-tenant advisory lock, so racing creates cannot exceed it;
+  limits live in `lib/server/webhook-subscriptions.ts`). At send time the
   host is re-checked and its DNS answers must all be public, redirects are
   never followed (a 3xx is a failed attempt) and each POST has a 10s timeout.
   The response includes the signing secret exactly once; it is never

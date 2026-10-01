@@ -1,15 +1,14 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { executeDeletionRequest } from "@/lib/server/data-lifecycle";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { platform } from "@/lib/server/platform";
 import { logEvent } from "@/lib/server/telemetry";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 export async function POST(request: Request, context: {params: Promise<{requestId:string}>}) {
   const id=correlationId(request);
   try {
-    const identity=await resolveAuthorizedRequestIdentity(request); assertPermission(identity,"admin:manage");
+    const identity=await resolveAdminRequestIdentity(request);
     const {requestId}=await context.params; const result=await executeDeletionRequest(identity,requestId);
     // The deletion itself is irreversible and already committed by this point
     // (executeDeletionRequest calls an external retention adapter mid-flow, so

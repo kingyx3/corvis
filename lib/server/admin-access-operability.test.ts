@@ -20,8 +20,7 @@ test("resource entitlement and data-right admin commands are tenant scoped, effe
   assert.match(sql, /access\.data_right\.'\|\|p_operation/);
 
   const route = await read("app/api/v1/admin/access-policy/route.ts");
-  assert.match(route, /resolveAuthorizedRequestIdentity\(request\)/);
-  assert.match(route, /assertPermission\(identity, "admin:manage"\)/);
+  assert.match(route, /resolveAdminRequestIdentity\(request\)/);
   assert.match(route, /identity\.tenantId/);
   assert.match(route, /apply_resource_entitlement_admin/);
   assert.match(route, /apply_data_right_admin/);
@@ -54,7 +53,7 @@ test("support access is approval based, time bounded, audited and does not manuf
   assert.doesNotMatch(sql, /insert into corvis_control\.data_rights/);
 
   const route = await read("app/api/v1/admin/support-access/route.ts");
-  assert.match(route, /assertPermission\(identity, "admin:manage"\)/);
+  assert.match(route, /resolveAdminRequestIdentity\(request\)/);
   assert.match(route, /approvalReference/);
   assert.match(route, /validUntil/);
   assert.match(route, /apply_support_access_admin/);

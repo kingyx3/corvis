@@ -1,5 +1,4 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
@@ -7,7 +6,7 @@ import { postgres } from "@/lib/server/postgres";
 export async function GET(request:Request){
   const id=correlationId(request);
   try{
-    const identity=await resolveAuthorizedRequestIdentity(request);assertPermission(identity,"admin:manage");
+    const identity=await resolveAdminRequestIdentity(request);
     const operationsTenant=getServerConfig().operationsTenantId;if(!operationsTenant||identity.tenantId!==operationsTenant||!identity.roles.includes("admin"))return json({error:"operations_admin_required",correlationId:id},{status:403});
     const db=postgres(getServerConfig().postgresDsn);
     const rows=await db.query(`select t.tenant_id::text,t.display_name,

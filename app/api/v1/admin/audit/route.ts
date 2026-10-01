@@ -1,13 +1,11 @@
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { AuditQueryValidationError, listAuditRecords } from "@/lib/server/audit-query";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const url = new URL(request.url);
     const limitRaw = url.searchParams.get("limit");
     const limit = limitRaw == null ? undefined : Number(limitRaw);
