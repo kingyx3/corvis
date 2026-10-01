@@ -36,3 +36,19 @@ test("drill-through from Data review to Position Financials pre-scopes the posit
   await expect(page.getByLabel("Review sort")).toHaveValue("company");
   await expect(page.getByLabel("Search review observations")).toHaveValue("ABC");
 });
+
+test("a transient position-financials failure offers Retry and recovers instead of staying on the error", async ({ page }) => {
+  let failing = true;
+  await page.route("**/api/v1/position-financials**", (route) => failing
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) })
+    : route.continue());
+  await page.goto("/");
+  await page.getByRole("button", { name: /^portfolio analytics$/i }).first().click();
+  const unavailable = page.getByRole("alert").filter({ hasText: /financial statements unavailable/i });
+  await expect(unavailable).toBeVisible();
+
+  failing = false;
+  await unavailable.getByRole("button", { name: /^retry$/i }).click();
+  await expect(unavailable).toHaveCount(0);
+  await expect(page.getByRole("region", { name: /position financials table/i })).toBeVisible();
+});
