@@ -61,9 +61,11 @@ export async function POST(request: Request) {
     const source = body.source as "delivery" | "review" | undefined;
     if (format === "parquet") await assertFeatureEnabled(identity, "exports.parquet_delivery", "export");
     const clientKey = body.idempotencyKey || request.headers.get("idempotency-key") || undefined;
-    const { status, body: data } = await withIdempotency(identity, "exports.create", clientKey, async () => ({
+    const { status, body: data } = await withIdempotency(identity, "exports.create", clientKey, async (tx) => ({
       status: 202,
-      body: await createPhysicalExport(identity, format, { scope, source }),
+      // `tx` is withIdempotency's transaction (undefined without a key, which selects createPhysicalExport's own
+      // connection): the job row, its outbox event and the idempotency record commit together.
+      body: await createPhysicalExport(identity, format, { scope, source }, tx),
     }), undefined, { format, scope, source: source ?? null });
     return json({ data, correlationId: id }, { status });
   } catch (error) { return apiError(error, id); }

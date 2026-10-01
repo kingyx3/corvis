@@ -8,6 +8,7 @@ import {
   resumeWebhookSubscription, revokeWebhookSubscription, rotateWebhookSigningKey, sweepExpiredWebhookSigningKeys,
   webhookSubscriptionTransition,
   WebhookSubscriptionError,
+  MAX_WEBHOOK_ENDPOINT_URL_LENGTH, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT,
   type WebhookDeliveryDiagnostic,
 } from "./webhook-subscriptions.ts";
 
@@ -33,6 +34,7 @@ class FakeWebhookDb implements PostgresSqlApi {
   signingKeys: SigningKeyRow[] = [];
   deliveries: DeliveryRow[] = [];
   deliveryQueries = 0;
+  locks = 0;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     if (sql.includes("select corvis_control.create_webhook_subscription(")) {
@@ -42,6 +44,11 @@ class FakeWebhookDb implements PostgresSqlApi {
       this.signingKeys.push({ tenant_id: tenantId, webhook_id: webhookId, key_id: keyId, secret, status: "active", retire_by: null });
       void createdBy;
       return [];
+    }
+    if (sql.includes("pg_advisory_xact_lock")) { this.locks += 1; return []; }
+    if (sql.includes("select count(*)::int as count from corvis_control.webhook_subscription")) {
+      const [tenantId] = parameters as string[];
+      return [{ count: this.subscriptions.filter((s) => s.tenant_id === tenantId && s.status !== "revoked").length }];
     }
     if (sql.includes("select corvis_control.rotate_webhook_signing_key(")) {
       const [tenantId, webhookId, newKeyId, newSecret] = parameters as string[];
@@ -305,4 +312,54 @@ test("webhookSubscriptionTransition resolves only own actions, never prototype m
   for (const action of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "", undefined, null, 1, {}]) {
     assert.equal(webhookSubscriptionTransition(action), undefined, `action ${String(action)} must not resolve`);
   }
+});
+
+const HOOK_EVENTS = ["SnapshotPublicationChanged"];
+
+test("createWebhookSubscription rejects an over-long endpoint URL as submitted or once normalized, and accepts the limit", async () => {
+  const db = new FakeWebhookDb();
+  const prefix = "https://example.com/";
+  const atLimit = prefix + "a".repeat(MAX_WEBHOOK_ENDPOINT_URL_LENGTH - prefix.length);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: atLimit, eventTypes: HOOK_EVENTS }, db);
+  assert.equal(created.endpointUrl.length, MAX_WEBHOOK_ENDPOINT_URL_LENGTH);
+
+  await assert.rejects(
+    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: atLimit + "a", eventTypes: HOOK_EVENTS }, db),
+    (error: unknown) => error instanceof WebhookSubscriptionError && error.code === "endpoint_url_too_long",
+  );
+  // Short as submitted, longer once each non-ASCII character is percent-encoded (6 chars) by URL normalization.
+  const expanding = prefix + "é".repeat(Math.ceil((MAX_WEBHOOK_ENDPOINT_URL_LENGTH - prefix.length) / 6) + 1);
+  assert.ok(expanding.length <= MAX_WEBHOOK_ENDPOINT_URL_LENGTH);
+  await assert.rejects(
+    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: expanding, eventTypes: HOOK_EVENTS }, db),
+    (error: unknown) => error instanceof WebhookSubscriptionError && error.code === "endpoint_url_too_long",
+  );
+  assert.equal(db.subscriptions.length, 1);
+});
+
+test("createWebhookSubscription caps non-revoked subscriptions per tenant, locks, and frees capacity on revoke", async () => {
+  const db = new FakeWebhookDb();
+  const created: string[] = [];
+  for (let i = 0; i < MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT; i += 1) {
+    created.push((await createWebhookSubscription(identity(TENANT_A), { endpointUrl: `https://example.com/hook/${i}`, eventTypes: HOOK_EVENTS }, db)).webhookId);
+  }
+  assert.equal(db.locks, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT);
+  await assert.rejects(
+    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/over", eventTypes: HOOK_EVENTS }, db),
+    (error: unknown) => error instanceof WebhookSubscriptionError && error.code === "webhook_subscription_limit_reached",
+  );
+  assert.equal(db.subscriptions.length, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT);
+  assert.equal(db.signingKeys.length, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT);
+
+  // The cap is per tenant.
+  await createWebhookSubscription(identity(TENANT_B), { endpointUrl: "https://example.com/b", eventTypes: HOOK_EVENTS }, db);
+
+  // Pausing keeps a subscription counted; revoking (terminal) frees its slot.
+  await pauseWebhookSubscription(identity(TENANT_A), created[0]!, db);
+  await assert.rejects(
+    () => createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/over", eventTypes: HOOK_EVENTS }, db),
+    WebhookSubscriptionError,
+  );
+  await revokeWebhookSubscription(identity(TENANT_A), created[0]!, db);
+  await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/again", eventTypes: HOOK_EVENTS }, db);
 });

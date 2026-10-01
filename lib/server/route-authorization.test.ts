@@ -881,3 +881,68 @@ test("source references require sources:read and source-document entitlement for
   const lookup = queries.find((query) => query.sql.includes("source_reference"));
   assert.ok(lookup?.parameters.includes(TENANT), "the evidence lookup must be tenant-scoped");
 });
+
+// ------------------------------------------------------- admin surface: who may call what
+// Pins today's behaviour for every /admin route and method: an `admin` caller (a tenant admin
+// under the gateway identity) is let past authorization, and every other role is refused with
+// 403 before any query. The route-layer admin guard must leave this table unchanged.
+test("every admin route and method admits a tenant admin and refuses every other role", async () => {
+  let admitted = 0;
+  for (const [file, methods] of MATRIX.filter(([file]) => file.startsWith("admin/"))) {
+    const handlers = await load(file);
+    for (const method of Object.keys(methods)) {
+      seedDatabase();
+      const response = await handlers[method]!(requestFor(pathFor(file), { roles: ["admin"], method, body: {} }), paramsFor(file));
+      assert.ok(![401, 403].includes(response.status), `${method} ${file} must admit a tenant admin (got ${response.status})`);
+      admitted += 1;
+      for (const role of ROLES.filter((candidate) => candidate !== "admin")) {
+        seedDatabase();
+        const denied = await handlers[method]!(requestFor(pathFor(file), { roles: [role], method, body: {} }), paramsFor(file));
+        assert.equal(denied.status, 403, `${method} ${file} must refuse ${role}`);
+        assert.equal(queries.length, 0, `${method} ${file} must refuse ${role} before any query runs`);
+      }
+    }
+  }
+  assert.ok(admitted >= 28, `expected the whole admin surface, exercised ${admitted} methods`);
+});
+
+// ------------------------------------------------------------ bounded request bodies
+function chunkedRequest(path: string, roles: Role[], chunk: Uint8Array, count: number): Request {
+  const base = requestFor(path, { roles, method: "POST" });
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { if (sent++ < count) controller.enqueue(chunk); else controller.close(); },
+  }, { highWaterMark: 0 });
+  return new Request(base.url, { method: "POST", headers: base.headers, body, duplex: "half" } as RequestInit);
+}
+
+test("client-errors and bulk invitations bound the body while reading it (declared length, chunked, and normal)", async () => {
+  const cases = [
+    { file: "client-errors/route.ts", path: "/client-errors", limit: 2048, error: "payload_too_large" },
+    { file: "access/invitations/bulk/route.ts", path: "/access/invitations/bulk", limit: 1_000_000, error: "csv_too_large" },
+  ];
+  for (const { file, path, limit, error } of cases) {
+    const handlers = await load(file);
+
+    // Declared Content-Length over the limit (a plain string body carries its own length).
+    seedDatabase();
+    const declared = await handlers.POST!(requestFor(path, { roles: ["admin"], method: "POST", rawBody: "x".repeat(limit + 1) }));
+    assert.equal(declared.status, 413, `${file} declared length`);
+    assert.equal(await errorOf(declared), error);
+
+    // Chunked stream with no Content-Length: aborted once the running count passes the limit.
+    const chunk = new Uint8Array(1024).fill(120);
+    const request = chunkedRequest(path, ["admin"], chunk, Math.ceil(limit / 1024) + 5);
+    assert.equal(request.headers.get("content-length"), null);
+    const chunked = await handlers.POST!(request);
+    assert.equal(chunked.status, 413, `${file} chunked`);
+    assert.equal(await errorOf(chunked), error);
+    assert.equal(queries.length, 0, `${file} must not touch the database for an oversized body`);
+  }
+
+  // A normal body still reaches the route's own validation (400, not 413).
+  const clientErrors = await load("client-errors/route.ts");
+  const invalid = await clientErrors.POST!(requestFor("/client-errors", { roles: ["admin"], method: "POST", rawBody: "{}" }));
+  assert.equal(invalid.status, 400);
+  assert.equal(await errorOf(invalid), "invalid_client_error");
+});

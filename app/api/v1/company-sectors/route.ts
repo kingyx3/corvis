@@ -50,8 +50,10 @@ export async function POST(request: Request) {
       reason: input.reason.trim(),
     };
     const clientKey = (input.idempotencyKey as string | undefined) || request.headers.get("idempotency-key") || undefined;
-    const { status, body: data } = await withIdempotency(identity, "company_sectors.assign", clientKey, async () => {
+    const { status, body: data } = await withIdempotency(identity, "company_sectors.assign", clientKey, async (tx) => {
+      // `tx` is withIdempotency's transaction: the idempotency record commits with the mutation and its audit row.
       const outcome = await runAuditedMutation({
+        db: tx,
         mutate: (db) => db ? new PostgresCompanySectorRepository(db).assign(identity, command, db) : companySectors().assign(identity, command),
         audit: (result) => ({
           id: randomUUID(),

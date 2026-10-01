@@ -689,7 +689,7 @@ paths:
               type: object
               required: [endpointUrl, eventTypes]
               properties:
-                endpointUrl: { type: string, format: uri, description: "Must be https, without credentials, and must not target localhost, *.internal/metadata hosts or a loopback, private, link-local or reserved IP address." }
+                endpointUrl: { type: string, format: uri, maxLength: 2048, description: "Must be https, without credentials, at most 2048 characters (as submitted and once normalized; longer is rejected with endpoint_url_too_long), and must not target localhost, *.internal/metadata hosts or a loopback, private, link-local or reserved IP address." }
                 eventTypes:
                   type: array
                   minItems: 1
@@ -708,6 +708,7 @@ paths:
                   data:
                     $ref: '#/components/schemas/WebhookSubscriptionCreated'
                   correlationId: { type: string }
+        '409': { description: 'The tenant already holds the maximum of 25 non-revoked (active or paused) subscriptions (`webhook_subscription_limit_reached`); revoke one to free capacity', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }

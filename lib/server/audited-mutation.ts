@@ -18,6 +18,11 @@ export type AuditedMutationOptions<T> = {
  * If the audit insert fails, the mutation rolls back. Commands that decline
  * without mutating may return no audit event. Demo mode preserves the
  * in-memory platform behavior and is deliberately not production evidence.
+ *
+ * `db` may be a transaction handle supplied by the caller (e.g. by
+ * `withIdempotency`): a handle has no `transaction` method, so
+ * `withTransaction` runs the mutation and audit insert on it directly and they
+ * commit or roll back with the caller's transaction instead of their own.
  */
 export async function runAuditedMutation<T>(options: AuditedMutationOptions<T>): Promise<T> {
   const config = getServerConfig();

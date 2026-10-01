@@ -1,8 +1,7 @@
 import { randomUUID } from "crypto";
-import { assertPermission, type RequestIdentity } from "@/core/enterprise";
+import type { RequestIdentity } from "@/core/enterprise";
 import { PostgresSessionRevocationRepository } from "@/lib/server/authorization";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { readJsonObject } from "@/lib/server/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
@@ -15,8 +14,7 @@ function revocableAuthMethod(value: unknown): Exclude<RequestIdentity["authMetho
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
 
     const body = await readJsonObject(request) as {
       subject?: unknown;

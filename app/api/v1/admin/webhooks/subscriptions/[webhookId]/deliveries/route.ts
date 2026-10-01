@@ -1,6 +1,5 @@
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { decodeCursor, paginate, parseLimit } from "@/lib/server/pagination";
 import { listWebhookDeliveries } from "@/lib/server/webhook-subscriptions";
 
@@ -8,8 +7,7 @@ import { listWebhookDeliveries } from "@/lib/server/webhook-subscriptions";
 export async function GET(request: Request, context: { params: Promise<{ webhookId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const { webhookId } = await context.params;
     const url = new URL(request.url);
     const limit = parseLimit(url.searchParams.get("limit"));

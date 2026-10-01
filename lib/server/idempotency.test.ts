@@ -264,3 +264,187 @@ test("a record stored before payload binding still replays when a fingerprint is
   const replay = await withIdempotency(identity(), "exports.create", "key-1", fn, db, { format: "csv" });
   assert.equal(replay.replayed, true);
 });
+
+/**
+ * Models a transactional transport (the native Postgres client): writes made
+ * through the handle `transaction()` passes to its callback are staged and only
+ * become visible in `committed*` if the callback resolves; a throw discards
+ * them, like `rollback`. The handle itself has no `transaction` method, as with
+ * the real native client, so nested `withTransaction` calls join it. `log`
+ * records the order of events so tests can assert what shared which transaction.
+ */
+class FakeTransactionalDb implements PostgresSqlApi {
+  readonly log: string[] = [];
+  readonly committedRecords = new Map<string, PostgresRow>();
+  readonly committedMutations: string[] = [];
+  failRecordInsert = false;
+  /** Runs inside the next transaction right before the record insert, to model another request committing first. */
+  beforeRecordInsert?: () => void;
+  private transactions = 0;
+
+  private handle(label: string, staged?: { records: Map<string, PostgresRow>; mutations: string[] }): PostgresSqlApi {
+    const records = staged?.records ?? this.committedRecords;
+    const mutations = staged?.mutations ?? this.committedMutations;
+    return {
+      query: async (sql: string, parameters: PostgresPrimitive[] = []) => {
+        const text = sql.trim();
+        const [tenantId, scope, key] = parameters;
+        const rowKey = `${String(tenantId)}:${String(scope)}:${String(key)}`;
+        if (text.startsWith("select response_status")) {
+          this.log.push(`select@${label}`);
+          const row = staged?.records.get(rowKey) ?? this.committedRecords.get(rowKey);
+          return row ? [row] : [];
+        }
+        if (text.startsWith("insert into corvis_control.idempotency_key")) {
+          this.log.push(`insert@${label}`);
+          this.beforeRecordInsert?.();
+          if (this.failRecordInsert) throw new Error("record insert failed");
+          if (this.committedRecords.has(rowKey) || staged?.records.has(rowKey)) return [];
+          const row: PostgresRow = { response_status: parameters[4], response_body: parameters[5], request_hash: parameters[3] };
+          records.set(rowKey, row);
+          return [row];
+        }
+        throw new Error(`FakeTransactionalDb: unexpected SQL: ${sql}`);
+      },
+      execute: async (sql: string) => { this.log.push(`${sql}@${label}`); mutations.push(sql); },
+      health: async () => true,
+    };
+  }
+
+  async query(sql: string, parameters?: PostgresPrimitive[]): Promise<PostgresRow[]> { return this.handle("db").query(sql, parameters); }
+  async execute(sql: string): Promise<void> { return this.handle("db").execute(sql); }
+  async health(): Promise<boolean> { return true; }
+
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    const label = `tx${++this.transactions}`;
+    const staged = { records: new Map<string, PostgresRow>(), mutations: [] as string[] };
+    this.log.push(`begin@${label}`);
+    try {
+      const result = await fn(this.handle(label, staged));
+      for (const [key, row] of staged.records) this.committedRecords.set(key, row);
+      this.committedMutations.push(...staged.mutations);
+      this.log.push(`commit@${label}`);
+      return result;
+    } catch (error) {
+      this.log.push(`rollback@${label}`);
+      throw error;
+    }
+  }
+}
+
+const winnerRowKey = `tenant-a:exports.create:${JSON.stringify(["oidc|user-1", "workspace-1", "key-1"])}`;
+
+test("the record insert shares one transaction with the mutation and commits with it", async () => {
+  const db = new FakeTransactionalDb();
+  const outcome = await withIdempotency(identity(), "exports.create", "key-1", async (tx) => {
+    await tx!.execute("mutation");
+    return { status: 202, body: { exportId: "export-1" } };
+  }, db);
+
+  assert.equal(outcome.replayed, false);
+  assert.deepEqual(db.log, ["select@db", "begin@tx1", "mutation@tx1", "insert@tx1", "commit@tx1"]);
+  assert.deepEqual(db.committedMutations, ["mutation"]);
+  assert.equal(db.committedRecords.size, 1);
+});
+
+test("a failed record insert rolls the mutation back, so a retry with the same key re-runs cleanly", async () => {
+  const db = new FakeTransactionalDb();
+  let runs = 0;
+  const fn = async (tx?: PostgresSqlApi) => {
+    runs += 1;
+    await tx!.execute(`mutation-${runs}`);
+    return { status: 202, body: { runs } };
+  };
+
+  db.failRecordInsert = true;
+  await assert.rejects(withIdempotency(identity(), "exports.create", "key-1", fn, db), /record insert failed/);
+  assert.deepEqual(db.committedMutations, [], "nothing may commit when the record could not be stored");
+  assert.equal(db.committedRecords.size, 0);
+  assert.equal(db.log.at(-1), "rollback@tx1");
+
+  db.failRecordInsert = false;
+  const retry = await withIdempotency(identity(), "exports.create", "key-1", fn, db);
+  assert.equal(retry.replayed, false);
+  assert.deepEqual(retry.body, { runs: 2 });
+  assert.deepEqual(db.committedMutations, ["mutation-2"], "exactly one mutation is committed, by the retry");
+
+  const replay = await withIdempotency(identity(), "exports.create", "key-1", fn, db);
+  assert.equal(replay.replayed, true);
+  assert.equal(runs, 2);
+});
+
+test("a throwing fn rolls back and records nothing", async () => {
+  const db = new FakeTransactionalDb();
+  await assert.rejects(withIdempotency(identity(), "exports.create", "key-1", async (tx) => {
+    await tx!.execute("mutation");
+    throw new Error("domain failure");
+  }, db), /domain failure/);
+  assert.deepEqual(db.committedMutations, []);
+  assert.equal(db.committedRecords.size, 0);
+  assert.ok(!db.log.some((entry) => entry.startsWith("insert")), "a failed result is never recorded");
+});
+
+test("a replay returns the stored result without opening a transaction or re-running fn", async () => {
+  const db = new FakeTransactionalDb();
+  let runs = 0;
+  const fn = async (tx?: PostgresSqlApi) => { runs += 1; await tx!.execute("mutation"); return { status: 202, body: { runs } }; };
+  const first = await withIdempotency(identity(), "exports.create", "key-1", fn, db);
+  db.log.length = 0;
+
+  const replay = await withIdempotency(identity(), "exports.create", "key-1", fn, db);
+  assert.equal(runs, 1);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.body, first.body);
+  assert.deepEqual(db.log, ["select@db"], "replay is one lookup on the plain connection");
+  assert.deepEqual(db.committedMutations, ["mutation"]);
+});
+
+test("a request that loses the insert race rolls its mutation back and returns the winner's stored response", async () => {
+  const db = new FakeTransactionalDb();
+  // Another request with the same key commits between our lookup and our insert.
+  db.beforeRecordInsert = () => {
+    db.beforeRecordInsert = undefined;
+    db.committedRecords.set(winnerRowKey, { response_status: 202, response_body: JSON.stringify({ exportId: "winner" }) });
+    db.committedMutations.push("winner-mutation");
+  };
+
+  const loser = await withIdempotency(identity(), "exports.create", "key-1", async (tx) => {
+    await tx!.execute("loser-mutation");
+    return { status: 202, body: { exportId: "loser" } };
+  }, db);
+
+  assert.equal(loser.replayed, true);
+  assert.deepEqual(loser.body, { exportId: "winner" });
+  assert.deepEqual(db.committedMutations, ["winner-mutation"], "the loser's mutation must not commit alongside the winner's");
+  assert.ok(db.log.includes("rollback@tx1"));
+});
+
+test("losing the insert race with a different payload is still refused as key reuse", async () => {
+  const db = new FakeTransactionalDb();
+  db.beforeRecordInsert = () => {
+    db.beforeRecordInsert = undefined;
+    // The winner stored a hash of a different fingerprint.
+    db.committedRecords.set(winnerRowKey, { response_status: 202, response_body: "{}", request_hash: "different-hash" });
+  };
+  await assert.rejects(
+    withIdempotency(identity(), "exports.create", "key-1", async () => ({ status: 202, body: {} }), db, { format: "csv" }),
+    IdempotencyKeyReuseError,
+  );
+});
+
+test("without a key fn receives no transaction handle and Postgres is never touched", async () => {
+  const db = new FakeTransactionalDb();
+  let received: PostgresSqlApi | undefined | "unset" = "unset";
+  await withIdempotency(identity(), "exports.create", undefined, async (tx) => { received = tx; return { status: 202, body: {} }; }, db);
+  assert.equal(received, undefined);
+  assert.deepEqual(db.log, []);
+});
+
+test("on a transport without transactions fn still runs and the record is written on the same connection", async () => {
+  const db = new FakeIdempotencyDb();
+  let received: PostgresSqlApi | undefined;
+  const outcome = await withIdempotency(identity(), "exports.create", "key-1", async (tx) => { received = tx; return { status: 202, body: { ok: true } }; }, db);
+  assert.equal(received, db, "the HTTP fallback hands fn the plain connection, as before");
+  assert.equal(outcome.replayed, false);
+  assert.ok(db.calls.some((call) => call.sql.trim().startsWith("insert into corvis_control.idempotency_key")));
+});

@@ -54,14 +54,23 @@ export async function releaseScannedUploads(options: UploadReleaseOptions = {}):
 
   // Only artifacts still inside the quarantine retention window: older ones are
   // the sweep's to purge and must not starve fresh uploads of the batch limit.
+  // Rows that stayed pending (no scanner verdict yet, or a failed attempt) carry
+  // `last_release_attempt_at` and go to the back, and each tenant's rows are
+  // interleaved by rank, so neither a stuck row nor one tenant's backlog can
+  // hold the head of the queue for the whole retention window.
   const rows = await db.query(
     `select tenant_id::text as tenant_id, document_id::text as document_id,
             document_artifact_version_id::text as artifact_version_id, ingestion_id,
             object_uri, size_bytes, storage_generation
-       from corvis_source.document_artifact_version
-      where malware_scan_status='pending' and quarantine_status='quarantined' and storage_generation is not null
-        and created_at > now() - make_interval(secs => $2)
-      order by created_at
+       from (
+         select tenant_id, document_id, document_artifact_version_id, ingestion_id,
+                object_uri, size_bytes, storage_generation, created_at, last_release_attempt_at,
+                row_number() over (partition by tenant_id order by last_release_attempt_at nulls first, created_at) as tenant_rank
+           from corvis_source.document_artifact_version
+          where malware_scan_status='pending' and quarantine_status='quarantined' and storage_generation is not null
+            and created_at > now() - make_interval(secs => $2)
+       ) queued
+      order by tenant_rank, last_release_attempt_at nulls first, created_at
       limit $1`,
     [Math.min(Math.max(1, options.limit ?? DEFAULT_LIMIT), 200), Math.floor(QUARANTINE_RETENTION_MS / 1000)],
   );
@@ -72,12 +81,21 @@ export async function releaseScannedUploads(options: UploadReleaseOptions = {}):
     try {
       const outcome = await processArtifact(store, db, row, config);
       summary[outcome] += 1;
+      if (outcome === "pending") await markAttempted(db, row);
     } catch {
       // One unreadable object must not stop the rest; the next tick retries it.
       summary.errors += 1;
+      await markAttempted(db, row);
     }
   }
   return summary;
+}
+
+/** Sends a row that is still unreleased to the back of the queue; best effort, so a failure only costs fairness. */
+async function markAttempted(db: PostgresSqlApi, row: PostgresRow): Promise<void> {
+  await db.execute(`update corvis_source.document_artifact_version set last_release_attempt_at=now()
+    where tenant_id=$1::uuid and document_artifact_version_id=$2::uuid`,
+  [String(row.tenant_id), String(row.artifact_version_id)]).catch(() => undefined);
 }
 
 async function processArtifact(

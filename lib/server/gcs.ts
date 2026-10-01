@@ -282,11 +282,29 @@ export class GcsControlClient implements UploadObjectStore {
   }
 
   async getObjectPrefix(key: string, bytes = 32): Promise<Buffer> {
+    const limit = Math.max(1, Math.floor(bytes));
     const response = await this.authorizedFetch(this.mediaUrl(key), {
-      headers: { range: `bytes=0-${Math.max(0, bytes - 1)}` },
+      headers: { range: `bytes=0-${limit - 1}` },
     });
     if (!response.ok && response.status !== 206) throw new Error(`GCS object validation read failed (${response.status})`);
-    return Buffer.from(await response.arrayBuffer());
+    if (!response.body) return Buffer.from(await response.arrayBuffer()).subarray(0, limit);
+    // A server that ignores Range answers 200 with the whole object: read only as much as asked for
+    // and cancel the rest, rather than buffering a multi-gigabyte source document in memory.
+    const chunks: Buffer[] = [];
+    let received = 0;
+    const reader = response.body.getReader();
+    try {
+      while (received < limit) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value.buffer, value.byteOffset, Math.min(value.byteLength, limit - received));
+        chunks.push(chunk);
+        received += chunk.length;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+    return Buffer.concat(chunks, received);
   }
 
   async getObjectSha256(key: string, generation?: string): Promise<string> {

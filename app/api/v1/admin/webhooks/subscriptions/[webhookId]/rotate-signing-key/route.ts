@@ -1,8 +1,7 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { rotateWebhookSigningKey } from "@/lib/server/webhook-subscriptions";
 
 /**
@@ -12,8 +11,7 @@ import { rotateWebhookSigningKey } from "@/lib/server/webhook-subscriptions";
 export async function POST(request: Request, context: { params: Promise<{ webhookId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const { webhookId } = await context.params;
     const rotated = await runAuditedMutation({
       mutate: (db) => rotateWebhookSigningKey(identity, webhookId, db),

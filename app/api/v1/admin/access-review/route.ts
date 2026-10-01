@@ -1,5 +1,4 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
@@ -7,8 +6,7 @@ import { postgres } from "@/lib/server/postgres";
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const db = postgres(getServerConfig().postgresDsn);
     const [memberships, entitlements, rights, serviceGrants, supportGrants] = await Promise.all([
       db.query(`select s.subject,s.auth_method,s.user_id::text,s.status as subject_status,
