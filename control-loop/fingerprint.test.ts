@@ -1,15 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import {
-  dedupeFindings,
-  fingerprintFor,
-  formatFingerprint,
-  formatLegacyFingerprint,
-  legacyFingerprintOf,
-  parseFingerprint,
-  sortFindings,
-} from "./classifiers/fingerprint.ts";
+import { dedupeFindings, fingerprintFor, formatFingerprint, parseFingerprint, sortFindings } from "./classifiers/fingerprint.ts";
 import { rule } from "./rules/catalog.ts";
 import type { Finding } from "./types.ts";
 
@@ -31,7 +23,7 @@ test("subjects that slug to the same text keep distinct fingerprints", () => {
   const subjects = ["docs/a-b.md:missing.md", "docs/a_b.md:missing.md", "docs/A-B.md:missing.md", "docs/a-b.md:missing-md"];
   const fingerprints = subjects.map((subject) => formatFingerprint({ domain: "docs", owners, subject }));
   assert.equal(new Set(fingerprints).size, subjects.length);
-  assert.equal(new Set(fingerprints.map(legacyFingerprintOf)).size, 1, "they did collide in the legacy format");
+  assert.equal(new Set(fingerprints.map((value) => value.slice(0, value.lastIndexOf("#")))).size, 1, "the readable slug part alone would have collided");
   // The collision is no longer silently deduplicated away.
   const findings = fingerprints.map((fingerprint, index) => ({
     ruleId: "CL-DOC-003", fingerprint, subject: subjects[index]!, severity: "medium" as const,
@@ -46,28 +38,20 @@ test("a subject with no ASCII letters is fingerprinted by its hash instead of th
   assert.ok(parseFingerprint(value));
 });
 
-test("legacyFingerprintOf strips only the subject hash and leaves legacy values alone", () => {
-  const current = formatFingerprint({ domain: "docs", owners: ["eng"], subject: "docs/a.md:x" });
-  assert.equal(legacyFingerprintOf(current), "docs:eng:docs-a-md-x");
-  assert.equal(legacyFingerprintOf("docs:eng:docs-a-md-x"), "docs:eng:docs-a-md-x");
-  assert.equal(legacyFingerprintOf("not-a-fingerprint"), "not-a-fingerprint");
-  assert.equal(legacyFingerprintOf(current), formatLegacyFingerprint({ domain: "docs", owners: ["eng"], subject: "docs/a.md:x" }));
-});
-
-test("parseFingerprint still accepts a legacy (hash-less) fingerprint and rejects a malformed hash", () => {
-  const legacy = "business-control-loop:strategy-engineering:docs-a-md";
-  assert.deepEqual(parseFingerprint(legacy), { domain: "business-control-loop", owners: ["strategy", "engineering"], subject: "docs-a-md" });
-  assert.equal(parseFingerprint(`${legacy}#xyz`), null);
-  assert.equal(parseFingerprint(`${legacy}#ABCDEF0123`), null, "the hash is lowercase hex");
-  assert.equal(parseFingerprint(`${legacy}#abcdef01234`), null, "the hash has a fixed length");
-});
-
 test("parseFingerprint round-trips a value produced by formatFingerprint", () => {
   const value = fingerprintFor(rule("CL-DOC-003"), "docs/README.md:broken-link:foo");
   const parsed = parseFingerprint(value);
   assert.ok(parsed);
   assert.equal(formatFingerprint(parsed!), value);
   assert.match(value, /#[0-9a-f]{10}$/);
+});
+
+test("parseFingerprint rejects a missing, malformed or wrongly sized subject hash", () => {
+  const value = fingerprintFor(rule("CL-DOC-003"), "docs/a.md:x");
+  assert.ok(parseFingerprint(value));
+  assert.equal(parseFingerprint(value.slice(0, value.lastIndexOf("#"))), null, "the hash is required");
+  assert.equal(parseFingerprint(`${value}0`), null, "the hash has a fixed length");
+  assert.equal(parseFingerprint(value.toUpperCase()), null, "the hash is lowercase hex");
 });
 
 test("parseFingerprint rejects a malformed value instead of throwing", () => {

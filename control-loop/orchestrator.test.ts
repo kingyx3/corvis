@@ -266,7 +266,6 @@ function flakyIssueWriter(succeedFirst: number, status: number) {
       return { number: 100 + created.length - 1 };
     },
     setState: async () => {},
-    updateBody: async () => {},
     comment: async () => {},
   };
   return { writer, created };
@@ -306,7 +305,6 @@ test("a 403 stops the remaining reconciliation writes instead of hammering the A
     const writer = {
       create: async (): Promise<{ number: number }> => { attempts += 1; throw new Error("github_issue_create_failed:403"); },
       setState: async () => {},
-      updateBody: async () => {},
       comment: async () => {},
     };
     const report = await runControlLoop({

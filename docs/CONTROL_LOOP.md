@@ -83,17 +83,7 @@ These are functional/operating-control gaps, not reasons to weaken the runtime s
 
 ## Finding fingerprints
 
-A finding fingerprint is `domain:owners:subject`, where the subject segment is `<slug>#<hash>`: a readable slug of the subject plus the first 10 hex characters of the SHA-256 of the raw, unslugged subject (`control-loop/classifiers/fingerprint.ts`). The hash keeps subjects that slug to the same text distinct (`docs/a-b.md` vs `docs/a_b.md`, or paths differing only in case or punctuation), so `dedupeFindings` no longer drops one of them, and a subject with no ASCII letters is still fingerprinted.
-
-The first version of the format had no `#hash` (the "legacy" form). Stripping `#hash` from a current fingerprint yields its legacy form, which is how issues opened before the change are migrated without being closed and re-opened:
-
-- issue reconciliation adopts a legacy-tagged issue for the first active finding (in fingerprint order) that maps to it and emits a `rekey` action, which rewrites only the `Finding fingerprint:` line of the issue body (`IssueWriter.updateBody`); the issue then reconciles like any other. A re-key costs one unit of the mutation budget and is retried on the next run if the budget or a failure stops it;
-- a closed legacy issue for a recurring finding is re-keyed and then reopened;
-- when several findings collided onto one legacy fingerprint, only one adopts the issue and the others get their own;
-- an issue whose body has no re-keyable fingerprint line is not adopted;
-- a legacy issue whose finding is gone is closed as before, and issue hygiene treats a legacy fingerprint as active when any active finding maps to it.
-
-`parseFingerprint` accepts both forms, so no tracked issue becomes unparseable during the transition.
+A finding fingerprint is `domain:owners:subject`, where the subject segment is `<slug>#<hash>`: a readable slug of the subject plus the first 10 hex characters of the SHA-256 of the raw, unslugged subject (`control-loop/classifiers/fingerprint.ts`). The hash keeps subjects that slug to the same text distinct (`docs/a-b.md` vs `docs/a_b.md`, or paths differing only in case or punctuation), so `dedupeFindings` never drops one of them, and a subject with no ASCII letters is still fingerprinted. Tracked issues carry the fingerprint in a `Finding fingerprint:` line of their body, and `parseFingerprint` only accepts this format.
 
 ## Runbook
 

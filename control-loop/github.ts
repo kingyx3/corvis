@@ -1,11 +1,12 @@
 import type { IssueSnapshot, IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
 import type { IssueWriter } from "./issue-reconciliation.ts";
-import { FINGERPRINT_LINE } from "./classifiers/fingerprint.ts";
 
 /** Upper bound for any single GitHub API call so a hung connection cannot stall a control-loop run. */
 export const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
 /** Hard page cap for the issue snapshot (per_page=100). Reaching it fails closed rather than truncating. */
 export const ISSUE_SNAPSHOT_MAX_PAGES = 20;
+
+const FINGERPRINT_LINE = /Finding fingerprint:\s*`([^`]+)`/;
 
 type RawIssue = { number: number; state: string; title: string; body: string | null; labels: Array<string | { name?: string }> };
 
@@ -66,7 +67,6 @@ export async function fetchIssueSnapshot(options: FetchIssuesOptions): Promise<I
           state: raw.state === "closed" ? "closed" : "open",
           title: raw.title,
           fingerprint: extractFingerprint(raw.body),
-          body: raw.body,
           labels: labelNames(raw.labels),
         });
       }
@@ -104,8 +104,8 @@ function githubHeaders(token: string): Record<string, string> {
 }
 
 /**
- * The write counterpart to `fetchIssueSnapshot`: creates, closes, reopens, re-keys
- * (rewrites the fingerprint line of) and comments on control-loop-labeled issues via the GitHub REST API. Kept as a
+ * The write counterpart to `fetchIssueSnapshot`: creates, closes, reopens and
+ * comments on control-loop-labeled issues via the GitHub REST API. Kept as a
  * thin, directly-testable adapter behind the `IssueWriter` port so the
  * deterministic reconciliation logic in `issue-reconciliation.ts` never talks
  * to the network itself.
@@ -136,15 +136,6 @@ export function createGitHubIssueWriter(options: GitHubIssueWriterOptions): Issu
         body: JSON.stringify({ state }),
       });
       if (!response.ok) throw new Error(`github_issue_set_state_failed:${response.status}`);
-    },
-    async updateBody(issueNumber, body) {
-      const response = await fetchImpl(`${base}/issues/${issueNumber}`, {
-        method: "PATCH",
-        headers,
-        signal: AbortSignal.timeout(timeoutMs),
-        body: JSON.stringify({ body }),
-      });
-      if (!response.ok) throw new Error(`github_issue_update_body_failed:${response.status}`);
     },
     async comment(issueNumber, body) {
       const response = await fetchImpl(`${base}/issues/${issueNumber}/comments`, {
