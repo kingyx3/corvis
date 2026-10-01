@@ -43,6 +43,13 @@ on:
         required: false
         type: boolean
         default: false
+    outputs:
+      api_image:
+        description: Immutable API/worker image reference resolved for this deployment (empty when no release was selected)
+        value: ${{ jobs.terraform.outputs.api_image }}
+      control_loop_image:
+        description: Immutable control-loop image reference resolved for this deployment (empty for dev or when no release was selected)
+        value: ${{ jobs.terraform.outputs.control_loop_image }}
 
 permissions:
   contents: read
@@ -56,6 +63,9 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      api_image: ${{ steps.release.outputs.api_image }}
+      control_loop_image: ${{ steps.release.outputs.control_loop_image }}
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -177,6 +187,7 @@ jobs:
         run: bash .github/scripts/terraform-state.sh require
 
       - name: Resolve immutable release set
+        id: release
         shell: bash
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -228,6 +239,8 @@ jobs:
 
           echo "TF_VAR_api_image=${api_image}" >> "${GITHUB_ENV}"
           echo "TF_VAR_control_loop_image=${control_loop_image}" >> "${GITHUB_ENV}"
+          echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
+          echo "control_loop_image=${control_loop_image}" >> "${GITHUB_OUTPUT}"
 
           {
             echo "### Terraform release selection"

@@ -131,7 +131,7 @@ Messages that exhaust push delivery are dead-lettered to `processing-dead-letter
 
 The source bucket is regional, private, versioned, CMEK-encrypted, uniform-access and public-access-prevention protected. The project's Cloud Storage service agent is granted `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the source key only.
 
-The API's actual upload/quarantine adapter performs object create/read/list/delete operations, so it receives object-level `roles/storage.objectUser`, not bucket administration. Worker access is read-only unless a later bounded stage explicitly requires more.
+The API's actual upload/quarantine adapter performs object create/read/list/delete operations, so it receives object-level `roles/storage.objectUser`, not bucket administration. The worker reads the whole bucket (`roles/storage.objectViewer`) and creates export artifacts (`roles/storage.objectCreator`); because the scheduled delivery drain on the worker also deletes and overwrites objects (upload sweep, session/cursor JSON, failed or superseded export attempts), it additionally holds `roles/storage.objectUser` restricted by an IAM condition to the `tenant=`, `exports/`, `_corvis/upload-sessions/` and `_corvis/upload-sweep-cursors/` object prefixes. It has no bucket administration.
 
 Transient/quarantine/export/intermediate data has lifecycle cleanup (noncurrent versions under those prefixes are deleted 7 days after becoming noncurrent); retained source evidence follows governance/legal retention rather than a cost-only timer.
 
