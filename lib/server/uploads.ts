@@ -686,8 +686,12 @@ export class ProductionUploadSessions implements UploadSessionPort {
       set storage_generation=$1,malware_scan_status=$2,quarantine_status='quarantined'
       where tenant_id=$3 and document_artifact_version_id=$4::uuid and quarantine_status in ('pending','quarantined')`,
     [session.storageVersionId ?? null,session.contentValidated ? "pending" : "invalid_content",session.tenantId,session.artifactVersionId]);
+    // Only advance a document still in the states a completing upload can be in ('uploading', or already
+    // quarantined/rejected by an earlier attempt whose session write failed): a concurrent abort or
+    // release has moved it on ('aborted', 'queued', ...) and must not be overwritten.
     await this.db.execute(`update corvis_source.document set status=$1
-      where tenant_id=$2 and document_id=$3::uuid`, [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
+      where tenant_id=$2 and document_id=$3::uuid and status in ('uploading','quarantined','rejected')`,
+    [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
     await this.persist(session);
     assertNotRejected(session);
     return this.refreshAccepted(session);

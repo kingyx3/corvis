@@ -995,3 +995,15 @@ test("completion never overwrites a registry row a concurrent abort already purg
   assert.ok(quarantine);
   assert.match(quarantine.sql, /and quarantine_status in \('pending','quarantined'\)/);
 });
+
+test("completion only advances a document that is still uploading, quarantined or rejected", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  const documentUpdate = db.calls.find((call) => /update corvis_source\.document set status=\$1/.test(call.sql));
+  assert.ok(documentUpdate);
+  assert.match(documentUpdate.sql, /and status in \('uploading','quarantined','rejected'\)/);
+  assert.deepEqual(documentUpdate.parameters, ["quarantined", session.tenantId, session.documentId]);
+});

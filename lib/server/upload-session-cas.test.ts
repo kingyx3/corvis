@@ -149,6 +149,34 @@ test("release racing an abort: the release claims first, so the abort refuses an
   assert.deepEqual(store.deleted, [], "released evidence must never be purged");
 });
 
+test("completion racing an abort never rewrites the document status the abort set", async () => {
+  const store = new CasStore();
+  // Models the document row's status guard, which the plain fake ignores.
+  const db = new (class extends Db {
+    documentStatus = "uploading";
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      await super.execute(sql, parameters);
+      if (!/update corvis_source\.document set status/.test(sql)) return;
+      const next = /status=\$1/.test(sql) ? String(parameters[0]) : sql.match(/status='([a-z_]+)'/)![1];
+      const guard = sql.match(/and status in \(([^)]*)\)/)?.[1].split(",").map((state) => state.trim().replace(/'/g, ""));
+      if (!guard || guard.includes(this.documentStatus)) this.documentStatus = next;
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+  // After complete verified the object but before it writes the document row, a concurrent abort runs to completion.
+  const original = db.execute.bind(db);
+  db.execute = async (sql, parameters) => {
+    if (sql.includes("set storage_generation=")) { db.execute = original; await uploads.abort(actor, session.uploadId); }
+    return original(sql, parameters);
+  };
+  await assert.rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), (error: unknown) =>
+    error instanceof UploadRequestError && error.code === "upload_conflict");
+  assert.equal(db.documentStatus, "aborted", "complete must not relabel an aborted document as quarantined");
+  assert.equal(stored(store, session).state, "aborted");
+});
+
 test("a failed release reopens the session so the next poll can retry it", async () => {
   const { store, db, uploads, session } = await quarantinedUpload();
   const original = db.query.bind(db);
