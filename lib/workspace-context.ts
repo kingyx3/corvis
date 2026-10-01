@@ -1,3 +1,5 @@
+import { safeGetItem } from "./safe-storage.ts";
+
 /** Context selectors are untrusted; the server reauthorizes every request. */
 export const WORKSPACE_CONTEXT_KEY = "corvis:workspace-context:v1";
 export type WorkspaceContext = { tenantId: string; workspaceId: string };
@@ -9,7 +11,7 @@ export function workspaceContext(): WorkspaceContext | null {
   // tab changing the preference must never redirect an in-flight command.
   if (pageContext !== undefined) return pageContext;
   try {
-    const value = JSON.parse(window.localStorage.getItem(WORKSPACE_CONTEXT_KEY) ?? "null") as WorkspaceContext | null;
+    const value = JSON.parse(safeGetItem("local", WORKSPACE_CONTEXT_KEY) ?? "null") as WorkspaceContext | null;
     pageContext = value && typeof value.tenantId === "string" && typeof value.workspaceId === "string" ? value : null;
   } catch { pageContext = null; }
   return pageContext;
