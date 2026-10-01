@@ -1,15 +1,13 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { runAuditedMutation } from "@/lib/server/audited-mutation";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { assertWebhookId, webhookSubscriptionTransition } from "@/lib/server/webhook-subscriptions";
 
 export async function PATCH(request: Request, context: { params: Promise<{ webhookId: string }> }) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const { webhookId } = await context.params;
     assertWebhookId(webhookId);
     const body = await request.json() as { action?: unknown } | null;

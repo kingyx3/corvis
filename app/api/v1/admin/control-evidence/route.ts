@@ -1,17 +1,15 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { generateControlEvidence, listControlEvidence } from "@/lib/server/operations";
 import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
 import { postgres, withTransaction } from "@/lib/server/postgres";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 export async function GET(request: Request) {
   const id=correlationId(request);
   try {
-    const identity=await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity,"admin:manage");
+    const identity=await resolveAdminRequestIdentity(request);
     const rows=await listControlEvidence(identity);
     return json({data:rows,correlationId:id});
   } catch(error){ return apiError(error,id); }
@@ -20,7 +18,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const id=correlationId(request);
   try {
-    const identity=await resolveAuthorizedRequestIdentity(request); assertPermission(identity,"admin:manage");
+    const identity=await resolveAdminRequestIdentity(request);
     // The evidence write and its audit event must commit or roll back
     // together, so a failed audit insert never leaves an unaudited evidence
     // record (and its irreversible audit_events/… counts) in place.

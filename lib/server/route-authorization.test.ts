@@ -882,6 +882,30 @@ test("source references require sources:read and source-document entitlement for
   assert.ok(lookup?.parameters.includes(TENANT), "the evidence lookup must be tenant-scoped");
 });
 
+// ------------------------------------------------------- admin surface: who may call what
+// Pins today's behaviour for every /admin route and method: an `admin` caller (a tenant admin
+// under the gateway identity) is let past authorization, and every other role is refused with
+// 403 before any query. The route-layer admin guard must leave this table unchanged.
+test("every admin route and method admits a tenant admin and refuses every other role", async () => {
+  let admitted = 0;
+  for (const [file, methods] of MATRIX.filter(([file]) => file.startsWith("admin/"))) {
+    const handlers = await load(file);
+    for (const method of Object.keys(methods)) {
+      seedDatabase();
+      const response = await handlers[method]!(requestFor(pathFor(file), { roles: ["admin"], method, body: {} }), paramsFor(file));
+      assert.ok(![401, 403].includes(response.status), `${method} ${file} must admit a tenant admin (got ${response.status})`);
+      admitted += 1;
+      for (const role of ROLES.filter((candidate) => candidate !== "admin")) {
+        seedDatabase();
+        const denied = await handlers[method]!(requestFor(pathFor(file), { roles: [role], method, body: {} }), paramsFor(file));
+        assert.equal(denied.status, 403, `${method} ${file} must refuse ${role}`);
+        assert.equal(queries.length, 0, `${method} ${file} must refuse ${role} before any query runs`);
+      }
+    }
+  }
+  assert.ok(admitted >= 28, `expected the whole admin surface, exercised ${admitted} methods`);
+});
+
 // ------------------------------------------------------------ bounded request bodies
 function chunkedRequest(path: string, roles: Role[], chunk: Uint8Array, count: number): Request {
   const base = requestFor(path, { roles, method: "POST" });

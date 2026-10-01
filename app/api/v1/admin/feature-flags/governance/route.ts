@@ -1,7 +1,6 @@
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { listFeatureFlagGovernance } from "@/lib/server/feature-flags";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 /**
  * Authoritative flag-governance report: every registered flag's rollout,
@@ -12,8 +11,7 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     return json({ data: await listFeatureFlagGovernance(identity), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

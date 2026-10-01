@@ -1,9 +1,8 @@
 import { randomUUID } from "crypto";
-import { assertPermission, type RequestIdentity } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
+import type { RequestIdentity } from "@/core/enterprise";
 import { getServerConfig } from "@/lib/server/config";
 import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/lib/server/data-correction";
-import { readJsonObject } from "@/lib/server/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
 import { postgres, type PostgresSqlApi, withTransaction } from "@/lib/server/postgres";
@@ -26,8 +25,7 @@ function audit(db: PostgresSqlApi, identity: RequestIdentity, id: string, action
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     return json({ data: await dataCorrectionRepository().list(identity), correlationId: id });
   } catch (error) { return correctionError(error, id); }
 }
@@ -35,8 +33,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const body = await readJsonObject(request) as Record<string, unknown> | undefined;
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const action = String(body.action ?? "open");

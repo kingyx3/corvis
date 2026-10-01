@@ -1,12 +1,10 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
 import { setFeatureFlagEmergencyStop } from "@/lib/server/feature-flags";
-import { readJsonObject } from "@/lib/server/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
 import { postgres, withTransaction } from "@/lib/server/postgres";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 /**
  * Tenant-wide emergency stop. Engaging it denies every flag on every channel
@@ -15,8 +13,7 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const body = await readJsonObject(request) as { engaged?: boolean; reason?: string } | undefined;
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     if (typeof body.engaged !== "boolean") return json({ error: "invalid_request", correlationId: id }, { status: 400 });

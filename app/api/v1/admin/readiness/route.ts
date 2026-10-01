@@ -1,13 +1,11 @@
-import { assertPermission } from "@/core/enterprise";
+import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { platform } from "@/lib/server/platform";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    await resolveAdminRequestIdentity(request);
     const bindings = await platform().readiness();
     const productionReady = Object.values(bindings).every((value) => value === "configured");
     return json({ data: { productionReady, bindings, checkedAt: new Date().toISOString() }, correlationId: id });

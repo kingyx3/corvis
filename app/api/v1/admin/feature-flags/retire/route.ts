@@ -1,19 +1,16 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
 import { retireFeatureFlag } from "@/lib/server/feature-flags";
-import { readJsonObject } from "@/lib/server/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
 import { postgres, withTransaction } from "@/lib/server/postgres";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 
 /** Retirement is terminal: a retired flag can never be re-enabled or re-registered under the same key. */
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     const body = await readJsonObject(request) as { key?: string } | undefined;
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     if (typeof body.key !== "string" || !body.key || body.key.length > 128) return json({ error: "invalid_request", correlationId: id }, { status: 400 });

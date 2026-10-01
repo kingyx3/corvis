@@ -1,8 +1,6 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
-import { readJsonObject } from "@/lib/server/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { getServerConfig } from "@/lib/server/config";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { postgres } from "@/lib/server/postgres";
@@ -16,8 +14,7 @@ import { listTransportDeadLetters, requeueTransportDeadLetter, type TransportReq
 export async function GET(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     if (identity.isTenantAdmin !== true) return json({ error: "tenant_admin_required", correlationId: id }, { status: 403 });
     const config = getServerConfig();
     const data = config.demoMode ? [] : await listTransportDeadLetters(identity, postgres(config.postgresDsn));
@@ -28,8 +25,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const id = correlationId(request);
   try {
-    const identity = await resolveAuthorizedRequestIdentity(request);
-    assertPermission(identity, "admin:manage");
+    const identity = await resolveAdminRequestIdentity(request);
     if (identity.isTenantAdmin !== true) return json({ error: "tenant_admin_required", correlationId: id }, { status: 403 });
     const body = await readJsonObject(request);
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
