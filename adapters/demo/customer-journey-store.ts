@@ -2,6 +2,7 @@ import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/con
 import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication, ReconciliationException } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
 import { UnauthenticatedError } from "@/lib/api-errors";
+import { safeGetItem } from "@/lib/safe-storage";
 import { documents as seedDocuments, fundSnapshots as seedSnapshots, observations as seedObservations } from "@/adapters/demo/catalog";
 
 function cloneDocument(value: DocumentRecord): DocumentRecord { return { ...value }; }
@@ -30,8 +31,7 @@ function checksum(value: unknown): string {
 export type DemoModuleName = "documents" | "snapshots" | "observations" | "research" | "delivery" | "upload";
 
 export function assertDemoModuleAvailable(module: DemoModuleName): void {
-  if (typeof window === "undefined") return;
-  const fault = window.sessionStorage.getItem(`corvis:demo:fail:${module}`);
+  const fault = safeGetItem("session", `corvis:demo:fail:${module}`);
   // "unauthenticated" simulates an expired session (HTTP 401) for this module.
   if (fault === "unauthenticated") throw new UnauthenticatedError();
   if (fault === "true") {
