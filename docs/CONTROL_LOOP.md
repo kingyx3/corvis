@@ -81,9 +81,9 @@ The runtime/scheduler infrastructure is no longer the primary code gap, but #27 
 
 These are functional/operating-control gaps, not reasons to weaken the runtime safety model.
 
-## Known limitations
+## Finding fingerprints
 
-- **Fingerprint subject slug collisions:** the fingerprint subject is slugged (`control-loop/classifiers/fingerprint.ts`: lowercased, every run of non-`[a-z0-9]` characters, including non-Latin letters, collapsed to `-`). Distinct subjects such as `docs/a-b.md` and `docs/a_b.md`, or two paths that differ only in case or punctuation, can therefore share one fingerprint, and `dedupeFindings` keeps only the first. This is deliberately not changed yet: altering the slug (for example by appending a short hash of the raw subject) changes the fingerprint of every existing finding and tracked GitHub issue, so it needs a migration plan for existing fingerprints (re-keying open issues rather than closing and re-opening them) before it can ship.
+A finding fingerprint is `domain:owners:subject`, where the subject segment is `<slug>#<hash>`: a readable slug of the subject plus the first 10 hex characters of the SHA-256 of the raw, unslugged subject (`control-loop/classifiers/fingerprint.ts`). The hash keeps subjects that slug to the same text distinct (`docs/a-b.md` vs `docs/a_b.md`, or paths differing only in case or punctuation), so `dedupeFindings` never drops one of them, and a subject with no ASCII letters is still fingerprinted. Tracked issues carry the fingerprint in a `Finding fingerprint:` line of their body, and `parseFingerprint` only accepts this format.
 
 ## Runbook
 

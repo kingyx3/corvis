@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { dedupeFindings, fingerprintFor, formatFingerprint, parseFingerprint, sortFindings } from "./classifiers/fingerprint.ts";
 import { rule } from "./rules/catalog.ts";
 import type { Finding } from "./types.ts";
@@ -11,8 +12,30 @@ test("formatFingerprint requires a non-empty domain, owners and subject", () => 
 });
 
 test("formatFingerprint slugifies each part deterministically", () => {
-  assert.equal(formatFingerprint({ domain: "Business Control Loop", owners: ["Strategy", "Engineering"], subject: "docs/README.md:broken-link" }),
-    "business-control-loop:strategy-engineering:docs-readme-md-broken-link");
+  const subject = "docs/README.md:broken-link";
+  const hash = createHash("sha256").update(subject).digest("hex").slice(0, 10);
+  assert.equal(formatFingerprint({ domain: "Business Control Loop", owners: ["Strategy", "Engineering"], subject }),
+    `business-control-loop:strategy-engineering:docs-readme-md-broken-link#${hash}`);
+});
+
+test("subjects that slug to the same text keep distinct fingerprints", () => {
+  const owners = ["Engineering"];
+  const subjects = ["docs/a-b.md:missing.md", "docs/a_b.md:missing.md", "docs/A-B.md:missing.md", "docs/a-b.md:missing-md"];
+  const fingerprints = subjects.map((subject) => formatFingerprint({ domain: "docs", owners, subject }));
+  assert.equal(new Set(fingerprints).size, subjects.length);
+  assert.equal(new Set(fingerprints.map((value) => value.slice(0, value.lastIndexOf("#")))).size, 1, "the readable slug part alone would have collided");
+  // The collision is no longer silently deduplicated away.
+  const findings = fingerprints.map((fingerprint, index) => ({
+    ruleId: "CL-DOC-003", fingerprint, subject: subjects[index]!, severity: "medium" as const,
+    authority: "github" as const, remediation: "auto-fix" as const, path: null, line: null, detail: "d", suggestion: null,
+  }));
+  assert.equal(dedupeFindings(findings).length, subjects.length);
+});
+
+test("a subject with no ASCII letters is fingerprinted by its hash instead of throwing", () => {
+  const value = formatFingerprint({ domain: "docs", owners: ["eng"], subject: "文档说明" });
+  assert.match(value, /^docs:eng:#[0-9a-f]{10}$/);
+  assert.ok(parseFingerprint(value));
 });
 
 test("parseFingerprint round-trips a value produced by formatFingerprint", () => {
@@ -20,6 +43,15 @@ test("parseFingerprint round-trips a value produced by formatFingerprint", () =>
   const parsed = parseFingerprint(value);
   assert.ok(parsed);
   assert.equal(formatFingerprint(parsed!), value);
+  assert.match(value, /#[0-9a-f]{10}$/);
+});
+
+test("parseFingerprint rejects a missing, malformed or wrongly sized subject hash", () => {
+  const value = fingerprintFor(rule("CL-DOC-003"), "docs/a.md:x");
+  assert.ok(parseFingerprint(value));
+  assert.equal(parseFingerprint(value.slice(0, value.lastIndexOf("#"))), null, "the hash is required");
+  assert.equal(parseFingerprint(`${value}0`), null, "the hash has a fixed length");
+  assert.equal(parseFingerprint(value.toUpperCase()), null, "the hash is lowercase hex");
 });
 
 test("parseFingerprint rejects a malformed value instead of throwing", () => {
