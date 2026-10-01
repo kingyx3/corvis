@@ -189,6 +189,22 @@ test("a download failure for one document is recorded as rejected and the run st
   assert.equal(ingest.calls.length, 0);
 });
 
+test("an auth- or permission-class download failure fails the connection closed instead of counting as a rejected file", async () => {
+  for (const [errorClass, status] of [["auth", "reauthorization_required"], ["permission", "suspended"]] as const) {
+    const db = new FakeSyncDb();
+    const outcome = await runConnectionSync(TENANT, CONNECTION_ID, "scheduled", {
+      db, secrets: new FakeSecrets(),
+      drivers: new Map([["acme-portal", driver({ download: async () => { throw new ConnectorError(errorClass, "access revoked"); } })]]),
+      ingest: new RecordingIngest(),
+    });
+    assert.equal(outcome.state, "refused", errorClass);
+    assert.equal(outcome.errorClass, errorClass);
+    assert.equal(db.connection.status, status, errorClass);
+    assert.equal(db.connection.consecutive_failures, 1, errorClass);
+    assert.equal(db.acquisitions.length, 0, "the credential failure is not recorded as a rejected document");
+  }
+});
+
 test("an auth-class discovery failure fails the connection closed rather than retrying", async () => {
   const db = new FakeSyncDb();
   const outcome = await runConnectionSync(TENANT, CONNECTION_ID, "scheduled", {

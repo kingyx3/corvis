@@ -102,6 +102,7 @@ test("a subscription only receives events raised after it was created, and fan-o
     "a new subscription must not replay events that predate it");
   const completion = store.statements.find((statement) => /set webhook_fanout_completed_at=now\(\)/.test(statement.sql))!.sql;
   assert.match(completion, /s\.created_at<=e\.created_at/, "a subscription created after the event must not hold its fan-out open forever");
+  assert.match(completion, /s\.status in \('active','paused'\)/, "a paused subscription can be resumed, so it must keep the event's fan-out open");
 });
 
 test("webhook POST refuses redirects and is bounded by a timeout", async () => {

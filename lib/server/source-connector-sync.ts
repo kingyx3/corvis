@@ -198,7 +198,10 @@ export async function runConnectionSync(
           });
         }
       } catch (error) {
-        // A per-document failure is recorded as a rejection and the run continues;
+        // An auth/permission-class failure is about the connection's credential, not this document: it fails the
+        // whole run closed (and moves the connection out of "active") instead of looking like one rejected file.
+        if (isFailClosedErrorClass(connectorErrorClass(error))) throw error;
+        // Any other per-document failure is recorded as a rejection and the run continues;
         // it never silently drops the document and never aborts the whole run.
         counts.rejected += 1;
         await recordAcquisition(db, {

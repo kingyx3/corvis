@@ -1077,3 +1077,32 @@ test("in-progress and completed sessions are still replayed by initiate, and onl
   const otherUser = identity({ subject: "oidc|uploader-2" });
   await rejectsWith(uploads.initiate(otherUser, initiateInput({ idempotencyKey: "oidc|uploader-1:key-2" })), "upload_idempotency_mismatch", 409);
 });
+
+test("a replayed initiate surfaces transient storage and database failures instead of minting a second document", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const first = await uploads.initiate(actor, initiateInput());
+  store.finalize(first.resumableUploadUrl ?? "", pdfBytes(first.sizeBytes));
+  await uploads.complete(actor, first.uploadId, first.idempotencyKey);
+  const documents = () => db.calls.filter((call) => call.sql.includes("insert into corvis_source.document\n")).length;
+  assert.equal(documents(), 1);
+
+  const getObjectMetadata = store.getObjectMetadata.bind(store);
+  store.getObjectMetadata = async () => { throw new Error("GCS object metadata read failed (503)"); };
+  await rejects(uploads.initiate(actor, initiateInput()), /503/);
+  store.getObjectMetadata = getObjectMetadata;
+
+  const getJson = store.getJson.bind(store);
+  let failSessionRead = true;
+  store.getJson = async <T>(key: string) => {
+    if (failSessionRead && key.includes("upload-sessions")) throw new Error("GCS read failed (500)");
+    return getJson<T>(key);
+  };
+  await rejects(uploads.initiate(actor, initiateInput()), /500/);
+  failSessionRead = false;
+
+  assert.equal(store.resumable.size, 1, "no second resumable session was authorized");
+  assert.equal(documents(), 1, "no second document was registered");
+  const replayed = await uploads.initiate(actor, initiateInput());
+  assert.equal(replayed.uploadId, first.uploadId, "the original session is still the one replayed");
+});
