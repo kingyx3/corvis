@@ -358,7 +358,8 @@ function isoOrThrow(value: string, code: string): string {
 }
 
 /**
- * Upserts rollout/capability state. Ownership is mandatory for every flag.
+ * Upserts rollout/capability state. Omitted `owner`, `retireBy` and `config`
+ * keep their stored values. Ownership is mandatory for every flag.
  * Temporary rollout flags additionally require a retire-by date; durable
  * product capability flags do not, because their enabled/disabled state is a
  * customer configuration rather than temporary release scaffolding.
@@ -370,7 +371,7 @@ export async function setFeatureFlag(
 ): Promise<void> {
   const definition = REGISTRY_BY_KEY.get(write.key);
   if (!definition) throw new FeatureFlagGovernanceError("unregistered_flag");
-  const existing = await db.query(`select owner, retire_by, retired_at from corvis_control.feature_flag
+  const existing = await db.query(`select owner, retire_by, retired_at, configuration from corvis_control.feature_flag
     where tenant_id=$1 and flag_key=$2 limit 1`, [identity.tenantId, write.key]);
   const current = existing[0];
   if (current && text(current, "retired_at")) throw new FeatureFlagGovernanceError("flag_retired");
@@ -380,6 +381,8 @@ export async function setFeatureFlag(
   if (!owner) throw new FeatureFlagGovernanceError("flag_owner_required");
   if ((definition.kind ?? "rollout") === "rollout" && !retireByRaw) throw new FeatureFlagGovernanceError("flag_retire_by_required");
   const retireBy = retireByRaw ? isoOrThrow(retireByRaw, "invalid_retire_by") : null;
+  // Like owner and retire-by, an omitted config keeps what is stored; only an explicit value (null clears) replaces it.
+  const configuration = write.config === undefined && current ? config(current, "configuration") : (write.config ?? {});
 
   const written = await db.query(`insert into corvis_control.feature_flag
       (tenant_id, flag_key, enabled, configuration, owner, retire_by, updated_at, updated_by)
@@ -393,7 +396,7 @@ export async function setFeatureFlag(
       updated_by=excluded.updated_by
     where corvis_control.feature_flag.retired_at is null
     returning flag_key`,
-  [identity.tenantId, write.key, write.enabled, JSON.stringify(write.config ?? {}), owner, retireBy, identity.subject]);
+  [identity.tenantId, write.key, write.enabled, JSON.stringify(configuration), owner, retireBy, identity.subject]);
   // The conflict guard skips a row retired between the read above and this
   // write; report that instead of claiming the update was applied.
   if (written.length === 0) throw new FeatureFlagGovernanceError("flag_retired");
