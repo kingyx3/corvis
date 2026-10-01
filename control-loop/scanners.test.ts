@@ -101,6 +101,19 @@ test("external links, anchors and mailto targets are never flagged", () => {
   assert.deepEqual(scanInternalLinks(files, snapshot(["docs/README.md"])), []);
 });
 
+test("a link with a malformed percent escape does not throw; it resolves against the raw path", () => {
+  const files = [file("docs/README.md", "[Growth](growth-100%.md) and [Other](./growth-100%.md)")];
+  assert.doesNotThrow(() => scanInternalLinks(files, snapshot(["docs/README.md"])));
+  const flagged = scanInternalLinks(files, snapshot(["docs/README.md"]));
+  assert.equal(flagged.length, 2, "a missing target is still reported as a broken link");
+  assert.deepEqual(scanInternalLinks(files, snapshot(["docs/README.md", "docs/growth-100%.md"])), [], "an existing file with a literal % resolves");
+});
+
+test("percent-encoded link targets are still decoded before resolving", () => {
+  const files = [file("docs/README.md", "[x](./my%20doc.md)")];
+  assert.deepEqual(scanInternalLinks(files, snapshot(["docs/README.md", "docs/my doc.md"])), []);
+});
+
 // ---- architecture-drift ----
 
 test("core/ importing a server or adapter module is a critical finding", () => {
