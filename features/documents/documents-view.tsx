@@ -87,7 +87,7 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
       <span className="result-count" role="status">{formatValue(filtered.length)} of {formatValue(documents.length)}</span>
     </div>
     <div className="table-card" tabIndex={0} role="region" aria-label="Documents table"><table className="data-table document-table" data-hidden-columns={VIEW_COLUMNS.documents.map((v, i) => visibleColumns.includes(v) ? "" : String(i + 1)).filter(Boolean).join(" ")}><thead><tr><th>Document</th><th>Fund / period</th><th>Source</th><th>Status</th><th>Quality</th><th>Received</th><th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>
-      {filtered.length === 0 && <tr><td colSpan={7} className="empty-cell">{documents.length ? "No entitled documents match this view. Its filters may reference data you cannot currently access." : canUpload ? "No source documents yet. Upload a file to start a reporting cycle." : "No entitled source documents are available."}</td></tr>}
+      {filtered.length === 0 && <tr><td colSpan={7} className="empty-cell">{documents.length ? "No documents match this view with your current access. Its filters may reference unavailable data." : canUpload ? "No source documents yet. Upload a file to start a reporting cycle." : "No entitled source documents are available."}</td></tr>}
       {ordered.map((doc) => {
         const securityNotice = documentSecurityNotice(doc);
         const origin = doc.lifecycle?.origin;
