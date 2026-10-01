@@ -367,6 +367,25 @@ test("a threat found while completing fails the first complete too", async () =>
   await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
 });
 
+test("get checks access before refreshScan can change any state", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  store.scan(session.objectKey ?? "", "clean");
+  const before = { json: store.json.get(sessionStorageKey(session)), calls: db.calls.length };
+
+  const stranger = identity({ subject: "oidc|someone-else" });
+  await rejectsWith(uploads.get(stranger, session.uploadId), "upload_not_found", 404);
+  assert.equal(store.json.get(sessionStorageKey(session)), before.json, "a refused read must not persist a scan verdict");
+  assert.equal(db.calls.length, before.calls, "a refused read must not touch the registry");
+  assert.equal(db.releases.length, 0, "a refused read must not release the artifact");
+
+  assert.equal((await uploads.get(actor, session.uploadId)).state, "complete");
+  assert.equal(db.releases.length, 1);
+});
+
 test("an expired session cannot be completed and its bytes are purged", async () => {
   const { uploads, store, db } = harness();
   const actor = identity();

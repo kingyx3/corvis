@@ -582,8 +582,9 @@ export class ProductionUploadSessions implements UploadSessionPort {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const prior = await this.readIdempotency(idempotencyObject);
       if (prior?.uploadId) {
-        const existing = await this.get(identity, prior.uploadId).catch(() => null);
-        if (existing) assertSameUploader(identity, existing);
+        const loaded = await this.load(identity, prior.uploadId).catch(() => null);
+        if (loaded) assertSameUploader(identity, loaded);
+        const existing = loaded ? await this.refreshScan(loaded).catch(() => null) : null;
         if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
       }
       const created = await this.createSession(identity, input, idempotencyObject, prior?.generation);
@@ -643,7 +644,10 @@ export class ProductionUploadSessions implements UploadSessionPort {
   }
 
   async get(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
-    return this.refreshScan(await this.load(identity, uploadId));
+    const session = await this.load(identity, uploadId);
+    // refreshScan persists scan verdicts and registry state: only an authorized caller may trigger that.
+    this.assertUploader(identity, session);
+    return this.refreshScan(session);
   }
 
   /** `refreshScan` for a completing caller: a session that is (or just turned out) rejected or infected is an error, not a poll. */
