@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { formatFingerprint, legacyFingerprintOf } from "./classifiers/fingerprint.ts";
 import { applyIssueReconciliation, planIssueReconciliation, type IssueWriter } from "./issue-reconciliation.ts";
 import type { Finding } from "./types.ts";
 import type { IssueSnapshot } from "./scanners/issue-hygiene.ts";
@@ -86,12 +87,112 @@ test("an issue without the control-loop label is never touched even if its finge
   assert.equal(actions[0]?.type, "create");
 });
 
+// ---- legacy-fingerprint adoption ----
+
+const OWNERS = ["strategy", "engineering"];
+function current(subject: string): string { return formatFingerprint({ domain: "business-control-loop", owners: OWNERS, subject }); }
+function issueBody(fingerprint: string): string { return `detail\n\nFinding fingerprint: \`${fingerprint}\`\n\n_Opened automatically_`; }
+
+test("an open issue tagged with the legacy fingerprint is re-keyed, not closed and duplicated", () => {
+  const fingerprint = current("docs/a.md:broken");
+  const legacy = legacyFingerprintOf(fingerprint);
+  const actions = planIssueReconciliation({
+    findings: [finding({ fingerprint })],
+    snapshot: snapshot([{ number: 9, state: "open", title: "t", fingerprint: legacy, labels: ["control-loop"], body: issueBody(legacy) }]),
+    status: "complete",
+    closureAllowed: true,
+  });
+  assert.deepEqual(actions.map((a) => [a.type, a.issueNumber]), [["rekey", 9]]);
+  assert.match(actions[0]!.body!, new RegExp(`Finding fingerprint: \`${fingerprint.replace(/[#:]/g, "\\$&")}\``));
+  assert.ok(actions[0]!.body!.includes("_Opened automatically_"), "the rest of the body is preserved");
+});
+
+test("a closed legacy issue for a recurring finding is re-keyed and reopened", () => {
+  const fingerprint = current("docs/a.md:broken");
+  const legacy = legacyFingerprintOf(fingerprint);
+  const actions = planIssueReconciliation({
+    findings: [finding({ fingerprint })],
+    snapshot: snapshot([{ number: 4, state: "closed", title: "t", fingerprint: legacy, labels: ["control-loop"], body: issueBody(legacy) }]),
+    status: "complete",
+    closureAllowed: true,
+  });
+  assert.deepEqual(actions.map((a) => [a.type, a.issueNumber]), [["rekey", 4], ["reopen", 4]]);
+});
+
+test("a legacy issue whose finding is gone is still closed", () => {
+  const legacy = legacyFingerprintOf(current("docs/a.md:gone"));
+  const actions = planIssueReconciliation({
+    findings: [],
+    snapshot: snapshot([{ number: 3, state: "open", title: "t", fingerprint: legacy, labels: ["control-loop"], body: issueBody(legacy) }]),
+    status: "complete",
+    closureAllowed: true,
+  });
+  assert.deepEqual(actions.map((a) => [a.type, a.issueNumber]), [["close", 3]]);
+});
+
+test("findings that collided in the legacy format share one legacy issue: one adopts it, the other gets its own", () => {
+  const first = current("docs/a-b.md:missing.md");
+  const second = current("docs/a_b.md:missing.md");
+  const legacy = legacyFingerprintOf(first);
+  assert.equal(legacyFingerprintOf(second), legacy);
+  const actions = planIssueReconciliation({
+    findings: [finding({ fingerprint: second }), finding({ fingerprint: first })],
+    snapshot: snapshot([{ number: 8, state: "open", title: "t", fingerprint: legacy, labels: ["control-loop"], body: issueBody(legacy) }]),
+    status: "complete",
+    closureAllowed: true,
+  });
+  assert.deepEqual(actions.map((a) => a.type).sort(), ["create", "rekey"]);
+  assert.equal(actions.filter((a) => a.type === "rekey").length, 1);
+  assert.ok(!actions.some((a) => a.type === "close"), "the adopted issue is not closed as gone");
+  const rekey = actions.find((a) => a.type === "rekey")!;
+  const created = actions.find((a) => a.type === "create")!;
+  assert.notEqual(rekey.fingerprint, created.fingerprint);
+});
+
+test("a legacy issue with no re-keyable body is not adopted (the finding is created instead)", () => {
+  const fingerprint = current("docs/a.md:broken");
+  const legacy = legacyFingerprintOf(fingerprint);
+  const actions = planIssueReconciliation({
+    findings: [finding({ fingerprint })],
+    snapshot: snapshot([{ number: 9, state: "open", title: "t", fingerprint: legacy, labels: ["control-loop"], body: null }]),
+    status: "complete",
+    closureAllowed: false,
+  });
+  assert.deepEqual(actions.map((a) => a.type), ["create"]);
+});
+
+test("an issue already carrying the current fingerprint is matched directly with no re-key", () => {
+  const fingerprint = current("docs/a.md:broken");
+  const actions = planIssueReconciliation({
+    findings: [finding({ fingerprint })],
+    snapshot: snapshot([{ number: 9, state: "open", title: "t", fingerprint, labels: ["control-loop"], body: issueBody(fingerprint) }]),
+    status: "complete",
+    closureAllowed: true,
+  });
+  assert.deepEqual(actions, []);
+});
+
+test("applying a rekey rewrites only the issue body and spends one budget unit", async () => {
+  const writer = new RecordingWriter();
+  const result = await applyIssueReconciliation(
+    [{ type: "rekey", fingerprint: "f", issueNumber: 9, title: null, body: "rewritten" }],
+    { mode: "execute", budget: 1, writer },
+  );
+  assert.deepEqual(writer.bodyUpdates, [{ issueNumber: 9, body: "rewritten" }]);
+  assert.equal(writer.stateChanges.length + writer.comments.length + writer.created.length, 0);
+  assert.deepEqual(result.outcomes.map((o) => o.outcome), ["applied"]);
+});
+
 // ---- applyIssueReconciliation ----
 
 class RecordingWriter implements IssueWriter {
   created: Array<{ title: string; body: string; labels: string[] }> = [];
   stateChanges: Array<{ issueNumber: number; state: "open" | "closed" }> = [];
   comments: Array<{ issueNumber: number; body: string }> = [];
+  bodyUpdates: Array<{ issueNumber: number; body: string }> = [];
+  async updateBody(issueNumber: number, body: string) {
+    this.bodyUpdates.push({ issueNumber, body });
+  }
   async create(input: { title: string; body: string; labels: string[] }) {
     this.created.push(input);
     return { number: 42 };

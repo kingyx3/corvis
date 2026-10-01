@@ -18,7 +18,7 @@ test("fetchIssueSnapshot reads open/closed control-loop issues and extracts thei
   };
   const snapshot = await fetchIssueSnapshot({ owner: "kingyx3", repo: "corvis", fetchImpl });
   assert.equal(snapshot?.issues.length, 2, "pull requests are excluded");
-  assert.deepEqual(snapshot?.issues[0], { number: 1, state: "open", title: "a", fingerprint: "x:y:z", labels: ["control-loop"] });
+  assert.deepEqual(snapshot?.issues[0], { number: 1, state: "open", title: "a", fingerprint: "x:y:z", labels: ["control-loop"], body: "Finding fingerprint: `x:y:z`" });
   assert.equal(snapshot?.issues[1]?.fingerprint, null);
   assert.ok(calls[0]?.includes("labels=control-loop"));
 });
@@ -41,6 +41,21 @@ test("createGitHubIssueWriter.create posts title/body/labels and returns the iss
   assert.equal(calls[0]?.init.method, "POST");
   assert.equal(new Headers(calls[0]?.init.headers).get("authorization"), "Bearer tok");
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { title: "t", body: "b", labels: ["control-loop"] });
+});
+
+test("createGitHubIssueWriter.updateBody PATCHes only the issue body", async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), init: init as RequestInit });
+    return new Response("{}", { status: 200 });
+  };
+  const writer = createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await writer.updateBody(7, "new body");
+  assert.equal(calls[0]?.url, "https://api.github.com/repos/o/r/issues/7");
+  assert.equal(calls[0]?.init.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { body: "new body" });
+  const failing = createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok", fetchImpl: async () => new Response("", { status: 403 }) });
+  await assert.rejects(failing.updateBody(7, "x"), /github_issue_update_body_failed:403/);
 });
 
 test("createGitHubIssueWriter.setState PATCHes the issue state", async () => {

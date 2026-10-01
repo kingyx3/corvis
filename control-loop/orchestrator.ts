@@ -51,7 +51,7 @@ export type RunDependencies = {
   mutationBudget?: number;
   applier?: EditApplier;
   /**
-   * Issue reconciliation (create/reopen/close control-loop issues by
+   * Issue reconciliation (create/reopen/close/re-key control-loop issues by
    * fingerprint) defaults to dry-run and no writer, same as file-edit apply —
    * safe to leave unset. Deliberately a separate mode/budget from
    * `applyMode`/`mutationBudget`: mutating GitHub issues and mutating repo

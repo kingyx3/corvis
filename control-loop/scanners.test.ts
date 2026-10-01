@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { scanArchitectureDrift } from "./scanners/architecture-drift.ts";
 import { scanDocumentationAuthority } from "./scanners/documentation-authority.ts";
+import { dedupeFindings } from "./classifiers/fingerprint.ts";
 import { scanInternalLinks } from "./scanners/internal-links.ts";
 import { scanIssueHygiene, type IssueSnapshot } from "./scanners/issue-hygiene.ts";
 import { isDocumentationPath, markdownLinks, proseLines, relativePathBetween, resolveRelative } from "./scanners/markdown.ts";
@@ -94,6 +95,17 @@ test("a broken link with an ambiguous or absent replacement target requires huma
   const findings = scanInternalLinks(files, snapshot(["docs/README.md"]));
   assert.equal(findings[0]?.remediation, "human-approval");
   assert.equal(findings[0]?.suggestion, null);
+});
+
+test("broken links in files whose paths differ only by punctuation or case are all reported, not deduplicated away", () => {
+  const files = [
+    file("docs/a-b.md", "[x](./missing.md)"),
+    file("docs/a_b.md", "[x](./missing.md)"),
+    file("docs/A-B.md", "[x](./missing.md)"),
+  ];
+  const findings = dedupeFindings(scanInternalLinks(files, snapshot(["docs/a-b.md", "docs/a_b.md", "docs/A-B.md"])));
+  assert.equal(findings.length, 3);
+  assert.equal(new Set(findings.map((f) => f.fingerprint)).size, 3);
 });
 
 test("external links, anchors and mailto targets are never flagged", () => {

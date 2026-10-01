@@ -1,4 +1,4 @@
-import { fingerprintFor, parseFingerprint } from "../classifiers/fingerprint.ts";
+import { fingerprintFor, legacyFingerprintOf, parseFingerprint } from "../classifiers/fingerprint.ts";
 import { rule } from "../rules/catalog.ts";
 import type { Finding, RunMode } from "../types.ts";
 
@@ -8,6 +8,8 @@ export interface IssueSnapshotItem {
   title: string;
   fingerprint: string | null;
   labels: string[];
+  /** Issue body, when the snapshot source provides it (needed to re-key a legacy-fingerprint issue). */
+  body?: string | null;
 }
 
 export interface IssueSnapshot {
@@ -35,6 +37,10 @@ export function scanIssueHygiene(input: { snapshot: IssueSnapshot | null; findin
     return { complete: false, reason: "issue_snapshot_unavailable", findings: [], closureCandidates: [], reopenCandidates: [] };
   }
   const active = new Set(findings.map((finding) => finding.fingerprint));
+  // An issue opened before fingerprints carried a subject hash is tracking the
+  // same finding as its current-format fingerprint; reconciliation re-keys it.
+  const activeLegacy = new Set(findings.map((finding) => legacyFingerprintOf(finding.fingerprint)));
+  const isActive = (value: string): boolean => active.has(value) || (!value.includes("#") && activeLegacy.has(value));
   const produced: Finding[] = [];
   const closureCandidates: number[] = [];
   const reopenCandidates: number[] = [];
@@ -67,10 +73,10 @@ export function scanIssueHygiene(input: { snapshot: IssueSnapshot | null; findin
     const value = issue.fingerprint as string;
     if (issue.state === "open") {
       openByFingerprint.set(value, [...(openByFingerprint.get(value) ?? []), issue.number]);
-      if (!active.has(value)) closureCandidates.push(issue.number);
+      if (!isActive(value)) closureCandidates.push(issue.number);
       continue;
     }
-    if (active.has(value)) {
+    if (isActive(value)) {
       reopenCandidates.push(issue.number);
       const subject = `issue-${issue.number}:recurred`;
       produced.push({
