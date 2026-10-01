@@ -113,3 +113,26 @@ test("bounded numeric configuration ignores invalid values and caps research tim
   assert.equal(config.researchTimeoutMs, 120_000);
   assert.equal(config.rateLimitRequestsPerMinute, 600);
 });
+
+// Next's typings narrow NODE_ENV to its three known values; these tests deliberately pass arbitrary strings.
+const rawEnv = (env: Record<string, string | undefined>) => env as NodeJS.ProcessEnv;
+
+test("only development, test and unset NODE_ENV are non-production; any other value fails closed to production", () => {
+  assert.equal(getServerConfig(rawEnv({})).environment, "development");
+  assert.equal(getServerConfig(rawEnv({ NODE_ENV: "" })).environment, "development");
+  assert.equal(getServerConfig(rawEnv({ NODE_ENV: "development" })).environment, "development");
+  assert.equal(getServerConfig({ NODE_ENV: "test" }).environment, "test");
+  assert.equal(getServerConfig({ ...productionEnvironment(), NODE_ENV: "production" }).environment, "production");
+
+  for (const nodeEnv of ["Production", "PRODUCTION", "staging", "prod", " production", "Development", "dev"]) {
+    // Production checks fire: the missing production configuration error is raised ...
+    assert.throws(
+      () => getServerConfig(rawEnv({ NODE_ENV: nodeEnv })),
+      (error: unknown) => error instanceof Error && error.message.includes("Missing production configuration"),
+      `NODE_ENV=${JSON.stringify(nodeEnv)} must be treated as production`,
+    );
+    // ... demo mode is refused, and a fully configured environment resolves to production.
+    assert.throws(() => getServerConfig(rawEnv({ ...productionEnvironment(), NODE_ENV: nodeEnv, CORVIS_DEMO_MODE: "true" })), /CORVIS_DEMO_MODE must be disabled in production/);
+    assert.equal(getServerConfig(rawEnv({ ...productionEnvironment(), NODE_ENV: nodeEnv })).environment, "production");
+  }
+});

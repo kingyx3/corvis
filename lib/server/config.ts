@@ -67,8 +67,18 @@ function publicOrigin(value?: string): string | undefined {
   } catch { return undefined; }
 }
 
+/**
+ * Fails closed: only an unset NODE_ENV or exactly "development"/"test" is treated as non-production.
+ * Any other value ("Production", "staging", a typo) gets production behavior, so it can never
+ * select the header-trusting legacy gateway, the in-memory rate limiter or skip production checks.
+ */
+function resolveEnvironment(nodeEnv?: string): ServerConfig["environment"] {
+  if (!nodeEnv) return "development";
+  return nodeEnv === "development" || nodeEnv === "test" ? nodeEnv : "production";
+}
+
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
-  const environment = (env.NODE_ENV || "development") as ServerConfig["environment"];
+  const environment = resolveEnvironment(env.NODE_ENV);
   const demoMode = truthy(env.CORVIS_DEMO_MODE);
   const exportArtifactTtlSeconds = Math.min(positiveInteger(env.CORVIS_EXPORT_ARTIFACT_TTL_SECONDS) ?? 24 * 60 * 60, 7 * 24 * 60 * 60);
   const config: ServerConfig = {
