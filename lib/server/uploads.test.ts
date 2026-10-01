@@ -319,9 +319,52 @@ test("a malware disposition keeps the artifact quarantined and out of canonical 
   assert.equal(scanned.malwareScanStatus, "threat");
   assert.equal(db.releases.length, 0);
 
-  assert.equal((await uploads.complete(actor, session.uploadId, session.idempotencyKey)).state, "quarantined");
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
   assert.equal(db.releases.length, 0);
   assert.ok(db.documentStatuses().includes("quarantined"));
+});
+
+test("repeat completes of a rejected signature keep failing with the first call's error", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", Buffer.alloc(session.sizeBytes, 0x41));
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
+  store.scan(session.objectKey ?? "", "clean");
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
+  assert.equal(db.releases.length, 0);
+});
+
+test("repeat completes of an integrity failure keep reporting upload_integrity_failed", async () => {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput({ checksumSha256: "a".repeat(64) }));
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  context.db.shaMatches = false;
+  context.store.scan(session.objectKey ?? "", "clean");
+  await rejectsWith(context.uploads.complete(actor, session.uploadId, session.idempotencyKey), "upload_integrity_failed", 422);
+  await rejectsWith(context.uploads.complete(actor, session.uploadId, session.idempotencyKey), "upload_integrity_failed", 422);
+  assert.equal(context.db.releases.length, 0);
+});
+
+test("a pending scan is still a successful complete poll", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  assert.equal((await uploads.complete(actor, session.uploadId, session.idempotencyKey)).state, "quarantined");
+  assert.equal((await uploads.complete(actor, session.uploadId, session.idempotencyKey)).state, "quarantined");
+});
+
+test("a threat found while completing fails the first complete too", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes), { metadata: { "corvis-malware-status": "threat" } });
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "invalid_file_content", 422);
 });
 
 test("an expired session cannot be completed and its bytes are purged", async () => {
