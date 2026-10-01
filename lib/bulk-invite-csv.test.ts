@@ -22,3 +22,26 @@ test("parseBulkInviteCsv accepts accountadmin and normalises the legacy workspac
   assert.deepEqual(rows.map((row) => [row.row, row.roleName]), [[2, "accountadmin"], [3, "accountadmin"]]);
   assert.deepEqual(errors.map((error) => error.row), [4, 5]);
 });
+
+test("parseBulkInviteCsv reports physical line numbers, skipping blank lines", () => {
+  const csv = `email,role,workspaceId\r\n\r\na@example.com,analyst,${workspace}\n\n\nbad,analyst,${workspace}\n`;
+  const { rows, errors } = parseBulkInviteCsv(csv);
+  assert.deepEqual(rows.map((row) => row.row), [3]);
+  assert.deepEqual(errors, [{ row: 6, error: "Invalid email, role, workspaceId, or reason" }]);
+});
+
+test("parseBulkInviteCsv keeps a quoted multi-line reason as one row and numbers later rows by physical line", () => {
+  const csv = `﻿name,email,role,workspaceId,reason\n"Doe, ""J""",a@example.com,analyst,${workspace},"Onboarding batch\r\n\r\nsecond paragraph"\nbad,bad,analyst,${workspace},ok reason\nb@example.com,b@example.com,viewer,${workspace},"fine"\n`;
+  const { rows, errors } = parseBulkInviteCsv(csv);
+  assert.deepEqual(rows.map((row) => [row.row, row.email, row.name]), [[2, "a@example.com", 'Doe, "J"'], [6, "b@example.com", "b@example.com"]]);
+  assert.match(rows[0]!.reason, /^Onboarding batch\r?\n\r?\nsecond paragraph$/);
+  assert.deepEqual(errors.map((error) => error.row), [5]);
+});
+
+test("parseBulkInviteCsv flags an unterminated quote on the row it starts and keeps the header rules", () => {
+  const open = parseBulkInviteCsv(`email,role,workspaceId\na@example.com,analyst,${workspace}\nb@example.com,analyst,"${workspace}\n`);
+  assert.deepEqual(open.rows.map((row) => row.row), [2]);
+  assert.deepEqual(open.errors, [{ row: 3, error: "Invalid CSV row" }]);
+  assert.deepEqual(parseBulkInviteCsv("\n\nemail,role\na,b,c\n").errors, [{ row: 3, error: "Required columns: email, role, workspaceId" }]);
+  assert.deepEqual(parseBulkInviteCsv("email,role,workspaceId\n\n").errors, [{ row: 1, error: "CSV requires a header and at least one data row" }]);
+});
