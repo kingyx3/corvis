@@ -119,7 +119,7 @@ test("a full 200-row semantic result is small enough to pin", async () => {
   } as ResearchAnswer;
   assert.ok(JSON.stringify(big).length > 64 * 1024, "the fixture must exceed the old cap");
   db.queryQueue = [
-    [{ semantic_query_id: "sq_0123456789abcdef01234567", result_rows_sha256: computedRowsDigest(rows) }],
+    [{ semantic_query_id: "sq_0123456789abcdef01234567", query_shape: { fundIds: ["fund-1"], documentIds: ["doc-1"] }, result_rows_sha256: computedRowsDigest(rows) }],
     [], [{ count: 0 }], [{ pin_id: "pin-3", question: "Q", answer: big, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") }],
   ];
   const pinned = await pinResearchAnswer(readerIdentity, { question: "Q", answer: big, askedAt: "2026-09-20T00:00:00Z" }, db);
@@ -135,7 +135,7 @@ const SRC = "00000000-0000-0000-0000-000000000401";
 const pinnedRow = (stored: unknown) => ({ pin_id: "pin-9", question: "Q", answer: stored, asked_at: new Date("2026-09-20T00:00:00Z"), pinned_at: new Date("2026-09-22T00:00:00Z") });
 const readerIdentity: RequestIdentity = {
   ...identity,
-  entitlements: { ...identity.entitlements, sourceDocumentAccessAllowed: true, sourceDocumentIds: ["doc-1"], documentIds: undefined },
+  entitlements: { ...identity.entitlements, sourceDocumentAccessAllowed: true, sourceDocumentIds: ["doc-1"], documentIds: ["doc-1"], fundIds: ["fund-1"] },
 };
 const groundedAnswer = (): ResearchAnswer => ({
   answer: "Revenue was 100.",
@@ -152,7 +152,7 @@ test("a well-formed, entitled answer is pinned after its citations and query ids
   const db = new FakeDb();
   db.queryQueue = [
     [{ source_reference_id: SRC, document_id: "doc-1" }],
-    [{ semantic_query_id: SQ, result_rows_sha256: computedRowsDigest(groundedAnswer().computedResults![0]!.rows) }],
+    [{ semantic_query_id: SQ, query_shape: { fundIds: ["fund-1"], documentIds: ["doc-1"] }, result_rows_sha256: computedRowsDigest(groundedAnswer().computedResults![0]!.rows) }],
     [], [{ count: 0 }], [pinnedRow(groundedAnswer())],
   ];
   const result = await pin(db, groundedAnswer());
@@ -206,7 +206,7 @@ test("figures in a pinned answer must be grounded in its computed rows; a forged
   await assert.rejects(pin(db, { answer: "Revenue was 999.", citations: [], semanticQueryIds: [], grounding: "no_grounded_figures" }), rejectedWith("invalid_answer"));
   assert.equal(db.calls.length, 0);
   // the server's own downgraded answer can be pinned
-  db.queryQueue = [[{ semantic_query_id: SQ }], [], [{ count: 0 }], [pinnedRow({})]];
+  db.queryQueue = [[{ semantic_query_id: SQ, query_shape: { fundIds: [], documentIds: [] } }], [], [{ count: 0 }], [pinnedRow({})]];
   await pin(db, { answer: NO_GROUNDED_FIGURES_ANSWER, citations: [], semanticQueryIds: [SQ], grounding: "no_grounded_figures" });
 });
 
@@ -225,7 +225,7 @@ test("pinned computed rows must be exactly the rows the server logged for that q
   const forged: ResearchAnswer = { ...groundedAnswer(), answer: "Revenue was 999.", computedResults: [{ ...groundedAnswer().computedResults![0]!, rows: [{ value_number: 999 }] }] };
   for (const digest of [logged, null]) {
     const db = new FakeDb();
-    db.queryQueue = [[{ source_reference_id: SRC, document_id: "doc-1" }], [{ semantic_query_id: SQ, result_rows_sha256: digest }]];
+    db.queryQueue = [[{ source_reference_id: SRC, document_id: "doc-1" }], [{ semantic_query_id: SQ, query_shape: { fundIds: ["fund-1"], documentIds: ["doc-1"] }, result_rows_sha256: digest }]];
     await assert.rejects(pin(db, digest === null ? groundedAnswer() : forged), rejectedWith("answer_not_permitted", 403));
     assert.ok(!db.calls.some((call) => /insert into/.test(call.sql)), "nothing is written");
   }
@@ -248,7 +248,7 @@ test("listing pins re-checks access to every cited document, so lost access hide
   const ids = (pins: Array<{ pinId: string }>) => pins.map((pin) => pin.pinId);
 
   const stillAllowed = new FakeDb();
-  stillAllowed.queryQueue = [rows(), [{ source_reference_id: SRC, document_id: "doc-1" }]];
+  stillAllowed.queryQueue = [rows(), [{ source_reference_id: SRC, document_id: "doc-1" }], [{ semantic_query_id: SQ, query_shape: { fundIds: ["fund-1"], documentIds: ["doc-1"] }, result_rows_sha256: computedRowsDigest(cited.computedResults![0]!.rows) }]];
   assert.deepEqual(ids(await listResearchPins(readerIdentity, stillAllowed)), ["pin-9", "pin-cited"]);
   assert.match(stillAllowed.calls[1]!.sql, /corvis_serving\.source_references/);
 
@@ -264,4 +264,42 @@ test("listing pins re-checks access to every cited document, so lost access hide
   uncitedOnly.queryQueue = [[pinnedRow(answer)]];
   await listResearchPins(identity, uncitedOnly);
   assert.equal(uncitedOnly.calls.length, 1, "no extra query when nothing is cited");
+});
+
+
+test("uncited computed pins are hidden after fund or document access is revoked", async () => {
+  const stored = { ...groundedAnswer(), citations: [] };
+  for (const scope of [{ fundIds: ["revoked-fund"], documentIds: ["doc-1"] }, { fundIds: ["fund-1"], documentIds: ["revoked-doc"] }]) {
+    const db = new FakeDb();
+    db.queryQueue = [[pinnedRow(stored)], [{ semantic_query_id: SQ, query_shape: scope, result_rows_sha256: computedRowsDigest(stored.computedResults![0]!.rows) }]];
+    assert.deepEqual(await listResearchPins(readerIdentity, db), []);
+  }
+});
+
+test("pin creation rejects a server-recorded query outside current resource entitlements", async () => {
+  const db = new FakeDb();
+  const stored = { ...groundedAnswer(), citations: [] };
+  db.queryQueue = [[{ semantic_query_id: SQ, query_shape: { fundIds: ["revoked-fund"], documentIds: ["doc-1"] }, result_rows_sha256: computedRowsDigest(stored.computedResults![0]!.rows) }], [], [{ count: 0 }], [pinnedRow(stored)]];
+  await assert.rejects(pin(db, stored), rejectedWith("answer_not_permitted", 403));
+  assert.ok(!db.calls.some((call) => /insert into/.test(call.sql)));
+});
+
+
+test("pin authorization fails closed for absent, malformed and incomplete recorded query scopes", async () => {
+  for (const scope of [undefined, null, {}, "not json", { fundIds: ["fund-1"] }, { fundIds: ["fund-1"], documentIds: [42] }]) {
+    const db = new FakeDb();
+    db.queryQueue = [[{ semantic_query_id: SQ, query_shape: scope, result_rows_sha256: computedRowsDigest(groundedAnswer().computedResults![0]!.rows) }]];
+    await assert.rejects(pin(db, { ...groundedAnswer(), citations: [] }), rejectedWith("answer_not_permitted", 403));
+  }
+});
+
+test("uncited computed pins remain readable only while the complete recorded scope and digest match", async () => {
+  const stored = { ...groundedAnswer(), citations: [] };
+  for (const digest of [computedRowsDigest(stored.computedResults![0]!.rows), null, "forged"]) {
+    const db = new FakeDb();
+    db.queryQueue = [[pinnedRow(stored)], [{ semantic_query_id: SQ, query_shape: JSON.stringify({ fundIds: ["fund-1"], documentIds: ["doc-1"] }), result_rows_sha256: digest }]];
+    const pins = await listResearchPins(readerIdentity, db);
+    assert.equal(pins.length, digest === computedRowsDigest(stored.computedResults![0]!.rows) ? 1 : 0);
+    assert.equal(db.calls.length, 2);
+  }
 });

@@ -208,9 +208,10 @@ test("an attacker who exhausts the tenant budget cannot lock out a recently veri
   await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 401);
   await assert.rejects(attacker(), (error) => error instanceof ScimError && error.status === 429);
   const queries = db.calls.length;
+  db.queryQueue = [[VALID_ROW]];
   const resolved = await authenticateScim(scimRequest(), db, limits);
   assert.equal(resolved.tenantId, config.tenantId);
-  assert.equal(db.calls.length, queries, "the verified token is honoured without a query during the lockout");
+  assert.equal(db.calls.length, queries + 1, "known tokens bypass the throttle but must re-check current authority");
   // A verification older than the TTL is not honoured during a lockout.
   const stale = new Map([...verifiedTokens].map(([key, entry]) => [key, { ...entry, expiresAt: entry.expiresAt - VERIFIED_TOKEN_TTL_MS }]));
   await assert.rejects(authenticateScim(scimRequest(), db, { ...limits, verifiedTokens: stale }), (error) => error instanceof ScimError && error.status === 429);
@@ -318,4 +319,16 @@ test("the lockout cache is bounded to 1000 verified tokens, evicting the least r
   const keyFor = (i: number) => `${config.tenantId}:${createHash("sha256").update(String(i).padStart(43, "0")).digest("hex")}`;
   assert.ok(!keys.includes(keyFor(0)) && !keys.includes(keyFor(4)), "the oldest entries were evicted");
   assert.ok(keys.includes(keyFor(5)) && keys.includes(keyFor(1_004)));
+});
+
+
+test("revocation during a tenant lockout cannot authenticate from cached SCIM configuration", async () => {
+  const db = new QueueDb();
+  const limits = { clientLimiter: new RateLimiter(1000), tenantLimiter: new RateLimiter(1), verifiedTokens: new Map(), now: 1000 };
+  db.queryQueue = [[VALID_ROW]];
+  await authenticateScim(scimRequest(), db, limits);
+  await assert.rejects(authenticateScim(scimRequest({ authorization: `Bearer ${"a".repeat(43)}` }), db, limits));
+  db.queryQueue = [[]]; // The previously verified token was rotated or disabled.
+  await assert.rejects(authenticateScim(scimRequest(), db, limits), (error) => error instanceof ScimError && error.status === 401);
+  assert.equal(limits.verifiedTokens.size, 0);
 });

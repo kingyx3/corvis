@@ -41,10 +41,13 @@ export function useFocusTrap(containerRef: RefObject<HTMLElement | null>, onClos
       }
       const first = current[0]!;
       const last = current[current.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
+      // Closing a prompt or removing a control can leave focus on the dialog
+      // container; that is also a boundary, especially for Shift+Tab.
+      const onFocusableControl = current.includes(document.activeElement as HTMLElement);
+      if (event.shiftKey && (document.activeElement === first || !onFocusableControl)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (document.activeElement === last || !onFocusableControl)) {
         event.preventDefault();
         first.focus();
       }

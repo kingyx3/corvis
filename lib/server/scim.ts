@@ -51,10 +51,10 @@ export async function configureScim(identity:RequestIdentity,authMethod:HumanAut
  *   bound a rotating client address cannot evade.
  * - The tenant budget counts only failed authentications, so a tenant's own IdP
  *   never spends it. While a tenant is over it, a token this instance verified
- *   within VERIFIED_TOKEN_TTL_MS still authenticates without a query, so an
- *   attacker who knows a tenant id cannot lock that tenant's IdP out. That cache
- *   is consulted only during a lockout; normal requests always re-check Postgres,
- *   so a rotated or disabled token stops working at once outside an attack.
+ *   within VERIFIED_TOKEN_TTL_MS may pass the tenant throttle to revalidate against Postgres, so an
+ *   attacker who knows a tenant id cannot lock that tenant's IdP out. The cache
+ *   is only a throttle exemption, never authentication authority. Every accepted
+ *   request re-checks Postgres, including during attacks and after rotation.
  */
 export const VERIFIED_TOKEN_TTL_MS = 5 * 60_000;
 const VERIFIED_TOKEN_MAX = 1_000;
@@ -93,8 +93,7 @@ export async function authenticateScim(request:Request,db:PostgresSqlApi=postgre
   const budget=tenantLimiter.peek(tenantKey,now);
   if(!budget.allowed){
     const known=verified.get(verifiedKey);
-    if(known&&known.expiresAt>now)return known.config;
-    throw new ScimError(429,"tooMany","SCIM rate limit exceeded",budget.retryAfterSeconds);
+    if(!known||known.expiresAt<=now)throw new ScimError(429,"tooMany","SCIM rate limit exceeded",budget.retryAfterSeconds);
   }
   const rows=await db.query(`select auth_method,default_workspace_id::text,default_role_name from corvis_control.tenant_scim_configuration where tenant_id=$1::uuid and enabled=true and token_sha256=$2 limit 1`,[tenantId,hash]);const row=rows[0];
   if(!row){verified.delete(verifiedKey);tenantLimiter.consume(tenantKey,now);throw new ScimError(401,"invalidToken","SCIM bearer token is invalid");}

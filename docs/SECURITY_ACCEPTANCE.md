@@ -30,7 +30,7 @@ The repository modules are:
 
 The retired `gcp-serverless-origin` external load-balancer / Cloud Armor / Certificate Manager / Authenticated Origin Pull path has been removed from the repository baseline.
 
-Cloudflare remains separate from application authentication and tenant authorization. Passing the edge key boundary does not grant an application identity, workspace membership, entitlement or data right. The application continues to require its signed identity assertion and server-side authorization context; Postgres RLS remains an independent tenant-isolation boundary.
+Cloudflare remains separate from application authentication and tenant authorization. Passing the edge key boundary does not grant an application identity, workspace membership, entitlement or data right. The application independently verifies the end-user OIDC token (or an optional signed broker assertion) and resolves server-side authorization from Postgres; Postgres RLS remains an independent tenant-isolation boundary.
 
 ## Edge-only gateway credential
 

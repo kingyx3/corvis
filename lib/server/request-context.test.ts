@@ -321,6 +321,7 @@ test("OIDC failures are classified as an IdP outage or a rejected token", () => 
   assert.equal(classifyOidcFailure(new Error("OIDC metadata request failed with status 503")), "idp_unavailable");
   assert.equal(classifyOidcFailure(Object.assign(new Error("aborted"), { name: "AbortError" })), "idp_unavailable");
   assert.equal(classifyOidcFailure(new Error("invalid OIDC JWKS response")), "idp_unavailable");
+  assert.equal(classifyOidcFailure(new Error("OIDC signing keys expired; metadata refresh unavailable")), "idp_unavailable");
   assert.equal(classifyOidcFailure(new Error("malformed OIDC bearer token")), "token_rejected");
   assert.equal(classifyOidcFailure(new Error("OIDC token expired")), "token_rejected");
   assert.equal(classifyOidcFailure("not an error"), "token_rejected");

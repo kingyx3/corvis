@@ -156,7 +156,7 @@ test("OIDC unknown-kid JWKS refreshes are single-flight and rate limited", async
   assert.equal((await verifyAt(kid, t0 + 33)).subject, "user-1");
 });
 
-test("OIDC keeps previously fetched keys when a JWKS refresh fails", async () => {
+test("OIDC keeps unexpired keys when an unknown-kid refresh fails", async () => {
   const { counts, fetchImpl } = countingFixture({ failJwksAfter: 1 });
   const verifier = new OidcVerifier(fetchImpl);
   const t0 = 1_800_000_100;
@@ -164,11 +164,12 @@ test("OIDC keeps previously fetched keys when a JWKS refresh fails", async () =>
     authorization: `Bearer ${tokenWithKid(kid, t0)}`, issuer, audience, now: new Date(seconds * 1_000),
   });
   await verifyAt(t0);
-  // Keys expired (max-age=300) and the IdP is failing: cached keys still serve.
-  assert.equal((await verifyAt(t0 + 400)).subject, "user-1");
+  // An unknown kid triggers a refresh while the original keys are still valid.
+  await assert.rejects(verifier.verify({ authorization: `Bearer ${tokenWithKid("unknown", t0)}`, issuer, audience, now: new Date((t0 + 31) * 1000) }));
+  assert.equal((await verifyAt(t0 + 32)).subject, "user-1");
   assert.equal(counts.jwks, 2);
   // Retries against the failing IdP are throttled as well.
-  await verifyAt(t0 + 401);
+  await verifyAt(t0 + 33);
   assert.equal(counts.jwks, 2);
 });
 
@@ -200,4 +201,23 @@ test("OIDC verifier rejects a token presented before its nbf and a malformed nbf
     const identity = await verifier.verify({ authorization: `Bearer ${token({ nbf })}`, issuer, audience, now });
     assert.equal(identity.subject, "user-1");
   }
+});
+
+
+test("expired signing keys fail closed during a JWKS outage", async () => {
+  const { fetchImpl } = countingFixture({ failJwksAfter: 1 });
+  const verifier = new OidcVerifier(fetchImpl);
+  const t0 = 1_800_000_100;
+  const verifyAt = (seconds: number) => verifier.verify({ authorization: `Bearer ${tokenWithKid(kid, t0)}`, issuer, audience, now: new Date(seconds * 1000) });
+  await verifyAt(t0);
+  await assert.rejects(verifyAt(t0 + 400));
+  await assert.rejects(verifyAt(t0 + 401));
+});
+
+test("cold-start JWKS failures are throttled across sequential requests", async () => {
+  const { counts, fetchImpl } = countingFixture({ failJwksAfter: 0 });
+  const verifier = new OidcVerifier(fetchImpl);
+  const t0 = 1_800_000_100;
+  for (let i = 0; i < 5; i++) await assert.rejects(verifier.verify({ authorization: `Bearer ${tokenWithKid(kid, t0)}`, issuer, audience, now: new Date((t0 + i) * 1000) }));
+  assert.equal(counts.jwks, 1);
 });
