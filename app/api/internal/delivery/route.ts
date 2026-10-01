@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "crypto";
 import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
 import { getServerConfig } from "@/lib/server/config";
+import { sweepExpiredExportDownloadGrants } from "@/lib/server/export-grant-sweep";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
@@ -39,6 +40,7 @@ export async function POST(request:Request){
       processing:()=>dispatchConfiguredProcessingTransport(processingWorkerUrl),
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
       idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
+      exportGrantSweep:()=>sweepExpiredExportDownloadGrants(),
       uploadRelease:()=>releaseScannedUploads(),
       uploadSweep:()=>sweepUploadSessions(),
       emailDigests:()=>processEmailDigests(),
