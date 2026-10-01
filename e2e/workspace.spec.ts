@@ -189,10 +189,13 @@ test("customer can upload, review, publish and request structured delivery", asy
   await expect(page.getByText("Observation approval recorded.")).toBeVisible();
   const publishButton = page.getByRole("button", { name: /publish snapshot/i });
   await expect(publishButton).toBeEnabled();
+  const snapshotHeading = page.locator(".page-heading .lede");
+  await expect(snapshotHeading).toHaveText(/^Demo Fund · Q[1-4] \d{4} · Snapshot v1$/);
+  const selectedSnapshot = (await snapshotHeading.innerText()).replace(/Snapshot v1$/, "Snapshot v2");
   await publishButton.click();
   await expect(page.getByText(/snapshot publication accepted/i)).toBeVisible();
   // The reviewer stays on the snapshot they published and cannot re-publish it.
-  await expect(page.getByText(/demo fund · q3 2026 · snapshot v2/i)).toBeVisible();
+  await expect(snapshotHeading).toHaveText(selectedSnapshot);
   await expect(page.getByRole("button", { name: /^published$/i })).toBeDisabled();
   await page.getByRole("button", { name: /data delivery/i }).first().click();
   await expect(page.getByRole("heading", { name: /deliver structured data/i })).toBeVisible();
