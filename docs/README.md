@@ -25,6 +25,7 @@ When the same subject appears in both systems:
 - [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
 - [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — continuous business-build/documentation control loop: scanners, fingerprinting, health/watermark rules and what remains manual.
 - [`QUALITY_BUDGETS.md`](QUALITY_BUDGETS.md) — accessibility, browser/responsive matrix and performance gates in `e2e/`.
+- [`TESTING.md`](TESTING.md) — blocking coverage policy, changed-code 100% gate, whole-repo coverage ratchet, coverage-denominator integrity and escaped-defect prevention.
 - [`API_CONVENTIONS.md`](API_CONVENTIONS.md) — `/api/v1` envelope, error codes, cursor pagination and idempotency conventions.
 - [`GITHUB_ENVIRONMENTS.md`](GITHUB_ENVIRONMENTS.md) — required GitHub Environments, variables/secrets, bootstrap exceptions and configuration propagation.
 - [`GCP_PRE_BOOTSTRAP.md`](GCP_PRE_BOOTSTRAP.md) — one-time Cloud Shell trust-anchor setup for `corvis-deploy`, GitHub OIDC/WIF, exact UAT subject/ref restrictions, IAM verification and handoff to the first GitHub Actions bootstrap plan/apply.
