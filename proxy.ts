@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server.js";
 import type { NextRequest } from "next/server.js";
+import { isProductionEnvironment } from "./lib/server/config.ts";
 import { buildContentSecurityPolicy, generateNonce } from "./lib/server/content-security-policy.ts";
 import { checkBrowserRequest } from "./lib/server/request-security.ts";
 import { resolveRuntimeSurface, runtimeSurfaceAllows } from "./lib/server/runtime-surface.ts";
 
 export function proxy(request: NextRequest) {
+  // Fail closed like getServerConfig(): "Production"/"staging"/a typo is production, never the open "combined" surface.
+  // `process.env.NODE_ENV` stays a literal read so Next can still inline it at build time.
+  const isProduction = isProductionEnvironment(process.env.NODE_ENV);
   const surface = resolveRuntimeSurface(process.env.CORVIS_RUNTIME_SURFACE, {
-    nodeEnv: process.env.NODE_ENV,
+    nodeEnv: isProduction ? "production" : process.env.NODE_ENV,
     demoMode: process.env.CORVIS_DEMO_MODE,
     serviceName: process.env.K_SERVICE,
   });
@@ -44,7 +48,6 @@ export function proxy(request: NextRequest) {
   // below applies to every dynamic response, so there is no static shell that could serve a stale nonce).
   // Content-hashed /_next/static assets are the exception: they carry no nonce and keep Next's
   // immutable caching so browsers and the edge do not re-download the bundle on every visit.
-  const isProduction = process.env.NODE_ENV === "production";
   const requestHeaders = new Headers(request.headers);
   let contentSecurityPolicy: string | undefined;
   if (isProduction) {

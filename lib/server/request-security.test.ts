@@ -81,3 +81,17 @@ test("local and unconfigured runtimes keep the request.url same-origin fallback"
     { allowedOrigins: [], production: false },
   ), { allowed: false, code: "cross_origin_browser_request" });
 });
+
+test("anything but unset/development/test is treated as production, like getServerConfig()", () => {
+  for (const value of ["production", "Production", "PRODUCTION", "staging", "prod"]) {
+    assert.equal(browserRequestPolicyFromEnv({ NODE_ENV: value }).production, true, value);
+  }
+  for (const value of [undefined, "", "development", "test"]) {
+    assert.equal(browserRequestPolicyFromEnv({ NODE_ENV: value }).production, false, String(value));
+  }
+  const env = { NODE_ENV: "Production", CORVIS_BROWSER_ALLOWED_ORIGINS: "https://app.corvis.example" };
+  assert.deepEqual(checkBrowserRequest(
+    new Request("https://internal.run.app/api/v1/exports", { method: "POST", headers: { origin: "https://internal.run.app" } }),
+    browserRequestPolicyFromEnv(env),
+  ), { allowed: false, code: "cross_origin_browser_request" }, "a configured allow-list is authoritative under 'Production'");
+});

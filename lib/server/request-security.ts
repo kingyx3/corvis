@@ -1,3 +1,5 @@
+import { isProductionEnvironment } from "./config.ts";
+
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
 
 export type BrowserRequestDecision =
@@ -38,7 +40,7 @@ export function browserRequestPolicyFromEnv(env: Record<string, string | undefin
       const origin = parsedOrigin(value);
       return origin ? [origin] : [];
     });
-  return { allowedOrigins, production: env.NODE_ENV === "production" };
+  return { allowedOrigins, production: isProductionEnvironment(env.NODE_ENV) };
 }
 
 /**

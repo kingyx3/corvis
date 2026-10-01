@@ -77,6 +77,15 @@ function resolveEnvironment(nodeEnv?: string): ServerConfig["environment"] {
   return nodeEnv === "development" || nodeEnv === "test" ? nodeEnv : "production";
 }
 
+/**
+ * True unless NODE_ENV is unset or exactly "development"/"test" (see {@link resolveEnvironment}).
+ * Use this instead of `NODE_ENV === "production"` so "Production", "staging" or a typo fail closed.
+ * This module has no imports, so it is safe to use from the proxy and from server components.
+ */
+export function isProductionEnvironment(nodeEnv?: string): boolean {
+  return resolveEnvironment(nodeEnv) === "production";
+}
+
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const environment = resolveEnvironment(env.NODE_ENV);
   const demoMode = truthy(env.CORVIS_DEMO_MODE);

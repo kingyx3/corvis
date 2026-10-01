@@ -118,3 +118,24 @@ test("transaction-pooler mode sends no timeout startup parameters and applies th
   assert.equal(transactionLocalSettings(), "set local statement_timeout = 30000; set local idle_in_transaction_session_timeout = 60000");
   assert.equal(transactionLocalSettings({ statement_timeout: 900_000, lock_timeout: 30_000 }), "set local statement_timeout = 900000; set local lock_timeout = 30000; set local idle_in_transaction_session_timeout = 60000");
 });
+
+const mutableEnv = process.env as Record<string, string | undefined>;
+
+test("the default production flag fails closed on NODE_ENV values other than development/test/unset", () => {
+  const original = process.env.NODE_ENV;
+  const plaintext = "postgres://localhost/db?sslmode=disable";
+  try {
+    for (const value of ["production", "Production", "staging"]) {
+      mutableEnv.NODE_ENV = value;
+      assert.throws(() => nativePostgresConfig(plaintext), /verified TLS/, value);
+    }
+    for (const value of ["development", "test"]) {
+      mutableEnv.NODE_ENV = value;
+      assert.equal(nativePostgresConfig(plaintext).ssl, false, value);
+    }
+    delete mutableEnv.NODE_ENV;
+    assert.equal(nativePostgresConfig(plaintext).ssl, false, "unset");
+  } finally {
+    if (original === undefined) delete mutableEnv.NODE_ENV; else mutableEnv.NODE_ENV = original;
+  }
+});
