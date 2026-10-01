@@ -19,16 +19,16 @@ Test files and `test-support` infrastructure are excluded from numerical product
 
 Coverage has two complementary gates:
 
-1. **100% changed-code coverage.** Every changed executable production `.ts` file in the unit scope must have 100% line, branch and function coverage. `scripts/check-changed-coverage.mjs` reads Node's LCOV output and compares it with the pull-request base, so newly changed behavior cannot merge with an untested branch or function.
+1. **100% changed-code coverage.** Every changed executable production `.ts` file in the unit scope must have 100% line, branch and function coverage. `scripts/check-changed-coverage.mjs` reads Node's LCOV output and compares it with the pull-request base. A changed production file that is absent from LCOV fails the gate, so new code cannot disappear from the coverage denominator simply because no test loaded it.
 2. **Whole-repository ratchet.** The existing unit-testable codebase had legacy coverage debt when this policy was introduced. The measured floor is 92.82% lines, 82.03% branches and 89.35% functions. `npm test` fails below those thresholds, so coverage cannot regress while subsequent changes drive the floor upward toward 100%.
 
 The target is 100% whole-repository coverage. Until that legacy target is reached, Corvis must not describe the repository as globally 100% covered. A changed file can still merge only at 100/100/100.
 
 ## Coverage-denominator integrity
 
-Native runtime coverage can omit a module that no executed test ever loads. `core/unit-coverage-scope.test.ts` therefore walks the repository import graph, including the `@/` alias and application/runtime intermediates, and fails when a production module in the numerical unit scope is outside the executed test graph.
+Node's native runtime coverage can omit production modules that no executed test loads. Corvis therefore treats denominator integrity as a forward-enforced contract: every changed production file in the numerical unit scope must appear in the LCOV report and satisfy 100% line, branch and function coverage. This prevents newly introduced or modified code from becoming invisible to coverage.
 
-This guard exists specifically to prevent a misleading high percentage caused by unmeasured production files.
+Legacy modules that pre-date this contract are part of the whole-repository coverage debt and must be brought under execution as that ratchet moves toward 100%. Do not add blanket source exclusions, coverage-ignore directives or synthetic no-op imports to conceal those gaps; add meaningful tests at the appropriate unit, integration or browser layer.
 
 ## Escaped-defect rule
 
