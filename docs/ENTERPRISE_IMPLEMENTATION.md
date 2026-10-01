@@ -9,9 +9,11 @@ See [`README.md`](README.md) for the technical-doc authority rule, [`MODULARITY.
 ### Identity and tenant authorization
 
 - `core/enterprise.ts` defines roles, permissions, entitlements and source-access separation.
-- `lib/server/request-context.ts` currently accepts production identity from a trusted gateway assertion boundary and rejects callers that do not satisfy that trust check.
+- `lib/server/request-context.ts` verifies production end-user OIDC bearer tokens directly (signature, issuer, audience and lifetime), taking the caller token from `X-Forwarded-Authorization` behind API Gateway. Optional signed gateway assertions support brokered SAML/service identities.
 - Production configuration requires issuer/audience and fails closed when required bindings are missing.
-- Direct production IdP/session verification plus Postgres-backed membership/RBAC/entitlement resolution remains tracked in GitHub issue #2.
+- `lib/server/authorized-request.ts` independently resolves active Postgres membership, workspace roles, fund/document rights, service-identity lifecycle and session revocation on protected requests. Tenant-wide control paths require authoritative tenant-admin scope.
+- OIDC JWKS refreshes are single-flight and throttled even on cold-start failures. Unexpired keys survive a failed refresh; expired keys fail closed.
+- Provider-backed identity/access/RLS evidence remains a launch gate in GitHub issues #8/#10; implemented code alone does not establish live control effectiveness.
 
 ### Source ingestion
 

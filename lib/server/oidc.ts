@@ -146,10 +146,10 @@ export class OidcVerifier {
   }
 
   /**
-   * JWKS refresh is single-flight and, once keys are cached, rate limited: an
+   * JWKS refresh is single-flight and, including cold-start failures, rate limited: an
    * unauthenticated token with an unknown `kid` (or an IdP outage) can trigger
    * at most one JWKS fetch per JWKS_MIN_REFRESH_INTERVAL_MS. A failed refresh
-   * keeps the previously fetched keys.
+   * keeps unexpired keys only; expired signing authority must fail closed.
    */
   private async key(kid: string, issuer: string, configuredJwksUrl: string | undefined, nowMs: number): Promise<OidcJwk> {
     if (this.keysIssuer !== issuer) {
@@ -159,15 +159,17 @@ export class OidcVerifier {
       this.keysIssuer = issuer;
     }
     if (nowMs >= this.keysExpireAt || !this.keys.has(kid)) {
-      const throttled = this.keys.size > 0 && nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS;
+      const throttled = nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS
+        && this.refreshInFlight?.issuer !== issuer;
       if (!throttled) {
         try {
           await this.refreshKeys(issuer, configuredJwksUrl, nowMs);
         } catch (error) {
-          if (this.keys.size === 0) throw error;
+          if (this.keys.size === 0 || nowMs >= this.keysExpireAt) throw error;
         }
       }
     }
+    if (nowMs >= this.keysExpireAt) throw new Error("OIDC signing keys expired; metadata refresh unavailable");
     const key = this.keys.get(kid);
     if (!key) throw new Error("OIDC signing key is unknown");
     return key;

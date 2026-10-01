@@ -53,6 +53,37 @@ function unavailableInDemo(identity: RequestIdentity): boolean {
   return getServerConfig().demoMode || identity.authMethod === "demo";
 }
 
+/** The logged scope, not client-supplied rows or citations, defines all data an answer used. */
+function queryScopePermitted(identity: RequestIdentity, value: unknown): boolean {
+  let shape: unknown = value;
+  if (typeof shape === "string") {
+    try { shape = JSON.parse(shape); } catch { return false; }
+  }
+  if (!shape || typeof shape !== "object" || Array.isArray(shape)) return false;
+  const scope = shape as Record<string, unknown>;
+  const contained = (ids: unknown, permitted: string[] | undefined) =>
+    Array.isArray(ids) && ids.every((id) => typeof id === "string" && (permitted ?? []).includes(id));
+  return contained(scope.fundIds, identity.entitlements.fundIds)
+    && contained(scope.documentIds, identity.entitlements.documentIds);
+}
+
+async function permittedQueryDigests(identity: RequestIdentity, queryIds: string[], db: PostgresSqlApi): Promise<Map<string, string | null>> {
+  if (queryIds.length === 0) return new Map();
+  const rows = await db.query(
+    `select semantic_query_id,result_rows_sha256,query_shape from corvis_control.semantic_query_log
+      where tenant_id=$1::uuid
+        and semantic_query_id in (select jsonb_array_elements_text($2::jsonb))`,
+    [identity.tenantId, JSON.stringify([...new Set(queryIds)])],
+  );
+  return new Map(rows.filter((row) => queryScopePermitted(identity, row.query_shape))
+    .map((row) => [String(row.semantic_query_id), row.result_rows_sha256 == null ? null : String(row.result_rows_sha256)]));
+}
+
+function computedResultsPermitted(answer: ResearchAnswer, digests: Map<string, string | null>): boolean {
+  return answer.semanticQueryIds.every((id) => digests.has(id))
+    && (answer.computedResults ?? []).every((result) => digests.get(result.semanticQueryId) === computedRowsDigest(result.rows));
+}
+
 export async function listResearchPins(identity: RequestIdentity, db?: PostgresSqlApi): Promise<ResearchPin[]> {
   if (unavailableInDemo(identity)) return [];
   const database = db ?? dbDefault();
@@ -68,9 +99,10 @@ export async function listResearchPins(identity: RequestIdentity, db?: PostgresS
   // Access is re-checked on read, as it was when the answer was pinned: a caller who has since lost access to a
   // cited document must not keep reading that document's figures out of an old pin.
   const citations = pins.flatMap((pin) => pin.answer.citations ?? []);
-  if (citations.length === 0) return pins;
-  const readable = await entitledSourceReferenceIds(database, identity, citations);
-  return pins.filter((pin) => (pin.answer.citations ?? []).every((citation) => readable.has(citation.sourceReferenceId)));
+  const readable = citations.length ? await entitledSourceReferenceIds(database, identity, citations) : new Set<string>();
+  const digests = await permittedQueryDigests(identity, pins.flatMap((pin) => pin.answer.semanticQueryIds), database);
+  return pins.filter((pin) => (pin.answer.citations ?? []).every((citation) => readable.has(citation.sourceReferenceId))
+    && computedResultsPermitted(pin.answer, digests));
 }
 
 export type PinResearchAnswerInput = { question: string; answer: ResearchAnswer; askedAt: string };
@@ -81,7 +113,7 @@ export type PinResearchAnswerInput = { question: string; answer: ResearchAnswer;
  *  2. figures in the text (and uncertainty) must be grounded in the payload's own computed rows, and a
  *     "no_grounded_figures" answer must carry exactly the server's fixed text -> `invalid_answer` (400);
  *  3. every citation must be a source reference of a document this caller may read, and every semantic query id
- *     must be one the server logged in this caller's tenant -> `answer_not_permitted` (403). The ids are content
+ *     must have a server-recorded fund/document scope contained in the caller's current entitlements -> `answer_not_permitted` (403). The ids are content
  *     hashes and the log keeps the first asker, so two users with the same question and scope share an id;
  *     the check is therefore tenant-scoped, not per-actor.
  *  4. every computed result's rows must hash to the digest the server logged for its semantic query id when it
@@ -104,18 +136,9 @@ async function verifiedAnswer(identity: RequestIdentity, raw: unknown, database:
     if (answer.citations.some((citation) => !readable.has(citation.sourceReferenceId))) throw new ResearchPinError("answer_not_permitted", 403);
   }
   if (answer.semanticQueryIds.length > 0) {
-    const rows = await database().query(
-      `select semantic_query_id,result_rows_sha256 from corvis_control.semantic_query_log
-        where tenant_id=$1::uuid
-          and semantic_query_id in (select jsonb_array_elements_text($2::jsonb))`,
-      [identity.tenantId, JSON.stringify(answer.semanticQueryIds)],
-    );
-    const digests = new Map(rows.map((row) => [String(row.semantic_query_id), row.result_rows_sha256 == null ? null : String(row.result_rows_sha256)]));
-    if (answer.semanticQueryIds.some((id) => !digests.has(id))) throw new ResearchPinError("answer_not_permitted", 403);
-    // A query logged before digests existed (null) cannot prove its rows, so it is not pinnable.
-    if ((answer.computedResults ?? []).some((result) => digests.get(result.semanticQueryId) !== computedRowsDigest(result.rows))) {
-      throw new ResearchPinError("answer_not_permitted", 403);
-    }
+    const digests = await permittedQueryDigests(identity, answer.semanticQueryIds, database());
+    // Missing scope/digest cannot prove either current rights or the original computed rows.
+    if (!computedResultsPermitted(answer, digests)) throw new ResearchPinError("answer_not_permitted", 403);
   }
   return answer;
 }
