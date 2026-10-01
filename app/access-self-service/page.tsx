@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bulkInviteErrorText, tenantAdminRows } from "@/lib/bulk-invite-csv";
+import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 
 type AuditEvent={auditEventId:string;occurredAt:string;workspaceId?:string;actorSubject:string;action:string;targetType:string;targetId:string;outcome:string;metadata:Record<string,unknown>};
@@ -21,7 +22,6 @@ const ROLE_GUIDE=[
 function apiUrl(path:string){const base=process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/,"")??"";return `${base}${path}`;}
 async function api<T>(path:string,init:RequestInit={}):Promise<T>{const headers=new Headers(init.headers);for(const [key,value] of Object.entries(workspaceContextHeaders()))headers.set(key,value);const response=await fetch(apiUrl(path),{credentials:"include",cache:"no-store",...init,headers});const body=await response.json().catch(()=>({})) as {data?:T;error?:string};if(!response.ok)throw new Error(body.error??`Request failed (${response.status})`);return body.data as T;}
 function invitationUrl(invitation:Invitation,token:string){const url=new URL("/invite",window.location.origin);url.searchParams.set("tenantId",invitation.tenantId);url.searchParams.set("workspaceId",invitation.workspaceId);url.hash=token;return url.toString();}
-function downloadText(name:string,text:string,type:string){const href=URL.createObjectURL(new Blob([text],{type}));const anchor=document.createElement("a");anchor.href=href;anchor.download=name;anchor.click();URL.revokeObjectURL(href);}
 
 export default function AccessSelfServicePage(){
   const [audit,setAudit]=useState<AuditEvent[]>([]);const [grants,setGrants]=useState<Grant[]>([]);const [notices,setNotices]=useState<Notice[]>([]);const [invitations,setInvitations]=useState<Invitation[]>([]);
