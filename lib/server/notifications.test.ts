@@ -111,7 +111,7 @@ test("an outbox insert failure after a successful send still reports the invitat
   const sender = new RecordingEmailSender();
   assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender, appUrl: "https://app.corvis.test" }), "sent");
   assert.equal(sender.sent.length, 1, "the email went out exactly once");
-  assert.equal(broken.statements.length, 1, "the failed record is not retried");
+  assert.equal(broken.statements.filter((statement) => /insert into corvis_control.email_outbox/.test(statement.sql)).length, 1, "the failed record is not retried");
 
   assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new RecordingEmailSender([{ status: "failed", retryable: false, errorClass: "rejected" }]), appUrl: "https://app.corvis.test" }), "failed");
   assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db: broken, sender: new RecordingEmailSender(), appUrl: null }), "not_configured");
@@ -200,4 +200,20 @@ test("email retries back off exponentially and cap at one hour", () => {
   assert.equal(computeEmailRetryDelayMs(1), 60_000);
   assert.equal(computeEmailRetryDelayMs(3), 240_000);
   assert.equal(computeEmailRetryDelayMs(20), 3_600_000);
+});
+
+
+test("invitation emails use only the known recipient's tenant-scoped display profile", async () => {
+  class ProfileDb extends RecordingDb {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []) {
+      await super.query(sql, parameters);
+      return [{ display_preferences: { timeZone: "America/Los_Angeles", dateFormat: "iso", numberFormat: "de-DE" } }];
+    }
+  }
+  const db = new ProfileDb(); const sender = new RecordingEmailSender();
+  assert.equal(await deliverInvitationEmail(invitation, "a".repeat(43), { db, sender, appUrl: "https://app.corvis.test" }), "sent");
+  assert.match(sender.sent[0]!.text, /2026-10-06 17:00/);
+  const lookup = db.statements.find((statement) => statement.sql.includes("select p.display_preferences"));
+  assert.deepEqual(lookup?.parameters, [TENANT, invitation.email]);
+  assert.match(lookup!.sql, /p.tenant_id=\$1::uuid and r.email=\$2 and s.status='active'/);
 });
