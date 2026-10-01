@@ -1,5 +1,5 @@
 import { assertPermission } from "@/core/enterprise";
-import { uploads } from "@/lib/server/uploads";
+import { uploadIdempotencyKey, uploads } from "@/lib/server/uploads";
 import { canAccessUpload } from "@/lib/server/upload-access";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ upload
     if (clientKey !== null && clientKey !== undefined && (typeof clientKey !== "string" || clientKey.length > 256)) return json({ error: "invalid_upload_request", correlationId: id }, { status: 400 });
     // A client that never supplied a key at initiate was given a server-generated one it cannot know, so an
     // absent key means "the session's own key": the caller is already authorised for this exact session.
-    const session = await uploads().complete(identity, uploadId, clientKey ? `${identity.subject}:${clientKey}` : current.idempotencyKey);
+    const session = await uploads().complete(identity, uploadId, clientKey ? uploadIdempotencyKey(identity, clientKey) : current.idempotencyKey);
     return json({ data: { uploadId: session.uploadId, documentId: session.documentId, artifactVersionId: session.artifactVersionId, ingestionId: session.ingestionId, state: session.state }, correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

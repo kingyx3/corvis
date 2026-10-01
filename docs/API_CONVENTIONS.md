@@ -106,7 +106,10 @@ Write operations that a client may need to safely retry take an explicit
 upload-session `initiate`/`complete` flow), not an `Idempotency-Key` HTTP
 header. A repeated call with the same key and tenant returns the original
 result rather than creating a duplicate resource or repeating a destructive
-action; `lib/server/data-lifecycle.ts`'s deletion execution follows the same
+action. Upload keys are additionally bound to the caller's subject and
+workspace (`uploadIdempotencyKey`); replaying one from another uploader or
+workspace is a 409 `upload_idempotency_mismatch`.
+`lib/server/data-lifecycle.ts`'s deletion execution follows the same
 principle for its per-attempt evidence ledger. New mutating endpoints that
 can be safely retried should follow this same body-field convention rather
 than introducing a second one.

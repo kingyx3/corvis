@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/core/enterprise";
-import { uploads } from "@/lib/server/uploads";
+import { uploadIdempotencyKey, uploads } from "@/lib/server/uploads";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { durationMetric } from "@/lib/server/telemetry";
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       sizeBytes: body.sizeBytes,
       lastModified: body.lastModified,
       checksumSha256: body.checksumSha256,
-      idempotencyKey: `${identity.subject}:${clientKey}`,
+      idempotencyKey: uploadIdempotencyKey(identity, clientKey),
       origin: request.headers.get("origin") || undefined,
     });
     durationMetric("upload.initiation", startedAt, {

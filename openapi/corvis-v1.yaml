@@ -589,7 +589,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/UploadSession'
         '400': { description: 'The request is malformed (`invalid_upload_request`) or the size is outside the accepted range (`invalid_file_size`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '409': { description: 'The idempotency key was already used for a different upload (`upload_idempotency_mismatch`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'The idempotency key was already used for a different upload, or by a different uploader or workspace (`upload_idempotency_mismatch`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '415': { description: 'The file type or media type is not accepted (`unsupported_file_type`, `unsupported_media_type`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
