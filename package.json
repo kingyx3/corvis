@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "node --test core/*.test.ts lib/*.test.ts lib/server/*.test.ts control-loop/*.test.ts adapters/upload/*.test.ts",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include-all --test-coverage-include='core/**/*.ts' --test-coverage-include='lib/**/*.ts' --test-coverage-include='control-loop/**/*.ts' --test-coverage-include='adapters/upload/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 core/*.test.ts lib/*.test.ts lib/server/*.test.ts control-loop/*.test.ts adapters/upload/*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/content-security-policy.spec.ts",
     "test:e2e:non-demo": "CORVIS_E2E_TARGET=production CORVIS_E2E_DEMO=false playwright test e2e/non-demo-smoke.spec.ts --project=chromium",
