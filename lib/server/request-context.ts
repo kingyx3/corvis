@@ -203,7 +203,7 @@ export function classifyOidcFailure(error: unknown): "idp_unavailable" | "token_
   const causeCode = cause && typeof cause === "object" ? (cause as { code?: unknown }).code : undefined;
   const name = error instanceof Error ? error.name : "";
   if (name === "AbortError" || name === "TimeoutError" || typeof causeCode === "string" || message === "fetch failed"
-    || /OIDC metadata request failed|(invalid OIDC (JWKS response|discovery document)|OIDC JWKS response contained no usable signing keys)|OIDC discovery (issuer mismatch|document has no JWKS URI)|OIDC JWKS URL must use HTTPS|invalid OIDC issuer URL|OIDC issuer must use HTTPS/i.test(message)) {
+    || /OIDC signing keys expired; metadata refresh unavailable|OIDC metadata request failed|(invalid OIDC (JWKS response|discovery document)|OIDC JWKS response contained no usable signing keys)|OIDC discovery (issuer mismatch|document has no JWKS URI)|OIDC JWKS URL must use HTTPS|invalid OIDC issuer URL|OIDC issuer must use HTTPS/i.test(message)) {
     return "idp_unavailable";
   }
   return "token_rejected";

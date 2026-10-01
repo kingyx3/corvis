@@ -89,3 +89,17 @@ test("the command palette opens notification settings", async ({ page }) => {
   await page.getByRole("option", { name: /notification settings/i }).click();
   await expect(page.getByRole("dialog", { name: "Notification settings" })).toBeVisible();
 });
+
+test("Tab and Shift+Tab stay inside the dialog after dismissing the discard prompt @matrix", async ({ page }) => {
+  const dialog = await openFromSidebar(page);
+  await dialog.getByRole("checkbox", { name: /email me about export ready/i }).uncheck();
+  await page.mouse.click(2, 2);
+  await expect(dialog.getByRole("button", { name: "Keep editing" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await dialog.focus();
+  await page.keyboard.press("Tab");
+  expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+});
