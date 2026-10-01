@@ -19,7 +19,7 @@ The stable error codes today include `authentication_required` (401),
 `forbidden` (403), a per-domain conflict/governance code (409 or 422 —
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
 `FeatureFlagGovernanceError`/`DeletionExecutionError`/`WebhookSubscriptionError`
-code, etc.), `invalid_cursor` (400), `invalid_json` (400, malformed request
+code, etc.), `invalid_cursor` (400), `invalid_limit` (400), `invalid_json` (400, malformed request
 body), `invalid_idempotency_key` (400), `idempotency_key_reused` (422 from `apiError()` for request-level `Idempotency-Key` reuse; the dead-letter recovery and
 candidate-review routes return 409 instead, because there the key names an already-recorded command on a specific resource and
 reuse with different content is a state conflict), `rate_limited`
@@ -53,9 +53,9 @@ A cursor encodes the sort key of the last item on the page that issued it
 (by convention, the resource's own id; `snapshots` uses an id/version key so
 multiple versions cannot be skipped at a page boundary). Pagination is
 keyset-based and ordered with the same `C` collation used by the cursor key.
-Malformed or tampered cursors, and non-positive/non-integer `limit` values,
-are rejected with `invalid_cursor` (400) rather than silently ignored,
-clamped without complaint, or crashing.
+Malformed or tampered cursors are rejected with `invalid_cursor` (400), and
+non-positive/non-integer `limit` values with `invalid_limit` (400), rather than
+silently ignored, clamped without complaint, or crashing.
 
 **Landed on:** `GET /documents`, `GET /observations`, `GET /snapshots` and
 `GET /jobs` preserve the unpaginated-by-default compatibility rule above.
