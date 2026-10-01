@@ -15,10 +15,10 @@ is_forbidden_path() {
     .env|*/.env|.env.*|*/.env.*)
       return 0
       ;;
-    *.pem|*.key|*.p12|*.pfx|*.jks|*/id_rsa|*/id_ed25519)
+    *.pem|*.key|*.p12|*.pfx|*.jks|id_rsa|*/id_rsa|id_ed25519|*/id_ed25519)
       return 0
       ;;
-    *.tfstate|*.tfstate.*|*/.terraform/*)
+    *.tfstate|*.tfstate.*|.terraform/*|*/.terraform/*|*.tfvars|*.tfvars.json)
       return 0
       ;;
     *.sqlite|*.sqlite3|*.db|*.dump|*.bak|*.har|*.log)

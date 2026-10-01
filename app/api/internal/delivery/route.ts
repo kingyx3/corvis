@@ -46,6 +46,10 @@ export async function POST(request:Request){
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });
+    // The upload sweep absorbs per-tenant failures into its summary instead of rejecting; surface them as a task failure too.
+    const sweepSummary=results.uploadSweep as {errors?:unknown}|null|undefined;
+    const sweepErrors=typeof sweepSummary?.errors==="number"?sweepSummary.errors:0;
+    if(sweepErrors>0&&!failed.includes("uploadSweep")) failed.push("uploadSweep");
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
     return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});

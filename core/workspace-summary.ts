@@ -180,7 +180,9 @@ export type WorkspaceSummary = {
  */
 export type NeedsReviewAggregate = {
   fund: string;
-  /** Exact number of observations awaiting review for this fund. */
+  /** Economic period of the waiting observations. One aggregate per fund-period, so it maps to exactly one snapshot. */
+  period?: string;
+  /** Exact number of observations awaiting review for this fund-period. */
   count: number;
   /** Most recently updated waiting observation, used as the deep link. */
   observationId: string;
@@ -428,30 +430,43 @@ function attentionItems(input: WorkspaceSummaryInput): AttentionItem[] {
     });
   }
 
-  const reviewByFund = new Map<string, NeedsReviewAggregate & { snapshotId?: string }>();
+  // One item per fund-period snapshot, never per fund: the destination screen scopes to a single
+  // snapshot, so the count and the observation deep link must belong to that same snapshot.
+  const reviewBySnapshot = new Map<string, NeedsReviewAggregate & { snapshotId?: string }>();
+  const samePeriod = (a: string | undefined, b: string | undefined) => a?.trim().toLowerCase() === b?.trim().toLowerCase();
+  const snapshotFor = (fund: string, period: string | undefined, snapshotId: string | undefined): FundSnapshot | undefined => {
+    if (snapshotId) return input.snapshots.find((candidate) => candidate.id === snapshotId);
+    const ofFund = input.snapshots.filter((candidate) => candidate.fund === fund);
+    // The Postgres serving view has no snapshot column: a snapshot is exactly one fund and one period.
+    const candidates = period ? ofFund.filter((candidate) => samePeriod(candidate.period, period)) : ofFund;
+    return candidates.find((candidate) => candidate.status === "Review") ?? candidates[0];
+  };
+  const addReview = (row: NeedsReviewAggregate & { snapshotId?: string }) => {
+    const snapshot = snapshotFor(row.fund, row.period, row.snapshotId);
+    const snapshotId = row.snapshotId ?? snapshot?.id;
+    const key = JSON.stringify([row.fund, snapshotId ?? row.period ?? ""]);
+    const existing = reviewBySnapshot.get(key);
+    if (existing) { existing.count += row.count; return; }
+    reviewBySnapshot.set(key, { ...row, snapshotId });
+  };
   if (input.attentionAggregates) {
-    for (const row of input.attentionAggregates.needsReview) reviewByFund.set(row.fund, row);
+    for (const row of input.attentionAggregates.needsReview) addReview(row);
   } else {
     for (const observation of input.observations) {
       if (observation.state !== "Needs review") continue;
-      const fund = observation.fund ?? "Unassigned fund";
-      const existing = reviewByFund.get(fund);
-      if (existing) { existing.count += 1; continue; }
-      reviewByFund.set(fund, { fund, count: 1, observationId: observation.id, company: observation.company, metric: observation.metric, snapshotId: observation.snapshotId });
+      addReview({ fund: observation.fund ?? "Unassigned fund", period: observation.period, count: 1, observationId: observation.id, company: observation.company, metric: observation.metric, snapshotId: observation.snapshotId });
     }
   }
-  for (const [fund, row] of reviewByFund) {
-    const snapshot = input.snapshots.find((candidate) => candidate.fund === fund && candidate.status === "Review")
-      ?? input.snapshots.find((candidate) => candidate.fund === fund);
-    const snapshotId = row.snapshotId ?? snapshot?.id;
+  for (const row of reviewBySnapshot.values()) {
+    const snapshot = snapshotFor(row.fund, row.period, row.snapshotId);
     items.push({
-      id: `needs_review:${fund}`,
+      id: `needs_review:${row.fund}:${row.snapshotId ?? row.period ?? ""}`,
       kind: "needs_review",
       severity: "high",
       title: `${row.count} ${plural(row.count, "observation needs", "observations need")} review`,
-      detail: `${fund}${snapshot ? ` · ${snapshot.period}` : ""} · starting with ${row.company} ${row.metric}.`,
+      detail: `${row.fund}${snapshot ? ` · ${snapshot.period}` : row.period ? ` · ${row.period}` : ""} · starting with ${row.company} ${row.metric}.`,
       count: row.count,
-      target: { view: "review", snapshotId, observationId: row.observationId },
+      target: { view: "review", snapshotId: row.snapshotId, observationId: row.observationId },
     });
   }
 

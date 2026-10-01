@@ -177,7 +177,7 @@ test("the attention aggregate queries are entitlement-scoped, unbounded by list 
   assert.equal(aggregates.stuckDocuments[0]!.processingState, "failed");
   const [observationsCall, documentsCall] = calls;
   assert.doesNotMatch(observationsCall!.sql, /limit\s+\d+/i, "counts must not be capped");
-  assert.match(observationsCall!.sql, /count\(\*\) over \(partition by o\.fund_id\)/);
+  assert.match(observationsCall!.sql, /count\(\*\) over \(partition by o\.fund_id,o\.economic_period\)/);
   assert.match(observationsCall!.sql, /not in \('approved','rejected'\)/);
   assert.match(observationsCall!.sql, /o\.fund_id in \(select jsonb_array_elements_text\(\$2::jsonb\)\)/);
   assert.match(documentsCall!.sql, /count\(\*\) over \(\) as stuck_total/);
@@ -189,4 +189,27 @@ test("the attention aggregate queries are entitlement-scoped, unbounded by list 
   assert.equal(calls.length, 1);
   assert.deepEqual(withoutDocuments.stuckDocuments, []);
   assert.equal(withoutDocuments.stuckDocumentTotal, 0);
+});
+
+test("the needs-review aggregate groups by fund-period so a fund with two review periods yields two items", async () => {
+  const db: PostgresSqlApi = {
+    async query(sql) {
+      if (sql.includes("corvis_serving.observations")) {
+        assert.match(sql, /count\(\*\) over \(partition by o\.fund_id,o\.economic_period\)/);
+        assert.match(sql, /row_number\(\) over \(partition by o\.fund_id,o\.economic_period /);
+        return [
+          { fund_id: "fund-a", fund_name: "Fund A", economic_period: "Q1 2026", review_count: "1", observation_id: "o-q1", company_id: "c-1", company_name: "Co", metric_code: "revenue" },
+          { fund_id: "fund-a", fund_name: "Fund A", economic_period: "Q2 2026", review_count: "2", observation_id: "o-q2", company_id: "c-1", company_name: "Co", metric_code: "revenue" },
+        ];
+      }
+      return [];
+    },
+    async execute() {},
+    async health() { return true; },
+  };
+  const aggregates = await new PostgresProductionPlatform(db).attentionAggregates!(identity, { includeDocuments: false });
+  assert.deepEqual(aggregates.needsReview, [
+    { fund: "Fund A", period: "Q1 2026", count: 1, observationId: "o-q1", company: "Co", metric: "revenue" },
+    { fund: "Fund A", period: "Q2 2026", count: 2, observationId: "o-q2", company: "Co", metric: "revenue" },
+  ]);
 });

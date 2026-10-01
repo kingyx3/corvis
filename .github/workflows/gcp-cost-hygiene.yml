@@ -63,20 +63,35 @@ jobs:
             --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
             api_image="$(gcloud run services describe corvis-api-uat \
               --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
-              --format='value(template.containers[0].image)')"
+              --format='value(spec.template.spec.containers[0].image)')"
+            if [[ ! "${api_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "corvis-api-uat exists but its image is not an immutable digest (got: '${api_image}'); refusing to continue without protecting it."
+              exit 1
+            fi
           fi
 
           if gcloud run jobs describe corvis-control-loop-daily-uat \
             --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
             control_loop_image="$(gcloud run jobs describe corvis-control-loop-daily-uat \
               --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
-              --format='value(template.template.containers[0].image)')"
+              --format='value(spec.template.spec.template.spec.containers[0].image)')"
+            if [[ ! "${control_loop_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "corvis-control-loop-daily-uat exists but its image is not an immutable digest (got: '${control_loop_image}'); refusing to continue without protecting it."
+              exit 1
+            fi
           fi
 
           manifest="gs://${TF_STATE_BUCKET}/releases/uat/known-good.json"
           if gcloud storage cat "${manifest}" > known-good.json 2>/dev/null; then
             known_good_api="$(jq -r '.image // empty' known-good.json)"
             known_good_control_loop="$(jq -r '.controlLoopImage // empty' known-good.json)"
+            # Manifests that predate the scheduled control-loop runtime legitimately
+            # have no controlLoopImage; any value that is present must be a digest.
+            if [[ ! "${known_good_api}" =~ @sha256:[0-9a-f]{64}$ ]] \
+               || [[ -n "${known_good_control_loop}" && ! "${known_good_control_loop}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "Known-good manifest exists but does not contain immutable image digests; refusing to continue."
+              exit 1
+            fi
           fi
           rm -f known-good.json
 

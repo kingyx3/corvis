@@ -180,7 +180,11 @@ export type WebhookDeliveryDependencies = {
  * allow-listed customer-facing types are delivered even if a legacy
  * subscription row names another type. A subscription only receives events
  * raised after it was created: events with no subscriber stay pending, and a
- * new subscription must not replay the tenant's whole event history.
+ * new subscription must not replay the tenant's whole event history. A paused
+ * subscription still holds its pending events open (pause is reversible and
+ * resuming keeps `created_at`), exactly as the unsubscribed-event sweep below
+ * treats it, so resuming never silently loses an event another subscriber
+ * already finished.
  */
 async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: string, eventId: string): Promise<void> {
   await store.execute(`update corvis_control.outbox_event e
@@ -188,7 +192,7 @@ async function markWebhookFanoutCompleteIfDone(store: PostgresSqlApi, tenantId: 
     where e.tenant_id=$1 and e.event_id=$2::uuid and e.webhook_fanout_completed_at is null
       and not exists (
         select 1 from corvis_control.webhook_subscription s
-        where s.tenant_id=e.tenant_id and s.status='active' and e.event_type=any(s.event_types)
+        where s.tenant_id=e.tenant_id and s.status in ('active','paused') and e.event_type=any(s.event_types)
           and s.created_at<=e.created_at
           and not exists (
             select 1 from corvis_control.webhook_delivery d
