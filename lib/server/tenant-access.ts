@@ -8,12 +8,13 @@ import type {
 } from "../../core/workspace.ts";
 import { getServerConfig } from "./config.ts";
 import {
-  identityLifecycleRepository,
+  guardIdentityLifecycleCommand,
+  PostgresIdentityLifecycleRepository,
   type HumanAuthMethod,
   type IdentityLifecycleRepository,
 } from "./identity-lifecycle.ts";
 import { bestEffortNotification, enqueueForUser } from "./notifications.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 export class TenantAccessError extends Error {
   readonly code: string;
@@ -135,7 +136,8 @@ export async function listTenantAccessMembers(
 
 type DeactivateDependencies = {
   db?: PostgresSqlApi;
-  lifecycle?: IdentityLifecycleRepository;
+  /** Builds the lifecycle repository on the transaction handle that also holds the tenant lock. */
+  lifecycleFor?: (tx: PostgresSqlApi) => IdentityLifecycleRepository;
   eventKey?: string;
 };
 
@@ -150,7 +152,7 @@ export async function deactivateTenantAccessMember(
   // check below would be bypassed by an upper-case spelling of the caller's own user id.
   const userId = requestedUserId.toLowerCase();
   const db = dependencies.db ?? postgres(getServerConfig().postgresDsn);
-  const lifecycle = dependencies.lifecycle ?? identityLifecycleRepository();
+  const lifecycleFor = dependencies.lifecycleFor ?? ((tx: PostgresSqlApi) => new PostgresIdentityLifecycleRepository(tx));
   const rows = await db.query(`select user_id::text,auth_method,subject
     from corvis_control.identity_subject
     where tenant_id=$1::uuid
@@ -174,18 +176,25 @@ export async function deactivateTenantAccessMember(
   const subject = text(rows[0], "subject");
   if (!authMethod || !subject) throw new TenantAccessError("member_not_found", 404);
 
-  return lifecycle.apply({
+  const command = {
     tenantId: identity.tenantId,
     eventKey: dependencies.eventKey ?? `tenant-admin-deactivate:${userId}:${randomUUID()}`,
     actorSubject: identity.subject,
     actorWorkspaceId: identity.workspaceId,
     correlationId,
-    operation: "disable",
+    operation: "disable" as const,
     authMethod,
     subject,
     userId,
     memberships: [],
     reason,
+  };
+  // Like the admin lifecycle route, the tenant lock, the last-admin check and the apply share one
+  // transaction: two tenant admins deactivating each other concurrently must not leave zero admins.
+  // A rejection surfaces as TenantInvitationError (`last_tenant_admin`, 409), which apiError maps.
+  return withTransaction(db, async (tx) => {
+    await guardIdentityLifecycleCommand(identity, command, tx);
+    return lifecycleFor(tx).apply(command);
   });
 }
 
