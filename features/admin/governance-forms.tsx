@@ -130,6 +130,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
 
 /** Mirrors lib/server/tenant-provisioning.ts's TENANT_SLUG. */
 const TENANT_SLUG = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function TenantProvisioning({ onSuccess }: FormProps) {
   const [tenantSlug, setTenantSlug] = useState("");
@@ -217,19 +218,22 @@ function Entitlement({ onSuccess }: FormProps) {
 
 function DataRights({ onSuccess }: FormProps) {
   const [operation, setOperation] = useState("set");
+  const [tenantId, setTenantId] = useState("");
   const [resourceType, setResourceType] = useState("workspace");
   const [resourceId, setResourceId] = useState("");
   const [contractReference, setContractReference] = useState("");
   const [reason, setReason] = useState("");
   const [rights, setRights] = useState({ clientVisible: true, internalAnalyticsAllowed: false, modelTrainingAllowed: false, redistributionAllowed: false, sourceDocumentAccessAllowed: false });
   // effectiveFrom is omitted: the server makes the right effective at apply time.
-  const body = { kind: "data_right", operation, resourceType, resourceId, ...rights, effectiveTo: null, contractReference, reason };
-  return <GovernedMutation title="Contractual data rights" description="Set or revoke visibility, source access, analytics, training and redistribution rights." endpoint="/api/v1/admin/access-policy" body={body} valid={Boolean(resourceId && reason)} onSuccess={onSuccess} destructive={operation === "revoke"}>
+  const body = { kind: "data_right", operation, tenantId, resourceType, resourceId, ...rights, effectiveTo: null, contractReference, reason };
+  const valid = Boolean(UUID.test(tenantId) && resourceId && reason && (operation === "revoke" || contractReference));
+  return <GovernedMutation title="Contractual data rights" description="Corvis Operations only. Set or revoke provider-governed client visibility, source access, analytics, training and redistribution rights for an explicit customer tenant." endpoint="/api/v1/admin/access-policy" body={body} valid={valid} onSuccess={onSuccess} destructive={operation === "revoke"}>
     <div className="form-grid">
       <label className="form-field">Operation<Select value={operation} onChange={setOperation}><option value="set">Set</option><option value="revoke">Revoke</option></Select></label>
+      <label className="form-field">Target tenant ID<Text value={tenantId} onChange={setTenantId} placeholder="UUID"/><span className="field-hint">The client tenant whose contractual authority is changing.</span></label>
       <label className="form-field">Resource type<Select value={resourceType} onChange={setResourceType}><option value="workspace">Workspace</option><option value="fund">Fund</option><option value="document">Document</option></Select></label>
       <label className="form-field">Resource ID<Text value={resourceId} onChange={setResourceId}/></label>
-      <label className="form-field">Contract reference<Text value={contractReference} onChange={setContractReference}/></label>
+      <label className="form-field">Contract reference<Text value={contractReference} onChange={setContractReference}/><span className="field-hint">Required when setting rights; identifies the governing contract, order form or approved rights record.</span></label>
       {Object.entries(rights).map(([key, value]) => <label key={key} className="check-field"><input type="checkbox" checked={value} onChange={() => setRights((current) => ({ ...current, [key]: !current[key as keyof typeof current] }))}/><span className="capitalize">{key.replaceAll(/([A-Z])/g, " $1").toLowerCase()}</span></label>)}
       <label className="form-field">Reason<Text value={reason} onChange={setReason}/></label>
     </div>
