@@ -3,6 +3,7 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { IdentityLifecycleCommand, IdentityLifecycleRepository, IdentityLifecycleResult } from "./identity-lifecycle.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { TenantInvitationError } from "./tenant-invitations.ts";
 import { deactivateTenantAccessMember, listTenantAccessMembers, TenantAccessError } from "./tenant-access.ts";
 
 const TENANT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -23,6 +24,8 @@ const identity: RequestIdentity = {
 
 class FakeDb implements PostgresSqlApi {
   readonly calls: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
+  /** Active tenant administrators reported to the last-admin guard. */
+  admins: string[] = [ACTOR_USER];
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
@@ -32,6 +35,7 @@ class FakeDb implements PostgresSqlApi {
         { user_id: TARGET_USER, auth_method: "oidc", subject: "oidc|departing-user" },
       ];
     }
+    if (sql.includes("role_name='tenant_admin'")) return this.admins.map((user_id) => ({ user_id }));
     if (sql.includes("from corvis_control.membership m")) {
       return [
         { user_id: TARGET_USER, workspace_id: WORKSPACE, workspace_name: "Primary", role_name: "analyst" },
@@ -98,7 +102,7 @@ test("deactivate everywhere delegates once to the existing atomic disable lifecy
   const lifecycle = new FakeLifecycle();
   const result = await deactivateTenantAccessMember(identity, TARGET_USER, "Employment ended", "correlation-1", {
     db,
-    lifecycle,
+    lifecycleFor: () => lifecycle,
     eventKey: "offboard-target-1",
   });
 
@@ -128,16 +132,61 @@ test("deactivate everywhere refuses to deactivate the current tenant-admin sessi
   }
   const lifecycle = new FakeLifecycle();
   await assert.rejects(
-    () => deactivateTenantAccessMember(identity, ACTOR_USER, "Self offboarding", "correlation-2", { db: new SelfDb(), lifecycle }),
+    () => deactivateTenantAccessMember(identity, ACTOR_USER, "Self offboarding", "correlation-2", { db: new SelfDb(), lifecycleFor: () => lifecycle }),
     (error: unknown) => error instanceof TenantAccessError && error.code === "cannot_deactivate_current_user" && error.status === 409,
   );
   assert.equal(lifecycle.command, undefined);
   // An upper-case spelling of the caller's own uuid is the same user.
   await assert.rejects(
-    () => deactivateTenantAccessMember(identity, ACTOR_USER.toUpperCase(), "Self offboarding", "correlation-2", { db: new SelfDb(), lifecycle }),
+    () => deactivateTenantAccessMember(identity, ACTOR_USER.toUpperCase(), "Self offboarding", "correlation-2", { db: new SelfDb(), lifecycleFor: () => lifecycle }),
     (error: unknown) => error instanceof TenantAccessError && error.code === "cannot_deactivate_current_user" && error.status === 409,
   );
   assert.equal(lifecycle.command, undefined);
+});
+
+class TxDb extends FakeDb {
+  transactions = 0;
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> { this.transactions += 1; return fn(this); }
+}
+
+test("deactivate everywhere locks the tenant and checks the admin set inside one transaction before applying", async () => {
+  const db = new TxDb();
+  db.admins = [ACTOR_USER, TARGET_USER];
+  const order: string[] = [];
+  const lifecycle = new FakeLifecycle();
+  const apply = lifecycle.apply.bind(lifecycle);
+  lifecycle.apply = async (command) => { order.push("apply"); return apply(command); };
+  let appliedOn: PostgresSqlApi | undefined;
+  await deactivateTenantAccessMember(identity, TARGET_USER, "Employment ended", "correlation-3", {
+    db,
+    lifecycleFor: (tx) => { appliedOn = tx; return lifecycle; },
+  });
+  const lockAt = db.calls.findIndex((call) => /from corvis_control\.tenant where tenant_id=\$1::uuid for update/.test(call.sql));
+  const adminsAt = db.calls.findIndex((call) => call.sql.includes("role_name='tenant_admin'"));
+  assert.equal(db.transactions, 1);
+  assert.ok(lockAt >= 0 && adminsAt > lockAt, "tenant lock precedes the admin-count query");
+  assert.deepEqual(order, ["apply"]);
+  assert.equal(appliedOn, db);
+  assert.equal(lifecycle.command?.operation, "disable");
+});
+
+test("deactivate everywhere refuses to remove the last other tenant admin and never applies", async () => {
+  const db = new TxDb();
+  db.admins = [TARGET_USER];
+  const lifecycle = new FakeLifecycle();
+  await assert.rejects(
+    () => deactivateTenantAccessMember(identity, TARGET_USER, "Employment ended", "correlation-4", { db, lifecycleFor: () => lifecycle }),
+    (error: unknown) => error instanceof TenantInvitationError && error.code === "last_tenant_admin" && error.status === 409,
+  );
+  assert.equal(lifecycle.command, undefined);
+});
+
+test("deactivating an ordinary member is unaffected by the last-admin guard", async () => {
+  const db = new TxDb();
+  db.admins = [ACTOR_USER];
+  const lifecycle = new FakeLifecycle();
+  await deactivateTenantAccessMember(identity, TARGET_USER, "Employment ended", "correlation-5", { db, lifecycleFor: () => lifecycle });
+  assert.equal(lifecycle.command?.userId, TARGET_USER);
 });
 
 // The transactional fake records committed effects, so an audit failure must
