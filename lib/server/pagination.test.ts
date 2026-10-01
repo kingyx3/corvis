@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InvalidCursorError, decodeCursor, encodeCursor, paginate, paginationRequested, parseLimit, type Page } from "./pagination.ts";
+import { InvalidCursorError, InvalidLimitError, decodeCursor, encodeCursor, paginate, paginationRequested, parseLimit, type Page } from "./pagination.ts";
 
 type Item = { id: string; label: string };
 
@@ -24,10 +24,14 @@ test("decodeCursor rejects a tampered or malformed cursor instead of returning a
 test("parseLimit falls back to the default when absent and rejects a non-positive or non-integer value", () => {
   assert.equal(parseLimit(null), 50);
   assert.equal(parseLimit("25"), 25);
-  assert.throws(() => parseLimit("0"), InvalidCursorError);
-  assert.throws(() => parseLimit("-5"), InvalidCursorError);
-  assert.throws(() => parseLimit("abc"), InvalidCursorError);
-  assert.throws(() => parseLimit("3.5"), InvalidCursorError);
+  assert.throws(() => parseLimit("0"), InvalidLimitError);
+  assert.throws(() => parseLimit("-5"), InvalidLimitError);
+  assert.throws(() => parseLimit("abc"), InvalidLimitError);
+  assert.throws(() => parseLimit("3.5"), InvalidLimitError);
+});
+
+test("an invalid limit is not reported as an invalid cursor", () => {
+  assert.throws(() => parseLimit("0"), (error: unknown) => error instanceof InvalidLimitError && !(error instanceof InvalidCursorError) && error.message === "invalid_limit");
 });
 
 test("parseLimit caps an oversized request at the maximum rather than rejecting it", () => {

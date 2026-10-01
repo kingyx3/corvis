@@ -288,6 +288,27 @@ test("non-string governance fields are rejected as 422 governance errors, not Ty
   );
 });
 
+test("setFeatureFlag keeps the stored configuration when config is omitted and replaces it when given", async () => {
+  const stored = { rolloutPercent: 25, allow: ["ws-1"] };
+  const existing = [{ owner: "team", retire_by: "2027-01-01T00:00:00.000Z", retired_at: null, configuration: stored }];
+  const writtenConfig = (db: FakeDb) => JSON.parse(String(db.calls.at(-1)?.parameters[3]));
+
+  const omitted = new FakeDb(existing);
+  omitted.query = async (sql: string, parameters: PostgresPrimitive[] = []) => { omitted.calls.push({ sql, parameters }); return sql.startsWith("select owner") ? existing : [{ flag_key: "ui.delivery_workspace" }]; };
+  await setFeatureFlag(identity(), { key: "ui.delivery_workspace", enabled: false }, omitted);
+  assert.deepEqual(writtenConfig(omitted), stored);
+
+  const replaced = new FakeDb(existing);
+  replaced.query = async (sql: string, parameters: PostgresPrimitive[] = []) => { replaced.calls.push({ sql, parameters }); return sql.startsWith("select owner") ? existing : [{ flag_key: "ui.delivery_workspace" }]; };
+  await setFeatureFlag(identity(), { key: "ui.delivery_workspace", enabled: true, config: { rolloutPercent: 50 } }, replaced);
+  assert.deepEqual(writtenConfig(replaced), { rolloutPercent: 50 });
+
+  const created = new FakeDb([]);
+  created.query = async (sql: string, parameters: PostgresPrimitive[] = []) => { created.calls.push({ sql, parameters }); return sql.startsWith("select owner") ? [] : [{ flag_key: "ui.delivery_workspace" }]; };
+  await setFeatureFlag(identity(), { key: "ui.delivery_workspace", enabled: true, owner: "team", retireBy: "2027-01-01T00:00:00.000Z" }, created);
+  assert.deepEqual(writtenConfig(created), {});
+});
+
 test("setFeatureFlag reports a flag retired concurrently instead of claiming the write applied", async () => {
   // The pre-read sees a live flag; the guarded upsert then affects no row because it was retired in between.
   const db = new FakeDb([]);

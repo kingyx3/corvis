@@ -30,10 +30,16 @@ type ListBody = { data: Array<Record<string, unknown>>; nextCursor: string | nul
 
 test("list routes answer 400 for a malformed cursor or limit now that the cursor is decoded before the SQL keyset fetch", async () => {
   for (const [name, get] of Object.entries(routes)) {
-    for (const query of ["cursor=not-a-cursor", `cursor=${Buffer.from(JSON.stringify({ v: 1, k: "" })).toString("base64url")}`, "limit=0"]) {
+    const cases: Array<[string, string]> = [
+      ["cursor=not-a-cursor", "invalid_cursor"],
+      [`cursor=${Buffer.from(JSON.stringify({ v: 1, k: "" })).toString("base64url")}`, "invalid_cursor"],
+      ["limit=0", "invalid_limit"],
+      ["limit=abc", "invalid_limit"],
+    ];
+    for (const [query, code] of cases) {
       const response = await get(request(`/api/v1/${name}?${query}`));
       assert.equal(response.status, 400, `${name}?${query}`);
-      assert.equal((await response.json() as { error: string }).error, "invalid_cursor");
+      assert.equal((await response.json() as { error: string }).error, code, `${name}?${query}`);
     }
   }
 });

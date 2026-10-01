@@ -24,6 +24,14 @@ export class InvalidCursorError extends Error {
   }
 }
 
+/** A `limit` query value that is not a positive integer; distinct from a bad cursor so clients can tell which parameter to fix. */
+export class InvalidLimitError extends Error {
+  constructor() {
+    super("invalid_limit");
+    this.name = "InvalidLimitError";
+  }
+}
+
 const CURSOR_SCHEMA_VERSION = 1;
 
 export function encodeCursor(sortKey: string): string {
@@ -64,10 +72,11 @@ export function paginationRequested(searchParams: URLSearchParams): boolean {
   return searchParams.has("limit") || searchParams.has("cursor");
 }
 
+/** Throws InvalidLimitError for a limit that is not a positive integer; oversized values are capped. */
 export function parseLimit(raw: string | null, fallback = DEFAULT_PAGE_LIMIT): number {
   if (!raw) return fallback;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) throw new InvalidCursorError();
+  if (!Number.isInteger(value) || value <= 0) throw new InvalidLimitError();
   return Math.min(value, MAX_PAGE_LIMIT);
 }
 

@@ -863,13 +863,13 @@ components:
                 properties:
                   error: { enum: [internal_error] }
     InvalidCursor:
-      description: The `cursor` was malformed, tampered with, or `limit` was not a positive integer.
+      description: The `cursor` was malformed or tampered with (`invalid_cursor`), or `limit` was not a positive integer (`invalid_limit`).
       content:
         application/json:
           schema:
             type: object
             properties:
-              error: { type: string, enum: [invalid_cursor] }
+              error: { type: string, enum: [invalid_cursor, invalid_limit] }
               correlationId: { type: string }
   schemas:
     ErrorResponse:

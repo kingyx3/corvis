@@ -26,7 +26,7 @@ test("lineage monitoring reflects the fail-closed publication gate", async () =>
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
   const slos = await read("ops/slos.yaml");
 
-  assert.match(policy, /lineagecoverage < 1/);
+  assert.match(policy, /!\(input\.lineagecoverage >= 1\)/);
   assert.match(policy, /incomplete_source_lineage/);
   assert.match(http, /snapshot\.publication_blocked/);
   assert.match(terraform, /jsonpayload\.event="snapshot\.publication_blocked"/);

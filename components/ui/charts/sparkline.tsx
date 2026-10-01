@@ -29,7 +29,9 @@ export function Sparkline({
   const delta = trendDelta(points);
   const accessibleName = delta
     ? `${label} trend: ${delta.direction === "up" ? "up" : delta.direction === "down" ? "down" : "flat"} ${valueFormatter(Math.abs(delta.absolute))}${delta.percent != null ? ` (${delta.percent > 0 ? "+" : ""}${delta.percent.toFixed(1)}%)` : ""} since the prior period`
-    : `${label} trend: not enough periods yet`;
+    : plottable.length >= 2
+      ? `${label} trend: no change shown because the latest or prior period has no value`
+      : `${label} trend: not enough periods yet`;
 
   return (
     <span className="sparkline">

@@ -102,7 +102,8 @@ test("GET /jobs conforms unpaginated and paginated, and documents its invalid_cu
   await assertDocumented(await jobsGet(call("/jobs?limit=5")), "/jobs", "get", 200);
   const invalid = await assertDocumented(await jobsGet(call("/jobs?cursor=not-a-cursor")), "/jobs", "get", 400) as { error: string };
   assert.equal(invalid.error, "invalid_cursor");
-  await assertDocumented(await jobsGet(call("/jobs?limit=0")), "/jobs", "get", 400);
+  const invalidLimit = await assertDocumented(await jobsGet(call("/jobs?limit=0")), "/jobs", "get", 400) as { error: string };
+  assert.equal(invalidLimit.error, "invalid_limit");
 });
 
 test("POST /exports 202 conforms to ExportManifest, and its documented 400/403/422 error bodies conform to ErrorResponse", async () => {
