@@ -21,6 +21,46 @@ test("conditional state allows only one simultaneous lock winner", async () => {
   assert.equal(Number(left.acquired) + Number(right.acquired), 1);
 });
 
+test("every GCS and metadata-token request carries an abort-timeout signal", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.startsWith("http://metadata.google.internal/")) {
+      return new Response(JSON.stringify({ access_token: "meta-token", expires_in: 3600 }), { status: 200 });
+    }
+    return new Response("state", { status: 200, headers: { "x-goog-generation": "7" } });
+  };
+  // No tokenProvider: the default provider exercises the metadata-server fetch.
+  const store = new GcsStateStore({ bucket: "corvis-control-state.example", fetchImpl });
+
+  await store.readVersioned("lock");
+  await store.write("lock", "v");
+  await store.write("lock", null);
+  await store.writeIfVersion("lock", "v", "7");
+  await store.writeIfVersion("lock", null, "7");
+
+  assert.equal(calls.length, 6, "one metadata token fetch (cached) plus five storage calls");
+  assert.ok(calls[0]?.url.startsWith("http://metadata.google.internal/"));
+  for (const call of calls) {
+    assert.ok(call.init?.signal instanceof AbortSignal, `no timeout signal on ${call.init?.method ?? "GET"} ${call.url}`);
+  }
+});
+
+test("a hung GCS request is aborted by the configured timeout instead of stalling forever", async () => {
+  const fetchImpl: typeof fetch = (_input, init) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+  });
+  const store = new GcsStateStore({ bucket: "corvis-control-state.example", fetchImpl, tokenProvider: async () => "t", timeoutMs: 20 });
+  // AbortSignal.timeout timers are unref'd; hold the event loop open so the runner does not exit first.
+  const keepAlive = setTimeout(() => {}, 5_000);
+  try {
+    await assert.rejects(store.readVersioned("lock"), (error: Error) => error.name === "TimeoutError");
+  } finally {
+    clearTimeout(keepAlive);
+  }
+});
+
 test("GCS state uses authenticated generation preconditions", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   let mode: "read" | "create-conflict" | "create-ok" = "read";

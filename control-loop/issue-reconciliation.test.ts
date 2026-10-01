@@ -153,3 +153,40 @@ test("the mutation budget stops further writes and is reported as exceeded", asy
   assert.equal(result.budgetExceeded, true);
   assert.deepEqual(result.outcomes.map((o) => o.outcome), ["applied", "skipped"]);
 });
+
+/** Throws `github_issue_create_failed:<status>` on the given 1-based create attempt; succeeds otherwise. */
+class FailingWriter extends RecordingWriter {
+  private attempts = 0;
+  private readonly failOnAttempt: number;
+  private readonly status: number;
+  constructor(failOnAttempt: number, status: number) {
+    super();
+    this.failOnAttempt = failOnAttempt;
+    this.status = status;
+  }
+  async create(input: { title: string; body: string; labels: string[] }) {
+    this.attempts += 1;
+    if (this.attempts === this.failOnAttempt) throw new Error(`github_issue_create_failed:${this.status}`);
+    return super.create(input);
+  }
+}
+
+const THREE_CREATES = ["a", "b", "c"].map((fingerprint) => ({ type: "create" as const, fingerprint, issueNumber: null, title: "t", body: "b" }));
+
+test("a non-halting writer error is recorded as a failed outcome and later actions still run", async () => {
+  const writer = new FailingWriter(2, 500);
+  const result = await applyIssueReconciliation(THREE_CREATES, { mode: "execute", budget: 10, writer });
+  assert.deepEqual(result.outcomes.map((o) => o.outcome), ["applied", "failed", "applied"]);
+  assert.equal(result.outcomes[1]?.reason, "github_500");
+  assert.equal(result.haltedReason, null);
+});
+
+test("a 403 writer error halts further writes and records the rest as skipped, retaining earlier applies", async () => {
+  const writer = new FailingWriter(2, 403);
+  const result = await applyIssueReconciliation(THREE_CREATES, { mode: "execute", budget: 10, writer });
+  assert.deepEqual(result.outcomes.map((o) => o.outcome), ["applied", "failed", "skipped"]);
+  assert.equal(result.outcomes[1]?.reason, "github_403");
+  assert.equal(result.outcomes[2]?.reason, "halted_after:github_403");
+  assert.equal(result.haltedReason, "github_403");
+  assert.equal(result.outcomes[0]?.issueNumber, 42);
+});
