@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bulkInviteErrorText, tenantAdminRows } from "@/lib/bulk-invite-csv";
+import { throwIfUnauthenticated } from "@/lib/api-errors";
 import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 
@@ -20,7 +21,7 @@ const ROLE_GUIDE=[
 ];
 
 function apiUrl(path:string){const base=process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/,"")??"";return `${base}${path}`;}
-async function api<T>(path:string,init:RequestInit={}):Promise<T>{const headers=new Headers(init.headers);for(const [key,value] of Object.entries(workspaceContextHeaders()))headers.set(key,value);const response=await fetch(apiUrl(path),{credentials:"include",cache:"no-store",...init,headers});const body=await response.json().catch(()=>({})) as {data?:T;error?:string};if(!response.ok)throw new Error(body.error??`Request failed (${response.status})`);return body.data as T;}
+async function api<T>(path:string,init:RequestInit={}):Promise<T>{const headers=new Headers(init.headers);for(const [key,value] of Object.entries(workspaceContextHeaders()))headers.set(key,value);const response=await fetch(apiUrl(path),{credentials:"include",cache:"no-store",...init,headers});throwIfUnauthenticated(response);const body=await response.json().catch(()=>({})) as {data?:T;error?:string};if(!response.ok)throw new Error(body.error??`Request failed (${response.status})`);return body.data as T;}
 function invitationUrl(invitation:Invitation,token:string){const url=new URL("/invite",window.location.origin);url.searchParams.set("tenantId",invitation.tenantId);url.searchParams.set("workspaceId",invitation.workspaceId);url.hash=token;return url.toString();}
 
 export default function AccessSelfServicePage(){
@@ -34,7 +35,7 @@ export default function AccessSelfServicePage(){
   const acknowledge=async(id:string)=>{setBusyId(id);setError("");try{await api("/api/v1/access/support",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"acknowledge",supportGrantId:id})});await load();}catch(caught){setError(caught instanceof Error?caught.message:"Support access could not be acknowledged");}finally{setBusyId("");}};
   const manageInvite=async(invitation:Invitation,action:"resend"|"revoke")=>{if(actionReason.trim().length<3){setError("Enter a reason before resending or revoking an invitation.");return;}setBusyId(invitation.invitationId);setError("");try{const result=await api<{invitation?:Invitation;token?:string}>(`/api/v1/access/invitations/${invitation.invitationId}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,reason:actionReason.trim()})});if(action==="resend"&&result.invitation&&result.token)setOneTimeLinks([{row:0,email:result.invitation.email,url:invitationUrl(result.invitation,result.token)}]);setActionReason("");await load();}catch(caught){setError(caught instanceof Error?caught.message:"Invitation update failed");}finally{setBusyId("");}};
   const uploadCsv=async()=>{if(!csv.trim())return;setBulkBusy(true);setError("");setBulkResult(null);setOneTimeLinks([]);try{const path=adminRows.length&&confirmTenantAdmin?"/api/v1/access/invitations/bulk?confirmTenantAdmin=true":"/api/v1/access/invitations/bulk";const result=await api<BulkResult>(path,{method:"POST",headers:{"content-type":"text/csv; charset=utf-8"},body:csv});setBulkResult(result);setConfirmTenantAdmin(false);setOneTimeLinks(result.created.map((item)=>({row:item.row,email:item.invitation.email,url:invitationUrl(item.invitation,item.token)})));await load();}catch(caught){setError(caught instanceof Error?caught.message:"Bulk import failed");}finally{setBulkBusy(false);}};
-  const exportAudit=async()=>{setError("");try{const response=await fetch(apiUrl("/api/v1/access/audit?format=csv"),{credentials:"include",cache:"no-store",headers:workspaceContextHeaders()});if(!response.ok)throw new Error("Audit export failed");downloadText("corvis-access-audit.csv",await response.text(),"text/csv;charset=utf-8");}catch(caught){setError(caught instanceof Error?caught.message:"Audit export failed");}};
+  const exportAudit=async()=>{setError("");try{const response=await fetch(apiUrl("/api/v1/access/audit?format=csv"),{credentials:"include",cache:"no-store",headers:workspaceContextHeaders()});throwIfUnauthenticated(response);if(!response.ok)throw new Error("Audit export failed");downloadText("corvis-access-audit.csv",await response.text(),"text/csv;charset=utf-8");}catch(caught){setError(caught instanceof Error?caught.message:"Audit export failed");}};
   const exportBulkErrors=()=>{if(!bulkResult?.errors.length)return;const lines=["row,error",...bulkResult.errors.map((item)=>`${item.row},"${bulkInviteErrorText(item.error).replaceAll('"','""')}"`)];downloadText("corvis-bulk-invite-errors.csv",`${lines.join("\r\n")}\r\n`,"text/csv;charset=utf-8");};
   const pending=invitations.filter((item)=>item.status==="pending");
   // An empty list is only truthful once the load has succeeded.

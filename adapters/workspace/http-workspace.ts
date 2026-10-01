@@ -1,5 +1,5 @@
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
-import { ApiError, MalformedStreamError, UnauthenticatedError, notifySessionExpired } from "../../lib/api-errors.ts";
+import { MalformedStreamError, apiResponseError } from "../../lib/api-errors.ts";
 import type {
   MemberRoleReceipt,
   DeactivateTenantAccessResult,
@@ -33,19 +33,9 @@ type CollectionEnvelope<T> = Envelope<T[]> & { nextCursor: string | null };
 export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
   const base = apiBase.replace(/\/$/, "");
 
-  async function responseError(response: Response): Promise<Error> {
-    const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
-    const message = body.reasons?.length
-      ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}`
-      : body.error || `Corvis API request failed (${response.status})`;
-    // 401 means the session is gone; callers surface a re-authentication prompt instead of a module error.
-    if (response.status === 401) { notifySessionExpired(); return new UnauthenticatedError(message, body.error); }
-    return new ApiError(message, response.status, body.error);
-  }
-
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${base}${path}`, { ...init, credentials: "include", headers: { "content-type": "application/json", ...workspaceContextHeaders(), ...(init?.headers || {}) } });
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) throw await apiResponseError(response);
     const body = await response.json() as Envelope<T>;
     return body.data;
   }
@@ -66,7 +56,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
         credentials: "include",
         headers: { "content-type": "application/json", ...workspaceContextHeaders() },
       });
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await apiResponseError(response);
       const body = await response.json() as CollectionEnvelope<T>;
       items.push(...body.data);
       if (body.nextCursor && seen.has(body.nextCursor)) throw new Error("pagination_cursor_cycle");
@@ -88,7 +78,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
       body: JSON.stringify({ question }),
       signal,
     });
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) throw await apiResponseError(response);
     if (!response.body) throw new Error("research_stream_unavailable");
 
     const reader = response.body.getReader();

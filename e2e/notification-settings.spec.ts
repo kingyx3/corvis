@@ -92,6 +92,14 @@ test("the settings link in emails opens the dialog and a failed save is reported
   await expect(dialog).toBeVisible();
 });
 
+test("an expired session while loading notification settings says so instead of a generic failure", async ({ page }) => {
+  await page.route("**/api/v1/notification-preferences", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "authentication_required" }) }));
+  await page.goto("/?notifications=settings");
+  const dialog = page.getByRole("dialog", { name: "Notification settings" });
+  await expect(dialog.getByRole("alert")).toContainText(/your session has expired/i);
+  await expect(page.getByRole("alert", { name: /session expired/i })).toBeVisible();
+});
+
 test("the command palette opens notification settings", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
