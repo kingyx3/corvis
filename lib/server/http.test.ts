@@ -8,6 +8,7 @@ register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.met
 const { apiError, correlationId } = await import("@/lib/server/http");
 const { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } = await import("@/lib/server/idempotency");
 const { TenantInvitationError } = await import("@/lib/server/tenant-invitations");
+const { WebhookSubscriptionError } = await import("@/lib/server/webhook-subscriptions");
 
 function withCorrelation(value: string): Request {
   return new Request("https://corvis.test/api/v1/me", { headers: { "x-correlation-id": value } });
@@ -53,6 +54,15 @@ test("expected tenant-admin request errors keep their own 4xx status instead of 
   const response = apiError(new TenantInvitationError("invitation_not_pending", 409), "corr-tenant");
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: "invitation_not_pending", correlationId: "corr-tenant" });
+});
+
+test("webhook subscription limits map to 409 (count cap) and 400 (URL length)", async () => {
+  const cap = apiError(new WebhookSubscriptionError("webhook_subscription_limit_reached"), "corr-cap");
+  assert.equal(cap.status, 409);
+  assert.deepEqual(await cap.json(), { error: "webhook_subscription_limit_reached", correlationId: "corr-cap" });
+  const long = apiError(new WebhookSubscriptionError("endpoint_url_too_long"), "corr-long");
+  assert.equal(long.status, 400);
+  assert.deepEqual(await long.json(), { error: "endpoint_url_too_long", correlationId: "corr-long" });
 });
 
 const { PostgresDriverError } = await import("@/lib/server/postgres-native");

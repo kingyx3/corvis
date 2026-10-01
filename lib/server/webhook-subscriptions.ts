@@ -14,6 +14,14 @@ export class WebhookSubscriptionError extends Error {
   }
 }
 
+/** Longest accepted endpoint URL, both as submitted and after normalization; matches the common practical URL ceiling. */
+export const MAX_WEBHOOK_ENDPOINT_URL_LENGTH = 2048;
+/**
+ * Most non-revoked (active or paused) subscriptions one tenant may hold. Revoked subscriptions are terminal and
+ * cannot be deleted, so they do not count; otherwise revoking would never free capacity.
+ */
+export const MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT = 25;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A webhook id that is not a UUID can never exist; reject it as not-found before it reaches a `::uuid` cast. */
@@ -93,11 +101,15 @@ function validateEventTypes(eventTypes: unknown): string[] {
 
 function validateEndpointUrl(endpointUrl: unknown): string {
   if (typeof endpointUrl !== "string" || !endpointUrl.trim()) throw new WebhookSubscriptionError("endpoint_url_required");
+  // Checked before parsing so an oversized string never reaches the URL parser.
+  if (endpointUrl.trim().length > MAX_WEBHOOK_ENDPOINT_URL_LENGTH) throw new WebhookSubscriptionError("endpoint_url_too_long");
   let parsed: URL;
   try { parsed = new URL(endpointUrl.trim()); } catch { throw new WebhookSubscriptionError("endpoint_url_invalid"); }
   if (parsed.protocol !== "https:") throw new WebhookSubscriptionError("endpoint_url_must_be_https");
   const blocked = webhookEndpointBlockReason(parsed.toString());
   if (blocked) throw new WebhookSubscriptionError(blocked);
+  // Normalization can lengthen the URL (percent-encoding), and the normalized form is what is stored.
+  if (parsed.toString().length > MAX_WEBHOOK_ENDPOINT_URL_LENGTH) throw new WebhookSubscriptionError("endpoint_url_too_long");
   return parsed.toString();
 }
 
@@ -117,6 +129,13 @@ export async function createWebhookSubscription(
   const webhookId = randomUUID();
   const keyId = randomUUID();
   const secret = newSigningSecret();
+
+  // Serialize creates per tenant so two racing requests cannot both pass the cap check. The lock is
+  // transaction-scoped; the route runs this inside `runAuditedMutation`'s transaction.
+  await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`webhook_subscription_create:${identity.tenantId}`]);
+  const counted = await db.query(`select count(*)::int as count from corvis_control.webhook_subscription
+    where tenant_id=$1::uuid and status <> 'revoked'`, [identity.tenantId]);
+  if (Number(counted[0]?.count ?? 0) >= MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT) throw new WebhookSubscriptionError("webhook_subscription_limit_reached");
 
   await db.query(`select corvis_control.create_webhook_subscription(
     $1::uuid,$2::uuid,$3,$4::text[],$5,$6::uuid,$7)`,
