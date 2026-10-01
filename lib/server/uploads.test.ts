@@ -5,7 +5,7 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { GcsObject, UploadObjectStore } from "./gcs.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, UploadRequestError, type UploadSession } from "./uploads.ts";
+import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, UploadRequestError, uploadIdempotencyKey, type UploadSession } from "./uploads.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 type FakeObject = { bytes: Buffer; object: GcsObject };
@@ -731,6 +731,53 @@ test("an upload id that is not a server-issued UUID never reaches an object key"
     await assert.rejects(context.uploads.get(identity(), uploadId), (error: unknown) => error instanceof UploadRequestError && error.code === "upload_not_found", uploadId);
   }
   assert.deepEqual(reads, [], "a malformed id is refused before any storage read");
+});
+
+const OTHER_WORKSPACE = "00000000-0000-0000-0000-0000000000b2";
+
+test("the idempotency key is bound to subject, workspace and client key without ambiguity", () => {
+  const base = identity();
+  const key = uploadIdempotencyKey(base, "key-1");
+  assert.equal(key, uploadIdempotencyKey({ ...base }, "key-1"), "deterministic, so complete recomputes initiate's key");
+  assert.notEqual(key, uploadIdempotencyKey({ ...base, workspaceId: OTHER_WORKSPACE }, "key-1"));
+  assert.notEqual(key, uploadIdempotencyKey({ ...base, subject: "oidc|uploader-2" }, "key-1"));
+  assert.notEqual(key, uploadIdempotencyKey(base, "key-2"));
+  // A plain `subject:key` join cannot tell these apart.
+  assert.notEqual(
+    uploadIdempotencyKey({ ...base, subject: "svc:x" }, "y"),
+    uploadIdempotencyKey({ ...base, subject: "svc" }, "x:y"),
+  );
+  assert.notEqual(
+    uploadIdempotencyKey({ ...base, subject: "svc", workspaceId: "a" }, "b,c"),
+    uploadIdempotencyKey({ ...base, subject: "svc", workspaceId: "a\",\"b" }, "c"),
+  );
+});
+
+test("the same client key from two workspaces of one user authorizes two independent sessions", async () => {
+  const { uploads, store } = harness();
+  const w1 = identity();
+  const w2 = identity({ workspaceId: OTHER_WORKSPACE, entitlements: { workspaceIds: [OTHER_WORKSPACE], sourceDocumentAccessAllowed: true } });
+  const first = await uploads.initiate(w1, initiateInput({ idempotencyKey: uploadIdempotencyKey(w1, "same-key") }));
+  const second = await uploads.initiate(w2, initiateInput({ idempotencyKey: uploadIdempotencyKey(w2, "same-key") }));
+  assert.notEqual(second.uploadId, first.uploadId);
+  assert.equal(first.workspaceId, w1.workspaceId);
+  assert.equal(second.workspaceId, w2.workspaceId);
+  assert.equal(store.resumable.size, 2);
+  assert.equal((await uploads.initiate(w2, initiateInput({ idempotencyKey: uploadIdempotencyKey(w2, "same-key") }))).uploadId, second.uploadId);
+});
+
+test("an initiate replay is refused unless the uploader and workspace match the session", async () => {
+  const { uploads, store } = harness();
+  const w1 = identity();
+  const first = await uploads.initiate(w1, initiateInput());
+
+  const otherWorkspace = identity({ workspaceId: OTHER_WORKSPACE });
+  await rejectsWith(uploads.initiate(otherWorkspace, initiateInput()), "upload_idempotency_mismatch", 409);
+  const otherUser = identity({ subject: "oidc|uploader-2" });
+  await rejectsWith(uploads.initiate(otherUser, initiateInput()), "upload_idempotency_mismatch", 409);
+
+  assert.equal(store.resumable.size, 1, "a refused replay never authorizes another resumable session");
+  assert.equal((await uploads.initiate(w1, initiateInput())).uploadId, first.uploadId);
 });
 
 /** A purge failure is logged to the console as a structured event; keep it out of the test output. */

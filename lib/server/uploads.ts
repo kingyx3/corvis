@@ -149,6 +149,22 @@ export function validateSourceMagic(fileName: string, bytes: Buffer): boolean {
   return false;
 }
 
+/**
+ * The session-level idempotency key for a client-supplied key. Bound to the caller's subject and
+ * workspace (JSON-encoded, like idempotency.ts, so no subject/key pair can collide with another) and
+ * shared by initiate and complete, which must derive it identically.
+ */
+export function uploadIdempotencyKey(identity: Pick<RequestIdentity, "subject" | "workspaceId">, clientKey: string): string {
+  return JSON.stringify([identity.subject, identity.workspaceId, clientKey]);
+}
+
+/** A replay is only valid for the uploader and workspace that created the session. */
+function assertSameUploader(identity: RequestIdentity, session: UploadSession): void {
+  if (session.actorSubject !== identity.subject || session.workspaceId !== identity.workspaceId) {
+    throw new UploadRequestError("upload_idempotency_mismatch", "Upload idempotency key belongs to a different uploader or workspace");
+  }
+}
+
 /** An idempotent initiate replay must describe the same file as the original request. */
 function assertSameInitiate(session: UploadSession, input: { fileName: string; contentType: string; sizeBytes: number; checksumSha256?: string }): void {
   if (session.fileName !== input.fileName || session.contentType !== input.contentType || session.sizeBytes !== input.sizeBytes
@@ -253,6 +269,7 @@ class DemoUploadSessions implements UploadSessionPort {
     const existingId = this.idempotency.get(`${identity.tenantId}:${input.idempotencyKey}`);
     if (existingId) {
       const existing = await this.get(identity, existingId);
+      assertSameUploader(identity, existing);
       if (existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
     }
     const config = getServerConfig();
@@ -551,6 +568,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
       const prior = await this.readIdempotency(idempotencyObject);
       if (prior?.uploadId) {
         const existing = await this.get(identity, prior.uploadId).catch(() => null);
+        if (existing) assertSameUploader(identity, existing);
         if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
       }
       const created = await this.createSession(identity, input, idempotencyObject, prior?.generation);
