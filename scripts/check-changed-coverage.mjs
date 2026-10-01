@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
 const COVERAGE_ROOTS = ["core/", "lib/", "control-loop/", "adapters/upload/"];
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+function git(args, options = {}) {
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", ...options }).trim();
+}
 
 function normalizeRepoPath(value) {
   const clean = value.replace(/^file:\/\//, "").split("?")[0];
@@ -48,14 +52,31 @@ function parseLcov(content) {
   return records;
 }
 
+function eventBaseSha() {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) return null;
+  try {
+    const event = JSON.parse(readFileSync(eventPath, "utf8"));
+    return event.pull_request?.base?.sha ?? event.before ?? null;
+  } catch { return null; }
+}
+
+function ensureCommit(base) {
+  try { git(["cat-file", "-e", `${base}^{commit}`]); return; }
+  catch {
+    if (!process.env.GITHUB_ACTIONS) throw new Error(`Coverage base commit ${base} is not available locally.`);
+    git(["fetch", "--no-tags", "--depth=1", "origin", base], { stdio: ["ignore", "pipe", "pipe"] });
+  }
+}
+
 function changedFiles() {
-  const explicitBase = process.env.COVERAGE_BASE_REF?.trim();
-  let base = explicitBase;
+  let base = process.env.COVERAGE_BASE_REF?.trim() || eventBaseSha();
   if (!base) {
-    try { base = execFileSync("git", ["rev-parse", "HEAD^"], { encoding: "utf8" }).trim(); }
+    try { base = git(["rev-parse", "HEAD^"]); }
     catch { return []; }
   }
-  return execFileSync("git", ["diff", "--name-only", "--diff-filter=ACMR", base, "HEAD"], { encoding: "utf8" })
+  ensureCommit(base);
+  return git(["diff", "--name-only", "--diff-filter=ACMR", base, "HEAD"])
     .split(/\r?\n/)
     .map((file) => file.trim().split(path.sep).join("/"))
     .filter(Boolean);
