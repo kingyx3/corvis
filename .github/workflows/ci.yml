@@ -379,6 +379,8 @@ jobs:
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
           # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/email-notifications.mjs
+          # Recorded research scopes and attack-mode SCIM caches cannot outlive revoked authority. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/authorization-cache-revocation.mjs
           # Migration 073 corrects the audit rows 069 mislabelled; append-only audit means it is exercised in a rolled-back transaction.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/migration-073-audit-correction.mjs
       - name: Exercise RLS tenant-isolation negatives as a non-owner role
