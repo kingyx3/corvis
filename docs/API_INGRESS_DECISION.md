@@ -2,7 +2,7 @@
 
 **Status:** implemented in repository; live UAT rollout/evidence pending  
 **Decision date:** 2026-09-20  
-**Implementation tracking:** #99
+**Implementation tracking:** #99 (completed 2026-09-20)
 
 This document records the approved Corvis public API ingress architecture and its rollout state. The Terraform, Worker proxy and security-acceptance contract now implement the target design in the repository; this does **not** claim that provider-side UAT resources have already been applied or that live controls have already passed.
 
@@ -130,7 +130,7 @@ The implementation does not add deterministic provider identifiers as human-mana
 
 The repository implementation is complete enough for CI/provider planning, but production-like operation is **not evidenced until UAT apply + live Security acceptance succeed**.
 
-Issue #99 therefore remains open through rollout. A code merge is not equivalent to provider evidence.
+Issue #99 completed the repository ingress migration and is closed. Live UAT/provider evidence remains a separate acceptance gate; a code merge is not equivalent to provider evidence.
 
 ## Live UAT acceptance contract
 

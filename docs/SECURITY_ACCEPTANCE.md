@@ -69,7 +69,7 @@ Security acceptance authenticates to GCP through GitHub OIDC/WIF and derives:
 - `corvis-gateway-${environment}@${project}.iam.gserviceaccount.com` expected invoker identity;
 - the deterministic public API hostname from `CLOUDFLARE_ZONE_NAME` and environment.
 
-The Postgres DSN remains a runtime secret in GCP Secret Manager. Its secret name is deterministic: `corvis-${environment}-postgres-dsn`.
+The Postgres DSN remains a runtime secret in GCP Secret Manager. Its secret name is deterministic: `corvis-postgres-dsn-${environment}`.
 
 ## Executable UAT evidence
 
@@ -114,4 +114,4 @@ The workflow uploads separate sanitized JSON artifacts for edge/gateway and Post
 
 A passing source-code CI run is not provider evidence. For a material security release, retain the successful UAT acceptance artifacts together with the release SHA/deployment evidence and reference them from the enterprise control-evidence process.
 
-Issue #99 remains open until live production-like UAT proves the gateway/Worker/IAM checks and live Postgres RLS isolation against deployed provider resources.
+Issue #99 completed the repository ingress migration and is closed. Live production-like UAT must still prove the gateway/Worker/IAM checks and live Postgres RLS isolation against deployed provider resources before the corresponding operational/security acceptance gates are considered complete.
