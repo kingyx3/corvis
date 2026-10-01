@@ -12,7 +12,7 @@ This document describes the repository implementation. Confluence remains author
 - documentation-authority, internal-link, architecture-drift and GitHub issue-hygiene scanners;
 - deterministic plan/apply envelope with dry-run default and mutation budget;
 - health/closure gates that fail closed on incomplete or failed scans;
-- daily incremental vs weekly/monthly full-scan scope;
+- daily incremental vs weekly/monthly full-scan scope: the watermark records the last successfully scanned commit and a daily run scans every path changed in `<last scanned commit>..HEAD` (read with `git diff -z`, so non-ASCII and unusual file names match verbatim). A missing watermark, a watermark from before the field existed, an unreachable or non-ancestor commit, or no git checkout (the Cloud Run image) falls back to a full scan;
 - durable watermark state;
 - single-writer lease with stale-lock recovery;
 - one structured `RunReport` instead of scattered side effects.

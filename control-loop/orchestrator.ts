@@ -32,6 +32,8 @@ export type RunDependencies = {
   runId?: string;
   /** Paths changed since the watermark, for a daily incremental scan. `null`/omitted means unavailable, which forces a full scan. */
   changedPaths?: string[] | null;
+  /** Commit the scanned checkout is at; recorded in the watermark when the run succeeds so the next daily scan can diff from it. */
+  headCommit?: string | null;
   /** Open/closed control-loop-labeled issues. `null`/omitted means unavailable. */
   issueSnapshot?: IssueSnapshot | null;
   /**
@@ -80,8 +82,9 @@ function nextWatermark(input: {
   runId: string;
   status: RunStatus;
   scanComplete: boolean;
+  headCommit: string | null;
 }): Watermark {
-  const { previous, mode, now, runId, status, scanComplete } = input;
+  const { previous, mode, now, runId, status, scanComplete, headCommit } = input;
   const succeeded = status === "complete";
   const isWeekly = mode === "weekly" || mode === "monthly";
   return {
@@ -91,6 +94,9 @@ function nextWatermark(input: {
     lastWeeklyScanComplete: isWeekly ? succeeded && scanComplete : previous.lastWeeklyScanComplete,
     consecutiveFailures: succeeded ? 0 : previous.consecutiveFailures + 1,
     lastRunId: runId,
+    // Only a successful run proves everything up to headCommit was scanned; an
+    // unknown head (no git) keeps the older commit, which only widens the next diff.
+    lastScannedCommit: succeeded && headCommit ? headCommit : previous.lastScannedCommit ?? null,
   };
 }
 
@@ -193,7 +199,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     // since closing issues without an issue snapshot is meaningless.
     const scanComplete = status !== "failed" && scanners.every((scanner) => scanner.complete || scanner.skipped === true);
     const allScannersComplete = status !== "failed" && scanners.every((scanner) => scanner.complete);
-    const computeWatermark = () => nextWatermark({ previous: previousWatermark, mode: deps.mode, now: deps.now, runId, status, scanComplete });
+    const computeWatermark = () => nextWatermark({ previous: previousWatermark, mode: deps.mode, now: deps.now, runId, status, scanComplete, headCommit: deps.headCommit ?? null });
     const computeHealth = (watermark: Watermark) => evaluateHealth({ now: deps.now, watermark, weeklyScanComplete: watermark.lastWeeklyScanComplete });
     // Plan from the pre-apply health; the watermark and reported health are
     // recomputed below if a writer failure downgrades the run's status.
