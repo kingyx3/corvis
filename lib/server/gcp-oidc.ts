@@ -89,21 +89,24 @@ export class GoogleOidcVerifier {
   }
 
   /**
-   * Single-flight, rate-limited JWKS refresh: once keys are cached, an unknown
-   * `kid` (or a failing Google endpoint) triggers at most one fetch per
-   * JWKS_MIN_REFRESH_INTERVAL_MS, and a failed refresh keeps the cached keys.
+   * Single-flight, rate-limited JWKS refresh: an unknown `kid` or a failing
+   * Google endpoint triggers at most one fetch per JWKS_MIN_REFRESH_INTERVAL_MS,
+   * including after a cold-start failure. Unexpired cached keys survive a
+   * failed refresh; expired keys never authenticate, so an outage cannot keep
+   * a rotated or revoked key trusted.
    */
   private async key(kid: string, nowMs: number): Promise<GoogleJwk> {
     if (nowMs >= this.keysExpireAt || !this.keys.has(kid)) {
-      const throttled = this.keys.size > 0 && nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS;
+      const throttled = !this.refreshInFlight && nowMs - this.lastRefreshAttemptAt < JWKS_MIN_REFRESH_INTERVAL_MS;
       if (!throttled) {
         try {
           await this.refreshKeys(nowMs);
         } catch (error) {
-          if (this.keys.size === 0) throw error;
+          if (this.keys.size === 0 || nowMs >= this.keysExpireAt) throw error;
         }
       }
     }
+    if (nowMs >= this.keysExpireAt) throw new Error("GCP OIDC signing keys expired; JWKS refresh unavailable");
     const key = this.keys.get(kid);
     if (!key) throw new Error("GCP OIDC signing key is unknown");
     return key;

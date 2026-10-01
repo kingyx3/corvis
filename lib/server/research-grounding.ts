@@ -152,6 +152,8 @@ const MONTH = String.raw`(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May
 const NOT_A_UNIT = String.raw`(?![\d]|[.,]\d|\s?(?:%|per\s?cent|pct|bps?\b|basis|thousand|million|billion|trillion|mm\b|mn\b|bn\b|tn\b|[kmbtx]\b))`;
 const DAY_BEFORE_MONTH = new RegExp(String.raw`\b(?:[12]?\d|3[01])(?:st|nd|rd|th)?(?=\s+${MONTH}\b)`, "g");
 const DAY_AFTER_MONTH = new RegExp(String.raw`\b(${MONTH}\s+)(?:[12]?\d|3[01])(?:st|nd|rd|th)?${NOT_A_UNIT}(?![\w])`, "g");
+// "1.2m-9.9m", "1.2x-9.9x": the upper bound of a range follows a number's unit suffix, so it is a claim, not a label.
+const AFTER_UNIT_RANGE = new RegExp(String.raw`\d\s?(?:${SUFFIX})-$`, "i");
 // "12-month", "30-day": a duration used as an adjective is a label.
 const HYPHENATED_DURATION = /\b\d+-(?=(?:day|week|month|quarter|year|hour|minute)s?\b)/gi;
 
@@ -229,8 +231,8 @@ function extractSpelledFigures(text: string): NumericFigure[] {
 /**
  * Pulls the numeric claims out of free text. Deliberately NOT counted as figures (they are labels, not claims):
  * bare four-digit years 1900-2100, dates (ISO, "30 September"/"Sep 30", uuids, urls are stripped first), hyphenated durations ("12-month"), list markers at the start of a
- * line, and digits glued to letters such as "Q2", "FY25", "H1", "fund-a2", "company-7" (a currency code such as "USD100" is
- * still a figure). Spelled-out numbers are parsed too (see `extractSpelledFigures`), so writing "four percent"
+ * line, and digits glued to letters such as "Q2", "FY25", "H1", "fund-a2", "company-7" (a currency code such as "USD100" and the
+ * upper bound of a unit range such as "1.2m-9.9m" are still figures). Spelled-out numbers are parsed too (see `extractSpelledFigures`), so writing "four percent"
  * instead of "4%" does not bypass the grounding check. Scientific notation ("1e6") is read as an exact value; a
  * comma followed by one or two digits ("12,5 million", "12,50,000") is flagged `ambiguous` and never grounds.
  */
@@ -249,7 +251,7 @@ export function extractNumericFigures(text: string): NumericFigure[] {
     const numberText = match[1] ?? "";
     const suffixText = (match[2] ?? "").trim();
     const before = cleaned.slice(0, match.index ?? 0);
-    if (/[A-Za-z_]-?$/.test(before) && !/\b[A-Z]{3}$/.test(before)) continue;
+    if (/[A-Za-z_]-?$/.test(before) && !/\b[A-Z]{3}$/.test(before) && !AFTER_UNIT_RANGE.test(before)) continue;
     const scientific = SCIENTIFIC.exec(numberText);
     const ambiguous = numberText.includes(",") && !GROUPED.test(numberText);
     // An ambiguous token is read with a decimal comma only to give it a value; it is flagged so it never grounds.
