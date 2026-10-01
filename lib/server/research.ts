@@ -155,7 +155,7 @@ export function parseResearchQuestion(body: unknown): string | null {
 // any 8-4-4-4-12 hex string.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type CitationLink = { observationId?: string; hasOpenReconciliation: boolean };
+type CitationLink = { observationId?: string; hasOpenReconciliation: boolean; /** The enrichment lookup failed, so the open-reconciliation state of this citation is not known. */ statusUnknown?: true };
 
 export class PermissionedResearchService {
   private readonly db: PostgresSqlApi;
@@ -171,8 +171,8 @@ export class PermissionedResearchService {
    * external search index, so a source reference id that doesn't resolve to
    * anything in Postgres (or isn't even a UUID) just gets no link rather than
    * failing the whole answer -- this is chrome on top of an already-returned,
-   * already-entitled answer, never a gate on it. A database failure is logged (the answer still returns): the open
-   * reconciliation flag is then absent from every citation, which the UI cannot tell apart from "no open exception".
+   * already-entitled answer, never a gate on it. A database failure is logged and the answer still returns, but every
+   * citation is marked `statusUnknown` so the UI does not present a missing flag as "no open exception".
    */
   private async citationLinks(identity: RequestIdentity, correlationId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
     const ids = [...new Set(sourceReferenceIds)].filter((id) => UUID.test(id));
@@ -213,7 +213,7 @@ export class PermissionedResearchService {
         errorName: error instanceof Error ? error.name : typeof error,
         ...(typeof code === "string" ? { code } : {}),
       });
-      return new Map();
+      return new Map(ids.map((id) => [id, { hasOpenReconciliation: false, statusUnknown: true as const }]));
     }
     return links;
   }
@@ -364,7 +364,8 @@ export class PermissionedResearchService {
           page: hit.page,
           label: hit.label || `Source ${hit.sourceReferenceId}`,
           observationId: link?.observationId,
-          hasOpenReconciliation: link?.hasOpenReconciliation,
+          hasOpenReconciliation: link?.statusUnknown ? undefined : link?.hasOpenReconciliation,
+          ...(link?.statusUnknown ? { reconciliationStatusUnknown: true } : {}),
         };
       }) : [];
       const computed: SemanticComputedResult = {

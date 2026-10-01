@@ -299,6 +299,7 @@ test("parseResearchAnswerPayload rejects malformed payloads (table)", () => {
     ["citation id too long", mutate((v) => { v.citations[0].sourceReferenceId = long(129); })],
     ["citation page fractional", mutate((v) => { v.citations[0].page = 1.5; })],
     ["citation flag not boolean", mutate((v) => { v.citations[0].hasOpenReconciliation = "yes"; })],
+    ["citation unknown-status flag not boolean", mutate((v) => { v.citations[0].reconciliationStatusUnknown = "yes"; })],
     ["semantic id not server-shaped", mutate((v) => { v.semanticQueryIds = ["../../etc"]; v.computedResults = undefined; })],
     ["too many semantic ids", mutate((v) => { v.semanticQueryIds = Array.from({ length: 11 }, (_, i) => `sq_${String(i).padStart(24, "0")}`); v.computedResults = undefined; })],
     ["computed result for an unlisted query", mutate((v) => { v.computedResults[0].semanticQueryId = "sq_ffffffffffffffffffffffff"; })],

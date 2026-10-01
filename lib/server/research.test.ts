@@ -256,7 +256,7 @@ test("citations link to their reviewed observation and flag an open reconciliati
   }
 });
 
-test("a citation-link database failure is logged and the answer still returns (flag absent, not silently swallowed)", async () => {
+test("a citation-link database failure is logged, the answer still returns, and the citation is marked status-unknown", async () => {
   const db = new FakeDb();
   const sourceReferenceId = "00000000-0000-0000-0000-000000000201";
   db.citationLinkRows = [{ source_reference_id: sourceReferenceId, observation_id: "00000000-0000-0000-0000-000000000301", has_open_reconciliation: true }];
@@ -270,6 +270,7 @@ test("a citation-link database failure is logged and the answer still returns (f
     assert.equal(result.citations.length, 1);
     assert.equal(result.citations[0]?.observationId, undefined);
     assert.equal(result.citations[0]?.hasOpenReconciliation, undefined);
+    assert.equal(result.citations[0]?.reconciliationStatusUnknown, true, "a failed lookup is not presented as 'no open exception'");
   } finally {
     console.warn = originalWarn;
   }

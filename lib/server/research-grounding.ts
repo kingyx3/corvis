@@ -443,11 +443,12 @@ function str(value: unknown, max: number, min = 0): value is string {
 function optionalStr(value: unknown, max: number): boolean { return value === undefined || str(value, max); }
 
 function parseCitation(value: unknown): SourceCitation | null {
-  if (!isPlainObject(value) || !onlyKeys(value, ["sourceReferenceId", "documentId", "page", "label", "observationId", "hasOpenReconciliation"])) return null;
+  if (!isPlainObject(value) || !onlyKeys(value, ["sourceReferenceId", "documentId", "page", "label", "observationId", "hasOpenReconciliation", "reconciliationStatusUnknown"])) return null;
   if (!str(value.sourceReferenceId, MAX_ID, 1) || !str(value.documentId, MAX_ID, 1) || !str(value.label, MAX_RETRIEVAL_LABEL_LENGTH * 2)) return null;
   if (!optionalStr(value.observationId, MAX_ID)) return null;
   if (value.page !== undefined && sanitizePage(value.page) === undefined) return null;
   if (value.hasOpenReconciliation !== undefined && typeof value.hasOpenReconciliation !== "boolean") return null;
+  if (value.reconciliationStatusUnknown !== undefined && typeof value.reconciliationStatusUnknown !== "boolean") return null;
   return {
     sourceReferenceId: value.sourceReferenceId,
     documentId: value.documentId,
@@ -455,6 +456,7 @@ function parseCitation(value: unknown): SourceCitation | null {
     ...(value.page !== undefined ? { page: value.page as number } : {}),
     ...(value.observationId !== undefined ? { observationId: value.observationId as string } : {}),
     ...(value.hasOpenReconciliation !== undefined ? { hasOpenReconciliation: value.hasOpenReconciliation as boolean } : {}),
+    ...(value.reconciliationStatusUnknown !== undefined ? { reconciliationStatusUnknown: value.reconciliationStatusUnknown as boolean } : {}),
   };
 }
 
