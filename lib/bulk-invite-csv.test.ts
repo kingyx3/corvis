@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bulkInviteErrorText, tenantAdminRows } from "./bulk-invite-csv.ts";
+import { bulkInviteErrorText, parseBulkInviteCsv, tenantAdminRows } from "./bulk-invite-csv.ts";
 
 const workspace = "22222222-2222-4222-8222-222222222222";
 
@@ -14,4 +14,11 @@ test("bulkInviteErrorText explains stable codes and passes other text through", 
   assert.match(bulkInviteErrorText("tenant_admin_confirmation_required"), /confirm/i);
   assert.match(bulkInviteErrorText("invitation_already_pending"), /already pending/i);
   assert.equal(bulkInviteErrorText("Invalid CSV row"), "Invalid CSV row");
+});
+
+test("parseBulkInviteCsv accepts accountadmin and normalises the legacy workspace_admin alias", () => {
+  const csv = `email,role,workspaceId\na@example.com,accountadmin,${workspace}\nb@example.com,workspace_admin,${workspace}\nc@example.com,support,${workspace}\nd@example.com,constructor,${workspace}\n`;
+  const { rows, errors } = parseBulkInviteCsv(csv);
+  assert.deepEqual(rows.map((row) => [row.row, row.roleName]), [[2, "accountadmin"], [3, "accountadmin"]]);
+  assert.deepEqual(errors.map((error) => error.row), [4, 5]);
 });

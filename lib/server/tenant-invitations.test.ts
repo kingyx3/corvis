@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { AuthorizationError } from "../../core/enterprise.ts";
 import { ConflictError } from "./platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { acceptTenantInvitation, assertInvitationIssuer, createTenantInvitation, normalizeTenantInvitation } from "./tenant-invitations.ts";
+import { BULK_ROLES } from "../bulk-invite-csv.ts";
+import { acceptTenantInvitation, assertInvitationIssuer, createTenantInvitation, INVITABLE_ROLES, normalizeTenantInvitation } from "./tenant-invitations.ts";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE = "22222222-2222-4222-8222-222222222222";
@@ -130,4 +131,52 @@ test("invitation migration stores only a digest and atomically links identity, m
   assert.match(fn, /update corvis_control\.tenant_invitation/);
   assert.match(fn, /insert into corvis_control\.audit_event/);
   assert.match(sql, /revoke all on function corvis_control\.accept_tenant_invitation[^;]+from public/);
+});
+
+test("the legacy workspace_admin role name is accepted as an alias and normalised to accountadmin", () => {
+  const base = { ...command, confirmTenantAdmin: false };
+  assert.equal(normalizeTenantInvitation({ ...base, roleName: "accountadmin" })?.roleName, "accountadmin");
+  assert.equal(normalizeTenantInvitation({ ...base, roleName: " workspace_admin " })?.roleName, "accountadmin");
+  assert.equal(normalizeTenantInvitation({ ...base, roleName: "support" }), undefined);
+  assert.equal(normalizeTenantInvitation({ ...base, roleName: "Workspace_Admin" }), undefined);
+});
+
+test("creating a workspace-admin invitation persists the accountadmin role, even from a legacy caller", async () => {
+  const db = new FakeDb();
+  const normalized = normalizeTenantInvitation({ ...command, confirmTenantAdmin: false, roleName: "workspace_admin" });
+  assert.ok(normalized);
+  const { invitation } = await createTenantInvitation(identity, normalized, "corr-alias", db);
+  assert.equal(invitation.roleName, "accountadmin");
+  const insert = db.executions.find((entry) => entry.sql.includes("insert into corvis_control.tenant_invitation"));
+  assert.ok(insert?.parameters.includes("accountadmin"));
+  assert.ok(!insert?.parameters.includes("workspace_admin"));
+});
+
+async function latestRoleCheck(table: string, constraint: string): Promise<Set<string>> {
+  const dir = "db/postgres/migrations";
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".sql")).sort();
+  let latest: Set<string> | undefined;
+  for (const file of files) {
+    const sql = (await readFile(`${dir}/${file}`, "utf8")).toLowerCase();
+    // Both the explicit `add constraint <name> check (...)` form and the inline column check in create table.
+    const explicit = new RegExp(`alter table corvis_control\\.${table}\\s+add constraint ${constraint}\\s+check \\(role_name in \\(([^)]*)\\)\\)`, "g");
+    for (const match of sql.matchAll(explicit)) latest = new Set(match[1].match(/'([^']+)'/g)?.map((role) => role.slice(1, -1)));
+    const inline = new RegExp(`create table if not exists corvis_control\\.${table} \\([\\s\\S]*?role_name text not null check \\(role_name in \\(([^)]*)\\)\\)`, "g");
+    for (const match of sql.matchAll(inline)) latest = new Set(match[1].match(/'([^']+)'/g)?.map((role) => role.slice(1, -1)));
+  }
+  assert.ok(latest, `no role check found for ${table}`);
+  return latest;
+}
+
+test("every invitable role is allowed by the latest membership and tenant_invitation role checks", async () => {
+  const membership = await latestRoleCheck("membership", "membership_role_name_check");
+  const invitation = await latestRoleCheck("tenant_invitation", "tenant_invitation_role_name_check");
+  assert.ok(membership.size >= 5, "expected to parse the membership role list");
+  for (const role of INVITABLE_ROLES) {
+    assert.ok(membership.has(role), `${role} is invitable but rejected by membership_role_name_check, so acceptance would fail`);
+    assert.ok(invitation.has(role), `${role} is invitable but rejected by tenant_invitation_role_name_check`);
+  }
+  for (const role of BULK_ROLES) assert.ok(INVITABLE_ROLES.has(role), `bulk role ${role} is not invitable`);
+  assert.ok(!membership.has("workspace_admin"), "workspace_admin was retired by migration 048");
+  assert.ok(!invitation.has("workspace_admin"));
 });

@@ -100,7 +100,7 @@ export type TenantInvitation = {
   workspaceId: string;
   workspaceName: string;
   email: string;
-  roleName: "tenant_admin" | "workspace_admin" | "reviewer" | "analyst" | "viewer";
+  roleName: "tenant_admin" | "accountadmin" | "reviewer" | "analyst" | "viewer";
   status: "pending" | "accepted" | "revoked" | "expired";
   createdAt: string;
   expiresAt: string;

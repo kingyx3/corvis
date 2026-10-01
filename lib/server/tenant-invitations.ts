@@ -8,13 +8,15 @@ import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 
 export const INVITATION_TTL_DAYS = 7;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const INVITABLE_ROLES = new Set(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
+export const INVITABLE_ROLES: ReadonlySet<string> = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
+// `workspace_admin` was renamed to `accountadmin` in migration 048; older clients, CSVs and API callers may still send it.
+export function canonicalInvitationRole(role: string): string { return role === "workspace_admin" ? "accountadmin" : role; }
 
 export type CreateTenantInvitation = {
   tenantId: string;
   workspaceId: string;
   email: string;
-  roleName: "tenant_admin" | "workspace_admin" | "reviewer" | "analyst" | "viewer";
+  roleName: "tenant_admin" | "accountadmin" | "reviewer" | "analyst" | "viewer";
   reason: string;
   confirmTenantAdmin: boolean;
 };
@@ -49,7 +51,7 @@ export function normalizeTenantInvitation(value: Record<string, unknown>): Creat
   const tenantId = typeof value.tenantId === "string" ? value.tenantId.trim() : "";
   const workspaceId = typeof value.workspaceId === "string" ? value.workspaceId.trim() : "";
   const email = typeof value.email === "string" ? value.email.trim().toLowerCase() : "";
-  const roleName = typeof value.roleName === "string" ? value.roleName.trim() : "";
+  const roleName = typeof value.roleName === "string" ? canonicalInvitationRole(value.roleName.trim()) : "";
   const reason = typeof value.reason === "string" ? value.reason.trim() : "";
   const confirmTenantAdmin = value.confirmTenantAdmin === true;
   if (!UUID.test(tenantId) || !UUID.test(workspaceId) || email.length > 320 || !EMAIL.test(email)

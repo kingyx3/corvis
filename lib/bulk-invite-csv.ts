@@ -3,7 +3,8 @@
 // Keep this module free of server-only imports: it ships in the client bundle.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const BULK_ROLES = new Set(["tenant_admin", "workspace_admin", "reviewer", "analyst", "viewer"]);
+export const BULK_ROLES: ReadonlySet<string> = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
+// `workspace_admin` was renamed to `accountadmin` (migration 048); CSVs prepared before the rename still use it.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseCsvLine(line: string): string[] {
@@ -20,7 +21,7 @@ export function parseBulkInviteCsv(csv:string): { rows:BulkInviteRow[]; errors:A
   const nameIndex=index("name","fullname"),emailIndex=index("email","emailaddress"),roleIndex=index("role","rolename"),workspaceIndex=index("workspace","workspaceid"),reasonIndex=index("reason");
   if(emailIndex<0||roleIndex<0||workspaceIndex<0) return {rows:[],errors:[{row:1,error:"Required columns: email, role, workspaceId"}]};
   const rows:BulkInviteRow[]=[]; const errors:Array<{row:number;error:string}>=[];
-  for(let i=1;i<lines.length;i++){const rowNumber=i+1;try{const values=parseCsvLine(lines[i]);const email=(values[emailIndex]??"").trim().toLowerCase(),roleName=(values[roleIndex]??"").trim(),workspaceId=(values[workspaceIndex]??"").trim(),name=nameIndex>=0?(values[nameIndex]??"").trim():"",reason=reasonIndex>=0?(values[reasonIndex]??"").trim():"Bulk enterprise onboarding";if(!EMAIL.test(email)||!BULK_ROLES.has(roleName)||!UUID.test(workspaceId)||reason.length<3||reason.length>1000){errors.push({row:rowNumber,error:"Invalid email, role, workspaceId, or reason"});continue;}rows.push({row:rowNumber,name,email,roleName,workspaceId,reason});}catch{errors.push({row:rowNumber,error:"Invalid CSV row"});}}
+  for(let i=1;i<lines.length;i++){const rowNumber=i+1;try{const values=parseCsvLine(lines[i]);const email=(values[emailIndex]??"").trim().toLowerCase(),rawRole=(values[roleIndex]??"").trim(),roleName=rawRole==="workspace_admin"?"accountadmin":rawRole,workspaceId=(values[workspaceIndex]??"").trim(),name=nameIndex>=0?(values[nameIndex]??"").trim():"",reason=reasonIndex>=0?(values[reasonIndex]??"").trim():"Bulk enterprise onboarding";if(!EMAIL.test(email)||!BULK_ROLES.has(roleName)||!UUID.test(workspaceId)||reason.length<3||reason.length>1000){errors.push({row:rowNumber,error:"Invalid email, role, workspaceId, or reason"});continue;}rows.push({row:rowNumber,name,email,roleName,workspaceId,reason});}catch{errors.push({row:rowNumber,error:"Invalid CSV row"});}}
   return {rows,errors};
 }
 
