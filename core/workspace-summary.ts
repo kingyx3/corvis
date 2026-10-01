@@ -258,10 +258,11 @@ export function comparePeriods(left: string, right: string): number {
  * Total order over published snapshot values of one fund: chronological by
  * period, then the later `publishedAt`, then snapshot id. Two published
  * snapshots can share a fund and period (a restatement); every consumer (the
- * trend's "latest as of a period" and the exposure headline's "latest per
- * fund") must pick the same one, so both use this comparator.
+ * trend's "latest as of a period", the exposure headline's "latest per
+ * fund" and the dashboard's per-fund trend points) must pick the same one, so
+ * all use this comparator.
  */
-function compareSnapshotValues(a: { period: string; publishedAt: string | null; snapshotId: string }, b: { period: string; publishedAt: string | null; snapshotId: string }): number {
+export function compareSnapshotValues(a: { period: string; publishedAt: string | null; snapshotId: string }, b: { period: string; publishedAt: string | null; snapshotId: string }): number {
   const byPeriod = comparePeriods(a.period, b.period);
   if (byPeriod !== 0) return byPeriod;
   const left = a.publishedAt ? Date.parse(a.publishedAt) : Number.NEGATIVE_INFINITY;

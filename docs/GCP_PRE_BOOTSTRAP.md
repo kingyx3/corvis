@@ -269,8 +269,7 @@ Confirm all of the following:
 - `state` is `ACTIVE`;
 - `issuerUri` is GitHub Actions' token issuer;
 - `google.subject` maps to `assertion.sub`;
-- the condition contains `repo:kingyx3/corvis:environment:uat`;
-- the condition contains `refs/heads/main`.
+- the condition is exactly the equality conjunction created in step 6 (`assertion.sub == 'repo:kingyx3/corvis:environment:uat' && assertion.ref == 'refs/heads/main'`; clause order is irrelevant). The equivalent `assertion.repository == 'kingyx3/corvis' && assertion.environment == 'uat' && assertion.ref == 'refs/heads/main'` form is also accepted. Negations (`!=`), `||`, parentheses, method calls and extra clauses are rejected by the verifier even when they mention the expected values.
 
 Inspect the deploy-service-account binding:
 

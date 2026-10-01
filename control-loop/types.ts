@@ -75,6 +75,12 @@ export interface Watermark {
   lastWeeklyScanComplete: boolean;
   consecutiveFailures: number;
   lastRunId: string | null;
+  /**
+   * Full commit sha the last successful run scanned. A daily incremental scan
+   * diffs this against HEAD. Optional on read: watermarks written before the
+   * field existed parse as null, which forces a full scan.
+   */
+  lastScannedCommit?: string | null;
 }
 
 export interface HealthState {

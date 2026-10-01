@@ -12,6 +12,7 @@ export function emptyWatermark(): Watermark {
     lastWeeklyScanComplete: false,
     consecutiveFailures: 0,
     lastRunId: null,
+    lastScannedCommit: null,
   };
 }
 
@@ -20,7 +21,10 @@ function parseWatermark(raw: string | null): Watermark {
   try {
     const parsed = JSON.parse(raw) as Partial<Watermark>;
     if (parsed.schemaVersion !== SCHEMA_VERSION) return emptyWatermark();
-    return { ...emptyWatermark(), ...parsed };
+    // Watermarks written before lastScannedCommit existed lack it; null makes
+    // the next daily run a full scan, which is safe.
+    const lastScannedCommit = typeof parsed.lastScannedCommit === "string" && parsed.lastScannedCommit ? parsed.lastScannedCommit : null;
+    return { ...emptyWatermark(), ...parsed, lastScannedCommit };
   } catch {
     // A corrupted watermark must never crash the loop; it degrades to a full
     // rescan, which is safe, rather than trusting a partially-written file.

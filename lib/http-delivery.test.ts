@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { createHttpDeliveryPort } from "../adapters/delivery/http-delivery.ts";
+import { SESSION_EXPIRED_EVENT, UnauthenticatedError } from "./api-errors.ts";
 
 // Lives in lib/ so `npm test` (which globs lib/*.test.ts) runs it.
 
@@ -42,4 +43,19 @@ test("a failed export request is not cached", async () => {
   const port = createHttpDeliveryPort();
   await assert.rejects(port.createExport("csv"), /unavailable/);
   assert.deepEqual(await port.createExport("csv"), { exportId: "e" });
+});
+
+test("a 401 from any delivery call is an UnauthenticatedError and fires the session-expired event", async () => {
+  const fired: string[] = [];
+  Object.defineProperty(globalThis, "window", { value: { dispatchEvent: (event: Event) => { fired.push(event.type); return true; } }, configurable: true });
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: "authentication_required" }), { status: 401 })) as typeof fetch;
+    const port = createHttpDeliveryPort();
+    await assert.rejects(port.createExport("csv"), UnauthenticatedError);
+    await assert.rejects(port.listExports(), UnauthenticatedError);
+    await assert.rejects(port.prepareDownload("e1"), UnauthenticatedError);
+    assert.deepEqual(fired, [SESSION_EXPIRED_EVENT, SESSION_EXPIRED_EVENT, SESSION_EXPIRED_EVENT]);
+  } finally {
+    Reflect.deleteProperty(globalThis, "window");
+  }
 });

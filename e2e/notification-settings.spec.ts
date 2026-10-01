@@ -53,6 +53,17 @@ test("security notices are always on, optional categories save, and delivery sta
   await expect(dialog).toBeHidden();
 });
 
+test("an untouched notification settings dialog closes with Escape or a backdrop click without a discard prompt", async ({ page }) => {
+  const dialog = await openFromSidebar(page);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  const reopened = await openFromSidebar(page);
+  await page.mouse.click(2, 2);
+  await expect(reopened).toBeHidden();
+  await expect(page.getByText("Discard what you entered?")).toHaveCount(0);
+});
+
 test("clicking the backdrop over an edited dialog keeps focus inside it so Escape only dismisses the prompt", async ({ page }) => {
   const dialog = await openFromSidebar(page);
   const exportReady = dialog.getByRole("listitem").filter({ hasText: "Export ready" });
@@ -79,6 +90,14 @@ test("the settings link in emails opens the dialog and a failed save is reported
   await dialog.getByRole("button", { name: "Save settings" }).click();
   await expect(dialog.getByRole("alert")).toBeVisible();
   await expect(dialog).toBeVisible();
+});
+
+test("an expired session while loading notification settings says so instead of a generic failure", async ({ page }) => {
+  await page.route("**/api/v1/notification-preferences", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "authentication_required" }) }));
+  await page.goto("/?notifications=settings");
+  const dialog = page.getByRole("dialog", { name: "Notification settings" });
+  await expect(dialog.getByRole("alert")).toContainText(/your session has expired/i);
+  await expect(page.getByRole("alert", { name: /session expired/i })).toBeVisible();
 });
 
 test("the command palette opens notification settings", async ({ page }) => {

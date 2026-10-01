@@ -3,6 +3,7 @@ import {
   PORTFOLIO_VALUE_METRICS,
   VALUE_SUBJECT_LEVELS,
   comparePeriods,
+  compareSnapshotValues,
   type PortfolioValueFact,
   type PortfolioValueMetric,
   type WorkspaceSummary,
@@ -142,7 +143,13 @@ export function buildFundTrends(facts: PortfolioValueFact[], currency: string | 
     series.points.push({ period: value.period, snapshotId: value.snapshotId, value: value.value, metricCode: value.metricCode, publishedAt: value.publishedAt });
     byFund.set(value.fundId, series);
   }
-  for (const series of byFund.values()) series.points.sort((a, b) => comparePeriods(a.period, b.period));
+  // One point per fund and period: a restatement can publish a second snapshot
+  // for the same period, and the headline rollup keeps only the latest by
+  // `compareSnapshotValues`, so the trend must keep the same one.
+  for (const series of byFund.values()) {
+    series.points.sort(compareSnapshotValues);
+    series.points = series.points.filter((point, index, points) => index === points.length - 1 || points[index + 1]!.period !== point.period);
+  }
   return [...byFund.values()].sort((a, b) => a.fund.localeCompare(b.fund));
 }
 

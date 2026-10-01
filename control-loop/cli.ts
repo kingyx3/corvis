@@ -8,10 +8,12 @@
 // scan, preserving the documented scheduler contract.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
+import { createGitRunner, resolveChangedPaths } from "./changed-paths.ts";
 import { createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
 import { resolveRunMode } from "./schedule.ts";
 import { FileStateStore, GcsStateStore, type StateStore } from "./state.ts";
+import { readWatermark } from "./watermark.ts";
 
 const { values } = parseArgs({
   options: {
@@ -24,12 +26,6 @@ const { values } = parseArgs({
     root: { type: "string", default: "." },
   },
 });
-
-function changedPathsFromEnv(): string[] | null {
-  const raw = process.env.CONTROL_LOOP_CHANGED_PATHS;
-  if (!raw) return null;
-  return raw.split("\n").map((line) => line.trim()).filter(Boolean);
-}
 
 function createStateStore(): { store: StateStore; durable: boolean } {
   const bucket = process.env.CONTROL_LOOP_STATE_BUCKET?.trim();
@@ -46,6 +42,13 @@ function createStateStore(): { store: StateStore; durable: boolean } {
 async function run() {
   const mode = resolveRunMode(values.mode);
   const state = createStateStore();
+
+  // A daily incremental scan covers everything changed since the last
+  // successfully scanned commit (not just the latest commit), diffed here with
+  // git so non-ASCII paths and odd file names are handled verbatim. Any doubt
+  // yields null changed paths, which the orchestrator turns into a full scan.
+  const lastScannedCommit = await readWatermark(state.store).then((watermark) => watermark.lastScannedCommit ?? null, () => null);
+  const { headCommit, changedPaths } = await resolveChangedPaths({ lastScannedCommit, git: createGitRunner(values.root ?? ".") });
 
   const owner = process.env.GITHUB_REPOSITORY_OWNER;
   const repoFull = process.env.GITHUB_REPOSITORY;
@@ -66,7 +69,8 @@ async function run() {
     mode,
     now: new Date(),
     stateStore: state.store,
-    changedPaths: changedPathsFromEnv(),
+    changedPaths,
+    headCommit,
     issueSnapshot,
     // Without a credential, issue hygiene is best-effort (anonymous, rate
     // limited); a missing snapshot is then a skip, not a run failure.

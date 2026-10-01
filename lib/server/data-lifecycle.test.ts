@@ -206,6 +206,48 @@ test("an adapter failure records failed evidence and leaves the request retryabl
   }
 });
 
+test("a successful adapter reply with no usable body (204, empty 200, JSON null) still completes the request", async () => {
+  const replies: Array<[string, () => Response]> = [
+    ["204", () => new Response(null, { status: 204 })],
+    ["empty 200", () => new Response("", { status: 200 })],
+    ["JSON null", () => new Response("null", { status: 200 })],
+    ["non-JSON 200", () => new Response("ok", { status: 200 })],
+  ];
+  for (const [label, reply] of replies) {
+    await withAdapter(async () => {
+      const db = new FakeDb(baseRequest());
+      let calls = 0;
+      const result = await executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: (async () => { calls += 1; return reply(); }) as typeof fetch });
+      assert.equal(calls, 1, label);
+      assert.equal(result.state, "completed", label);
+      assert.equal(result.evidence.adapterStatus, "completed", label);
+      assert.deepEqual(db.evidenceRows.map((row) => row.outcome), ["completed"], label);
+      assert.equal(db.request.state, "completed", label);
+    });
+  }
+});
+
+test("a bookkeeping failure after the adapter succeeded is not recorded as an adapter failure", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  await withAdapter(async () => {
+    const db = new FakeDb(baseRequest());
+    const execute = db.execute.bind(db);
+    db.execute = async (sql, parameters) => {
+      if (sql.includes("state='completed'")) throw new Error("connection reset while completing");
+      return execute(sql, parameters);
+    };
+    let calls = 0;
+    await assert.rejects(
+      () => executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: (async () => { calls += 1; return new Response("{}", { status: 200 }); }) as typeof fetch }),
+      /connection reset while completing/,
+    );
+    assert.equal(calls, 1);
+    assert.equal(db.calls.some((call) => call.sql.includes("state='retryable'")), false, "the deleted scope must not be marked retryable");
+    assert.equal(db.evidenceRows.some((row) => row.outcome === "failed"), false, "no adapter-failed evidence for a successful deletion");
+    assert.equal(db.request.state, "executing", "left for lease-expiry reclaim, which re-sends the idempotent deletion");
+  });
+});
+
 test("a malformed request id is rejected as not found before reaching the uuid cast", async () => {
   const db = new FakeDb(baseRequest());
   await assert.rejects(

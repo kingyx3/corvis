@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { FundSnapshot } from "./contracts.ts";
 import { buildFundTrends, buildTrendContributors, buildWorkspaceDigest } from "./workspace-dashboard.ts";
-import type { PortfolioValueFact } from "./workspace-summary.ts";
+import { buildWorkspaceSummary, type PortfolioValueFact } from "./workspace-summary.ts";
 
 function fact(overrides: Partial<PortfolioValueFact> = {}): PortfolioValueFact {
   return { snapshotId: "a2", fundId: "fund-a", fund: "Fund A", period: "Q2 2026", publishedAt: "2026-08-01T00:00:00Z", metricCode: "nav", subjectLevel: "fund", currency: "USD", value: 120, factCount: 1, ...overrides };
@@ -60,4 +60,29 @@ test("returning-user digest merges publishes, exception changes and value deltas
 test("first visit establishes a baseline instead of replaying all history", () => {
   const digest = buildWorkspaceDigest({ lastSeenAt: null, snapshots: [snapshot()], fundTrends: [], exceptionEvents: [], currency: "USD" });
   assert.deepEqual(digest, { since: null, items: [], newPublishes: 0, exceptionChanges: 0, valueDeltas: 0 });
+});
+
+test("restated same-period snapshots resolve like the headline: one trend point, matching contributors and digest", () => {
+  // Snapshot id order ("s-a" < "s-z") disagrees with publish order (s-z first).
+  const facts = [
+    fact({ snapshotId: "s-q1", period: "Q1 2026", publishedAt: "2026-05-01T00:00:00Z", value: 100 }),
+    fact({ snapshotId: "s-a", period: "Q2 2026", publishedAt: "2026-09-01T00:00:00Z", value: 130 }),
+    fact({ snapshotId: "s-z", period: "Q2 2026", publishedAt: "2026-08-01T00:00:00Z", value: 110 }),
+    fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", period: "Q1 2026", publishedAt: "2026-05-02T00:00:00Z", value: 50 }),
+  ];
+  const summary = buildWorkspaceSummary({ snapshots: [], observations: [], documents: [], valueFacts: facts, now: new Date("2026-09-25T12:00:00Z") });
+  const series = buildFundTrends(facts, summary.currency);
+  const fundA = series.find((item) => item.fundId === "fund-a")!;
+  assert.deepEqual(fundA.points.map((point) => [point.period, point.snapshotId, point.value]), [["Q1 2026", "s-q1", 100], ["Q2 2026", "s-a", 130]]);
+
+  const contributors = buildTrendContributors(series, summary.valueTrend.map((point) => point.period));
+  for (const point of summary.valueTrend) {
+    assert.equal(contributors[point.period]!.reduce((sum, item) => sum + item.value, 0), point.value);
+  }
+  assert.equal(contributors["Q2 2026"]!.find((item) => item.fundId === "fund-a")!.snapshotId, "s-a");
+
+  const digest = buildWorkspaceDigest({ lastSeenAt: "2026-07-01T00:00:00Z", snapshots: [], fundTrends: series, exceptionEvents: [], currency: "USD" });
+  const delta = digest.items.find((item) => item.kind === "value_delta")!;
+  assert.equal(delta.snapshotId, "s-a");
+  assert.match(delta.detail, /\+\$30 since Q1 2026/);
 });

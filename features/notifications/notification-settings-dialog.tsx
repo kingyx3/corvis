@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { NotificationDelivery, NotificationPreferenceSetting, NotificationSettings } from "@/core/notifications";
 import { Icon } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
+import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 
 type Draft = Record<string, { enabled: boolean; delivery: NotificationDelivery }>;
@@ -17,6 +18,7 @@ async function request(init?: RequestInit): Promise<NotificationSettings> {
     ...init,
     headers: { ...workspaceContextHeaders(), accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}) },
   });
+  throwIfUnauthenticated(response);
   const body = await response.json().catch(() => ({})) as { data?: NotificationSettings; error?: string };
   if (!response.ok || !body.data) throw new Error(body.error === "human_identity_required" ? "Notification settings are only available to people, not service accounts." : "Notification settings could not be loaded. Try again.");
   return body.data;
@@ -40,7 +42,7 @@ export function NotificationSettingsDialog({ onClose }: { onClose: () => void })
   useEffect(() => {
     let active = true;
     request().then((loaded) => { if (active) { setSettings(loaded); setDraft(draftOf(loaded.categories)); } })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Notification settings could not be loaded."); });
+      .catch((reason: unknown) => { if (active) setError(friendlyErrorMessage(reason, "Notification settings could not be loaded.")); });
     return () => { active = false; };
   }, []);
 
@@ -56,7 +58,7 @@ export function NotificationSettingsDialog({ onClose }: { onClose: () => void })
       await request({ method: "PUT", body: JSON.stringify({ categories }) });
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Notification settings could not be saved.");
+      setError(friendlyErrorMessage(reason, "Notification settings could not be saved."));
       setSaving(false);
     }
   };

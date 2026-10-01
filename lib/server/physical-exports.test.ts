@@ -176,3 +176,46 @@ test("a finished export stops being visible once a newer snapshot version (withd
   await assert.rejects(exportStatusFromJob(identity, artifactRow, db), (error: unknown) => error instanceof Error && error.name === "AuthorizationError");
   assert.ok(checked, "an artifact-bearing manifest still re-checks snapshot currency");
 });
+
+/** Buffers writes made through the transaction handle and only "commits" them when the callback resolves. */
+class TransactionalDb extends FakeDb {
+  committed: string[] = [];
+  transactions = 0;
+  failOn: RegExp | undefined;
+  constructor() {
+    super((sql) => sql.includes("from corvis_serving.fund_period_snapshots")
+      ? [{ snapshot_id: "snap-a", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-a", version: 1, blocking_exception_count: 0 }]
+      : sql.includes("from corvis_serving.observations") ? [{ row_count: 1 }] : []);
+  }
+  async transaction<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
+    this.transactions += 1;
+    const pending: string[] = [];
+    const tx: PostgresSqlApi = {
+      query: async () => [],
+      execute: async (sql: string) => {
+        if (this.failOn?.test(sql)) throw new Error("simulated insert failure");
+        pending.push(sql);
+      },
+      health: async () => true,
+    };
+    const result = await fn(tx);
+    this.committed.push(...pending);
+    return result;
+  }
+}
+
+test("createPhysicalExport inserts the export job and its ExportRequested event in one transaction", async () => {
+  const db = new TransactionalDb();
+  await createPhysicalExport(identity, "csv", undefined, db);
+  assert.equal(db.transactions, 1);
+  assert.equal(db.committed.length, 2);
+  assert.match(db.committed[0]!, /corvis_serving\.export_job/);
+  assert.match(db.committed[1]!, /corvis_control\.outbox_event/);
+});
+
+test("a failed outbox insert leaves no queued export job behind", async () => {
+  const db = new TransactionalDb();
+  db.failOn = /outbox_event/;
+  await assert.rejects(createPhysicalExport(identity, "csv", undefined, db), /simulated insert failure/);
+  assert.deepEqual(db.committed, [], "the export_job row must roll back with the failed outbox insert");
+});

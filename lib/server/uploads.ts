@@ -73,6 +73,8 @@ export type UploadSession = {
   resumableUploadUrl?: string;
   storageVersionId?: string;
   contentValidated?: boolean;
+  /** Why a rejected session (`contentValidated === false`) failed, so repeat completes report the same error. */
+  rejection?: "invalid_file_content" | "upload_integrity_failed";
   malwareScanStatus?: "pending" | "clean" | "threat" | "error";
   releasedAt?: string;
   purgedAt?: string;
@@ -183,6 +185,17 @@ class ObjectPurgeError extends Error {
 
 function sessionContext(session: UploadSession) {
   return { correlationId: session.uploadId, tenantId: session.tenantId, workspaceId: session.workspaceId, actorSubject: session.actorSubject, documentId: session.documentId };
+}
+
+/**
+ * A quarantined session that was rejected (bad signature, integrity failure) or infected can never be
+ * released. Every `complete` call reports that failure; only a still-pending scan is a successful poll.
+ */
+function assertNotRejected(session: UploadSession): void {
+  if (session.malwareScanStatus === "threat") throw new UploadRequestError("invalid_file_content", "Uploaded file was rejected by malware scanning");
+  if (session.contentValidated !== false) return;
+  if (session.rejection === "upload_integrity_failed") throw new UploadRequestError("upload_integrity_failed", "Uploaded bytes do not match the declared SHA-256");
+  throw new UploadRequestError("invalid_file_content", "File content does not match the permitted document type");
 }
 
 function errorText(error: unknown): string {
@@ -413,6 +426,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
         // rejected the bytes, so report that failure rather than leaving the session quarantined forever.
         session.malwareScanStatus = "error";
         session.contentValidated = false;
+        session.rejection = "upload_integrity_failed";
         await this.persist(session);
         throw new UploadRequestError("upload_integrity_failed", "Uploaded bytes do not match the declared SHA-256");
       }
@@ -503,6 +517,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
   private async quarantineIntegrityFailure(session: UploadSession): Promise<void> {
     session.malwareScanStatus = "error";
     session.contentValidated = false;
+    session.rejection = "upload_integrity_failed";
     await this.db.execute(`update corvis_source.document_artifact_version
       set malware_scan_status='integrity_failed',quarantine_status='quarantined'
       where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId,session.artifactVersionId]);
@@ -567,8 +582,9 @@ export class ProductionUploadSessions implements UploadSessionPort {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const prior = await this.readIdempotency(idempotencyObject);
       if (prior?.uploadId) {
-        const existing = await this.get(identity, prior.uploadId).catch(() => null);
-        if (existing) assertSameUploader(identity, existing);
+        const loaded = await this.load(identity, prior.uploadId).catch(() => null);
+        if (loaded) assertSameUploader(identity, loaded);
+        const existing = loaded ? await this.refreshScan(loaded).catch(() => null) : null;
         if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
       }
       const created = await this.createSession(identity, input, idempotencyObject, prior?.generation);
@@ -628,14 +644,25 @@ export class ProductionUploadSessions implements UploadSessionPort {
   }
 
   async get(identity: RequestIdentity, uploadId: string): Promise<UploadSession> {
-    return this.refreshScan(await this.load(identity, uploadId));
+    const session = await this.load(identity, uploadId);
+    // refreshScan persists scan verdicts and registry state: only an authorized caller may trigger that.
+    this.assertUploader(identity, session);
+    return this.refreshScan(session);
+  }
+
+  /** `refreshScan` for a completing caller: a session that is (or just turned out) rejected or infected is an error, not a poll. */
+  private async refreshAccepted(session: UploadSession): Promise<UploadSession> {
+    const refreshed = await this.refreshScan(session);
+    if (refreshed.state === "quarantined") assertNotRejected(refreshed);
+    return refreshed;
   }
 
   async complete(identity: RequestIdentity, uploadId: string, key: string): Promise<UploadSession> {
     const session = await this.load(identity, uploadId);
     this.assertUploader(identity, session);
     if (key !== session.idempotencyKey) throw new UploadRequestError("upload_idempotency_mismatch", "Upload completion idempotency key does not match session");
-    if (session.state === "complete" || session.state === "quarantined") return this.refreshScan(session);
+    if (session.state === "quarantined") { assertNotRejected(session); return this.refreshAccepted(session); }
+    if (session.state === "complete") return session;
     if (session.state === "aborted") throw new UploadRequestError("upload_not_active", "Upload session is no longer active");
     if (ageMs(session, Date.now()) > UPLOAD_SESSION_TTL_MS) {
       await this.expire(session);
@@ -654,6 +681,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
     session.contentValidated = validateSourceMagic(session.fileName, prefix);
     session.state = "quarantined";
     session.malwareScanStatus = session.contentValidated ? "pending" : "error";
+    if (!session.contentValidated) session.rejection = "invalid_file_content";
     await this.db.execute(`update corvis_source.document_artifact_version
       set storage_generation=$1,malware_scan_status=$2,quarantine_status='quarantined'
       where tenant_id=$3 and document_artifact_version_id=$4::uuid and quarantine_status in ('pending','quarantined')`,
@@ -661,8 +689,8 @@ export class ProductionUploadSessions implements UploadSessionPort {
     await this.db.execute(`update corvis_source.document set status=$1
       where tenant_id=$2 and document_id=$3::uuid`, [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
     await this.persist(session);
-    if (!session.contentValidated) throw new UploadRequestError("invalid_file_content", "File content does not match the permitted document type");
-    return this.refreshScan(session);
+    assertNotRejected(session);
+    return this.refreshAccepted(session);
   }
 
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {

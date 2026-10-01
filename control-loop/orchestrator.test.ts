@@ -226,12 +226,29 @@ test("an incremental daily scan never allows automatic closure even when the loo
   const store = new InMemoryStateStore();
   const root = await tempRepo({ "docs/README.md": "# Hi\n" });
   try {
-    await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, headCommit: "a".repeat(40) });
     const later = new Date(NOW.getTime() + 60 * 60 * 1000);
-    const report = await runControlLoop({ root, mode: "daily", now: later, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, changedPaths: ["docs/README.md"] });
+    const report = await runControlLoop({ root, mode: "daily", now: later, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, changedPaths: ["docs/README.md"], headCommit: "b".repeat(40) });
     assert.equal(report.scan.full, false);
     assert.equal(report.health.healthy, true);
     assert.deepEqual(report.closure, { allowed: false, reason: "incremental_scan" });
+    assert.equal(report.watermark.lastScannedCommit, "b".repeat(40), "a successful run records the commit it scanned");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the last scanned commit only advances on success and survives runs that cannot resolve HEAD", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/README.md": "# Hi\n" });
+  try {
+    const first = await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, headCommit: "a".repeat(40) });
+    assert.equal(first.watermark.lastScannedCommit, "a".repeat(40));
+    const noGit = await runControlLoop({ root, mode: "weekly", now: new Date(NOW.getTime() + 1000), stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.equal(noGit.watermark.lastScannedCommit, "a".repeat(40));
+    const incomplete = await runControlLoop({ root, mode: "weekly", now: new Date(NOW.getTime() + 2000), stateStore: store, issueSnapshot: null, headCommit: "c".repeat(40) });
+    assert.notEqual(incomplete.status, "complete");
+    assert.equal(incomplete.watermark.lastScannedCommit, "a".repeat(40), "an unsuccessful run must not claim it scanned the new commit");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,4 +1,5 @@
 import { Pool, types, type PoolConfig } from "pg";
+import { isProductionEnvironment } from "./config.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { matchSqlApplicationError, type SqlApplicationError } from "./sql-application-errors.ts";
 
@@ -36,7 +37,7 @@ export function postgresPoolerMode(value: string | undefined = process.env.CORVI
 
 export function nativePostgresConfig(
   dsn: string,
-  production = process.env.NODE_ENV === "production",
+  production = isProductionEnvironment(process.env.NODE_ENV),
   caCertificate: string | undefined = process.env.CORVIS_POSTGRES_CA_CERT,
   pooler: PostgresPoolerMode = postgresPoolerMode(),
 ): PoolConfig {

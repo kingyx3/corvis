@@ -233,13 +233,22 @@ test("a daily run with no prior watermark scans fully", () => {
 
 test("a daily run with a watermark but unavailable changed-path information scans fully", () => {
   const repo: RepoSnapshot = { root: ".", files: [file("a.md", "")], paths: new Set(["a.md"]) };
-  const scope = selectScanScope({ mode: "daily", watermark: baseWatermark({ lastSuccessfulDailyRunAt: new Date().toISOString() }), snapshot: repo, changedPaths: null });
+  const scope = selectScanScope({ mode: "daily", watermark: baseWatermark({ lastSuccessfulDailyRunAt: new Date().toISOString(), lastScannedCommit: "a".repeat(40) }), snapshot: repo, changedPaths: null });
   assert.equal(scope.full, true);
+  assert.equal(scope.reason, "changed_paths_unavailable_full_scan");
+});
+
+test("a daily run whose watermark has no last scanned commit scans fully even when changed paths are supplied", () => {
+  const repo: RepoSnapshot = { root: ".", files: [file("a.md", ""), file("b.md", "")], paths: new Set(["a.md", "b.md"]) };
+  const scope = selectScanScope({ mode: "daily", watermark: baseWatermark({ lastSuccessfulDailyRunAt: new Date().toISOString() }), snapshot: repo, changedPaths: ["b.md"] });
+  assert.equal(scope.full, true);
+  assert.equal(scope.reason, "no_last_scanned_commit_full_scan");
+  assert.equal(scope.files.length, 2);
 });
 
 test("a daily run with a watermark and known changed paths scans only those files", () => {
   const repo: RepoSnapshot = { root: ".", files: [file("a.md", ""), file("b.md", "")], paths: new Set(["a.md", "b.md"]) };
-  const scope = selectScanScope({ mode: "daily", watermark: baseWatermark({ lastSuccessfulDailyRunAt: new Date().toISOString() }), snapshot: repo, changedPaths: ["b.md"] });
+  const scope = selectScanScope({ mode: "daily", watermark: baseWatermark({ lastSuccessfulDailyRunAt: new Date().toISOString(), lastScannedCommit: "a".repeat(40) }), snapshot: repo, changedPaths: ["b.md"] });
   assert.equal(scope.full, false);
   assert.deepEqual(scope.files.map((f) => f.path), ["b.md"]);
 });

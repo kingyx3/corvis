@@ -27,6 +27,20 @@ test("readWatermark degrades to empty on corrupted or schema-mismatched content 
   assert.deepEqual(await readWatermark(store), emptyWatermark());
 });
 
+test("readWatermark reads a pre-lastScannedCommit watermark as having no scanned commit", async () => {
+  const store = new InMemoryStateStore();
+  const legacy: Record<string, unknown> = { ...emptyWatermark(), lastSuccessfulDailyRunAt: "2026-09-19T00:00:00.000Z" };
+  delete legacy.lastScannedCommit;
+  await store.write("watermark", JSON.stringify(legacy));
+  const watermark = await readWatermark(store);
+  assert.equal(watermark.lastScannedCommit, null);
+  assert.equal(watermark.lastSuccessfulDailyRunAt, "2026-09-19T00:00:00.000Z");
+  await store.write("watermark", JSON.stringify({ ...legacy, lastScannedCommit: 42 }));
+  assert.equal((await readWatermark(store)).lastScannedCommit, null, "a non-string commit is ignored");
+  await store.write("watermark", JSON.stringify({ ...legacy, lastScannedCommit: "a".repeat(40) }));
+  assert.equal((await readWatermark(store)).lastScannedCommit, "a".repeat(40));
+});
+
 test("writeWatermark then readWatermark round-trips exactly", async () => {
   const store = new InMemoryStateStore();
   const value = { ...emptyWatermark(), lastSuccessfulDailyRunAt: "2026-09-19T00:00:00.000Z", consecutiveFailures: 1 };

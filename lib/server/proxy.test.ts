@@ -39,3 +39,38 @@ test("pages are never cached, but content-hashed static assets keep Next's cachi
   assert.equal(call("/").headers.get("cache-control"), "no-store");
   assert.equal(call("/_next/static/chunks/app.js").headers.get("cache-control"), null);
 });
+
+const mutableEnv = process.env as Record<string, string | undefined>;
+
+test("'Production'/'staging' NODE_ENV fail closed: no open surface and a nonce CSP; development stays open", () => {
+  const keys = ["NODE_ENV", "CORVIS_RUNTIME_SURFACE", "CORVIS_DEMO_MODE", "K_SERVICE"] as const;
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    delete process.env.CORVIS_RUNTIME_SURFACE;
+    delete process.env.CORVIS_DEMO_MODE;
+    delete process.env.K_SERVICE;
+    for (const value of ["production", "Production", "staging"]) {
+      mutableEnv.NODE_ENV = value;
+      const response = call("/");
+      assert.equal(response.status, 404, `${value}: an unconfigured production surface is disabled`);
+      assert.equal(response.headers.get("x-corvis-runtime-surface"), "disabled", value);
+    }
+    process.env.CORVIS_RUNTIME_SURFACE = "combined";
+    for (const value of ["production", "Production", "staging"]) {
+      mutableEnv.NODE_ENV = value;
+      assert.match(call("/").headers.get("content-security-policy") ?? "", /nonce-/, `${value} gets the production CSP`);
+    }
+    for (const value of ["development", "test"]) {
+      mutableEnv.NODE_ENV = value;
+      assert.equal(call("/").headers.get("content-security-policy"), null, value);
+    }
+    delete process.env.CORVIS_RUNTIME_SURFACE;
+    mutableEnv.NODE_ENV = "development";
+    assert.equal(call("/").status, 200);
+  } finally {
+    for (const key of keys) {
+      const value = saved[key];
+      if (value === undefined) delete mutableEnv[key]; else mutableEnv[key] = value;
+    }
+  }
+});

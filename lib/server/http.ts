@@ -2,7 +2,7 @@ import { AuthorizationError } from "@/core/enterprise";
 import { DeletionExecutionError, LegalHoldError } from "@/lib/server/data-lifecycle";
 import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/lib/server/feature-flags";
 import { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } from "@/lib/server/idempotency";
-import { InvalidCursorError } from "@/lib/server/pagination";
+import { InvalidCursorError, InvalidLimitError } from "@/lib/server/pagination";
 import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { isTransientPostgresError } from "@/lib/server/postgres-native";
 import { RateLimitError } from "@/lib/server/rate-limit";
@@ -54,6 +54,10 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof InvalidCursorError) {
     logEvent("warn", "api.invalid_pagination", { correlationId });
     return json({ error: "invalid_cursor", correlationId }, { status: 400 });
+  }
+  if (error instanceof InvalidLimitError) {
+    logEvent("warn", "api.invalid_pagination", { correlationId });
+    return json({ error: "invalid_limit", correlationId }, { status: 400 });
   }
   if (error instanceof InvalidIdempotencyKeyError) {
     logEvent("warn", "api.invalid_idempotency_key", { correlationId });

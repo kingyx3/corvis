@@ -653,7 +653,7 @@ paths:
         '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'The idempotency key does not match the session (`upload_idempotency_mismatch`), the upload is not active (`upload_not_active`) the object is incomplete (`upload_incomplete`) or the session was modified concurrently (`upload_conflict`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '410': { description: 'The upload session expired and its bytes were purged (`upload_expired`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
-        '422': { description: 'The uploaded content failed file-signature validation (`invalid_file_content`) or integrity verification (`upload_integrity_failed`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 'The uploaded content failed file-signature validation or was rejected by malware scanning (`invalid_file_content`), or failed integrity verification (`upload_integrity_failed`). Repeat completions of a rejected session keep returning the same error', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -863,13 +863,13 @@ components:
                 properties:
                   error: { enum: [internal_error] }
     InvalidCursor:
-      description: The `cursor` was malformed, tampered with, or `limit` was not a positive integer.
+      description: The `cursor` was malformed or tampered with (`invalid_cursor`), or `limit` was not a positive integer (`invalid_limit`).
       content:
         application/json:
           schema:
             type: object
             properties:
-              error: { type: string, enum: [invalid_cursor] }
+              error: { type: string, enum: [invalid_cursor, invalid_limit] }
               correlationId: { type: string }
   schemas:
     ErrorResponse:

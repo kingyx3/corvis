@@ -33,7 +33,7 @@ test("aggregateComposition folds anything past the categorical cap into Other", 
   assert.equal(other.value, 6);
 });
 
-test("trendDelta compares the latest two numeric points and reports direction", () => {
+test("trendDelta compares the latest two points and reports direction", () => {
   const up = trendDelta([{ period: "Q1", value: 100 }, { period: "Q2", value: 120 }]);
   assert.deepEqual(up, { absolute: 20, percent: 20, direction: "up" });
 
@@ -44,12 +44,17 @@ test("trendDelta compares the latest two numeric points and reports direction", 
   assert.equal(flat?.direction, "flat");
 });
 
-test("trendDelta skips null points to find the latest two numeric values", () => {
-  const delta = trendDelta([{ period: "Q1", value: 50 }, { period: "Q2", value: null }, { period: "Q3", value: 75 }]);
-  assert.deepEqual(delta, { absolute: 25, percent: 50, direction: "up" });
+test("trendDelta compares the last two points positionally, so a gap never borrows an older period", () => {
+  // The prior period has no value: no "since the prior period" claim.
+  assert.equal(trendDelta([{ period: "Q1", value: 100 }, { period: "Q2", value: null }, { period: "Q3", value: 120 }]), null);
+  // The latest period has no value: nothing current to compare.
+  assert.equal(trendDelta([{ period: "Q1", value: 100 }, { period: "Q2", value: 120 }, { period: "Q3", value: null }]), null);
+  // An older gap does not matter once the last two points are present.
+  assert.deepEqual(trendDelta([{ period: "Q1", value: null }, { period: "Q2", value: 50 }, { period: "Q3", value: 75 }]), { absolute: 25, percent: 50, direction: "up" });
+  assert.equal(trendDelta([{ period: "Q1", value: 1 }, { period: "Q2", value: Number.NaN }]), null);
 });
 
-test("trendDelta returns null with fewer than two numeric points", () => {
+test("trendDelta returns null with fewer than two points", () => {
   assert.equal(trendDelta([]), null);
   assert.equal(trendDelta([{ period: "Q1", value: 10 }]), null);
   assert.equal(trendDelta([{ period: "Q1", value: null }, { period: "Q2", value: null }]), null);

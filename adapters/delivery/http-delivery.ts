@@ -1,13 +1,9 @@
 import { normalizeExportRequest, type DeliveryPort, type ExportDeliveryStatus, type ExportFormat, type ExportRequest } from "../../core/delivery.ts";
+import { apiResponseError } from "../../lib/api-errors.ts";
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
 import type { ExportManifest } from "../../core/enterprise.ts";
 
 type Envelope<T> = { data: T; correlationId: string };
-
-async function errorFrom(response: Response): Promise<Error> {
-  const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
-  return new Error(body.reasons?.length ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}` : body.error || `Request failed (${response.status})`);
-}
 
 export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
   const base = apiBase.replace(/\/$/, "");
@@ -29,7 +25,7 @@ export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
           headers: { ...workspaceContextHeaders(), "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
           body: payload,
         });
-        if (!response.ok) throw await errorFrom(response);
+        if (!response.ok) throw await apiResponseError(response);
         const body = await response.json() as Envelope<ExportManifest>;
         return body.data;
       })().finally(() => inFlight.delete(payload));
@@ -38,13 +34,13 @@ export function createHttpDeliveryPort(apiBase = ""): DeliveryPort {
     },
     async listExports(): Promise<ExportDeliveryStatus[]> {
       const response = await fetch(`${base}/api/v1/exports?limit=20`, { credentials: "include", cache: "no-store", headers: { ...workspaceContextHeaders(), accept: "application/json" } });
-      if (!response.ok) throw await errorFrom(response);
+      if (!response.ok) throw await apiResponseError(response);
       const body = await response.json() as Envelope<ExportDeliveryStatus[]>;
       return body.data;
     },
     async prepareDownload(exportId: string): Promise<ExportDeliveryStatus> {
       const response = await fetch(`${base}/api/v1/exports/${encodeURIComponent(exportId)}`, { credentials: "include", cache: "no-store", headers: { ...workspaceContextHeaders(), accept: "application/json" } });
-      if (!response.ok) throw await errorFrom(response);
+      if (!response.ok) throw await apiResponseError(response);
       const body = await response.json() as Envelope<ExportDeliveryStatus>;
       return body.data;
     },

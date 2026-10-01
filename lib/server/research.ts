@@ -9,16 +9,21 @@ import type {
 import { getServerConfig } from "./config.ts";
 import { isFeatureEnabled } from "./feature-flags.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { logEvent } from "./telemetry.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
 import {
   assessNumericGrounding,
   computedRowsDigest,
   entitledSourceReferenceIds,
   extractNumericFigures,
+  MAX_ANSWER_TEXT_LENGTH,
+  MAX_MODEL_VERSION_LENGTH,
+  MAX_UNCERTAINTY_TEXT_LENGTH,
   NO_GROUNDED_FIGURES_ANSWER,
   NO_GROUNDED_FIGURES_UNCERTAINTY,
   sanitizeLabel,
   sanitizePage,
+  sanitizeRowsForModel,
   sanitizeSnippet,
 } from "./research-grounding.ts";
 
@@ -31,7 +36,8 @@ type SearchHit = {
 };
 
 type SearchResponse = { hits?: SearchHit[] };
-type AiResponse = { answer?: string; uncertainty?: string; usedFactIds?: string[]; modelVersion?: string };
+// Untyped on purpose: the body is external, so every field is validated before use.
+type AiResponse = { answer?: unknown; uncertainty?: unknown; usedFactIds?: unknown; modelVersion?: unknown };
 export type ResearchExecutionOptions = {
   signal?: AbortSignal;
   onProgress?: (phase: ResearchProgressPhase) => void;
@@ -149,7 +155,7 @@ export function parseResearchQuestion(body: unknown): string | null {
 // any 8-4-4-4-12 hex string.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type CitationLink = { observationId?: string; hasOpenReconciliation: boolean };
+type CitationLink = { observationId?: string; hasOpenReconciliation: boolean; /** The enrichment lookup failed, so the open-reconciliation state of this citation is not known. */ statusUnknown?: true };
 
 export class PermissionedResearchService {
   private readonly db: PostgresSqlApi;
@@ -165,9 +171,10 @@ export class PermissionedResearchService {
    * external search index, so a source reference id that doesn't resolve to
    * anything in Postgres (or isn't even a UUID) just gets no link rather than
    * failing the whole answer -- this is chrome on top of an already-returned,
-   * already-entitled answer, never a gate on it.
+   * already-entitled answer, never a gate on it. A database failure is logged and the answer still returns, but every
+   * citation is marked `statusUnknown` so the UI does not present a missing flag as "no open exception".
    */
-  private async citationLinks(tenantId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
+  private async citationLinks(identity: RequestIdentity, correlationId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
     const ids = [...new Set(sourceReferenceIds)].filter((id) => UUID.test(id));
     const links = new Map<string, CitationLink>();
     if (ids.length === 0) return links;
@@ -180,7 +187,7 @@ export class PermissionedResearchService {
           ) as has_open_reconciliation
         from corvis_facts.observation_source_reference osr
         where osr.tenant_id=$1 and osr.source_reference_id in (select jsonb_array_elements_text($2::jsonb)::uuid)
-        order by osr.source_reference_id, osr.observation_id`, [tenantId, JSON.stringify(ids)]);
+        order by osr.source_reference_id, osr.observation_id`, [identity.tenantId, JSON.stringify(ids)]);
       for (const row of rows) {
         const sourceReferenceId = String(row.source_reference_id);
         const hasOpenReconciliation = row.has_open_reconciliation === true || row.has_open_reconciliation === "true";
@@ -191,10 +198,22 @@ export class PermissionedResearchService {
         }
         links.set(sourceReferenceId, { observationId: String(row.observation_id), hasOpenReconciliation });
       }
-    } catch {
+    } catch (error) {
       // Enrichment only; an unreachable/misbehaving database here must not
-      // turn an already-governed, already-entitled answer into a failure.
-      return new Map();
+      // turn an already-governed, already-entitled answer into a failure. It must not be silent either: the
+      // hasOpenReconciliation risk signal is dropped for this answer. Only the error class/code is logged (no SQL text).
+      const code = (error as { code?: unknown } | null)?.code;
+      logEvent("warn", "research.citation_links_failed", {
+        correlationId,
+        tenantId: identity.tenantId,
+        workspaceId: identity.workspaceId,
+        actorSubject: identity.subject,
+      }, {
+        citationCount: ids.length,
+        errorName: error instanceof Error ? error.name : typeof error,
+        ...(typeof code === "string" ? { code } : {}),
+      });
+      return new Map(ids.map((id) => [id, { hasOpenReconciliation: false, statusUnknown: true as const }]));
     }
     return links;
   }
@@ -276,6 +295,9 @@ export class PermissionedResearchService {
       checkExecutionSignal(execution.signal);
 
       options.onProgress?.("generation");
+      // The model gets a sanitized copy (value_string is free text from GP documents); the original rows stay the
+      // source for the digest, grounding and computedResults.
+      const modelRows = sanitizeRowsForModel(semantic.rows);
       let response: Response;
       try {
         response = await fetch(`${config.aiEndpoint.replace(/\/$/, "")}/answer`, {
@@ -294,8 +316,8 @@ export class PermissionedResearchService {
               id: semanticQueryId,
               status: semantic.status,
               shape: semantic.shape,
-              rows: semantic.rows,
-              result: { rows: semantic.rows, factIds: semantic.factIds },
+              rows: modelRows,
+              result: { rows: modelRows, factIds: semantic.factIds },
             },
             retrieval: hits.map((hit) => ({
               sourceReferenceId: hit.sourceReferenceId,
@@ -314,17 +336,26 @@ export class PermissionedResearchService {
       }
       if (!response.ok) throw new ResearchProviderError("ai", response.status);
       const body = await providerJson<AiResponse>(response, "ai", execution.signal);
-      if (!body.answer) throw new ResearchProviderError("ai", response.status);
+      // The provider is external: anything other than a bounded string (a number, an object, an over-long text that
+      // could never be pinned later) is a provider contract violation (502), not an internal failure.
+      const answerText = body.answer;
+      const uncertaintyText = body.uncertainty ?? undefined;
+      const modelVersion = body.modelVersion ?? undefined;
+      if (typeof answerText !== "string" || answerText.length === 0 || answerText.length > MAX_ANSWER_TEXT_LENGTH
+        || (uncertaintyText !== undefined && (typeof uncertaintyText !== "string" || uncertaintyText.length > MAX_UNCERTAINTY_TEXT_LENGTH))
+        || (modelVersion !== undefined && (typeof modelVersion !== "string" || modelVersion.length > MAX_MODEL_VERSION_LENGTH))) {
+        throw new ResearchProviderError("ai", response.status);
+      }
       const usedFactIds = normalizeUsedFactIds(body.usedFactIds, semantic.factIds);
       // Figures in the generated text must be citable facts and must appear in the cited rows (research-grounding.ts).
       // A failing answer is downgraded, not thrown: the deterministic computedResults are still worth showing and the
       // user gets a clearly labelled "no grounded figures" answer instead of a provider error. Foreign fact ids above
       // still throw: that is a contract violation, not a weak answer.
-      const grounding = assessNumericGrounding(body.answer, semantic.rows, usedFactIds);
-      const uncertaintyGrounded = !body.uncertainty || extractNumericFigures(body.uncertainty).length === 0
-        || assessNumericGrounding(body.uncertainty, semantic.rows, usedFactIds).grounded;
+      const grounding = assessNumericGrounding(answerText, semantic.rows, usedFactIds);
+      const uncertaintyGrounded = !uncertaintyText || extractNumericFigures(uncertaintyText).length === 0
+        || assessNumericGrounding(uncertaintyText, semantic.rows, usedFactIds).grounded;
 
-      const links = await this.citationLinks(identity.tenantId, hits.map((hit) => hit.sourceReferenceId));
+      const links = await this.citationLinks(identity, semanticQueryId, hits.map((hit) => hit.sourceReferenceId));
       const citations: SourceCitation[] = grounding.grounded ? hits.map((hit) => {
         const link = links.get(hit.sourceReferenceId);
         return {
@@ -333,7 +364,8 @@ export class PermissionedResearchService {
           page: hit.page,
           label: hit.label || `Source ${hit.sourceReferenceId}`,
           observationId: link?.observationId,
-          hasOpenReconciliation: link?.hasOpenReconciliation,
+          hasOpenReconciliation: link?.statusUnknown ? undefined : link?.hasOpenReconciliation,
+          ...(link?.statusUnknown ? { reconciliationStatusUnknown: true } : {}),
         };
       }) : [];
       const computed: SemanticComputedResult = {
@@ -350,18 +382,18 @@ export class PermissionedResearchService {
           citations,
           semanticQueryIds: [semanticQueryId],
           computedResults: [computed],
-          modelVersion: body.modelVersion,
+          modelVersion,
           uncertainty: NO_GROUNDED_FIGURES_UNCERTAINTY,
           grounding: "no_grounded_figures",
         };
       }
       return {
-        answer: body.answer,
+        answer: answerText,
         citations,
         semanticQueryIds: [semanticQueryId],
         computedResults: [computed],
-        modelVersion: body.modelVersion,
-        uncertainty: uncertaintyGrounded ? body.uncertainty : undefined,
+        modelVersion,
+        uncertainty: uncertaintyGrounded ? uncertaintyText : undefined,
       };
     } finally {
       execution.dispose();

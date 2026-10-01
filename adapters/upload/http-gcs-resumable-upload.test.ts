@@ -169,3 +169,39 @@ test("an upload still completes when Web Storage is blocked (private mode, block
     restore();
   }
 });
+
+/** Resumes a persisted session whose status reports `quarantined`; `complete` answers per `completeReply`. */
+async function resumeQuarantined(completeReply: () => Response) {
+  const total = GCS_QUANTUM;
+  const restore = installBrowserFakes(fakeGcs(total));
+  const globals = globalThis as Record<string, unknown>;
+  const calls: string[] = [];
+  globals.fetch = async (url: string) => {
+    calls.push(String(url));
+    if (String(url).endsWith("/api/v1/uploads/up_1")) return Response.json({ data: { uploadId: "up_1", documentId: "doc_1", chunkSize: GCS_QUANTUM, state: "quarantined" } });
+    if (String(url).endsWith("/api/v1/uploads/up_1/complete")) return completeReply();
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const storage = (globals.window as { localStorage: Storage }).localStorage;
+  storage.setItem(`corvis:upload:fund-report.pdf:${total}:1:default:default`, JSON.stringify({ uploadId: "up_1" }));
+  try {
+    const port = createHttpGcsResumableUploadPort({ apiBase: "https://api.example" });
+    const file = new File([new Uint8Array(total)], "fund-report.pdf", { type: "application/pdf", lastModified: 1 });
+    return { calls, outcome: await port.upload(file).then((value) => ({ value }), (error: unknown) => ({ error })) };
+  } finally {
+    restore();
+  }
+}
+
+test("a persisted quarantined session is reported complete only when completion still succeeds", async () => {
+  const { calls, outcome } = await resumeQuarantined(() => Response.json({ data: { uploadId: "up_1", documentId: "doc_1", state: "quarantined" } }));
+  assert.deepEqual(outcome, { value: { documentId: "doc_1" } });
+  assert.ok(calls.some((url) => url.endsWith("/up_1/complete")));
+});
+
+test("a persisted quarantined session that was rejected or infected is not reported as a success", async () => {
+  const { calls, outcome } = await resumeQuarantined(() => Response.json({ error: "invalid_file_content" }, { status: 422 }));
+  assert.ok("error" in outcome, "a rejected upload must fail");
+  assert.match(String((outcome as { error: Error }).error.message), /422/);
+  assert.ok(!calls.some((url) => url.endsWith("/initiate")), "a rejected session is not silently re-initiated");
+});

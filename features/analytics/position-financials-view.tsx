@@ -17,7 +17,7 @@ import { TableDensityToggle, type TableDensity } from "@/components/ui/table-den
 import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
 import { apiUrl } from "@/lib/api-url";
-import { friendlyErrorMessage } from "@/lib/api-errors";
+import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
@@ -103,6 +103,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [evidence, setEvidence] = useState<EvidenceState | null>(null);
   const [evidenceBusy, setEvidenceBusy] = useState<string | null>(null);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
@@ -131,17 +132,20 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    // Loading/error are reset by the handlers that change the inputs (changePeriodicity, changePortfolio, retry);
+    // a successful response clears any earlier failure, and `active` + abort drop stale responses.
     const portfolio = portfolioAttributionEnabled && selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
     void fetch(apiUrl(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`), { signal: controller.signal, credentials: "include", headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => {
+        throwIfUnauthenticated(response);
         const payload = await response.json() as ApiEnvelope;
         if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
         return payload.data ?? [];
       })
-      .then((data) => { if (active) { setRows(data); setLoading(false); } })
+      .then((data) => { if (active) { setRows(data); setError(null); setLoading(false); } })
       .catch((reason: unknown) => { if (active && !controller.signal.aborted) { setError(friendlyErrorMessage(reason, "Financial statements are temporarily unavailable")); setLoading(false); } });
     return () => { active = false; controller.abort(); };
-  }, [periodicity, portfolioAttributionEnabled, selectedPortfolio]);
+  }, [periodicity, portfolioAttributionEnabled, selectedPortfolio, reloadKey]);
 
   const positions = useMemo(() => {
     const map = new Map<string, { key: string; fundId: string; holdingId: string; companyId: string }>();
@@ -266,6 +270,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     if (value === periodicity) return;
     setLoading(true); setError(null); setExportMessage(null); setFocusedPeriod(null); setPeriodicity(value);
   };
+  const retryLoad = () => { setLoading(true); setError(null); setReloadKey((key) => key + 1); };
   const changePortfolio = (portfolioId: string) => {
     if (!portfolioAttributionEnabled || portfolioId === selectedPortfolio) return;
     setLoading(true); setError(null); setExportMessage(null); setSelectedPosition(""); setFocusedPeriod(null); setSelectedPortfolio(portfolioId);
@@ -355,7 +360,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     {exportMessage && <div className={exportMessage.error ? "position-financials-inline-error" : "position-financials-rule-note"} role={exportMessage.error ? "alert" : "status"}><strong>{exportMessage.error ? "Export failed. " : "Export requested. "}</strong>{exportMessage.text}</div>}
     {evidenceError && <div className="position-financials-inline-error" role="alert">{evidenceError}</div>}
     {loading && <div className="position-financials-state" aria-busy="true">Loading published financial statements…</div>}
-    {!loading && error && <div className="position-financials-state" role="alert"><strong>Financial statements unavailable</strong><span>{error}</span></div>}
+    {!loading && error && <div className="position-financials-state" role="alert"><strong>Financial statements unavailable</strong><span>{error}</span><button type="button" className="secondary-button" onClick={retryLoad}>Retry</button></div>}
     {!loading && !error && !rows.length && <div className="position-financials-state"><strong>No published position income statements yet</strong><span>Once reviewed statement-line candidates are included in a published fund period, they will appear here without requiring a fixed chart of accounts.</span></div>}
 
     {!loading && !error && rows.length > 0 && compareOpen && positions.length > 1 && <section className="panel position-financials-compare-panel" aria-label="Compare a metric across positions">

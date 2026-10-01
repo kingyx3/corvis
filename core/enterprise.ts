@@ -236,6 +236,8 @@ export type SourceCitation = {
   observationId?: string;
   /** True when this citation's source document is part of a currently open reconciliation exception. */
   hasOpenReconciliation?: boolean;
+  /** True when the reconciliation lookup failed for this answer, so "no open exception" cannot be assumed. */
+  reconciliationStatusUnknown?: boolean;
 };
 export type SemanticComputedResult = {
   semanticQueryId: string;
