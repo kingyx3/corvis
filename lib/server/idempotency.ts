@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 /**
  * Postgres-backed idempotency for mutating `/api/v1` requests (issue #11).
@@ -20,7 +20,8 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
  * `service_identity_grant` and other server-only control state): only the
  * server-side connection this module uses can ever read or write it.
  *
- * Usage: `withIdempotency(identity, scope, clientKey, fn)`.
+ * Usage: `withIdempotency(identity, scope, clientKey, fn)`, where `fn` receives
+ * the transaction handle the record is written on (see "Atomicity" below).
  *
  *  - `clientKey` is optional. `undefined` (no `idempotencyKey` in the body
  *    and no `Idempotency-Key` header) skips this mechanism entirely: `fn`
@@ -50,19 +51,45 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
  *    consistent choice applied identically at both call sites that use this
  *    module.
  *
- * A caveat worth stating plainly: this guards against the common case this
- * module targets -- a client retrying after a dropped/timed-out response --
- * not against two requests that are truly concurrent. If two requests with
- * the same brand-new key reach the "no existing record" branch at the same
- * instant, both invoke `fn`; the primary key still guarantees at most one
- * row is ever stored, so every caller (including the one whose own insert
- * lost that race) converges on one consistent stored response, but `fn`
- * itself may have run twice. Both call sites this module is used by already
- * carry an independent safeguard for that: exports create a fresh row per
- * call (a duplicate is a duplicate export job, not a corrupted one), and
- * reconciliation resolution is additionally protected by its own
- * `expectedVersion` optimistic-concurrency check at the database, which
- * fails the loser of any real race regardless of idempotency.
+ * Atomicity: when a key is supplied, `withIdempotency` opens one transaction
+ * (`withTransaction`), hands its handle to `fn`, and inserts the idempotency
+ * record on that same handle after `fn` returns. A handler that runs its work
+ * on the handle -- `runAuditedMutation({ db: tx, ... })` joins the caller's
+ * transaction instead of opening its own -- therefore commits the mutation,
+ * its audit row and the idempotency record together or not at all:
+ *
+ *  - If the record insert (or the commit) fails, or the process dies before
+ *    the commit, the mutation rolls back with it. The client sees a 5xx or a
+ *    timeout, and a retry with the same key re-runs from scratch instead of
+ *    hitting a spurious version conflict or creating a duplicate job.
+ *  - If the commit succeeded, the record exists, so a retry replays the stored
+ *    response without re-running the mutation.
+ *
+ * This needs a transport that supports transactions (the native Postgres
+ * client). On the stateless HTTP transport `withTransaction` degrades to
+ * running without one -- exactly as `runAuditedMutation` already does -- so
+ * there the mutation and the record are separate statements, as they always
+ * were. A handler that ignores the handle (opens its own transaction, or is an
+ * in-memory demo-mode mutation) is likewise outside the atomic unit: the
+ * record is still written, but after the handler has committed, and a crash in
+ * that window leaves an unrecorded mutation. Only the lookup that decides
+ * between replay and execution runs outside the transaction, so a replay never
+ * holds a connection open.
+ *
+ * Concurrent requests: if two requests with the same brand-new key both pass
+ * the lookup, both invoke `fn`, but the primary key admits one record. The
+ * loser's insert waits for the winner's transaction, then is rejected; the
+ * loser's transaction is rolled back (its mutation and audit row are
+ * discarded) and it returns the winner's stored response with
+ * `replayed: true`. Without a real transaction (HTTP transport) the loser's
+ * `fn` has already committed and cannot be undone, so `fn` may have run twice
+ * while every caller still converges on one stored response. The call sites
+ * carry an independent safeguard there too: reconciliation resolution and
+ * sector assignment are protected by their `expectedVersion`
+ * optimistic-concurrency check at the database, which fails the loser of any
+ * real race (that loser surfaces the conflict, as errors are never cached),
+ * and exports create a fresh row per call (a duplicate is a duplicate export
+ * job, not a corrupted one).
  */
 
 export interface IdempotentOutcome<T> {
@@ -175,16 +202,27 @@ function toOutcome<T>(row: PostgresRow, replayed: boolean): IdempotentOutcome<T>
   return { status: Number(row.response_status), body: parseResponseBody(row.response_body) as T, replayed };
 }
 
+/** Thrown inside the transaction to roll it back when the record insert lost the race to another request. */
+class LostInsertRace<T> extends Error {
+  readonly fresh: { status: number; body: T };
+  constructor(fresh: { status: number; body: T }) {
+    super("idempotency_insert_lost");
+    this.fresh = fresh;
+  }
+}
+
 /**
  * Runs `fn` at most once per `(identity.tenantId, scope, clientKey)`. See the
- * module doc comment above for the full replay, namespacing and
- * failure-handling contract.
+ * module doc comment above for the full replay, namespacing, atomicity and
+ * failure-handling contract. `fn` receives the transaction handle to run its
+ * mutation on, or nothing when no key was supplied (no record is written, so
+ * the handler uses its own connection exactly as before).
  */
 export async function withIdempotency<T>(
   identity: RequestIdentity,
   scope: string,
   clientKey: string | undefined,
-  fn: () => Promise<{ status: number; body: T }>,
+  fn: (tx?: PostgresSqlApi) => Promise<{ status: number; body: T }>,
   db: PostgresSqlApi = controlDb(),
   /** Canonical request content; reusing `clientKey` with a different value is refused with {@link IdempotencyKeyReuseError}. */
   fingerprint?: unknown,
@@ -207,15 +245,32 @@ export async function withIdempotency<T>(
     return toOutcome<T>(existing, true);
   }
 
-  const fresh = await fn();
-  const inserted = await insertRecordIfAbsent(db, identity.tenantId, scope, key, fresh.status, fresh.body, fingerprint);
-  if (inserted) return { ...fresh, replayed: false };
-
-  // Lost the insert race -- see the caveat in the module doc comment.
-  const winner = await findRecord(db, identity.tenantId, scope, key);
-  if (!winner) return { ...fresh, replayed: false };
-  assertSameRequest(winner, scope, key, fingerprint);
-  return toOutcome<T>(winner, true);
+  try {
+    // The record is inserted on the same handle `fn` mutates through, so a
+    // failed insert rolls the mutation back and a committed mutation always
+    // has its record. An error from `fn` rolls back too and stores nothing.
+    const fresh = await withTransaction(db, async (tx) => {
+      const result = await fn(tx);
+      const inserted = await insertRecordIfAbsent(tx, identity.tenantId, scope, key, result.status, result.body, fingerprint);
+      if (!inserted) throw new LostInsertRace(result);
+      return result;
+    });
+    return { ...fresh, replayed: false };
+  } catch (error) {
+    if (!(error instanceof LostInsertRace)) throw error;
+    // Lost the insert race -- see "Concurrent requests" in the module doc comment.
+    const winner = await findRecord(db, identity.tenantId, scope, key);
+    if (winner) {
+      assertSameRequest(winner, scope, key, fingerprint);
+      return toOutcome<T>(winner, true);
+    }
+    // The winner's row is gone (swept or rolled back) before we could read it.
+    // Without a real transaction our own result is already committed and is
+    // returned as before; with one it was rolled back above, so fail
+    // retryably rather than acknowledge work that did not persist.
+    if (!db.transaction) return { ...(error as LostInsertRace<T>).fresh, replayed: false };
+    throw new Error("idempotency_record_unavailable");
+  }
 }
 
 /** Upper bound on one call to {@link sweepExpiredIdempotencyKeys}. */
