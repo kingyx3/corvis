@@ -45,6 +45,7 @@ gcloud iam service-accounts get-iam-policy "${GCP_DEPLOY_SERVICE_ACCOUNT}" \
 
 python3 - "${provider_json}" "${policy_json}" "${actual_project_number}" "${pool_id}" "${CORVIS_ENVIRONMENT}" "${EXPECTED_REPOSITORY}" "${EXPECTED_REF}" <<'PY'
 import json
+import re
 import sys
 
 provider_path, policy_path, project_number, pool_id, environment, repository, expected_ref = sys.argv[1:]
@@ -57,19 +58,45 @@ mapping = provider.get("attributeMapping") or {}
 if mapping.get("google.subject") != "assertion.sub":
     raise SystemExit("WIF provider must map google.subject to assertion.sub.")
 
+expected_subject = f"repo:{repository}:environment:{environment}"
+
+# The condition must be a pure conjunction of claim equalities, each of the form
+# assertion.<claim> == '<value>'. Substring checks are not enough: a condition
+# such as "assertion.ref != 'refs/heads/main'" or "... || assertion.sub == 'x'"
+# contains the expected text yet admits other identities. Any clause that is
+# not a plain equality (negation, ||, parentheses, extra claims) is rejected.
+# Accepted shapes (clause order is irrelevant; each claim appears exactly once):
+#   assertion.sub == 'repo:<repository>:environment:<environment>' && assertion.ref == '<ref>'
+#   assertion.repository == '<repository>' && assertion.environment == '<environment>' && assertion.ref == '<ref>'
+ACCEPTED_CONDITIONS = (
+    {"sub": expected_subject, "ref": expected_ref},
+    {"repository": repository, "environment": environment, "ref": expected_ref},
+)
+EQUALITY = re.compile(r"""^assertion\.([a-z_]+) == (?:'([^']*)'|"([^"]*)")$""")
+
+
+def parse_condition(raw):
+    claims = {}
+    for clause in raw.split("&&"):
+        match = EQUALITY.match(clause.strip())
+        if match is None:
+            return None
+        claim = match.group(1)
+        value = match.group(2) if match.group(2) is not None else match.group(3)
+        if claim in claims:
+            return None
+        claims[claim] = value
+    return claims
+
+
 condition = provider.get("attributeCondition") or ""
-repo_scoped = repository in condition and (
-    "assertion.repository" in condition or "assertion.sub" in condition
-)
-environment_scoped = (
-    (f"environment:{environment}" in condition and "assertion.sub" in condition)
-    or (environment in condition and "assertion.environment" in condition)
-)
-main_ref_scoped = expected_ref in condition and "assertion.ref" in condition
-if not repo_scoped or not environment_scoped or not main_ref_scoped:
+if parse_condition(condition) not in ACCEPTED_CONDITIONS:
     raise SystemExit(
-        "WIF provider attributeCondition must restrict GitHub OIDC to "
-        f"repository {repository!r}, environment {environment!r}, and ref {expected_ref!r}."
+        "WIF provider attributeCondition must be exactly "
+        f"\"assertion.sub == '{expected_subject}' && assertion.ref == '{expected_ref}'\" "
+        f"(or equality clauses on assertion.repository == {repository!r}, "
+        f"assertion.environment == {environment!r} and assertion.ref == {expected_ref!r}) "
+        "with no other clauses, negations or ||."
     )
 
 role_members = []
@@ -85,7 +112,6 @@ subject_prefix = (
     "principal://iam.googleapis.com/projects/"
     f"{project_number}/locations/global/workloadIdentityPools/{pool_id}/subject/"
 )
-expected_subject = f"repo:{repository}:environment:{environment}"
 repo_member_suffix = f"attribute.repository/{repository}"
 
 scoped_member = any(

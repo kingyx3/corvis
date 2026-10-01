@@ -58,6 +58,11 @@ export function selectScanScope(input: { mode: RunMode; watermark: Watermark; sn
   const { mode, watermark, snapshot, changedPaths } = input;
   if (mode !== "daily") return { full: true, reason: `${mode}_full_scan_ignores_watermark`, files: snapshot.files };
   if (!watermark.lastSuccessfulDailyRunAt) return { full: true, reason: "no_daily_watermark_full_scan", files: snapshot.files };
+  // changedPaths is the diff from watermark.lastScannedCommit to HEAD. Without a
+  // recorded commit (an older watermark) there is no known base to diff from,
+  // so whatever paths were supplied cannot be trusted to cover everything
+  // changed since the last scan.
+  if (!watermark.lastScannedCommit) return { full: true, reason: "no_last_scanned_commit_full_scan", files: snapshot.files };
   if (changedPaths === null) return { full: true, reason: "changed_paths_unavailable_full_scan", files: snapshot.files };
   const changed = new Set(changedPaths);
   return { full: false, reason: "daily_incremental_since_watermark", files: snapshot.files.filter((file) => changed.has(file.path)) };

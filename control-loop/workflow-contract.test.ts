@@ -21,3 +21,15 @@ test("scheduled control loop persists runtime state without mutating protected m
   assert.doesNotMatch(workflow, /git commit/);
   assert.match(gitignore, /^control-loop\/state\/$/m);
 });
+
+test("the daily incremental scan diffs from the last scanned commit instead of only the latest commit", async () => {
+  const workflow = await read(".github/workflows/control-loop.yml");
+
+  // Enough history to reach the commit recorded in the watermark; the CLI falls back to a full scan if it is unreachable.
+  assert.match(workflow, /uses: actions\/checkout@[0-9a-f]{40} # v7\n        with:\n(?:          #[^\n]*\n)*          fetch-depth: 0\n/);
+  assert.doesNotMatch(workflow, /HEAD~1/);
+  assert.doesNotMatch(workflow, /git diff/);
+  // No fixed heredoc delimiter that a changed path named EOF could terminate early.
+  assert.doesNotMatch(workflow, /<<EOF/);
+  assert.doesNotMatch(workflow, /CONTROL_LOOP_CHANGED_PATHS/);
+});

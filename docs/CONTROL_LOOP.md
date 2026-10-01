@@ -12,7 +12,7 @@ This document describes the repository implementation. Confluence remains author
 - documentation-authority, internal-link, architecture-drift and GitHub issue-hygiene scanners;
 - deterministic plan/apply envelope with dry-run default and mutation budget;
 - health/closure gates that fail closed on incomplete or failed scans;
-- daily incremental vs weekly/monthly full-scan scope;
+- daily incremental vs weekly/monthly full-scan scope: the watermark records the last successfully scanned commit and a daily run scans every path changed in `<last scanned commit>..HEAD` (read with `git diff -z`, so non-ASCII and unusual file names match verbatim). A missing watermark, a watermark from before the field existed, an unreachable or non-ancestor commit, or no git checkout (the Cloud Run image) falls back to a full scan;
 - durable watermark state;
 - single-writer lease with stale-lock recovery;
 - one structured `RunReport` instead of scattered side effects.
@@ -80,6 +80,10 @@ The runtime/scheduler infrastructure is no longer the primary code gap, but #27 
 6. incident/postmortem feedback into regression rules remains future work.
 
 These are functional/operating-control gaps, not reasons to weaken the runtime safety model.
+
+## Known limitations
+
+- **Fingerprint subject slug collisions:** the fingerprint subject is slugged (`control-loop/classifiers/fingerprint.ts`: lowercased, every run of non-`[a-z0-9]` characters, including non-Latin letters, collapsed to `-`). Distinct subjects such as `docs/a-b.md` and `docs/a_b.md`, or two paths that differ only in case or punctuation, can therefore share one fingerprint, and `dedupeFindings` keeps only the first. This is deliberately not changed yet: altering the slug (for example by appending a short hash of the raw subject) changes the fingerprint of every existing finding and tracked GitHub issue, so it needs a migration plan for existing fingerprints (re-keying open issues rather than closing and re-opening them) before it can ship.
 
 ## Runbook
 

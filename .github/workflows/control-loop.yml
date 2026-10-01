@@ -40,7 +40,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 2
+          # Full history: the daily incremental scan diffs the last scanned
+          # commit (recorded in the watermark) against HEAD, which may be many
+          # commits back. The CLI falls back to a full scan if it is unreachable.
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -88,21 +91,9 @@ jobs:
             *) echo "unrecognized schedule: ${{ github.event.schedule }}" >&2; exit 1 ;;
           esac
 
-      - name: Changed paths since last commit
-        id: changed
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo "paths<<EOF"
-            git diff --name-only HEAD~1 HEAD 2>/dev/null || true
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Run control loop
         id: run
         env:
-          CONTROL_LOOP_CHANGED_PATHS: ${{ steps.changed.outputs.paths }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           node control-loop/cli.ts --mode "${{ steps.resolve.outputs.mode }}" --evidence control-loop-report.json
