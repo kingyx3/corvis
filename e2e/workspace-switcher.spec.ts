@@ -21,6 +21,22 @@ test("workspace switching resets data, permissions and search state and survives
   await expect(page.getByRole("button", { name: "Data review", exact: true })).toBeVisible();
 });
 
+test("workspace and demo data surfaces degrade cleanly when browser storage is blocked", async ({ page }) => {
+  await page.addInitScript(() => {
+    const blocked = () => { throw new DOMException("blocked", "SecurityError"); };
+    Object.defineProperty(window, "localStorage", { configurable: true, get: blocked });
+    Object.defineProperty(window, "sessionStorage", { configurable: true, get: blocked });
+  });
+  await page.goto("/");
+  const selector = page.getByRole("combobox", { name: "Current workspace" });
+  await expect(selector).toHaveValue("demo-workspace");
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Documents", exact: true })).toBeVisible();
+  await selector.selectOption("demo-secondary");
+  await expect(page.getByText(/Workspace selection could not be saved because browser storage is unavailable/)).toBeVisible();
+  await expect(selector).toHaveValue("demo-workspace");
+});
+
 test("workspace selector and access management dialog pass accessibility checks", async ({ page }) => {
   await page.addInitScript(() => window.sessionStorage.setItem("corvis:demo:role", "admin"));
   await page.goto("/");

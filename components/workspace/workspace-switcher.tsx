@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { WorkspaceMembershipSummary } from "@/core/enterprise";
 import type { WorkspaceIdentity } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
-import { safeRemoveItem } from "@/lib/safe-storage";
+import { safeRemoveItem, safeSetItem } from "@/lib/safe-storage";
 import { WORKSPACE_CONTEXT_KEY } from "@/lib/workspace-context";
 
 type SwitcherMembership=WorkspaceMembershipSummary&{supportAccess?:{supportGrantId:string;roleName:string;purpose:string;expiresAt:string}};
@@ -42,7 +42,9 @@ export function WorkspaceSwitcher({ identity, variant = "sidebar" }: { identity:
         const body = await response.json() as { data?: WorkspaceIdentity };
         if (body.data?.tenantId !== context.tenantId || body.data.workspaceId !== context.workspaceId) throw new Error("The server did not select this workspace.");
       }
-      window.localStorage.setItem(WORKSPACE_CONTEXT_KEY, JSON.stringify(context));
+      if (!safeSetItem("local", WORKSPACE_CONTEXT_KEY, JSON.stringify(context))) {
+        throw new Error("Workspace selection could not be saved because browser storage is unavailable. Your current workspace is unchanged.");
+      }
       window.location.reload();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Workspace could not be selected."); setBusy(false); }
   };
