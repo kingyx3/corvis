@@ -19,6 +19,7 @@ import {
   NO_GROUNDED_FIGURES_UNCERTAINTY,
   sanitizeLabel,
   sanitizePage,
+  sanitizeRowsForModel,
   sanitizeSnippet,
 } from "./research-grounding.ts";
 
@@ -276,6 +277,9 @@ export class PermissionedResearchService {
       checkExecutionSignal(execution.signal);
 
       options.onProgress?.("generation");
+      // The model gets a sanitized copy (value_string is free text from GP documents); the original rows stay the
+      // source for the digest, grounding and computedResults.
+      const modelRows = sanitizeRowsForModel(semantic.rows);
       let response: Response;
       try {
         response = await fetch(`${config.aiEndpoint.replace(/\/$/, "")}/answer`, {
@@ -294,8 +298,8 @@ export class PermissionedResearchService {
               id: semanticQueryId,
               status: semantic.status,
               shape: semantic.shape,
-              rows: semantic.rows,
-              result: { rows: semantic.rows, factIds: semantic.factIds },
+              rows: modelRows,
+              result: { rows: modelRows, factIds: semantic.factIds },
             },
             retrieval: hits.map((hit) => ({
               sourceReferenceId: hit.sourceReferenceId,

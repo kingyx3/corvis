@@ -58,6 +58,13 @@ export function sanitizeRetrievalText(value: unknown, options: { maxLength: numb
   text = text.trim().slice(0, options.maxLength);
   // Patterns run after truncation so a marker is never cut in half, and before a final trim so removal leaves no edge gaps.
   for (const pattern of INJECTION_PATTERNS) text = text.replace(pattern, UNTRUSTED_INSTRUCTION_MARKER);
+  // A marker can be longer than the construct it replaces, so re-bound the result; never leave half a marker behind.
+  if (text.length > options.maxLength) {
+    text = text.slice(0, options.maxLength);
+    const open = text.lastIndexOf("[");
+    const tail = open === -1 ? "" : text.slice(open);
+    if (tail && tail !== UNTRUSTED_INSTRUCTION_MARKER && UNTRUSTED_INSTRUCTION_MARKER.startsWith(tail)) text = text.slice(0, open);
+  }
   text = text.trim();
   return text ? text : undefined;
 }
@@ -68,6 +75,31 @@ export function sanitizeSnippet(value: unknown): string | undefined {
 
 export function sanitizeLabel(value: unknown): string | undefined {
   return sanitizeRetrievalText(value, { maxLength: MAX_RETRIEVAL_LABEL_LENGTH });
+}
+
+/** Bound for any one free-text cell of a semantic row sent to the model (`value_string` is extracted from GP documents). */
+export const MAX_MODEL_ROW_TEXT_LENGTH = 1000;
+const MAX_MODEL_ROW_DEPTH = 4;
+
+function sanitizeRowCell(value: unknown, depth: number): unknown {
+  if (typeof value === "string") return sanitizeRetrievalText(value, { maxLength: MAX_MODEL_ROW_TEXT_LENGTH }) ?? "";
+  if (Array.isArray(value)) return depth >= MAX_MODEL_ROW_DEPTH ? null : value.map((item) => sanitizeRowCell(item, depth + 1));
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    if (depth >= MAX_MODEL_ROW_DEPTH) return null;
+    return Object.fromEntries(Object.entries(value).map(([key, cell]) => [key, sanitizeRowCell(cell, depth + 1)]));
+  }
+  // numbers, booleans and null are typed data and pass through; Dates/bigints/other objects are left to JSON.stringify
+  return value;
+}
+
+/**
+ * A sanitized COPY of semantic rows for the model request: every string cell (notably the free-text `value_string`
+ * extracted from documents) goes through the shared retrieval sanitizer with a length bound, numeric/boolean/null cells
+ * are kept as-is. The input is never mutated: the original rows remain the source of truth for the digest, the
+ * numeric-grounding check and `computedResults`.
+ */
+export function sanitizeRowsForModel(rows: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, cell]) => [key, sanitizeRowCell(cell, 0)])));
 }
 
 export function sanitizePage(value: unknown): number | undefined {

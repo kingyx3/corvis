@@ -299,6 +299,13 @@ test("entitledSourceReferenceIds applies the source-reference route rule in bulk
   assert.deepEqual([...await entitledSourceReferenceIds(new SourceDb([{ source_reference_id: A.toUpperCase(), document_id: "d1" }]), caller({ documentIds: undefined }), [{ sourceReferenceId: A, documentId: "d1" }])], [A]);
 });
 
+test("sanitizeRetrievalText never exceeds maxLength even when a marker is longer than the text it replaces", () => {
+  const out = sanitizeRetrievalText(`${"a ".repeat(40)}<|im_start|><|im_end|><|x|>`, { maxLength: 100 })!;
+  assert.ok(out.length <= 100, String(out.length));
+  assert.doesNotMatch(out, /\[untrusted-document-instruction$/);
+  assert.doesNotMatch(out, /<\|/);
+});
+
 test("entitledSourceReferenceIds fails closed when the database errors", async () => {
   await assert.rejects(() => entitledSourceReferenceIds(new SourceDb([], true), caller({ documentIds: undefined }), [{ sourceReferenceId: A, documentId: "d1" }]), /db down/);
 });
