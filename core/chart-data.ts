@@ -56,11 +56,17 @@ export function compositionOmissionNote(
 export type TrendPoint = { period: string; value: number | null };
 export type TrendDelta = { absolute: number; percent: number | null; direction: "up" | "down" | "flat" };
 
+/**
+ * Change between the last two points, positionally. A missing (null or
+ * non-finite) latest or immediately previous point yields null: skipping a gap
+ * would present an older movement as "since the prior period", or report a
+ * change when the latest period has no value.
+ */
 export function trendDelta(points: TrendPoint[]): TrendDelta | null {
-  const numeric = points.filter((point): point is TrendPoint & { value: number } => point.value != null && Number.isFinite(point.value));
-  if (numeric.length < 2) return null;
-  const current = numeric[numeric.length - 1].value;
-  const previous = numeric[numeric.length - 2].value;
+  if (points.length < 2) return null;
+  const current = points[points.length - 1].value;
+  const previous = points[points.length - 2].value;
+  if (current == null || previous == null || !Number.isFinite(current) || !Number.isFinite(previous)) return null;
   const absolute = current - previous;
   const percent = previous === 0 ? null : (absolute / Math.abs(previous)) * 100;
   return { absolute, percent, direction: absolute > 0 ? "up" : absolute < 0 ? "down" : "flat" };
