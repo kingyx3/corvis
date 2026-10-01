@@ -44,6 +44,31 @@ export function notifySessionExpired(): void {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
 }
 
+/**
+ * The one place a 401 becomes "session expired": announces it to the shell (once per call, the shell
+ * de-duplicates the prompt) and returns the typed error. `message` defaults to user-facing copy so raw
+ * `fetch` callers that print `error.message` never show a code.
+ */
+export function sessionExpiredError(code?: string, message: string = SESSION_EXPIRED_MESSAGE): UnauthenticatedError {
+  notifySessionExpired();
+  return new UnauthenticatedError(message, code);
+}
+
+/** For raw `fetch` callers: throw the session-expired error if the response is a 401, before any other status handling. */
+export function throwIfUnauthenticated(response: { status: number }): void {
+  if (response.status === 401) throw sessionExpiredError();
+}
+
+/** Typed error for a non-2xx API response; a 401 additionally fires the session-expired flow. */
+export async function apiResponseError(response: Response): Promise<ApiError> {
+  const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
+  const message = body.reasons?.length
+    ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}`
+    : body.error || `Corvis API request failed (${response.status})`;
+  if (response.status === 401) return sessionExpiredError(body.error, message);
+  return new ApiError(message, response.status, body.error);
+}
+
 /** Plain-language text for an unexpected failure; falls back to `fallback` for code-like messages. */
 export function friendlyErrorMessage(reason: unknown, fallback: string): string {
   if (isUnauthenticatedError(reason)) return SESSION_EXPIRED_MESSAGE;

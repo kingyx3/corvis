@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 import { apiUrl } from "@/lib/api-url";
+import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
 
 type DrillPoint = { fundId: string; fund: string; period: string; snapshotId: string };
 
@@ -126,11 +127,12 @@ export function DashboardDepthSections({
         headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ pinnedFundIds: next }),
       });
+      throwIfUnauthenticated(response);
       if (!response.ok) throw new Error(`Preference update failed (${response.status})`);
       onSummaryChanged?.();
     } catch (reason) {
       setPinnedFundIds(previous);
-      setPreferenceError(reason instanceof Error ? reason.message : "Could not save portfolio pins");
+      setPreferenceError(friendlyErrorMessage(reason, "Could not save portfolio pins"));
     }
   };
 

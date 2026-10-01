@@ -8,6 +8,7 @@ import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 import { apiUrl } from "@/lib/api-url";
+import { throwIfUnauthenticated } from "@/lib/api-errors";
 
 type SourceActivityAcquisition = { acquisitionId: string; disposition: string; remotePath: string; remoteVersion: string; acquiredAt: string; documentId?: string; reason: string };
 type SourceActivityRun = { runId: string; trigger: string; state: string; discoveredCount: number; acceptedCount: number; duplicateCount: number; rejectedCount: number; startedAt: string; finishedAt?: string; zeroDiscoveryLongRunning: boolean; errorClass?: string; acquisitions: SourceActivityAcquisition[] };
@@ -39,11 +40,11 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
     const controller = new AbortController();
     const init = { signal: controller.signal, credentials: "include" as const, headers: workspaceContextHeaders() };
     void fetch(apiUrl("/api/v1/document-lifecycle"), init)
-      .then(async (response) => response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)))
+      .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)); })
       .then((payload) => { setLifecycles(payload.data ?? []); setLifecycleState("ready"); })
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setLifecycles([]); setLifecycleState("error"); } });
     void fetch(apiUrl("/api/v1/source-connections/activity"), init)
-      .then(async (response) => response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)))
+      .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)); })
       .then((payload) => setSourceActivity(payload.data ?? []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setSourceActivity([]); setActivityFailed(true); } });
     return () => controller.abort();
