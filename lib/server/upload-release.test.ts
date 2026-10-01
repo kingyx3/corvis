@@ -51,19 +51,30 @@ class FakeDb implements PostgresSqlApi {
   readonly released: PostgresPrimitive[][] = [];
   readonly sealed: PostgresPrimitive[][] = [];
   shaMatches = true;
+  /** SQL of the pending-rows selection, so the queue ordering can be asserted. */
+  queueSql = "";
+  /** Makes the attempt stamp fail, as a database outage would. */
+  failStamp = false;
   /** What the integrity seal's own read reports the artifact as (undefined = not yet sealed). */
   artifact: PostgresRow | undefined;
   private readonly pending: PostgresRow[];
   constructor(pending: PostgresRow[]) { this.pending = pending; }
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
-    if (sql.includes("from corvis_source.document_artifact_version") && sql.includes("malware_scan_status='pending'")) return this.pending;
+    if (sql.includes("from corvis_source.document_artifact_version") && sql.includes("malware_scan_status='pending'")) { this.queueSql = sql; return this.pending; }
     if (sql.includes("select malware_scan_status, quarantine_status")) return this.artifact ? [this.artifact] : [];
     if (sql.includes("set sha256=lower(coalesce(sha256")) { this.sealed.push(parameters); return [{ sha_matches: this.shaMatches }]; }
     if (sql.includes("release_clean_artifact")) { this.released.push(parameters); return [{ job_id: `registered:${String(parameters[1])}` }]; }
     throw new Error(`unexpected SQL: ${sql}`);
   }
-  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> { this.executed.push({ sql, parameters }); }
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    if (this.failStamp && sql.includes("last_release_attempt_at")) throw new Error("postgres unavailable");
+    this.executed.push({ sql, parameters });
+  }
   async health(): Promise<boolean> { return true; }
+  /** Artifact ids sent to the back of the queue. */
+  stamped(): string[] {
+    return this.executed.filter((call) => call.sql.includes("set last_release_attempt_at=now()")).map((call) => String(call.parameters[1]));
+  }
   statuses(): string[] {
     return this.executed.map((call) => call.sql.match(/malware_scan_status='([a-z_]+)'/)?.[1]).filter((value): value is string => Boolean(value));
   }
@@ -187,4 +198,57 @@ test("the latest release_clean_artifact definition refuses any scan verdict othe
   assert.ok(definition.search(/v_scan not in/i) < definition.search(/update corvis_source\.document_artifact_version/i), "the guard runs before the row is rewritten");
   // Signature and return contract are unchanged.
   assert.match(definition, /p_tenant_id uuid,\s*p_document_id uuid,\s*p_artifact_version_id uuid,\s*p_storage_generation text,\s*p_ingestion_id text\s*\)\s*returns text/i);
+});
+
+test("rows that stay pending or fail are stamped so they go to the back of the queue; settled rows are not", async () => {
+  const store = new FakeStore();
+  store.put("tenant=t/waiting.pdf", pdf);
+  store.put("tenant=t/ok.pdf", pdf, {}, "clean");
+  store.put("tenant=t/threat.pdf", pdf, {}, "threat");
+  const db = new FakeDb([
+    pendingRow("waiting", pdf),
+    pendingRow("foreign", pdf, { object_uri: "gs://another-bucket/x.pdf" }),
+    pendingRow("ok", pdf),
+    pendingRow("threat", pdf),
+  ]);
+  const summary = await releaseScannedUploads({ store, db });
+  assert.deepEqual(summary, { scanned: 4, released: 1, threats: 1, integrityFailed: 0, pending: 1, errors: 1 });
+  assert.deepEqual(db.stamped(), ["a-waiting", "a-foreign"]);
+  assert.deepEqual(db.executed.find((call) => call.sql.includes("last_release_attempt_at"))?.parameters, [TENANT, "a-waiting"]);
+});
+
+test("a failed attempt stamp never fails the batch", async () => {
+  const store = new FakeStore();
+  store.put("tenant=t/waiting.pdf", pdf);
+  store.put("tenant=t/ok.pdf", pdf, {}, "clean");
+  const db = new FakeDb([pendingRow("waiting", pdf), pendingRow("ok", pdf)]);
+  db.failStamp = true;
+  const summary = await releaseScannedUploads({ store, db });
+  assert.equal(summary.pending, 1);
+  assert.equal(summary.released, 1);
+  assert.equal(summary.errors, 0);
+});
+
+test("the release queue is ordered by recent attempts and interleaved per tenant, not by age alone", async () => {
+  const store = new FakeStore();
+  const db = new FakeDb([]);
+  await releaseScannedUploads({ store, db });
+  const sql = db.queueSql.replace(/\s+/g, " ");
+  assert.match(sql, /row_number\(\) over \(partition by tenant_id order by last_release_attempt_at nulls first, created_at\) as tenant_rank/);
+  assert.match(sql, /order by tenant_rank, last_release_attempt_at nulls first, created_at limit \$1/);
+  assert.match(sql, /created_at > now\(\) - make_interval\(secs => \$2\)/, "the retention window still bounds the queue");
+});
+
+test("migration 077 adds the attempt column and a partial index covering exactly the release queue", async () => {
+  const sql = (await readFile("db/postgres/migrations/077_upload_release_queue_fairness.sql", "utf8")).replace(/--.*$/gm, "").replace(/\s+/g, " ");
+  assert.match(sql, /^ ?begin; alter table corvis_source\.document_artifact_version add column if not exists last_release_attempt_at timestamptz; /);
+  assert.doesNotMatch(sql, /last_release_attempt_at timestamptz (not null|default)/, "the column is nullable with no default");
+  const index = sql.match(/create index if not exists (\w+) on corvis_source\.document_artifact_version \(([^)]*)\) where ([^;]*);/);
+  assert.ok(index, "a partial index must be created");
+  assert.equal(index[2], "tenant_id, last_release_attempt_at nulls first, created_at");
+  // The index predicate must be implied by the poll's own filter, or the planner cannot use it.
+  const queue = (await readFile("lib/server/upload-release.ts", "utf8")).replace(/\s+/g, " ");
+  assert.ok(queue.includes(index[3] ?? "?"), "the index predicate must match the release poll's filter");
+  assert.doesNotMatch(sql, /release_clean_artifact/, "the release function is not touched");
+  assert.match(sql, / commit; ?$/);
 });

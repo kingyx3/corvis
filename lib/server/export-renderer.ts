@@ -207,12 +207,20 @@ function worksheetXml(rows: readonly ExportRow[], columns: ExportColumns): strin
     `<sheetData>${header}${body}</sheetData></worksheet>`;
 }
 
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+/** CRC-32 (IEEE 802.3) lookup table: one table read per byte instead of eight shift/xor steps. */
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index++) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0);
+    table[index] = value >>> 0;
   }
+  return table;
+})();
+
+export function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let index = 0; index < bytes.length; index++) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ bytes[index]!) & 0xff]!;
   return (crc ^ 0xffffffff) >>> 0;
 }
 
