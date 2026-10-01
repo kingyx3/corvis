@@ -81,6 +81,10 @@ The runtime/scheduler infrastructure is no longer the primary code gap, but #27 
 
 These are functional/operating-control gaps, not reasons to weaken the runtime safety model.
 
+## Known limitations
+
+- **Fingerprint subject slug collisions:** the fingerprint subject is slugged (`control-loop/classifiers/fingerprint.ts`: lowercased, every run of non-`[a-z0-9]` characters, including non-Latin letters, collapsed to `-`). Distinct subjects such as `docs/a-b.md` and `docs/a_b.md`, or two paths that differ only in case or punctuation, can therefore share one fingerprint, and `dedupeFindings` keeps only the first. This is deliberately not changed yet: altering the slug (for example by appending a short hash of the raw subject) changes the fingerprint of every existing finding and tracked GitHub issue, so it needs a migration plan for existing fingerprints (re-keying open issues rather than closing and re-opening them) before it can ship.
+
 ## Runbook
 
 - **Run reports failed:** inspect the structured report's `notes` and scanner completeness. Failed scans cannot close issues.
