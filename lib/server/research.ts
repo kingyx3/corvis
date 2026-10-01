@@ -9,6 +9,7 @@ import type {
 import { getServerConfig } from "./config.ts";
 import { isFeatureEnabled } from "./feature-flags.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { logEvent } from "./telemetry.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
 import {
   assessNumericGrounding,
@@ -170,9 +171,10 @@ export class PermissionedResearchService {
    * external search index, so a source reference id that doesn't resolve to
    * anything in Postgres (or isn't even a UUID) just gets no link rather than
    * failing the whole answer -- this is chrome on top of an already-returned,
-   * already-entitled answer, never a gate on it.
+   * already-entitled answer, never a gate on it. A database failure is logged (the answer still returns): the open
+   * reconciliation flag is then absent from every citation, which the UI cannot tell apart from "no open exception".
    */
-  private async citationLinks(tenantId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
+  private async citationLinks(identity: RequestIdentity, correlationId: string, sourceReferenceIds: string[]): Promise<Map<string, CitationLink>> {
     const ids = [...new Set(sourceReferenceIds)].filter((id) => UUID.test(id));
     const links = new Map<string, CitationLink>();
     if (ids.length === 0) return links;
@@ -185,7 +187,7 @@ export class PermissionedResearchService {
           ) as has_open_reconciliation
         from corvis_facts.observation_source_reference osr
         where osr.tenant_id=$1 and osr.source_reference_id in (select jsonb_array_elements_text($2::jsonb)::uuid)
-        order by osr.source_reference_id, osr.observation_id`, [tenantId, JSON.stringify(ids)]);
+        order by osr.source_reference_id, osr.observation_id`, [identity.tenantId, JSON.stringify(ids)]);
       for (const row of rows) {
         const sourceReferenceId = String(row.source_reference_id);
         const hasOpenReconciliation = row.has_open_reconciliation === true || row.has_open_reconciliation === "true";
@@ -196,9 +198,21 @@ export class PermissionedResearchService {
         }
         links.set(sourceReferenceId, { observationId: String(row.observation_id), hasOpenReconciliation });
       }
-    } catch {
+    } catch (error) {
       // Enrichment only; an unreachable/misbehaving database here must not
-      // turn an already-governed, already-entitled answer into a failure.
+      // turn an already-governed, already-entitled answer into a failure. It must not be silent either: the
+      // hasOpenReconciliation risk signal is dropped for this answer. Only the error class/code is logged (no SQL text).
+      const code = (error as { code?: unknown } | null)?.code;
+      logEvent("warn", "research.citation_links_failed", {
+        correlationId,
+        tenantId: identity.tenantId,
+        workspaceId: identity.workspaceId,
+        actorSubject: identity.subject,
+      }, {
+        citationCount: ids.length,
+        errorName: error instanceof Error ? error.name : typeof error,
+        ...(typeof code === "string" ? { code } : {}),
+      });
       return new Map();
     }
     return links;
@@ -341,7 +355,7 @@ export class PermissionedResearchService {
       const uncertaintyGrounded = !uncertaintyText || extractNumericFigures(uncertaintyText).length === 0
         || assessNumericGrounding(uncertaintyText, semantic.rows, usedFactIds).grounded;
 
-      const links = await this.citationLinks(identity.tenantId, hits.map((hit) => hit.sourceReferenceId));
+      const links = await this.citationLinks(identity, semanticQueryId, hits.map((hit) => hit.sourceReferenceId));
       const citations: SourceCitation[] = grounding.grounded ? hits.map((hit) => {
         const link = links.get(hit.sourceReferenceId);
         return {

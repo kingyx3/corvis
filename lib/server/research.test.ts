@@ -32,6 +32,8 @@ class FakeDb implements PostgresSqlApi {
     version: 1,
   }];
   citationLinkRows: PostgresRow[] = [];
+  /** When set, the citation-link query rejects with this error. */
+  citationLinkError?: Error;
   /** Rows of corvis_serving.source_references the caller's tenant can see (source_reference_id -> document_id). */
   sourceReferenceRows: PostgresRow[] = [];
 
@@ -39,7 +41,10 @@ class FakeDb implements PostgresSqlApi {
     this.calls.push({ kind: "query", sql, parameters });
     if (sql.includes("bool_or(o.value_number is not null)")) return this.candidates;
     if (sql.includes("with scoped as")) return this.factRows;
-    if (sql.includes("from corvis_facts.observation_source_reference")) return this.citationLinkRows;
+    if (sql.includes("from corvis_facts.observation_source_reference")) {
+      if (this.citationLinkError) throw this.citationLinkError;
+      return this.citationLinkRows;
+    }
     if (sql.includes("from corvis_serving.source_references")) return this.sourceReferenceRows;
     if (sql.includes("from corvis_control.feature_flag where")) {
       return this.hybridSearchEnabled ? [{
@@ -249,6 +254,33 @@ test("citations link to their reviewed observation and flag an open reconciliati
     if (originalSearch === undefined) delete process.env.CORVIS_SEARCH_ENDPOINT;
     else process.env.CORVIS_SEARCH_ENDPOINT = originalSearch;
   }
+});
+
+test("a citation-link database failure is logged and the answer still returns (flag absent, not silently swallowed)", async () => {
+  const db = new FakeDb();
+  const sourceReferenceId = "00000000-0000-0000-0000-000000000201";
+  db.citationLinkRows = [{ source_reference_id: sourceReferenceId, observation_id: "00000000-0000-0000-0000-000000000301", has_open_reconciliation: true }];
+  db.citationLinkError = Object.assign(new Error("connection to 10.0.0.5 refused: select secret"), { code: "ECONNREFUSED" });
+  db.sourceReferenceRows = [{ source_reference_id: sourceReferenceId, document_id: DOC_101 }];
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (line?: unknown) => { warnings.push(String(line)); };
+  try {
+    const { result } = await runResearch(db, { hits: [{ sourceReferenceId, documentId: DOC_101, text: "Allowed evidence" }] });
+    assert.equal(result.citations.length, 1);
+    assert.equal(result.citations[0]?.observationId, undefined);
+    assert.equal(result.citations[0]?.hasOpenReconciliation, undefined);
+  } finally {
+    console.warn = originalWarn;
+  }
+  const record = warnings.map((line) => JSON.parse(line) as Record<string, unknown>).find((entry) => entry.event === "research.citation_links_failed");
+  assert.ok(record, "the failure is logged");
+  assert.equal(record.level, "warn");
+  assert.equal(record.tenantId, sourceScoped.tenantId);
+  assert.equal(record.code, "ECONNREFUSED");
+  assert.equal(record.citationCount, 1);
+  assert.match(String(record.correlationId), /^sq_[0-9a-f]{24}$/);
+  assert.doesNotMatch(JSON.stringify(record), /10\.0\.0\.5|secret/, "driver error text is not logged");
 });
 
 test("a citation whose source reference is not a UUID or does not resolve for the tenant is dropped (was: returned unlinked)", async () => {
