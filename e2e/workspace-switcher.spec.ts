@@ -33,7 +33,7 @@ test("workspace and demo data surfaces degrade cleanly when browser storage is b
   await page.getByRole("button", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Documents", exact: true })).toBeVisible();
   await selector.selectOption("demo-secondary");
-  await expect(page.getByRole("alert")).toContainText("browser storage is unavailable");
+  await expect(page.getByText(/Workspace selection could not be saved because browser storage is unavailable/)).toBeVisible();
   await expect(selector).toHaveValue("demo-workspace");
 });
 
