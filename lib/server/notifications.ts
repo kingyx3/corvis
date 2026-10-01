@@ -364,8 +364,12 @@ export async function processEmailOutbox(dependencies: DispatchDependencies = {}
 
 /**
  * Bundles each recipient's deferred items into one digest email once their
- * oldest item has waited {@link DIGEST_WINDOW_HOURS}. One statement per
- * recipient: the digest row and the `digested` marks commit together.
+ * oldest item has waited {@link DIGEST_WINDOW_HOURS}. Items were deferred at
+ * claim time, so eligibility and the preference are re-checked here exactly as
+ * the claim path does: an item whose category was switched off, moved back to
+ * immediate delivery, or whose recipient lost access in the meantime is
+ * suppressed instead of bundled. The digest row and the `digested` marks of the
+ * surviving items commit in one statement.
  */
 export async function processEmailDigests(dependencies: { db?: PostgresSqlApi; limit?: number } = {}): Promise<{ digests: number }> {
   const db = dependencies.db ?? dbDefault();
@@ -376,10 +380,28 @@ export async function processEmailDigests(dependencies: { db?: PostgresSqlApi; l
     limit $1`, [dependencies.limit ?? 100, DIGEST_WINDOW_HOURS]);
   let digests = 0;
   for (const recipient of due) {
+    const tenantId = text(recipient, "tenant_id");
+    const userId = text(recipient, "recipient_user_id");
+    const pendingRows = await db.query(`select email_id::text,tenant_id::text,category,recipient_user_id::text,workspace_id::text,fund_id,required_roles
+      from corvis_control.email_outbox
+      where tenant_id=$1::uuid and recipient_user_id=$2::uuid and status='digest_pending'`, [tenantId, userId]);
+    const bundled: string[] = [];
+    for (const row of pendingRows) {
+      const emailId = text(row, "email_id");
+      const reason = await digestSuppressionReason(db, row);
+      if (reason) {
+        await db.execute(`update corvis_control.email_outbox set status='suppressed',suppression_reason=$2,locked_until=null,updated_at=now()
+          where email_id=$1::uuid and status='digest_pending'`, [emailId, reason]);
+      } else {
+        bundled.push(emailId);
+      }
+    }
+    if (!bundled.length) continue;
     const digestId = randomUUID();
     const rows = await db.query(`with pending as (
         select email_id,category from corvis_control.email_outbox
         where tenant_id=$1::uuid and recipient_user_id=$2::uuid and status='digest_pending'
+          and email_id in (select jsonb_array_elements_text($4::jsonb)::uuid)
         for update skip locked
       ), digest as (
         insert into corvis_control.email_outbox (email_id,tenant_id,category,recipient_user_id,template_params,dedupe_key)
@@ -393,10 +415,22 @@ export async function processEmailDigests(dependencies: { db?: PostgresSqlApi; l
       update corvis_control.email_outbox o set status='digested',digest_email_id=d.email_id,updated_at=now()
       from pending p, digest d
       where o.email_id=p.email_id
-      returning o.email_id`, [text(recipient, "tenant_id"), text(recipient, "recipient_user_id"), digestId]);
+      returning o.email_id`, [tenantId, userId, digestId, json(bundled)]);
     if (rows.length) digests++;
   }
   return { digests };
+}
+
+/** Why a deferred item must not be bundled any more, mirroring the claim path's checks. */
+async function digestSuppressionReason(db: PostgresSqlApi, row: PostgresRow): Promise<"not_eligible" | "opted_out" | null> {
+  const who = await eligibility(db, row);
+  if (!who.identityActive || !who.memberActive || !who.fundEntitled) return "not_eligible";
+  const definition = notificationCategory(text(row, "category"));
+  if (definition && !definition.mandatory) {
+    const preference = effectivePreference(definition, who.preference);
+    if (!preference.enabled || preference.delivery !== "daily_digest") return "opted_out";
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
