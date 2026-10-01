@@ -67,3 +67,4 @@ The canonical deployment environments are:
 Technical changes that affect a Confluence-owned business requirement must link the governing Confluence page or issue. Changes that are purely implementation detail may be completed entirely in GitHub.
 
 Never copy credentials, customer data, confidential evidence or secret values into this public repository. Documentation may list **secret names and ownership**, never values.
+- [Review workflows and personal preferences](REVIEW_WORKFLOWS_AND_PREFERENCES.md) — exception investigation, original documents, saved views, formatting and rollout.

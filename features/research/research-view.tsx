@@ -1,4 +1,6 @@
 "use client";
+import { displayDate } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { useEffect, useRef, useState } from "react";
 import type { ResearchAnswer, ResearchPin, ResearchProgressPhase } from "@/core/enterprise";
@@ -47,11 +49,14 @@ function researchError(error: unknown): string {
 
 function formatAsOf(iso: string): string {
   const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return Number.isNaN(parsed.getTime()) ? iso : displayDate(parsed, { timeStyle: "short" });
 }
 
-export function ResearchView({ suggestions, canReadSources, onOpenReviewObservation }: { suggestions: string[]; canReadSources: boolean; onOpenReviewObservation?: (observationId: string) => void }) {
-  const [input, setInput] = useState("");
+export function ResearchView({ suggestions, canReadSources, onOpenReviewObservation, onOpenDocument, draftRequest }: { onOpenDocument?: (documentId: string, location?: SourceEvidence) => void; draftRequest?: { question: string; key: number } | null; suggestions: string[]; canReadSources: boolean; onOpenReviewObservation?: (observationId: string) => void }) {
+  usePreferences();
+  const [input, setInput] = useState(draftRequest?.question ?? "");
+  const [appliedDraft, setAppliedDraft] = useState(draftRequest?.key);
+  if (draftRequest && draftRequest.key !== appliedDraft) { setAppliedDraft(draftRequest.key); setInput(draftRequest.question); }
   const [turns, setTurns] = useState<ConversationTurn[]>([{
     id: "preview",
     question: "What changed in my portfolio this quarter?",
@@ -222,11 +227,11 @@ export function ResearchView({ suggestions, canReadSources, onOpenReviewObservat
           </div>)}
         </div>
         {suggestions.length > 0 && <div className="suggestion-wrap"><span id="suggestions-label">Try asking</span><div role="group" aria-labelledby="suggestions-label">{suggestions.filter((x) => x !== lastQuestion).slice(0,3).map((suggestion) => <button key={suggestion} disabled={pending} onClick={() => void ask(suggestion)}>{suggestion}<Icon name="arrow" size={14}/></button>)}</div></div>}
-        <form className="ask-box" onSubmit={(event) => { event.preventDefault(); void ask(input); }}><textarea aria-label="Ask Corvis a question" value={input} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(input); } }} onChange={(event) => setInput(event.target.value)} placeholder="Ask about a fund, company, metric, change or source document…" rows={2} readOnly={pending} aria-busy={pending}/><div className="ask-footer"><span><Icon name="shield" size={14}/>Uses only data you can access<span className="ask-hint"> · Enter to send, Shift+Enter for a new line</span></span>{pending ? <button type="button" className="text-button" onClick={cancel}>Cancel</button> : <button type="submit" disabled={!input.trim()} aria-label="Send question"><Icon name="send" size={17}/></button>}</div></form>
+        <form className="ask-box" onSubmit={(event) => { event.preventDefault(); void ask(input); }}><textarea autoFocus={!!draftRequest} aria-label="Ask Corvis a question" value={input} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(input); } }} onChange={(event) => setInput(event.target.value)} placeholder="Ask about a fund, company, metric, change or source document…" rows={2} readOnly={pending} aria-busy={pending}/><div className="ask-footer"><span><Icon name="shield" size={14}/>Uses only data you can access<span className="ask-hint"> · Enter to send, Shift+Enter for a new line</span></span>{pending ? <button type="button" className="text-button" onClick={cancel}>Cancel</button> : <button type="submit" disabled={!input.trim()} aria-label="Send question"><Icon name="send" size={17}/></button>}</div></form>
       </div>
       <aside className={`evidence-panel${evidence || evidenceError ? " evidence-open" : ""}`} aria-live="polite" aria-label="Source evidence"><p className="eyebrow">Evidence</p><h3>Sources used</h3>
         <div ref={evidenceRef}>
-          {evidence && <div className="evidence-policy"><Icon name="source"/><p><strong>Opened entitled evidence</strong><br/>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}{evidence.excerpt ? <><br/><br/>{evidence.excerpt}</> : null}</p><button className="text-button" onClick={closeEvidence}>Close</button></div>}
+          {evidence && <div className="evidence-policy"><Icon name="source"/><p><strong>Opened entitled evidence</strong><br/>{`Document ${evidence.documentId}${evidence.page ? ` · page ${evidence.page}` : ""}${evidence.sheetName ? ` · ${evidence.sheetName}` : ""}${evidence.cellRange ? ` · ${evidence.cellRange}` : ""}`}{evidence.excerpt ? <><br/><br/>{evidence.excerpt}</> : null}</p>{onOpenDocument && canReadSources && <button className="secondary-button" onClick={() => onOpenDocument(evidence.documentId, evidence)}>Open full document</button>}<button className="text-button" onClick={closeEvidence}>Close</button></div>}
           {evidenceError && <div className="evidence-policy" role="alert"><Icon name="alert"/><p><strong>Source evidence unavailable</strong><br/>{evidenceError}</p><button className="text-button" onClick={closeEvidence}>Dismiss</button></div>}
         </div>
         {focusedTurn?.answer?.citations.length ? focusedTurn.answer.citations.map((citation) => <div className="evidence-card" key={citation.sourceReferenceId}><div><strong>{citation.label}</strong><span>{citation.page ? `Page ${citation.page}` : "Source reference"}</span>{citation.hasOpenReconciliation && <span className="status-pill status-review"><span className="status-dot"/>Open reconciliation</span>}{citation.reconciliationStatusUnknown && <span className="status-pill"><span className="status-dot"/>Reconciliation status unavailable</span>}</div>{canReadSources ? <button disabled={evidenceLoading === citation.sourceReferenceId} onClick={() => void openEvidence(citation.sourceReferenceId)}>{evidenceLoading === citation.sourceReferenceId ? "Opening…" : "Open entitled source"} <Icon name="arrow" size={14}/></button> : <span>Source access not granted</span>}{citation.observationId && onOpenReviewObservation && <button onClick={() => onOpenReviewObservation(citation.observationId!)}>View reviewed observation <Icon name="arrow" size={14}/></button>}</div>) : <div className="evidence-policy"><Icon name="shield"/><p>No source evidence is shown until a permission-checked answer returns citations.</p></div>}

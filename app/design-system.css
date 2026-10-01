@@ -397,3 +397,18 @@
   .position-financials-analytics-grid { grid-template-columns: 1fr; }
   .design-system-catalog { padding: 24px 18px; }
 }
+
+/* Hidden table columns are removed from the accessibility tree as well as the visual layout. */
+.saved-views { margin-block: 1rem; }
+.saved-views .toolbar { flex-wrap: wrap; align-items: end; }
+.column-options { display: flex; gap: .75rem; flex-wrap: wrap; }
+.column-options label { display: flex; align-items: center; gap: .35rem; }
+.data-table[data-hidden-columns~="1"] tr > :nth-child(1) { display: none; }
+.data-table[data-hidden-columns~="2"] tr > :nth-child(2) { display: none; }
+.data-table[data-hidden-columns~="3"] tr > :nth-child(3) { display: none; }
+.data-table[data-hidden-columns~="4"] tr > :nth-child(4) { display: none; }
+.data-table[data-hidden-columns~="5"] tr > :nth-child(5) { display: none; }
+.data-table[data-hidden-columns~="6"] tr > :nth-child(6) { display: none; }
+.data-table[data-hidden-columns~="7"] tr > :nth-child(7) { display: none; }
+.data-table[data-hidden-columns~="8"] tr > :nth-child(8) { display: none; }
+.data-table[data-hidden-columns~="9"] tr > :nth-child(9) { display: none; }

@@ -1,3 +1,5 @@
+import { displayValue as formatValue, displayNumberFormatter, displayDate } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 import { useState, type ReactNode } from "react";
 import type { ActivityRecord, FundSnapshot, View } from "@/core/contracts";
 import { comparePeriods, type AttentionItem, type AttentionTarget, type ExposureBreakdownRow, type FundFreshness, type WorkspaceSummary } from "@/core/workspace-summary";
@@ -21,9 +23,9 @@ const SEVERITY_LABEL: Record<AttentionItem["severity"], string> = { blocking: "B
 function moneyFormatter(currency: string | null): (value: number) => string {
   let format: Intl.NumberFormat;
   try {
-    format = new Intl.NumberFormat(undefined, currency ? { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 } : { notation: "compact", maximumFractionDigits: 1 });
+    format = displayNumberFormatter( currency ? { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 } : { notation: "compact", maximumFractionDigits: 1 });
   } catch {
-    format = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+    format = displayNumberFormatter( { notation: "compact", maximumFractionDigits: 1 });
   }
   return (value) => format.format(value);
 }
@@ -31,7 +33,7 @@ function moneyFormatter(currency: string | null): (value: number) => string {
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return Number.isNaN(date.getTime()) ? iso : displayDate(iso.slice(0, 10));
 }
 
 function targetLabel(target: AttentionTarget): string {
@@ -78,6 +80,7 @@ export function OverviewView({
   canReview: boolean;
   canAdmin: boolean;
 }) {
+  usePreferences();
   const [classifying, setClassifying] = useState(false);
   const published = snapshots.filter((snapshot) => snapshot.status === "Published").length;
   const review = snapshots.filter((snapshot) => snapshot.status === "Review").length;
@@ -103,7 +106,7 @@ export function OverviewView({
   const attentionUnavailable = !attention && summaryError !== undefined;
   const attentionHeadline = attentionUnavailable ? "Attention data unavailable" : attention
     ? attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item needs" : "items need"} attention` : "All caught up"
-    : review ? `${review} ${review === 1 ? "reporting period needs" : "reporting periods need"} attention` : "All caught up";
+    : review ? `${formatValue(review)} ${review === 1 ? "reporting period needs" : "reporting periods need"} attention` : "All caught up";
   const formatMoney = moneyFormatter(summary?.currency ?? null);
   const freshnessByFund = new Map<string, FundFreshness>((summary?.freshness.funds ?? []).map((row) => [row.fund, row]));
   const asOf = summary?.freshness.asOf ?? null;
@@ -161,17 +164,17 @@ export function OverviewView({
     {exposure.bySector.length > 0 ? breakdownPanel(exposure.bySector, "Allocation", "Exposure by sector", "Holding fair values by each company's governed Corvis sector; funds that only report a GP sector breakdown are mapped onto the same taxonomy.", classifyButton) : <div className="panel chart-panel"><figure className="chart-figure"><figcaption><p className="eyebrow">Allocation</p><h3>Exposure by sector</h3></figcaption><p className="chart-empty">No published holding sits in a sector-classified company yet.</p></figure>{classifyButton && <div className="breakdown-footer">{classifyButton}</div>}</div>}
   </section>;
 
-  const headingDescription = <>{review ? `${review} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${published} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</>;
+  const headingDescription = <>{review ? `${formatValue(review)} ${review === 1 ? "period is" : "periods are"} waiting on review before publication.` : "No reporting periods currently require review."} {blockingExceptions ? `${blockingExceptions} blocking reconciliation ${blockingExceptions === 1 ? "exception is" : "exceptions are"} also open.` : ""} {snapshots.length ? `${formatValue(published)} of ${snapshots.length} fund periods are published (${completion}%).` : "No fund-period snapshots are available yet."}</>;
   const headingActions = <>{canReadObservations && review > 0 && <button className="primary-button" onClick={() => onNavigate("review")}><Icon name="alert"/>Review now</button>}{canUpload && <button className={review > 0 ? "secondary-button" : "primary-button"} onClick={onUpload}><Icon name="upload" />Upload documents</button>}</>;
 
   return <>
     <PageHeading variant="hero" eyebrow={audience === "admin" ? "Platform health" : "Current workspace"} title={`Reporting overview · ${attentionHeadline}`} description={headingDescription} actions={headingActions}>{summary && <p className="freshness-note" role="note"><Icon name="check" size={14} />{asOfLabel} · published (final) data only{staleFunds ? <> · <b>{staleFunds} {staleFunds === 1 ? "fund is" : "funds are"} stale</b> (no period published within {summary.freshness.staleAfterDays} days)</> : ""}</p>}</PageHeading>
     {audience === "admin" && (published > 0 || review > 0) && <section className="panel"><CompositionChart eyebrow="Platform health" title="Fund periods by status" description="How every reporting period across the tenant currently breaks down between review and publication, independent of your own review queue." items={statusComposition} unitLabel="Fund periods" /></section>}
     <section className="metric-grid" aria-label={`Workspace metrics ordered for ${audience} workflow`}>
-      <MetricCard label="Fund periods" value={snapshots.length} detail={<><b>{published}</b> final · <b>{review}</b> preliminary</>} icon={<Icon name="file"/>} order={reviewFirst ? 1 : 2} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
-      <MetricCard label={exposure?.items.length ? "Published exposure" : "Trusted facts"} value={exposure?.items.length ? formatMoney(exposure.total) : factCount.toLocaleString()} detail={exposure?.items.length ? <>{asOfLabel} · <b>{exposure.items.length}</b> {exposure.items.length === 1 ? "fund" : "funds"}</> : canReadObservations ? <>Across <b>{holdingCount.toLocaleString()}</b> holdings</> : "Read-only summary"} icon={<Icon name="database"/>} order={reviewFirst ? 3 : 1} onClick={canReadObservations ? () => onNavigate("review") : undefined} trend={portfolioTrend.length > 1 ? <Sparkline label="Published portfolio value" points={portfolioTrend} valueFormatter={formatMoney}/> : undefined}/>
+      <MetricCard label="Fund periods" value={snapshots.length} detail={<><b>{formatValue(published)}</b> final · <b>{formatValue(review)}</b> preliminary</>} icon={<Icon name="file"/>} order={reviewFirst ? 1 : 2} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
+      <MetricCard label={exposure?.items.length ? "Published exposure" : "Trusted facts"} value={exposure?.items.length ? formatMoney(exposure.total) : displayNumberFormatter().format(factCount)} detail={exposure?.items.length ? <>{asOfLabel} · <b>{formatValue(exposure.items.length)}</b> {exposure.items.length === 1 ? "fund" : "funds"}</> : canReadObservations ? <>Across <b>{displayNumberFormatter().format(holdingCount)}</b> holdings</> : "Read-only summary"} icon={<Icon name="database"/>} order={reviewFirst ? 3 : 1} onClick={canReadObservations ? () => onNavigate("review") : undefined} trend={portfolioTrend.length > 1 ? <Sparkline label="Published portfolio value" points={portfolioTrend} valueFormatter={formatMoney}/> : undefined}/>
       <MetricCard label="Needs attention" value={attentionUnavailable ? "—" : attentionTotal || "0"} detail={attentionUnavailable ? "Attention data unavailable" : attention ? (attentionTotal ? attentionCounts : "All caught up") : review ? <><b>{blockingExceptions}</b> blocking exceptions</> : "All caught up"} icon={<Icon name="alert"/>} tone={attentionUnavailable || attentionTotal || blockingExceptions ? "warning" : "default"} order={reviewFirst ? 0 : 3} ariaControls={attention || attentionUnavailable ? "needs-attention" : undefined} onClick={attention || attentionUnavailable ? focusAttention : canReadObservations ? () => onNavigate("review") : undefined}/>
-      <MetricCard label="Published snapshots" value={published} detail={<><b>{completion}%</b> of current workspace periods{summary ? <> · {asOfLabel}</> : null}</>} icon={<Icon name="check"/>} order={reviewFirst ? 2 : 4} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
+      <MetricCard label="Published snapshots" value={formatValue(published)} detail={<><b>{completion}%</b> of current workspace periods{summary ? <> · {asOfLabel}</> : null}</>} icon={<Icon name="check"/>} order={reviewFirst ? 2 : 4} onClick={canReadObservations ? () => onNavigate("review") : undefined}/>
     </section>
     {reviewFirst || audience === "admin" ? <>{attentionSection}{exposureSection}{breakdownSection}</> : <>{exposureSection}{breakdownSection}{attentionSection}</>}
     {!exposure && holdingsItems.length > 0 && <section className="panel"><CompositionChart eyebrow="Exposure" title="Holdings by fund" description="How your entitled fund holdings break down across the current reporting cycle." items={holdingsItems} unitLabel="Holdings" /></section>}

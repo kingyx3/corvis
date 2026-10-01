@@ -205,6 +205,8 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["uploads/[uploadId]/complete/route.ts", { POST: "documents:write" }],
   ["uploads/[uploadId]/route.ts", { GET: "documents:write", DELETE: "documents:write" }],
   ["uploads/initiate/route.ts", { POST: "documents:write" }],
+  ["user-preferences/route.ts", { GET: null, PUT: null, POST: null }],
+  ["source-references/[sourceReferenceId]/document/route.ts", { GET: "sources:read" }],
   ["workspace-preferences/route.ts", { GET: "observations:read", PUT: "observations:read", POST: "observations:read" }],
   ["workspace-summary/route.ts", { GET: "observations:read" }],
 ];

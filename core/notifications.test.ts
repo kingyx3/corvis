@@ -86,3 +86,14 @@ test("an invitation or action link must be an absolute https URL", () => {
   assert.throws(() => renderEmail("invitation", { roleName: "analyst", invitationUrl: "javascript:alert(1)" }, { appUrl }));
   assert.throws(() => renderEmail("export_ready", {}, { appUrl: "http://attacker.test" }));
 });
+
+
+test("email metadata respects recipient formats and calendar dates remain calendar dates", () => {
+  const displayPreferences = { timeZone: "America/Los_Angeles", dateFormat: "iso" as const, numberFormat: "de-DE" as const };
+  const instant = renderEmail("invitation", { invitationUrl: `${appUrl}/invite#token`, expiresAt: "2026-10-01T00:30:00Z" }, { appUrl, displayPreferences });
+  assert.match(instant.text, /2026-09-30 17:30/);
+  const calendar = renderEmail("invitation", { invitationUrl: `${appUrl}/invite#token`, expiresOn: "2026-10-01" }, { appUrl, displayPreferences });
+  assert.match(calendar.text, /2026-10-01/);
+  const digest = renderEmail("digest", { items: [{ category: "export_ready", count: 1234 }] }, { appUrl, displayPreferences });
+  assert.match(digest.text, /1\.234/);
+});

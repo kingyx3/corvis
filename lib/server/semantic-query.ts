@@ -8,6 +8,8 @@ export type GovernedSemanticQueryShape = {
   version: "v2";
   source: "corvis_serving.observations";
   reviewState: "approved";
+  subjectType?: "fund" | "company" | "holding" | "instrument";
+  subjectId?: string;
   fundIds: string[];
   documentIds: string[];
   metricCode?: string;
@@ -248,6 +250,7 @@ export class GovernedSemanticQueryService {
         and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
         and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
         and o.metric_code=$4
+        and ($8::text is null or (case $8::text when 'fund' then o.fund_id when 'company' then o.company_id when 'holding' then o.holding_id when 'instrument' then o.instrument_id end)=$9::text)
         and ($5::jsonb='[]'::jsonb or regexp_replace(lower(coalesce(o.economic_period,'')),'[^a-z0-9]+','','g') in (select jsonb_array_elements_text($5::jsonb)))
         and ($6::jsonb='[]'::jsonb
           or extract(year from o.report_date)::int in (select jsonb_array_elements_text($6::jsonb)::int)
@@ -267,6 +270,8 @@ export class GovernedSemanticQueryService {
       JSON.stringify(shape.economicPeriodTokens),
       JSON.stringify(shape.reportYears),
       shape.limit,
+      shape.subjectType ?? null,
+      shape.subjectId ?? null,
     ];
     if (shape.operation === "values") {
       return this.db.query(`${scoped}
@@ -296,7 +301,9 @@ export class GovernedSemanticQueryService {
     const fundIds = exactFundScope(question, entitledFundIds);
     const operation = inferSemanticOperation(question);
     const periods = extractPeriodFilters(question);
+    const subject = question.match(/\bsubject (fund|company|holding|instrument) "([^"\n]{1,200})"/i);
     const baseShape: GovernedSemanticQueryShape = {
+      ...(subject ? { subjectType: subject[1].toLowerCase() as GovernedSemanticQueryShape["subjectType"], subjectId: subject[2] } : {}),
       version: "v2",
       source: "corvis_serving.observations",
       reviewState: "approved",

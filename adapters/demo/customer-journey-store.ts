@@ -1,5 +1,5 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/core/contracts";
-import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication } from "@/core/enterprise";
+import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication, ReconciliationException } from "@/core/enterprise";
 import type { SourceEvidence } from "@/core/workspace";
 import { UnauthenticatedError } from "@/lib/api-errors";
 import { documents as seedDocuments, fundSnapshots as seedSnapshots, observations as seedObservations } from "@/adapters/demo/catalog";
@@ -43,6 +43,7 @@ class DemoCustomerJourneyStore {
   private documents: DocumentRecord[] = seedDocuments.map(cloneDocument);
   private observations: ObservationRecord[] = seedObservations.map((row) => ({ ...cloneObservation(row), version: row.version ?? 1 }));
   private snapshots: FundSnapshot[] = seedSnapshots.map((row, index) => ({ ...cloneSnapshot(row), id: row.id ?? `seed-snapshot-${index + 1}`, version: row.version ?? 1 }));
+  private resolvedExceptions = new Set<string>();
   private evidence = new Map<string, SourceEvidence>();
 
   listDocuments(): DocumentRecord[] { return this.documents.map(cloneDocument); }
@@ -153,10 +154,21 @@ class DemoCustomerJourneyStore {
     }
   }
 
+  listReconciliationExceptions(snapshotId: string, snapshotVersion: number): ReconciliationException[] {
+    if (snapshotId !== "seed-snapshot-2" || this.resolvedExceptions.has("demo-source-authority")) return [];
+    const document = this.documents.find((d) => d.fund === "Nordic Capital Fund V") ?? this.documents[0];
+    const sourceReferenceId = "11111111-1111-4111-8111-111111111155";
+    const evidence = { sourceReferenceId, documentId: document.id, page: 52, excerpt: "Illustrative competing source values for Northstar Health." }; this.evidence.set(sourceReferenceId, evidence);
+    return [{ exceptionId: "demo-source-authority", snapshotId, snapshotVersion, fundId: "fund-nordic-v", reportPeriod: "Q2 2026", type: "source_authority", subjectType: "company", subjectId: "company-northstar-health", metricCode: "fair_value", summary: "Northstar Health fair value differs between source reports", materiality: "material", status: "open", version: 1, allowedActions: ["select_source"], sourceReferences: [evidence], createdAt: "2026-09-30T00:00:00Z", context: {
+      competingValues: [{ value: { number: 294.5, currency: "USD", unit: "million" }, sourceReferenceId }, { value: { number: 300, currency: "USD", unit: "million" }, sourceReferenceId }],
+      publishedHistory: [{ reportPeriod: "Q3 2025", value: { number: 270, currency: "USD", unit: "million" } }, { reportPeriod: "Q4 2025", value: { number: 281, currency: "USD", unit: "million" }, restated: true }, { reportPeriod: "Q1 2026", value: { number: 290, currency: "USD", unit: "million" }, preliminary: true }],
+    } }];
+  }
+  resolveException(id: string): void { this.resolvedExceptions.add(id); }
   sourceEvidence(sourceReferenceId: string): SourceEvidence {
     return this.evidence.get(sourceReferenceId) ?? {
       sourceReferenceId,
-      documentId: "demo-document",
+      documentId: this.documents.find((d) => d.fund === this.observations[0]?.fund)?.id ?? this.documents[0].id,
       page: 18,
       excerpt: "Demo evidence is illustrative only; production resolves an entitled immutable source reference.",
     };
@@ -170,7 +182,7 @@ class DemoCustomerJourneyStore {
     const cited = this.observations[0];
     const citations = cited ? [{
       sourceReferenceId: cited.sourceReferenceId ?? "demo-source-1",
-      documentId: "demo-document",
+      documentId: this.documents.find((d) => d.fund === this.observations[0]?.fund)?.id ?? this.documents[0].id,
       page: 12,
       label: `${cited.company} · ${cited.metric}`,
       observationId: cited.id,

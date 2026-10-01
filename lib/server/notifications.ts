@@ -1,3 +1,4 @@
+import { normalizeDisplayPreferences, type DisplayPreferences } from "../../core/display-preferences.ts";
 import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import {
@@ -238,6 +239,7 @@ type Eligibility = {
   memberActive: boolean;
   fundEntitled: boolean;
   workspaceName: string | null;
+  displayPreferences?: DisplayPreferences;
 };
 
 async function eligibility(db: PostgresSqlApi, row: PostgresRow): Promise<Eligibility> {
@@ -245,6 +247,7 @@ async function eligibility(db: PostgresSqlApi, row: PostgresRow): Promise<Eligib
   const requireMembership = category !== "role_changed";
   const roles = Array.isArray(row.required_roles) ? row.required_roles.map(String) : null;
   const result = (await db.query(`select
+      (select p.display_preferences from corvis_control.workspace_user_preference p join corvis_control.identity_subject s on s.tenant_id=p.tenant_id and s.auth_method=p.auth_method and s.subject=p.subject where s.tenant_id=$1::uuid and s.user_id=$2::uuid and p.display_preferences is not null order by p.updated_at desc limit 1) as display_preferences,
       (select r.email from corvis_control.notification_recipient r where r.tenant_id=$1::uuid and r.user_id=$2::uuid) as email,
       (select p.enabled from corvis_control.notification_preference p where p.tenant_id=$1::uuid and p.user_id=$2::uuid and p.category=$3) as pref_enabled,
       (select p.delivery from corvis_control.notification_preference p where p.tenant_id=$1::uuid and p.user_id=$2::uuid and p.category=$3) as pref_delivery,
@@ -267,6 +270,7 @@ async function eligibility(db: PostgresSqlApi, row: PostgresRow): Promise<Eligib
     roles ? json(roles) : null, row.fund_id == null ? null : text(row, "fund_id"), requireMembership]))[0] ?? {};
   const truthy = (value: unknown) => value === true || value === "true" || value === "t";
   return {
+    displayPreferences: result.display_preferences ? normalizeDisplayPreferences(result.display_preferences) : undefined,
     email: text(result, "email") || null,
     preference: result.pref_enabled == null ? undefined : { category, enabled: truthy(result.pref_enabled), delivery: text(result, "pref_delivery") },
     identityActive: truthy(result.identity_active),
@@ -333,7 +337,7 @@ export async function processEmailOutbox(dependencies: DispatchDependencies = {}
       if (!who.email) { await suppress("no_verified_address"); continue; }
       if (!sender.configured) { await suppress("provider_not_configured"); continue; }
       if (!appUrl) { await suppress("app_url_not_configured"); continue; }
-      const rendered = renderEmail(category, paramsOf(row), { appUrl, workspaceName: who.workspaceName ?? undefined });
+      const rendered = renderEmail(category, paramsOf(row), { appUrl, workspaceName: who.workspaceName ?? undefined, displayPreferences: who.displayPreferences });
       const outcome = await sender.send({ to: who.email, ...rendered, category, idempotencyKey: emailId });
       if (outcome.status === "sent") {
         await settle(db, row, "status='sent',sent_at=now(),provider_message_id=$3,last_error_class=null", [outcome.providerMessageId ?? null]);
@@ -478,12 +482,17 @@ export async function deliverInvitationEmail(invitation: InvitationForEmail, tok
   try {
     if (!sender.configured) { await record("suppressed", { reason: "provider_not_configured" }); return "not_configured"; }
     if (!appUrl) { await record("suppressed", { reason: "app_url_not_configured" }); return "not_configured"; }
+    db ??= dependencies.db ?? dbDefault();
+    const profile = (await db.query(`select p.display_preferences from corvis_control.workspace_user_preference p
+      join corvis_control.identity_subject s on s.tenant_id=p.tenant_id and s.auth_method=p.auth_method and s.subject=p.subject
+      join corvis_control.notification_recipient r on r.tenant_id=s.tenant_id and r.user_id=s.user_id
+      where p.tenant_id=$1::uuid and r.email=$2 and s.status='active' and p.display_preferences is not null order by p.updated_at desc limit 1`, [invitation.tenantId, invitation.email]))[0];
     const expiresOn = new Date(invitation.expiresAt);
     const rendered = renderEmail("invitation", {
       roleName: invitation.roleName,
       invitationUrl: invitationLink(appUrl, invitation, token),
-      expiresOn: Number.isNaN(expiresOn.getTime()) ? "" : expiresOn.toISOString().slice(0, 10),
-    }, { appUrl, workspaceName: invitation.workspaceName });
+      expiresAt: Number.isNaN(expiresOn.getTime()) ? "" : expiresOn.toISOString(),
+    }, { appUrl, workspaceName: invitation.workspaceName, displayPreferences: profile?.display_preferences ? normalizeDisplayPreferences(profile.display_preferences) : undefined });
     const outcome = await sender.send({ to: invitation.email, ...rendered, category: "invitation", idempotencyKey: `invitation:${invitation.invitationId}:${invitation.expiresAt}` });
     if (outcome.status === "sent") { await record("sent", { providerMessageId: outcome.providerMessageId }); return "sent"; }
     if (outcome.status === "not_configured") { await record("suppressed", { reason: "provider_not_configured" }); return "not_configured"; }

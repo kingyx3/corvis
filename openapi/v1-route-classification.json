@@ -2,6 +2,8 @@
   "schemaVersion": 1,
   "description": "Companion classification for /api/v1 routes intentionally excluded from the stable customer integration OpenAPI contract. External routes belong in openapi/corvis-v1.yaml; entries here are product/control-plane endpoints whose compatibility is governed by the Corvis application rather than the external API contract.",
   "routes": [
+    {"pattern": "/user-preferences", "visibility": "workspace_control", "reason": "Per-user display preferences and personal/workspace-shared views; does not confer resource authorization."},
+    {"pattern": "/source-references/{sourceReferenceId}/document", "visibility": "workspace_control", "reason": "Authorized, clean, generation-pinned original document retrieval for the shared evidence viewer."},
     { "pattern": "/admin/**", "visibility": "tenant_control", "reason": "Tenant-wide privileged control plane; requires authoritative tenant_admin scope." },
     { "pattern": "/access/**", "visibility": "tenant_control", "reason": "Organization access administration surface; tenant-admin-only product workflow, not a stable customer data-integration API." },
     { "pattern": "/invitations/accept", "visibility": "identity_control", "reason": "Authenticated, verified-email, single-use onboarding acceptance; token-derived tenant/workspace membership is created before ordinary authorization." },

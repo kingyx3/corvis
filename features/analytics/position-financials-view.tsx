@@ -1,4 +1,6 @@
 "use client";
+import { displayNumberFormatter, displayValue as formatValue } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
 
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +20,8 @@ import { deliveryPort } from "@/runtime/delivery-services";
 import { workspacePort } from "@/runtime/workspace-services";
 import { apiUrl } from "@/lib/api-url";
 import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
+import { SavedViews } from "@/features/preferences/saved-views";
+import { VIEW_COLUMNS, type ViewConfiguration } from "@/core/saved-views";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
@@ -48,7 +52,7 @@ function displayValue(row: PositionFinancialStatementRow | undefined): string {
   if (row.valueNumber == null) return row.valueRaw || "—";
   const numeric = Number(row.valueNumber);
   if (!Number.isFinite(numeric)) return row.valueNumber;
-  const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(numeric);
+  const formatted = displayNumberFormatter( { maximumFractionDigits: 2 }).format(numeric);
   return row.currency ? `${row.currency} ${formatted}` : formatted;
 }
 
@@ -67,7 +71,7 @@ function valueForRows(candidateRows: PositionFinancialStatementRow[], periodKeyV
 }
 
 function signedNumber(value: number, maximumFractionDigits = 2): string {
-  const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(Math.abs(value));
+  const formatted = displayNumberFormatter( { maximumFractionDigits }).format(Math.abs(value));
   return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
 }
 
@@ -82,14 +86,18 @@ function displayDelta(current: PositionFinancialStatementRow | undefined, previo
 function moneyFormatter(currency: string | null): (value: number) => string {
   let formatter: Intl.NumberFormat;
   try {
-    formatter = new Intl.NumberFormat(undefined, currency ? { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 } : { notation: "compact", maximumFractionDigits: 1 });
+    formatter = displayNumberFormatter( currency ? { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 } : { notation: "compact", maximumFractionDigits: 1 });
   } catch {
-    formatter = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+    formatter = displayNumberFormatter( { notation: "compact", maximumFractionDigits: 1 });
   }
   return (value) => formatter.format(value);
 }
 
-export function PositionFinancialsView({ canReadSources = false, onOpenDocument, focusRequest }: { canReadSources?: boolean; onOpenDocument?: (documentId: string) => void; focusRequest?: PositionFinancialsFocusRequest | null }) {
+export function PositionFinancialsView({ canReadSources = false, onOpenDocument, focusRequest }: { canReadSources?: boolean; onOpenDocument?: (documentId: string, location?: SourceEvidence) => void; focusRequest?: PositionFinancialsFocusRequest | null }) {
+  usePreferences();
+  const [visibleColumns, setVisibleColumns] = useState(VIEW_COLUMNS.analytics);
+  const [tableSort, setTableSort] = useState<{ columnId: string; direction: "ascending" | "descending" } | null>(null);
+  const [savedPosition, setSavedPosition] = useState(false);
   const [periodicity, setPeriodicity] = useState<StatementPeriodicity>("quarterly");
   const [appliedFocusKey, setAppliedFocusKey] = useState(focusRequest?.key);
   const [focusedPeriod, setFocusedPeriod] = useState<string | null>(focusRequest?.period ?? null);
@@ -165,7 +173,8 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     }
   }
 
-  const effectiveSelectedPosition = selectedPosition && positions.some((position) => position.key === selectedPosition) ? selectedPosition : positions[0]?.key ?? "";
+  const unavailableSavedPortfolio = savedPosition && !!selectedPortfolio && (!portfolioAttributionEnabled || !portfolios.some((portfolio) => portfolio.id === selectedPortfolio));
+  const effectiveSelectedPosition = unavailableSavedPortfolio ? "" : savedPosition && selectedPosition && !positions.some((position) => position.key === selectedPosition) ? selectedPosition : selectedPosition && positions.some((position) => position.key === selectedPosition) ? selectedPosition : positions[0]?.key ?? "";
   const selectedRows = useMemo(() => rows.filter((row) => `${row.fundId}\u001f${row.holdingId}\u001f${row.companyId}` === effectiveSelectedPosition), [rows, effectiveSelectedPosition]);
   const periods = useMemo<PeriodColumn[]>(() => {
     const map = new Map<string, PeriodColumn>();
@@ -187,9 +196,8 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     }
     return keys;
   },[focusedPeriod,selectedRows]);
-  // If the source-period label cannot be represented in the selected periodicity,
-  // fail open to the full statement rather than rendering a misleading blank table.
-  const visiblePeriods = focusedPeriodKeys?.size ? periods.filter((period) => focusedPeriodKeys.has(period.key)) : periods;
+  // Saved filters never widen scope when a selected source period is missing.
+  const visiblePeriods = focusedPeriodKeys && (savedPosition || focusedPeriodKeys.size) ? periods.filter((period) => focusedPeriodKeys.has(period.key)) : periods;
 
   const lines = useMemo<LineGroup[]>(() => {
     const map = new Map<string, LineGroup>();
@@ -305,7 +313,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     },
     ...visiblePeriods.map((period): SortableColumn<LineGroup> => ({
       id: period.key,
-      header: <>{period.label}<small>As of {period.end}</small></>,
+      header: <>{period.label}<small>As of {formatValue(period.end)}</small></>,
       align: "end",
       sortValue: (line) => numericFinancialValue(valueFor(line, period)),
       cellTitle: (line) => { const row = valueFor(line, period); return row?.derivationFormula ?? row?.valueRaw ?? undefined; },
@@ -320,7 +328,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
         return <>
           {row && sourceReferenceId && canReadSources ? <button type="button" className="position-financials-value-button" aria-label={`Open source evidence for ${line.label}, ${period.label}`} disabled={evidenceBusy === sourceReferenceId} onClick={() => void openEvidence(row)}><span>{displayValue(row)}</span></button> : <span>{displayValue(row)}</span>}
           {delta && <small className={`position-financials-delta position-financials-delta-${delta.direction}`} aria-label={`Change from prior period: ${delta.text}`}>{delta.text}</small>}
-          {row?.valueId != null && <small className="position-financials-trust">{trust}{asOf ? ` · as of ${asOf}` : ""}</small>}
+          {row?.valueId != null && <small className="position-financials-trust">{trust}{asOf ? ` · as of ${formatValue(asOf)}` : ""}</small>}
           {row?.isDerived && <small>derived</small>}{row?.isRestatement && <small>restated</small>}{row?.preliminary && <small>preliminary</small>}
           {row?.valueId != null && !canReadSources && row.sourceReferenceIds.length > 0 && <small>Source evidence restricted by access</small>}
         </>;
@@ -328,9 +336,11 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     })),
   ];
 
+  const configuration: ViewConfiguration = { periodicity, selectedPosition: effectiveSelectedPosition, selectedPortfolio, deltaDisplay, density, sortColumn: tableSort?.columnId ?? "", sortDirection: tableSort?.direction ?? "ascending", focusedPeriod: focusedPeriod ?? "", columns: visibleColumns };
+  const applyView = (v: ViewConfiguration) => { setPeriodicity((v.periodicity ?? "quarterly") as StatementPeriodicity); setSelectedPosition(String(v.selectedPosition ?? "")); setSavedPosition(true); setSelectedPortfolio(String(v.selectedPortfolio ?? "")); setDeltaDisplay((v.deltaDisplay ?? "both") as DeltaDisplay); setDensity((v.density ?? "compact") as TableDensity); setFocusedPeriod(String(v.focusedPeriod ?? "") || null); setVisibleColumns(v.columns as string[] ?? VIEW_COLUMNS.analytics); setTableSort(v.sortColumn ? { columnId: String(v.sortColumn), direction: v.sortDirection === "descending" ? "descending" : "ascending" } : null); };
   const controls = <div className="position-financials-controls">
     {portfolioAttributionEnabled && <label><span>Portfolio</span><select value={selectedPortfolio} onChange={(event) => changePortfolio(event.target.value)}><option value="">All entitled funds</option>{portfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.displayName} · {portfolio.fundPositionCount} fund position{portfolio.fundPositionCount === 1 ? "" : "s"}</option>)}</select></label>}
-    <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => { setSelectedPosition(event.target.value); setFocusedPeriod(null); setExportMessage(null); }} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
+    <label><span>Position</span><select value={effectiveSelectedPosition} onChange={(event) => { setSavedPosition(false); setSelectedPosition(event.target.value); setFocusedPeriod(null); setExportMessage(null); }} disabled={!positions.length}>{positions.length ? positions.map((position) => <option key={position.key} value={position.key}>{position.companyId} · {position.fundId}</option>) : <option>No published statements</option>}</select></label>
     <fieldset className="position-financials-segmented"><legend>Periodicity</legend>{(["quarterly", "annual", "reported"] as const).map((value) => <button type="button" key={value} aria-pressed={periodicity === value} className={periodicity === value ? "active" : ""} onClick={() => changePeriodicity(value)}>{value === "reported" ? "As reported" : value[0].toUpperCase() + value.slice(1)}</button>)}</fieldset>
     <fieldset className="position-financials-segmented"><legend>Period-over-period change display</legend>{(["value", "percent", "both"] as const).map((value) => <button type="button" key={value} aria-pressed={deltaDisplay === value} className={deltaDisplay === value ? "active" : ""} onClick={() => setDeltaDisplay(value)}>{value === "value" ? "Δ value" : value === "percent" ? "Δ %" : "Δ both"}</button>)}</fieldset>
     <TableDensityToggle value={density} onChange={setDensity} label="Financial table density"/>
@@ -342,7 +352,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     { id: "position", header: "Position", rowHeader: true, sortValue: (entry) => `${entry.position.companyId}:${entry.position.fundId}`, render: (entry) => <><span>{entry.position.companyId}</span><small>{entry.position.fundId}</small></> },
     ...comparePeriods.map((period): SortableColumn<typeof compareRows[number]> => ({
       id: period.key,
-      header: <>{period.label}<small>As of {period.end}</small></>,
+      header: <>{period.label}<small>As of {formatValue(period.end)}</small></>,
       align: "end",
       sortValue: (entry) => numericFinancialValue(valueForRows(entry.rowsForMetric, period.key)),
       render: (entry) => <span>{displayValue(valueForRows(entry.rowsForMetric, period.key))}</span>,
@@ -356,6 +366,10 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     {portfolioAttributionEnabled && <div className="position-financials-rule-note"><strong>Attribution guardrail.</strong> {chosenPortfolio ? `${chosenPortfolio.displayName} scopes which fund holdings appear; ` : "Portfolio filters scope which fund holdings appear; "}company revenue, EBITDA and other operating statement values remain the full source-reported amounts and are never multiplied by ownership stake or position size.</div>}
     <div className="position-financials-rule-note"><strong>Aggregation guardrail.</strong> Annual mode prefers a reported annual disclosure. A derived annual value appears only when four explicit, compatible fiscal-quarter flow values exist; YTD, LTM, stock and cumulative values are never silently summed.</div>
     <div className="position-financials-rule-note"><strong>Trust and change.</strong> Each reported value shows its governed as-of/trust state. Period-over-period movement is computed only from adjacent numeric values in this same disclosed line; no missing period is silently imputed.</div>
+    <SavedViews screen="analytics" configuration={configuration} onApply={applyView} onColumns={setVisibleColumns} skipDefault={!!focusRequest}/>
+    {unavailableSavedPortfolio && !loading && <p role="status">This saved view references a portfolio you cannot currently access. Choose another portfolio or view.</p>}
+    {savedPosition && focusedPeriod && !focusedPeriodKeys?.size && !loading && <p role="status">No published values match this saved period. Clear the period filter or choose another view.</p>}
+    {savedPosition && selectedPosition && !positions.some((position) => position.key === selectedPosition) && !loading && <p role="status">This saved view references a position you cannot currently access. Choose another position or view.</p>}
     {focusedPeriod && <div className="position-financials-rule-note" role="status"><strong>Drill-through period.</strong> Showing the exact {focusedPeriod} column when that source period exists in this view. <button type="button" className="text-button" onClick={() => setFocusedPeriod(null)}>Show all periods</button></div>}
     {exportMessage && <div className={exportMessage.error ? "position-financials-inline-error" : "position-financials-rule-note"} role={exportMessage.error ? "alert" : "status"}><strong>{exportMessage.error ? "Export failed. " : "Export requested. "}</strong>{exportMessage.text}</div>}
     {evidenceError && <div className="position-financials-inline-error" role="alert">{evidenceError}</div>}
@@ -375,22 +389,22 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
 
     {!loading && !error && rows.length > 0 && chosen && <>
       <section className="position-financials-analytics-grid" aria-label="Position financial metrics">
-        <MetricCard label="Statement lines" value={lines.length.toLocaleString()} detail="Source-reported hierarchy retained"/>
-        <MetricCard label="Published periods" value={periods.length.toLocaleString()} detail={periodicity === "reported" ? "As reported by the GP" : periodicity}/>
-        <MetricCard label={featuredLine ? `Latest ${featuredLine.label}` : "Trend"} value={latestFeatured == null ? "—" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(latestFeatured)} detail={featuredLine ? "Compared across published periods" : "No numeric line available"} trend={featuredLine ? <Sparkline label={`${featuredLine.label} for ${chosen.companyId}`} points={trendPoints}/> : undefined}/>
+        <MetricCard label="Statement lines" value={displayNumberFormatter().format(lines.length)} detail="Source-reported hierarchy retained"/>
+        <MetricCard label="Published periods" value={displayNumberFormatter().format(periods.length)} detail={periodicity === "reported" ? "As reported by the GP" : periodicity}/>
+        <MetricCard label={featuredLine ? `Latest ${featuredLine.label}` : "Trend"} value={latestFeatured == null ? "—" : displayNumberFormatter( { maximumFractionDigits: 2 }).format(latestFeatured)} detail={featuredLine ? "Compared across published periods" : "No numeric line available"} trend={featuredLine ? <Sparkline label={`${featuredLine.label} for ${chosen.companyId}`} points={trendPoints}/> : undefined}/>
       </section>
 
-      <div className="position-financials-context">{chosenPortfolio && <span><strong>Portfolio</strong>{chosenPortfolio.displayName}</span>}<span><strong>Company</strong>{chosen.companyId}</span><span><strong>Holding</strong>{chosen.holdingId}</span><span><strong>Fund</strong>{chosen.fundId}</span><span><strong>Periods</strong>{visiblePeriods.length}{focusedPeriod && visiblePeriods.length !== periods.length ? ` of ${periods.length}` : ""}</span></div>
+      <div className="position-financials-context">{chosenPortfolio && <span><strong>Portfolio</strong>{chosenPortfolio.displayName}</span>}<span><strong>Company</strong>{chosen.companyId}</span><span><strong>Holding</strong>{chosen.holdingId}</span><span><strong>Fund</strong>{chosen.fundId}</span><span><strong>Periods</strong>{formatValue(visiblePeriods.length)}{focusedPeriod && visiblePeriods.length !== periods.length ? ` of ${periods.length}` : ""}</span></div>
 
       {!selectedPortfolio && summary?.exposure.items.length ? <section className="panel position-financials-chart-panel"><CompositionChart eyebrow="Allocation" title="Workspace exposure by fund" description={`Latest published fund values in the workspace${summary.currency ? ` (${summary.currency})` : ""}. This allocation is governed from published NAV/fair-value facts and is not ownership-weighted.`} items={summary.exposure.items.map((item) => ({ key: item.fundId, label: item.fund, value: item.value }))} valueFormatter={formatExposure} unitLabel={summary.currency ? `Value (${summary.currency})` : "Value"}/></section> : null}
       {featuredLine && <section className="panel position-financials-chart-panel"><TimeSeriesChart eyebrow="Trend" title={`${featuredLine.label} across periods`} description={`${chosen.companyId}'s reported ${featuredLine.label.toLowerCase()} for each published period, most recent last.`} name={featuredLine.label} data={trendPoints}/></section>}
 
       <div className="data-table-wrap" role="region" aria-label="Position financials table">
-        <SortableDataTable caption={`Position financials for ${chosen.companyId}`} rows={lines} columns={tableColumns} rowKey={(line) => line.key} density={density} className="position-financials-table" getRowAttributes={(line) => ({ "data-role": line.role })}/>
+        <SortableDataTable caption={`Position financials for ${chosen.companyId}`} rows={lines} columns={tableColumns.filter((column) => visibleColumns.includes(column.id === "line" ? "Metric" : "Periods"))} sort={tableSort} onSortChange={setTableSort} rowKey={(line) => line.key} density={density} className="position-financials-table" getRowAttributes={(line) => ({ "data-role": line.role })}/>
       </div>
       <p className="position-financials-footnote">Source labels, row order, hierarchy and unmapped disclosures are intentionally retained. Canonical metric codes are supplemental semantic mappings, not a replacement for the source statement. Select a column header to sort; compact/comfortable density changes presentation only.</p>
     </>}
 
-    {evidence && <Modal label="Source evidence" onClose={() => setEvidence(null)} width="min(720px, 100%)"><div className="position-financials-evidence-panel"><div><p className="eyebrow">Governed source evidence</p><h2>Evidence for reported value</h2></div><dl><div><dt>Document</dt><dd>{evidence.evidence.documentId}</dd></div>{evidence.evidence.page != null && <div><dt>Page</dt><dd>{evidence.evidence.page}</dd></div>}{evidence.evidence.sheetName && <div><dt>Sheet</dt><dd>{evidence.evidence.sheetName}</dd></div>}{evidence.evidence.cellRange && <div><dt>Cells</dt><dd>{evidence.evidence.cellRange}</dd></div>}<div><dt>Source reference</dt><dd>{evidence.sourceReferenceId}</dd></div></dl>{evidence.evidence.excerpt && <blockquote>{evidence.evidence.excerpt}</blockquote>}{onOpenDocument && <button type="button" className="primary-button" onClick={() => { const documentId = evidence.evidence.documentId; setEvidence(null); onOpenDocument(documentId); }}>Open source document</button>}</div></Modal>}
+    {evidence && <Modal label="Source evidence" onClose={() => setEvidence(null)} width="min(720px, 100%)"><div className="position-financials-evidence-panel"><div><p className="eyebrow">Governed source evidence</p><h2>Evidence for reported value</h2></div><dl><div><dt>Document</dt><dd>{evidence.evidence.documentId}</dd></div>{evidence.evidence.page != null && <div><dt>Page</dt><dd>{evidence.evidence.page}</dd></div>}{evidence.evidence.sheetName && <div><dt>Sheet</dt><dd>{evidence.evidence.sheetName}</dd></div>}{evidence.evidence.cellRange && <div><dt>Cells</dt><dd>{evidence.evidence.cellRange}</dd></div>}<div><dt>Source reference</dt><dd>{evidence.sourceReferenceId}</dd></div></dl>{evidence.evidence.excerpt && <blockquote>{evidence.evidence.excerpt}</blockquote>}{onOpenDocument && <button type="button" className="primary-button" onClick={() => { const documentId = evidence.evidence.documentId; setEvidence(null); onOpenDocument(documentId, evidence.evidence); }}>Open source document</button>}</div></Modal>}
   </section>;
 }

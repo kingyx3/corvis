@@ -1,4 +1,6 @@
 "use client";
+import { displayNumberFormatter } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { DotProps } from "recharts";
@@ -8,13 +10,15 @@ export type TimeSeriesStatus = "final" | "preliminary" | "restated" | "derived";
 export type TimeSeriesPoint = { period: string; label: string; value: number | null; status?: TimeSeriesStatus };
 
 function formatDefault(value: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  return displayNumberFormatter( { maximumFractionDigits: 2 }).format(value);
 }
 
 function StatusDot(props: DotProps & { payload?: TimeSeriesPoint; onSelect?: (point: TimeSeriesPoint) => void }) {
   const { cx, cy, payload, onSelect } = props;
   if (cx == null || cy == null || payload?.value == null) return null;
   const isPreliminary = payload.status === "preliminary";
+  if (payload.status === "restated") return <path d={`M ${cx} ${cy - 5} L ${cx + 5} ${cy} L ${cx} ${cy + 5} L ${cx - 5} ${cy} Z`} fill="var(--chart-series-1)" onClick={onSelect ? () => onSelect(payload) : undefined}/>;
+  if (payload.status === "derived") return <rect x={cx - 4} y={cy - 4} width={8} height={8} fill="var(--surface)" stroke="var(--chart-series-1)" strokeWidth={2} onClick={onSelect ? () => onSelect(payload) : undefined}/>;
   return (
     <circle
       cx={cx}
@@ -53,6 +57,7 @@ function ChartTooltip({ active, payload, valueFormatter }: { active?: boolean; p
 export function TimeSeriesChart({
   eyebrow,
   title,
+  emptyMessage = "Not enough published periods to chart a trend yet.",
   description,
   name,
   data,
@@ -63,6 +68,7 @@ export function TimeSeriesChart({
 }: {
   eyebrow?: string;
   title: string;
+  emptyMessage?: string;
   description?: string;
   name: string;
   data: TimeSeriesPoint[];
@@ -72,6 +78,7 @@ export function TimeSeriesChart({
   onSelectPoint?: (point: TimeSeriesPoint) => void;
   selectLabel?: string;
 }) {
+  usePreferences();
   const hasPreliminary = data.some((point) => point.status === "preliminary");
   const plottable = data.filter((point) => point.value != null);
   const columns: ChartTableColumn[] = [
@@ -95,10 +102,10 @@ export function TimeSeriesChart({
       tableCaption={`${title} by period`}
       columns={columns}
       rows={rows}
-      emptyMessage="Not enough published periods to chart a trend yet."
-      legend={hasPreliminary && (
+      emptyMessage={emptyMessage}
+      legend={(hasPreliminary || data.some((point) => point.status === "restated" || point.status === "derived")) && (
         <p className="chart-description" style={{ marginTop: 8, marginBottom: 0 }}>
-          <span aria-hidden="true">○</span> Hollow marker indicates a preliminary value.
+          <span aria-hidden="true">○</span> Hollow circle: preliminary. Diamond: restated. Square: derived.
         </p>
       )}
     >
@@ -113,7 +120,7 @@ export function TimeSeriesChart({
           </LineChart>
         </ResponsiveContainer>
       ) : (
-        <p className="chart-empty">Not enough published periods to chart a trend yet.</p>
+        <p className="chart-empty">{plottable.length === 1 ? "One published period is available in the data table." : emptyMessage}</p>
       )}
     </ChartFigure>
   );

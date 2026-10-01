@@ -1,4 +1,6 @@
 "use client";
+import { displayDate } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { useCallback, useEffect, useState } from "react";
 import type { ExportDeliveryStatus, ExportFormat } from "@/core/delivery";
@@ -44,6 +46,7 @@ function reviewStateLabel(manifest: ExportManifest): string {
 }
 
 export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: number }) {
+  usePreferences();
   const [busy, setBusy] = useState<ExportFormat | null>(null);
   const [manifest, setManifest] = useState<ExportManifest | null>(null);
   const [exports, setExports] = useState<ExportDeliveryStatus[]>([]);
@@ -134,7 +137,7 @@ export function DeliveryView({ publishedSnapshots }: { publishedSnapshots: numbe
       <div className="table-card" tabIndex={0} role="region" aria-label="Recent export history"><table className="data-table history-table"><thead><tr><th>Requested</th><th>Requested from</th><th>Scope</th><th>Format</th><th>Status</th><th>Coverage</th><th>Review state</th><th>Checksum</th><th>Expiry</th><th>Delivery</th></tr></thead><tbody>
         {historyLoading && <tr><td colSpan={10} className="empty-cell">Loading governed export history…</td></tr>}
         {!historyLoading && exports.length === 0 && <tr><td colSpan={10} className="empty-cell">No exports yet. Request a format above to create your first governed delivery.</td></tr>}
-        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{new Date(item.createdAt).toLocaleString()}</strong><span className="table-secondary">{item.exportId}</span></td><td>{sourceLabel(item.manifest.source)}</td><td>{scopeLabel(item.manifest)}</td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{rowCoverage(item.manifest)}</td><td>{reviewStateLabel(item.manifest)}</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
+        {exports.map((item) => <tr key={item.exportId}><td><strong className="nowrap">{displayDate(item.createdAt, { timeStyle: "short" })}</strong><span className="table-secondary">{item.exportId}</span></td><td>{sourceLabel(item.manifest.source)}</td><td>{scopeLabel(item.manifest)}</td><td>{item.format.toUpperCase()}</td><td><span className={`quality quality-${item.state === "complete" ? "high" : item.state === "failed" ? "failed" : "pending"}`}>{stateLabel(item.state)}</span></td><td>{rowCoverage(item.manifest)}</td><td>{reviewStateLabel(item.manifest)}</td><td><code>{(item.checksumSha256 || item.manifest.checksumSha256).slice(0, 16)}…</code></td><td>{item.expiresAt ? displayDate(item.expiresAt, { timeStyle: "short" }) : "—"}</td><td>{item.downloadAvailable ? <button className="secondary-button button-small" disabled={downloading === item.exportId} onClick={() => void download(item)}>{downloading === item.exportId ? "Preparing…" : `Download ${item.format.toUpperCase()}`}</button> : <span className="table-muted">{item.state === "complete" ? "Unavailable or expired" : "Not ready"}</span>}</td></tr>)}
       </tbody></table></div>
     </section>
     <div className="lineage-note"><Icon name="shield"/><div><strong>Only governed published data is delivered.</strong><span>Exports carry snapshot/schema/taxonomy metadata, immutable checksum lineage and time-bounded download grants. API, webhooks and optional warehouse sharing reuse the same serving contract.</span></div></div>

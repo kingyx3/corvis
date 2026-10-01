@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
+import { PreferenceProvider } from "@/features/preferences/preference-provider";
 import "./globals.css";
 import "./design-system.css";
 
@@ -29,7 +30,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body><PreferenceProvider>{children}</PreferenceProvider></body>
     </html>
   );
 }

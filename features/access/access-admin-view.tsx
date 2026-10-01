@@ -1,4 +1,6 @@
 "use client";
+import { displayDate } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEffect, useState } from "react";
@@ -21,6 +23,7 @@ function identityLabel(member: TenantAccessMember): string {
 }
 
 export function AccessAdminView() {
+  usePreferences();
   const [memberQuery, setMemberQuery] = useState("");
   const [memberSort, setMemberSort] = useState("ascending");
   const [roleEdit, setRoleEdit] = useState<{ member: TenantAccessMember; membership: TenantAccessMembership } | null>(null);
@@ -108,7 +111,7 @@ export function AccessAdminView() {
   const sendInvitationEmail = () => {
     if (!createdInvitation || !inviteUrl) return;
     const subject = encodeURIComponent("Your Corvis workspace invitation");
-    const body = encodeURIComponent(`You have been invited to ${createdInvitation.invitation.workspaceName} in Corvis.\n\nAccept your invitation using this one-time link (expires ${new Date(createdInvitation.invitation.expiresAt).toLocaleString()}):\n${inviteUrl}\n\nThis link is confidential and should only be used by ${createdInvitation.invitation.email}.`);
+    const body = encodeURIComponent(`You have been invited to ${createdInvitation.invitation.workspaceName} in Corvis.\n\nAccept your invitation using this one-time link (expires ${displayDate(createdInvitation.invitation.expiresAt, { timeStyle: "short" })}):\n${inviteUrl}\n\nThis link is confidential and should only be used by ${createdInvitation.invitation.email}.`);
     window.location.href = `mailto:${encodeURIComponent(createdInvitation.invitation.email)}?subject=${subject}&body=${body}`;
   };
 
@@ -171,10 +174,10 @@ export function AccessAdminView() {
       {inviteRole === "tenant_admin" && <label className="check-field"><input type="checkbox" checked={confirmTenantAdmin} onChange={(event) => setConfirmTenantAdmin(event.target.checked)}/><span>Confirm this invitation grants organization-wide administration.</span></label>}
       {inviteError && <p className="admin-state error" role="alert">{inviteError}</p>}
       <div className="dialog-actions"><button className="primary-button" disabled={inviteBusy || !inviteEmail.trim() || !inviteWorkspace || !inviteReason.trim() || (inviteRole === "tenant_admin" && !confirmTenantAdmin)} onClick={() => void createInvitation()}>{inviteBusy ? "Creating invitation…" : "Create invitation"}</button></div>
-      {createdInvitation && <div className="lineage-note tone-success" role="status"><Icon name="check"/><div><strong>Invitation created for {createdInvitation.invitation.email}</strong><span>{createdInvitation.emailDelivery === "sent" ? `Corvis emailed the invitation to ${createdInvitation.invitation.email}. ` : createdInvitation.emailDelivery === "failed" ? "Corvis could not email the invitation; send the link below instead. " : "Corvis email delivery isn't switched on, so send the link below yourself. "}Expires {new Date(createdInvitation.invitation.expiresAt).toLocaleString()}. The invitation token is shown only once.</span><label className="form-field"><span>One-time invitation link</span><input className="input-control" readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()}/></label><button type="button" className="secondary-button" onClick={() => { void copyToClipboard(inviteUrl).then((copied) => setInviteError(copied ? null : "Clipboard access was unavailable; select and copy the invitation link.")); }}>Copy invitation link</button><button type="button" className="secondary-button" onClick={sendInvitationEmail}>Open email draft</button></div></div>}
+      {createdInvitation && <div className="lineage-note tone-success" role="status"><Icon name="check"/><div><strong>Invitation created for {createdInvitation.invitation.email}</strong><span>{createdInvitation.emailDelivery === "sent" ? `Corvis emailed the invitation to ${createdInvitation.invitation.email}. ` : createdInvitation.emailDelivery === "failed" ? "Corvis could not email the invitation; send the link below instead. " : "Corvis email delivery isn't switched on, so send the link below yourself. "}Expires {displayDate(createdInvitation.invitation.expiresAt, { timeStyle: "short" })}. The invitation token is shown only once.</span><label className="form-field"><span>One-time invitation link</span><input className="input-control" readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()}/></label><button type="button" className="secondary-button" onClick={() => { void copyToClipboard(inviteUrl).then((copied) => setInviteError(copied ? null : "Clipboard access was unavailable; select and copy the invitation link.")); }}>Copy invitation link</button><button type="button" className="secondary-button" onClick={sendInvitationEmail}>Open email draft</button></div></div>}
     </section>
 
-    <section className="panel" aria-labelledby="pending-invitations-heading"><div className="panel-heading"><div><p className="eyebrow">Invitations</p><h2 id="pending-invitations-heading">Recent invitations</h2></div><span className="table-muted">{invitations.filter((item) => item.status === "pending").length} pending</span></div><div className="table-card" tabIndex={0} role="region" aria-label="Recent tenant invitations"><table className="data-table"><thead><tr><th>Recipient</th><th>Workspace</th><th>Role</th><th>Status</th><th>Expires</th></tr></thead><tbody>{invitations.length ? invitations.map((item) => <tr key={item.invitationId}><td>{item.email}</td><td>{item.workspaceName}</td><td>{roleLabel(item.roleName)}</td><td>{item.status}</td><td>{new Date(item.expiresAt).toLocaleDateString()}</td></tr>) : <tr><td colSpan={5} className="empty-cell">No invitations have been issued.</td></tr>}</tbody></table></div></section>
+    <section className="panel" aria-labelledby="pending-invitations-heading"><div className="panel-heading"><div><p className="eyebrow">Invitations</p><h2 id="pending-invitations-heading">Recent invitations</h2></div><span className="table-muted">{invitations.filter((item) => item.status === "pending").length} pending</span></div><div className="table-card" tabIndex={0} role="region" aria-label="Recent tenant invitations"><table className="data-table"><thead><tr><th>Recipient</th><th>Workspace</th><th>Role</th><th>Status</th><th>Expires</th></tr></thead><tbody>{invitations.length ? invitations.map((item) => <tr key={item.invitationId}><td>{item.email}</td><td>{item.workspaceName}</td><td>{roleLabel(item.roleName)}</td><td>{item.status}</td><td>{displayDate(item.expiresAt)}</td></tr>) : <tr><td colSpan={5} className="empty-cell">No invitations have been issued.</td></tr>}</tbody></table></div></section>
 
     <section className="panel" aria-labelledby="access-members-heading">
       <div className="panel-heading"><div><p className="eyebrow">Active access</p><h2 id="access-members-heading">Organization members</h2></div><span className="table-muted">{members.length} active</span></div>
