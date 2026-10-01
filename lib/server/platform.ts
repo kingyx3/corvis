@@ -256,7 +256,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   async listSnapshots(identity: RequestIdentity, page?: KeysetPage): Promise<FundSnapshot[]> {
     const rows = await this.workspace.listSnapshots(identity, page);
     return rows.map((row) => ({
-      id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), period: text(row,"report_period"),
+      id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), fundId: text(row,"fund_id") || undefined, period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
       changed: text(row,"published_at") || text(row,"created_at"), blockingExceptions: num(row,"blocking_exception_count"),
       publishedAt: isoText(row,"published_at"),

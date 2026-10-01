@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
+import { scopeObservationsToSnapshot } from "@/core/review-scope";
 import type { SourceEvidence } from "@/core/workspace";
 import { safeGetItem, safeSetItem } from "@/lib/safe-storage";
 import { workspaceStorageKey } from "@/lib/workspace-context";
@@ -226,8 +227,7 @@ export function ReviewView({
   );
   const exceptionsError = canReview && exceptionState.key === exceptionKey ? exceptionState.error : undefined;
   const exceptionsLoaded = !canReview || !exceptionKey || exceptionState.key === exceptionKey;
-  const hasSnapshotScopedRows = Boolean(snapshot?.id && rows.some((row) => row.snapshotId === snapshot.id));
-  const scopedRows = hasSnapshotScopedRows ? rows.filter((row) => row.snapshotId === snapshot?.id) : rows;
+  const scopedRows = scopeObservationsToSnapshot(rows, snapshot);
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const filtered = scopedRows.filter((row) => {
