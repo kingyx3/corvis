@@ -1,4 +1,5 @@
 import { workspaceContext } from "../../lib/workspace-context.ts";
+import { safeGetItem } from "../../lib/safe-storage.ts";
 import type { Permission, ResearchPin } from "@/core/enterprise";
 import type { TenantAccessMember, WorkspaceIdentity, WorkspacePort } from "@/core/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
@@ -17,8 +18,7 @@ const DEMO_WORKSPACE_DISPLAY_NAME = "Primary Workspace";
 function secondaryWorkspace(): boolean { return workspaceContext()?.workspaceId === "demo-secondary"; }
 
 function demoRole(): "read_only" | "admin" | null {
-  if (typeof window === "undefined") return null;
-  const value = window.sessionStorage.getItem("corvis:demo:role");
+  const value = safeGetItem("session", "corvis:demo:role");
   return value === "read_only" || value === "admin" ? value : null;
 }
 
@@ -26,8 +26,7 @@ function demoRole(): "read_only" | "admin" | null {
 // attribution module enabled by default in demo mode for existing journeys,
 // while allowing E2E to prove the fund-down experience works with it disabled.
 function demoPortfolioAttributionEnabled(): boolean {
-  if (typeof window === "undefined") return true;
-  return window.sessionStorage.getItem("corvis:demo:feature:portfolio_attribution") !== "disabled";
+  return safeGetItem("session", "corvis:demo:feature:portfolio_attribution") !== "disabled";
 }
 
 export function createDemoWorkspacePort(): WorkspacePort {
