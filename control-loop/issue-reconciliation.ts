@@ -1,3 +1,4 @@
+import { classifyFailure } from "./failure.ts";
 import type { Finding, RunStatus } from "./types.ts";
 import { CONTROL_LOOP_LABEL, type IssueSnapshot, type IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
 
@@ -123,7 +124,7 @@ export interface ReconciliationOutcome {
   type: ReconciliationActionType;
   fingerprint: string;
   issueNumber: number | null;
-  outcome: "dry-run" | "applied" | "skipped";
+  outcome: "dry-run" | "applied" | "skipped" | "failed";
   reason: string | null;
 }
 
@@ -132,6 +133,8 @@ export interface ReconciliationResult {
   dryRun: boolean;
   budget: number;
   budgetExceeded: boolean;
+  /** Set when an auth/rate-limit style failure stopped further writes; remaining actions are recorded as skipped. */
+  haltedReason: string | null;
   outcomes: ReconciliationOutcome[];
 }
 
@@ -139,7 +142,11 @@ export interface ReconciliationResult {
  * Phase two for issue reconciliation, mirroring `applyActions`: `dry-run`
  * (the default everywhere this is wired in today) never touches the writer,
  * and a bounded mutation budget stops further writes rather than continuing
- * past the configured limit.
+ * past the configured limit. A writer error becomes a `failed` outcome rather
+ * than a rejection; auth/rate-limit errors (401/403/429) additionally stop the
+ * remaining writes (recorded as skipped). If `setState` succeeds and the
+ * follow-up `comment` fails, the action is reported failed; the next run
+ * re-plans from a fresh snapshot, so the state change is not repeated.
  */
 export async function applyIssueReconciliation(
   actions: readonly ReconciliationAction[],
@@ -149,8 +156,13 @@ export async function applyIssueReconciliation(
   const outcomes: ReconciliationOutcome[] = [];
   let applied = 0;
   let budgetExceeded = false;
+  let haltedReason: string | null = null;
 
   for (const action of actions) {
+    if (haltedReason) {
+      outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber: action.issueNumber, outcome: "skipped", reason: `halted_after:${haltedReason}` });
+      continue;
+    }
     if (applied >= options.budget) {
       budgetExceeded = true;
       outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber: action.issueNumber, outcome: "skipped", reason: "mutation_budget_exceeded" });
@@ -166,16 +178,25 @@ export async function applyIssueReconciliation(
     }
 
     let issueNumber = action.issueNumber;
-    if (action.type === "create") {
-      const created = await options.writer.create({ title: action.title as string, body: action.body as string, labels: [CONTROL_LOOP_LABEL] });
-      issueNumber = created.number;
-    } else {
-      await options.writer.setState(action.issueNumber as number, action.type === "reopen" ? "open" : "closed");
-      if (action.body) await options.writer.comment(action.issueNumber as number, action.body);
+    try {
+      if (action.type === "create") {
+        const created = await options.writer.create({ title: action.title as string, body: action.body as string, labels: [CONTROL_LOOP_LABEL] });
+        issueNumber = created.number;
+      } else {
+        await options.writer.setState(action.issueNumber as number, action.type === "reopen" ? "open" : "closed");
+        if (action.body) await options.writer.comment(action.issueNumber as number, action.body);
+      }
+    } catch (error) {
+      // Recorded, not thrown: outcomes already applied this run must survive
+      // into the report and watermark.
+      const failure = classifyFailure(error);
+      outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber, outcome: "failed", reason: failure.reason });
+      if (failure.halt) haltedReason = failure.reason;
+      continue;
     }
     outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber, outcome: "applied", reason: null });
     applied += 1;
   }
 
-  return { executed: !dryRun, dryRun, budget: options.budget, budgetExceeded, outcomes };
+  return { executed: !dryRun, dryRun, budget: options.budget, budgetExceeded, haltedReason, outcomes };
 }

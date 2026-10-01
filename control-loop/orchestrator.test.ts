@@ -236,3 +236,120 @@ test("an incremental daily scan never allows automatic closure even when the loo
     await rm(root, { recursive: true, force: true });
   }
 });
+
+const TWO_BROKEN_LINKS = { "docs/README.md": "[one](./MISSING-ONE.md)\n\n[two](./MISSING-TWO.md)\n" };
+
+/** Succeeds for the first `succeedFirst` creates, then throws `github_issue_create_failed:<status>`. */
+function flakyIssueWriter(succeedFirst: number, status: number) {
+  const created: number[] = [];
+  const writer = {
+    create: async () => {
+      if (created.length >= succeedFirst) throw new Error(`github_issue_create_failed:${status}`);
+      created.push(100 + created.length);
+      return { number: 100 + created.length - 1 };
+    },
+    setState: async () => {},
+    comment: async () => {},
+  };
+  return { writer, created };
+}
+
+test("a writer failure never rejects the run: the report and watermark are still produced and earlier outcomes are kept", async () => {
+  const root = await tempRepo(TWO_BROKEN_LINKS);
+  try {
+    const store = new InMemoryStateStore();
+    const { writer, created } = flakyIssueWriter(1, 403);
+    const report = await runControlLoop({
+      root, mode: "daily", now: NOW, stateStore: store, runId: "run-403",
+      issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: writer,
+    });
+    assert.equal(created.length, 1);
+    assert.notEqual(report.status, "complete");
+    assert.equal(report.status, "incomplete");
+    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["applied", "failed"]);
+    assert.equal(report.issueReconciliation?.outcomes[1]?.reason, "github_403");
+    assert.equal(report.issueReconciliation?.haltedReason, "github_403");
+    assert.ok(report.notes.includes("issue_reconciliation_action_failed"));
+    assert.ok(report.notes.includes("issue_reconciliation_halted:github_403"));
+    assert.equal(report.watermark.consecutiveFailures, 1);
+    assert.equal(report.watermark.lastSuccessfulDailyRunAt, null, "a failed run must not advance the last-success timestamp");
+    assert.equal(report.watermark.lastRunId, "run-403");
+    assert.deepEqual(await readWatermark(store), report.watermark);
+    assert.equal(report.closure.allowed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a 403 stops the remaining reconciliation writes instead of hammering the API", async () => {
+  const root = await tempRepo(TWO_BROKEN_LINKS);
+  try {
+    let attempts = 0;
+    const writer = {
+      create: async (): Promise<{ number: number }> => { attempts += 1; throw new Error("github_issue_create_failed:403"); },
+      setState: async () => {},
+      comment: async () => {},
+    };
+    const report = await runControlLoop({
+      root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(),
+      issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: writer,
+    });
+    assert.equal(attempts, 1);
+    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["failed", "skipped"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a writer failure after a previously healthy run counts toward the failure streak and releases the lock", async () => {
+  const root = await tempRepo(TWO_BROKEN_LINKS);
+  try {
+    const store = new InMemoryStateStore();
+    const { writer } = flakyIssueWriter(0, 500);
+    const first = await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.equal(first.watermark.consecutiveFailures, 0);
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const second = await runControlLoop({
+      root, mode: "daily", now: later, stateStore: store,
+      issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: writer,
+    });
+    assert.equal(second.watermark.consecutiveFailures, 1);
+    assert.equal(second.watermark.lastSuccessfulDailyRunAt, first.watermark.lastSuccessfulDailyRunAt);
+    const third = await runControlLoop({ root, mode: "daily", now: new Date(later.getTime() + 60 * 60 * 1000), stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    assert.equal(third.skipped, false, "the lock was released after the failing run");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an applier failure is recorded and marks the run incomplete instead of rejecting", async () => {
+  const root = await tempRepo({ "docs/OTHER.md": "# Other\n", "docs/README.md": "[x](./OTHER-OLD/OTHER.md)\n" });
+  try {
+    const store = new InMemoryStateStore();
+    const report = await runControlLoop({
+      root, mode: "daily", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT,
+      applyMode: "execute", applier: { apply: async () => { throw new Error("disk full"); } },
+    });
+    assert.ok(report.applied?.actions.some((action) => action.outcome === "failed"));
+    assert.equal(report.status, "incomplete");
+    assert.equal(report.watermark.consecutiveFailures, 1);
+    assert.ok(report.notes.includes("apply_action_failed"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reconciliation budget exhaustion is surfaced in the report notes", async () => {
+  const root = await tempRepo(TWO_BROKEN_LINKS);
+  try {
+    const { writer } = flakyIssueWriter(10, 500);
+    const report = await runControlLoop({
+      root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(),
+      issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: writer, issueMutationBudget: 1,
+    });
+    assert.equal(report.issueReconciliation?.budgetExceeded, true);
+    assert.ok(report.notes.includes("issue_mutation_budget_exceeded"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
