@@ -412,3 +412,18 @@
 .data-table[data-hidden-columns~="7"] tr > :nth-child(7) { display: none; }
 .data-table[data-hidden-columns~="8"] tr > :nth-child(8) { display: none; }
 .data-table[data-hidden-columns~="9"] tr > :nth-child(9) { display: none; }
+
+/* Fixed overlays follow the phone viewport even while a wide table is scrolled. */
+@media (max-width: 720px) {
+  .sidebar {
+    top: calc(100dvh - 60px - env(safe-area-inset-bottom));
+    bottom: auto;
+    width: 100vw;
+  }
+  .modal-backdrop, .drawer-backdrop, .dialog-backdrop {
+    right: auto;
+    bottom: auto;
+    width: 100vw;
+    height: 100dvh;
+  }
+}
