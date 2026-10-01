@@ -124,7 +124,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CORVIS_DEMO_MODE: "true"
       NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
@@ -143,10 +143,28 @@ jobs:
           restore-keys: |
             nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Production CSP nonce regression (customer and admin surfaces)
+        run: npm run test:e2e:csp -- --project=chromium
+      - name: Preserve CSP report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-csp
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
 
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Each shard owns its dev server; Playwright retains two workers per runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       CORVIS_DEMO_MODE: "true"
       NEXT_PUBLIC_CORVIS_DEMO_MODE: "true"
@@ -170,9 +188,16 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E
-        run: npm run test:e2e
-      - name: Production CSP nonce regression (customer and admin surfaces)
-        run: npm run build && npm run test:e2e:csp
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/4
+      - name: Preserve browser E2E report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
 
   # Every other e2e spec runs against the in-memory demo port. This job builds the app the way it
   # ships (demo off), proves no demo fixture reaches the client bundle, and smoke-tests the real
