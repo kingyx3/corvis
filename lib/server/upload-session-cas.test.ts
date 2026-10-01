@@ -119,6 +119,19 @@ test("an aborted idempotency record is replaced atomically by exactly one new se
   assert.equal(a.uploadId, b.uploadId);
 });
 
+test("a rejected idempotency record is replaced atomically by exactly one new session", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const first = await uploads.initiate(actor, input());
+  store.land(first.resumableUploadUrl!, Buffer.alloc(4096, 0x41));
+  await assert.rejects(uploads.complete(actor, first.uploadId, first.idempotencyKey), (error: unknown) =>
+    error instanceof UploadRequestError && error.code === "invalid_file_content");
+  const [a, b] = await Promise.all([uploads.initiate(actor, input()), uploads.initiate(actor, input())]);
+  assert.notEqual(a.uploadId, first.uploadId);
+  assert.equal(a.uploadId, b.uploadId);
+  assert.ok(a.resumableUploadUrl);
+  assert.equal(stored(store, first).state, "quarantined", "the rejected session is left for the sweep to purge");
+});
+
 test("abort racing a release: the abort claims first, so the release stops and nothing is released", async () => {
   const { store, db, uploads, session } = await quarantinedUpload();
   // Just before release's "complete" claim lands, a concurrent abort runs to completion.

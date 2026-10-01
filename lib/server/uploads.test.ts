@@ -1007,3 +1007,73 @@ test("completion only advances a document that is still uploading, quarantined o
   assert.match(documentUpdate.sql, /and status in \('uploading','quarantined','rejected'\)/);
   assert.deepEqual(documentUpdate.parameters, ["quarantined", session.tenantId, session.documentId]);
 });
+
+test("a retried initiate after a rejected signature starts a fresh session the file can be re-uploaded through", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const rejected = await uploads.initiate(actor, initiateInput());
+  store.finalize(rejected.resumableUploadUrl ?? "", Buffer.alloc(rejected.sizeBytes, 0x41));
+  await rejectsWith(uploads.complete(actor, rejected.uploadId, rejected.idempotencyKey), "invalid_file_content", 422);
+
+  const retry = await uploads.initiate(actor, initiateInput());
+  assert.notEqual(retry.uploadId, rejected.uploadId);
+  assert.notEqual(retry.documentId, rejected.documentId);
+  assert.ok(retry.resumableUploadUrl, "the retry gets an upload URL, not the rejected session");
+  assert.equal(retry.state, "initiated");
+  // Both attempts share one idempotency key, so the retry's own completion still resolves.
+  store.finalize(retry.resumableUploadUrl, pdfBytes(retry.sizeBytes));
+  store.scan(retry.objectKey ?? "", "clean");
+  assert.equal((await uploads.complete(actor, retry.uploadId, retry.idempotencyKey)).state, "complete");
+  assert.equal(db.releases.length, 1);
+  assert.equal((await uploads.initiate(actor, initiateInput())).uploadId, retry.uploadId, "the new session replays idempotently");
+
+  // The rejected session stays unreleasable and its bytes are purged by the sweep.
+  await rejectsWith(uploads.complete(actor, rejected.uploadId, rejected.idempotencyKey), "invalid_file_content", 422);
+  assert.equal((await uploads.sweep(actor.tenantId)).quarantinePurged, 1);
+  assert.deepEqual(store.deleted, [rejected.objectKey]);
+});
+
+test("a retried initiate after an infected or integrity-failed upload also starts a fresh session", async () => {
+  const infected = harness();
+  const actor = identity();
+  const threat = await infected.uploads.initiate(actor, initiateInput());
+  infected.store.finalize(threat.resumableUploadUrl ?? "", pdfBytes(threat.sizeBytes));
+  await infected.uploads.complete(actor, threat.uploadId, threat.idempotencyKey);
+  infected.store.scan(threat.objectKey ?? "", "threat");
+  assert.equal((await infected.uploads.get(actor, threat.uploadId)).malwareScanStatus, "threat");
+  const afterThreat = await infected.uploads.initiate(actor, initiateInput());
+  assert.notEqual(afterThreat.uploadId, threat.uploadId);
+  assert.ok(afterThreat.resumableUploadUrl);
+
+  const tampered = harness();
+  const bad = await tampered.uploads.initiate(actor, initiateInput({ checksumSha256: "a".repeat(64) }));
+  tampered.store.finalize(bad.resumableUploadUrl ?? "", pdfBytes(bad.sizeBytes));
+  await tampered.uploads.complete(actor, bad.uploadId, bad.idempotencyKey);
+  tampered.db.shaMatches = false;
+  tampered.store.scan(bad.objectKey ?? "", "clean");
+  await rejectsWith(tampered.uploads.complete(actor, bad.uploadId, bad.idempotencyKey), "upload_integrity_failed", 422);
+  const afterIntegrity = await tampered.uploads.initiate(actor, initiateInput({ checksumSha256: "a".repeat(64) }));
+  assert.notEqual(afterIntegrity.uploadId, bad.uploadId);
+  assert.ok(afterIntegrity.resumableUploadUrl);
+});
+
+test("in-progress and completed sessions are still replayed by initiate, and only to their own uploader", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const pending = await uploads.initiate(actor, initiateInput());
+  assert.equal((await uploads.initiate(actor, initiateInput())).uploadId, pending.uploadId, "initiated");
+  store.finalize(pending.resumableUploadUrl ?? "", pdfBytes(pending.sizeBytes));
+  await uploads.complete(actor, pending.uploadId, pending.idempotencyKey);
+  const replayed = await uploads.initiate(actor, initiateInput());
+  assert.equal(replayed.uploadId, pending.uploadId, "quarantined with a pending scan");
+  assert.equal(replayed.state, "quarantined");
+  store.scan(pending.objectKey ?? "", "clean");
+  assert.equal((await uploads.initiate(actor, initiateInput())).state, "complete");
+
+  // A rejected session cannot be replaced by a different uploader sharing the key.
+  const rejected = await uploads.initiate(actor, initiateInput({ idempotencyKey: "oidc|uploader-1:key-2" }));
+  store.finalize(rejected.resumableUploadUrl ?? "", Buffer.alloc(rejected.sizeBytes, 0x41));
+  await rejectsWith(uploads.complete(actor, rejected.uploadId, rejected.idempotencyKey), "invalid_file_content", 422);
+  const otherUser = identity({ subject: "oidc|uploader-2" });
+  await rejectsWith(uploads.initiate(otherUser, initiateInput({ idempotencyKey: "oidc|uploader-1:key-2" })), "upload_idempotency_mismatch", 409);
+});

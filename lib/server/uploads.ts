@@ -188,6 +188,14 @@ function sessionContext(session: UploadSession) {
 }
 
 /**
+ * A session that ended rejected (bad signature, integrity failure) or infected. Only meaningful once
+ * `complete` has run (state "quarantined"): a fresh session also has `contentValidated === false`.
+ */
+function isRejectedSession(session: UploadSession): boolean {
+  return session.state === "quarantined" && (session.malwareScanStatus === "threat" || session.contentValidated === false);
+}
+
+/**
  * A quarantined session that was rejected (bad signature, integrity failure) or infected can never be
  * released. Every `complete` call reports that failure; only a still-pending scan is a successful poll.
  */
@@ -567,7 +575,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   /**
    * Binds the idempotency key to `uploadId`. With conditional writes this is an atomic
-   * claim (the key must still be absent, or still hold the aborted record we replaced),
+   * claim (the key must still be absent, or still hold the aborted or rejected record we replaced),
    * so two concurrent initiates with one key can never both create a document.
    */
   private async claimIdempotency(key: string, uploadId: string, priorGeneration: string | undefined): Promise<boolean> {
@@ -585,7 +593,9 @@ export class ProductionUploadSessions implements UploadSessionPort {
         const loaded = await this.load(identity, prior.uploadId).catch(() => null);
         if (loaded) assertSameUploader(identity, loaded);
         const existing = loaded ? await this.refreshScan(loaded).catch(() => null) : null;
-        if (existing && existing.state !== "aborted") { assertSameInitiate(existing, input); return existing; }
+        // Aborted and rejected/infected sessions are terminal: replaying one would hand the client a session
+        // with no upload URL forever, so the same file starts a fresh session (its sweep purges the old bytes).
+        if (existing && existing.state !== "aborted" && !isRejectedSession(existing)) { assertSameInitiate(existing, input); return existing; }
       }
       const created = await this.createSession(identity, input, idempotencyObject, prior?.generation);
       if (created) return created;
