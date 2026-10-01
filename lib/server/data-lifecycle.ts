@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { safeErrorText } from "./processing-error-text.ts";
+import { logEvent } from "./telemetry.ts";
 
 /**
  * Retention and deletion execution.
@@ -272,6 +273,7 @@ export async function executeDeletionRequest(
     throw new DeletionExecutionError("data_lifecycle_adapter_not_configured");
   }
 
+  let payload: { evidence?: unknown } | null;
   try {
     const response = await fetchImpl(`${config.dataLifecycleEndpoint.replace(/\/$/, "")}/delete`, {
       method: "POST",
@@ -281,9 +283,21 @@ export async function executeDeletionRequest(
       signal: AbortSignal.timeout(DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`Lifecycle adapter rejected deletion (${response.status})`);
-    const payload = await response.json() as { evidence?: unknown };
+    // The status is the adapter's verdict; the body only carries optional evidence. A 200 with an empty
+    // body, a 204 or a JSON `null` is a successful deletion, not a failed attempt.
+    payload = await response.json().catch(() => null) as { evidence?: unknown } | null;
+  } catch (error) {
+    await failRequest(db, identity, requestId, attempt, safeErrorText(error), scope);
+    throw error;
+  }
+
+  // The adapter has accepted the (irreversible) deletion. A failure in the bookkeeping below must NOT be
+  // recorded as an adapter failure: that would mark an already-deleted scope `failed`/`retryable`. The
+  // request is left `executing`, so once its lease expires it is reclaimed and re-sent to the adapter
+  // (idempotent on the request key) and the evidence is written then; the error still reaches the caller.
+  try {
     const evidence: Record<string, unknown> = {
-      ...record(payload.evidence),
+      ...record(payload?.evidence),
       adapterStatus: "completed",
       scope,
       attempt,
@@ -298,7 +312,7 @@ export async function executeDeletionRequest(
     [JSON.stringify(evidence), identity.tenantId, requestId, hash]);
     return { requestId, state: "completed", attempt, replayed: false, evidence, evidenceHash: hash };
   } catch (error) {
-    await failRequest(db, identity, requestId, attempt, safeErrorText(error), scope);
+    logEvent("error", "data_lifecycle.completion_bookkeeping_failed", { correlationId: requestId, tenantId: identity.tenantId, actorSubject: identity.subject }, { attempt, error: safeErrorText(error) });
     throw error;
   }
 }

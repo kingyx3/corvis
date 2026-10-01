@@ -120,18 +120,37 @@ export function createHttpGcsResumableUploadPort(options: Options): UploadPort {
 
       const persisted = safeGetItem("local", localKey);
       if (persisted) {
+        let status: StatusResponse | undefined;
         try {
           const saved = JSON.parse(persisted) as { uploadId: string };
-          const status = await requestJson<StatusResponse>(`/api/v1/uploads/${saved.uploadId}`);
-          if (status.data.state === "complete" || status.data.state === "quarantined") {
+          status = await requestJson<StatusResponse>(`/api/v1/uploads/${saved.uploadId}`);
+        } catch {
+          safeRemoveItem("local", localKey);
+        }
+        if (status) {
+          let state = status.data.state;
+          if (state === "quarantined") {
+            // "quarantined" is both a pending scan (accepted) and a rejected or infected session, and the
+            // status response cannot tell them apart. Completion is idempotent and fails (422) for the
+            // latter, so confirm it instead of reporting success; that failure is the upload's result.
+            try {
+              state = (await requestJson<CompleteResponse>(`/api/v1/uploads/${status.data.uploadId}/complete`, {
+                method: "POST",
+                headers: { "idempotency-key": fingerprint(file) },
+                body: JSON.stringify({ idempotencyKey: fingerprint(file) }),
+              })).data.state;
+            } catch (error) {
+              safeRemoveItem("local", localKey);
+              throw error;
+            }
+          }
+          if (state === "complete" || state === "quarantined") {
             safeRemoveItem("local", localKey);
             callbacks.onProgress?.({ fileName: file.name, uploadedBytes: file.size, totalBytes: file.size, percent: 100, status: "complete", documentId: status.data.documentId });
             return { documentId: status.data.documentId };
           }
-          if (status.data.state !== "aborted" && status.data.uploadUrl) session = status.data;
+          if (state !== "aborted" && status.data.uploadUrl) session = status.data;
           else safeRemoveItem("local", localKey);
-        } catch {
-          safeRemoveItem("local", localKey);
         }
       }
 
