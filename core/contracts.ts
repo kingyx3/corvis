@@ -93,6 +93,9 @@ export type FundSnapshot = {
   id?: string;
   version?: number;
   fund: string;
+  /** Governed fund id, when known; matches ObservationRecord.fundId. */
+  fundId?: string;
+  /** The snapshot's report period (matches the observations' economic period). */
   period: string;
   status: "Published" | "Review";
   holdings: number;

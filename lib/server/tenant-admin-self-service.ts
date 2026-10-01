@@ -16,7 +16,6 @@ export const ROLE_EXPLANATIONS: Record<string, string> = {
   analyst: "Can analyze tenant data and prepare working outputs. Cannot manage users or system settings.",
   viewer: "Can view entitled tenant data. Cannot change reviews, users, or system settings.",
   accountadmin: "Can oversee all reviews and submit evidence packages. Cannot manage organization-wide users or system settings.",
-  workspace_admin: "Can administer the selected workspace, including workspace-level access. Cannot administer the whole organization.",
   tenant_admin: "Full customer-side access, including user management and review oversight. Reserved for designated customer administrators.",
   support: "Temporary elevated access for authorized Corvis support staff. Always time-limited and fully audited.",
 };

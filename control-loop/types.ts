@@ -49,7 +49,7 @@ export interface PlannedAction {
   edit: TextEdit | null;
 }
 
-export type ApplyOutcome = "dry-run" | "applied" | "skipped";
+export type ApplyOutcome = "dry-run" | "applied" | "skipped" | "failed";
 
 export interface AppliedAction {
   fingerprint: string;
@@ -63,6 +63,8 @@ export interface ApplyResult {
   budget: number;
   budgetExceeded: boolean;
   blockedReason: string | null;
+  /** Set when an auth/rate-limit style failure stopped further applies; remaining actions are recorded as skipped. */
+  haltedReason: string | null;
   actions: AppliedAction[];
 }
 

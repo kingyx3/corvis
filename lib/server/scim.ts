@@ -7,6 +7,7 @@ import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from
 import { isTransientPostgresError } from "./postgres-native.ts";
 import { RATE_LIMIT_WINDOW_MS, RateLimitError, RateLimiter } from "./rate-limit.ts";
 import { userBearerAuthorization } from "./request-context.ts";
+import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 import { logEvent } from "./telemetry.ts";
 import { TenantInvitationError } from "./tenant-invitations.ts";
 
@@ -133,14 +134,18 @@ export type ScimUser={id:string;externalId:string;userName:string;active:boolean
 function user(row:PostgresRow,base:string):ScimUser{const id=text(row,"scim_user_id");return {id,externalId:text(row,"external_id"),userName:text(row,"user_name"),active:row.active===true,meta:{resourceType:"User",location:`${base}/${id}`}};}
 
 const SCIM_MAX_PAGE_SIZE=200;
+// `offset $n::int` raises 22003 above int4; SCIM treats an out-of-range startIndex as an empty page.
+const SCIM_MAX_START_INDEX=2147483647;
 
 export type ScimUserPage={resources:ScimUser[];totalResults:number;startIndex:number};
 
 export async function listScimUsers(config:ScimConfiguration,base:string,filter:string|null,db:PostgresSqlApi,startIndex=1,count=SCIM_MAX_PAGE_SIZE):Promise<ScimUserPage>{
-  const safeStartIndex=Number.isInteger(startIndex)&&startIndex>=1?startIndex:1;
+  const safeStartIndex=Number.isInteger(startIndex)&&startIndex>=1?Math.min(startIndex,SCIM_MAX_START_INDEX):1;
   const safeCount=Number.isInteger(count)&&count>=0?Math.min(count,SCIM_MAX_PAGE_SIZE):SCIM_MAX_PAGE_SIZE;
   let where=`tenant_id=$1::uuid`;const parameters:Array<string>=[config.tenantId];
-  const match=/^\s*(userName|externalId)\s+eq\s+"([^"]+)"\s*$/.exec(filter??"");if(filter&& !match)throw new ScimError(400,"invalidFilter","Only userName eq and externalId eq filters are supported");if(match){where+=match[1]==="userName"?` and user_name=$2`:` and external_id=$2`;parameters.push(match[2]);}
+  const match=/^\s*(userName|externalId)\s+eq\s+"([^"]+)"\s*$/.exec(filter??"");if(filter&& !match)throw new ScimError(400,"invalidFilter","Only userName eq and externalId eq filters are supported");if(match){where+=match[1]==="userName"?` and user_name=$2`:` and external_id=$2`;
+    // user_name is stored lower-cased (createScimUser), and SCIM userName comparison is case-insensitive.
+    parameters.push(match[1]==="userName"?match[2].trim().toLowerCase():match[2]);}
   const totalRows=await db.query(`select count(*)::int as count from corvis_control.tenant_scim_identity where ${where}`,parameters);
   const totalResults=Number(totalRows[0]?.count??0);
   const limitIndex=parameters.length+1,offsetIndex=parameters.length+2;
@@ -162,8 +167,15 @@ export async function createScimUser(config:ScimConfiguration,input:Record<strin
   return withTransaction(db,async(tx)=>{
     const existing=await tx.query(`select 1 from corvis_control.tenant_scim_identity where tenant_id=$1::uuid and (external_id=$2 or user_name=$3) limit 1`,[config.tenantId,externalId,userName]);if(existing.length)throw new ScimError(409,"uniqueness","SCIM user already exists");
     const scimUserId=randomUUID(),userId=randomUUID(),subject=externalId,eventKey=`scim:${scimUserId}:create`;
-    const lifecycle=new PostgresIdentityLifecycleRepository(tx);await lifecycle.apply({tenantId:config.tenantId,eventKey,actorSubject:`scim:${config.tenantId}`,actorWorkspaceId:config.defaultWorkspaceId,correlationId,operation:"sync",authMethod:config.authMethod,subject,userId,memberships:[{workspaceId:config.defaultWorkspaceId,roleName:config.defaultRoleName}],reason:"SCIM provision"});
-    if(!active)await lifecycle.apply({tenantId:config.tenantId,eventKey:`scim:${scimUserId}:create-disable`,actorSubject:`scim:${config.tenantId}`,actorWorkspaceId:config.defaultWorkspaceId,correlationId,operation:"disable",authMethod:config.authMethod,subject,userId,memberships:[],reason:"SCIM provisioned inactive"});
+    const lifecycle=new PostgresIdentityLifecycleRepository(tx);
+    try{await lifecycle.apply({tenantId:config.tenantId,eventKey,actorSubject:`scim:${config.tenantId}`,actorWorkspaceId:config.defaultWorkspaceId,correlationId,operation:"sync",authMethod:config.authMethod,subject,userId,memberships:[{workspaceId:config.defaultWorkspaceId,roleName:config.defaultRoleName}],reason:"SCIM provision"});
+    if(!active)await lifecycle.apply({tenantId:config.tenantId,eventKey:`scim:${scimUserId}:create-disable`,actorSubject:`scim:${config.tenantId}`,actorWorkspaceId:config.defaultWorkspaceId,correlationId,operation:"disable",authMethod:config.authMethod,subject,userId,memberships:[],reason:"SCIM provisioned inactive"});}
+    catch(error){
+      // The externalId is the identity subject: one that is already mapped to another user (e.g. an accepted invitation) or disabled is a conflict, not a server failure.
+      const code=sqlApplicationErrorOf(error);
+      if(code.includes("identity subject is already mapped to a different user")||code.includes("disabled identity requires explicit reactivation"))throw new ScimError(409,"uniqueness","SCIM user already exists");
+      throw error;
+    }
     let rows:PostgresRow[];
     try{rows=await tx.query(`insert into corvis_control.tenant_scim_identity(tenant_id,scim_user_id,external_id,user_id,auth_method,subject,user_name,active) values($1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8) returning scim_user_id::text,external_id,user_name,active`,[config.tenantId,scimUserId,externalId,userId,config.authMethod,subject,userName,active]);}
     catch(error){

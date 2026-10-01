@@ -85,6 +85,13 @@ export class InMemoryStateStore implements ConditionalStateStore {
   }
 }
 
+/**
+ * Upper bound for any single GCS or metadata-server call. A hung connection
+ * would otherwise stall the run while it holds the lock, blocking later runs
+ * until the lease goes stale.
+ */
+export const GCS_REQUEST_TIMEOUT_MS = 20_000;
+
 type FetchLike = typeof fetch;
 type TokenProvider = () => Promise<string>;
 
@@ -98,10 +105,12 @@ export class GcsStateStore implements ConditionalStateStore {
   private readonly prefix: string;
   private readonly fetchImpl: FetchLike;
   private readonly tokenProvider: TokenProvider;
+  private readonly timeoutMs: number;
   private cachedToken: { value: string; expiresAt: number } | null = null;
 
-  constructor(options: { bucket: string; prefix?: string; fetchImpl?: FetchLike; tokenProvider?: TokenProvider }) {
+  constructor(options: { bucket: string; prefix?: string; fetchImpl?: FetchLike; tokenProvider?: TokenProvider; timeoutMs?: number }) {
     if (!/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(options.bucket)) throw new Error("invalid_gcs_state_bucket");
+    this.timeoutMs = options.timeoutMs ?? GCS_REQUEST_TIMEOUT_MS;
     this.bucket = options.bucket;
     this.prefix = (options.prefix ?? "control-loop").replace(/^\/+|\/+$/g, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -122,7 +131,7 @@ export class GcsStateStore implements ConditionalStateStore {
     if (this.cachedToken && this.cachedToken.expiresAt - 60_000 > now) return this.cachedToken.value;
     const response = await this.fetchImpl(
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-      { headers: { "Metadata-Flavor": "Google" } },
+      { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(this.timeoutMs) },
     );
     if (!response.ok) throw new Error(`gcp_metadata_token_failed:${response.status}`);
     const body = await response.json() as { access_token?: string; expires_in?: number };
@@ -143,7 +152,7 @@ export class GcsStateStore implements ConditionalStateStore {
   }
 
   async readVersioned(key: string): Promise<VersionedState | null> {
-    const response = await this.fetchImpl(this.objectUrl(key), { headers: await this.authHeaders() });
+    const response = await this.fetchImpl(this.objectUrl(key), { headers: await this.authHeaders(), signal: AbortSignal.timeout(this.timeoutMs) });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`gcs_state_read_failed:${response.status}`);
     const generation = response.headers.get("x-goog-generation");
@@ -154,11 +163,12 @@ export class GcsStateStore implements ConditionalStateStore {
   async write(key: string, value: string | null): Promise<void> {
     const url = this.objectUrl(key);
     const response = value === null
-      ? await this.fetchImpl(url, { method: "DELETE", headers: await this.authHeaders() })
+      ? await this.fetchImpl(url, { method: "DELETE", headers: await this.authHeaders(), signal: AbortSignal.timeout(this.timeoutMs) })
       : await this.fetchImpl(url, {
           method: "PUT",
           headers: await this.authHeaders({ "Content-Type": "application/json; charset=utf-8" }),
           body: value,
+          signal: AbortSignal.timeout(this.timeoutMs),
         });
     if (value === null && response.status === 404) return;
     if (!response.ok) throw new Error(`gcs_state_write_failed:${response.status}`);
@@ -170,11 +180,12 @@ export class GcsStateStore implements ConditionalStateStore {
     const generation = expectedVersion ?? "0";
     const headers = await this.authHeaders({ "x-goog-if-generation-match": generation });
     const response = value === null
-      ? await this.fetchImpl(url, { method: "DELETE", headers })
+      ? await this.fetchImpl(url, { method: "DELETE", headers, signal: AbortSignal.timeout(this.timeoutMs) })
       : await this.fetchImpl(url, {
           method: "PUT",
           headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
           body: value,
+          signal: AbortSignal.timeout(this.timeoutMs),
         });
     if (response.status === 404 && value === null) return true;
     if (response.status === 412) return false;

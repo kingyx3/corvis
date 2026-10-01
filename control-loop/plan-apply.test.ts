@@ -96,3 +96,28 @@ test("the mutation budget stops further automatic actions and is reported as exc
   assert.equal(result.blockedReason, "mutation_budget_exceeded");
   assert.deepEqual(result.actions.map((a) => a.outcome), ["applied", "applied", "skipped"]);
 });
+
+test("an applier error is recorded as a failed outcome, keeps earlier outcomes, and does not reject", async () => {
+  let calls = 0;
+  const applier: EditApplier = {
+    apply: async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("disk full");
+    },
+  };
+  const plan = ["a", "b", "c"].map((id) => plannedAutomatic(id, { path: `docs/${id}.md`, before: "x", after: "y" }));
+  const result = await applyActions(plan, { mode: "execute", budget: 10, applier });
+  assert.deepEqual(result.actions.map((a) => a.outcome), ["applied", "failed", "applied"]);
+  assert.equal(result.actions[1]?.reason, "error:disk full");
+  assert.equal(result.haltedReason, null);
+});
+
+test("an auth or rate-limit applier error stops the remaining actions as skipped", async () => {
+  const applier: EditApplier = { apply: async () => { throw new Error("github_issue_create_failed:403"); } };
+  const plan = ["a", "b"].map((id) => plannedAutomatic(id, { path: `docs/${id}.md`, before: "x", after: "y" }));
+  const result = await applyActions(plan, { mode: "execute", budget: 10, applier });
+  assert.deepEqual(result.actions.map((a) => a.outcome), ["failed", "skipped"]);
+  assert.equal(result.actions[0]?.reason, "github_403");
+  assert.equal(result.haltedReason, "github_403");
+  assert.equal(result.actions[1]?.reason, "halted_after:github_403");
+});

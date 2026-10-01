@@ -11,6 +11,20 @@ function basenameOf(path: string): string {
   return index === -1 ? path : path.slice(index + 1);
 }
 
+/**
+ * Link targets are arbitrary author text: a literal `%` (`growth-100%.md`) is a
+ * malformed escape and makes `decodeURIComponent` throw, which would fail the
+ * whole scan on every run. Fall back to the raw path, which is also how such a
+ * file would actually be named on disk.
+ */
+function safeDecode(target: string): string {
+  try {
+    return decodeURIComponent(target);
+  } catch {
+    return target;
+  }
+}
+
 function uniqueTargetFor(basename: string, snapshot: RepoSnapshot): string | null {
   let match: string | null = null;
   for (const candidate of snapshot.paths) {
@@ -30,7 +44,7 @@ export function scanInternalLinks(files: RepoFile[], snapshot: RepoSnapshot): Fi
       if (EXTERNAL_TARGET.test(link.target)) continue;
       const withoutAnchor = link.target.split("#")[0] ?? "";
       if (!withoutAnchor) continue;
-      const decoded = decodeURIComponent(withoutAnchor);
+      const decoded = safeDecode(withoutAnchor);
       const resolved = decoded.startsWith("/") ? decoded.replace(/^\/+/, "") : resolveRelative(file.path, decoded);
       if (resolved && snapshot.paths.has(resolved)) continue;
       const subject = `${file.path}:broken-link:${decoded}`;

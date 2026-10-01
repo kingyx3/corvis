@@ -9,7 +9,7 @@ import { Icon } from "@/components/ui/icon";
 
 function roleLabel(role: string): string {
   if (role === "tenant_admin") return "Organization Admin";
-  if (role === "accountadmin" || role === "workspace_admin") return "Workspace Admin";
+  if (role === "accountadmin") return "Workspace Admin";
   if (role === "reviewer") return "Review Analyst";
   if (role === "analyst") return "Analyst";
   if (role === "viewer") return "Viewer";
@@ -165,7 +165,7 @@ export function AccessAdminView() {
       <div className="form-grid">
         <label className="form-field"><span>Recipient email</span><input className="input-control" type="email" autoComplete="email" maxLength={320} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="person@example.org"/></label>
         <label className="form-field"><span>Workspace</span><select value={inviteWorkspace} onChange={(event) => setInviteWorkspace(event.target.value)} disabled={!workspaces.length}><option value="">{workspaces.length ? "Select workspace" : "No workspaces available"}</option>{workspaces.map((workspace) => <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.workspaceDisplayName ?? workspace.workspaceId}</option>)}</select><small>Invitation workspace is validated server-side.</small></label>
-        <label className="form-field"><span>Role</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as TenantInvitation["roleName"])}><option value="viewer">Viewer</option><option value="analyst">Analyst</option><option value="reviewer">Review Analyst</option><option value="workspace_admin">Workspace Admin</option><option value="tenant_admin">Organization Admin</option></select></label>
+        <label className="form-field"><span>Role</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as TenantInvitation["roleName"])}><option value="viewer">Viewer</option><option value="analyst">Analyst</option><option value="reviewer">Review Analyst</option><option value="accountadmin">Workspace Admin</option><option value="tenant_admin">Organization Admin</option></select></label>
         <label className="form-field"><span>Reason</span><input className="input-control" value={inviteReason} maxLength={1000} onChange={(event) => setInviteReason(event.target.value)} placeholder="e.g. Finance team onboarding"/></label>
       </div>
       {inviteRole === "tenant_admin" && <label className="check-field"><input type="checkbox" checked={confirmTenantAdmin} onChange={(event) => setConfirmTenantAdmin(event.target.checked)}/><span>Confirm this invitation grants organization-wide administration.</span></label>}

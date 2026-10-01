@@ -147,6 +147,27 @@ test("a concurrent duplicate create is a 409 and rolls the provisioned identity 
   assert.deepEqual(db.committed, []);
 });
 
+test("an externalId whose identity subject already exists is a 409 uniqueness error, not a 500", async () => {
+  for (const [fragment, driver] of [
+    ["identity subject is already mapped to a different user", "native"],
+    ["disabled identity requires explicit reactivation", "native"],
+    ["identity subject is already mapped to a different user", "raw"],
+    ["disabled identity requires explicit reactivation", "raw"],
+  ] as const) {
+    const db = lifecycleDb();
+    // The native driver carries only the allowlisted fragment; other drivers and fakes carry the raw message.
+    db.failWhen = (sql) => sql.includes("apply_identity_lifecycle")
+      ? (driver === "native" ? new PostgresDriverError("query", "P0001", fragment) : new Error(fragment))
+      : undefined;
+    await assert.rejects(createScimUser(config, newUser, "https://x/scim/v2/Users", "corr-1", db), (error) => error instanceof ScimError && error.status === 409 && error.scimType === "uniqueness");
+    assert.deepEqual(db.committed, []);
+  }
+  // Unrelated lifecycle failures stay opaque server errors.
+  const db = lifecycleDb();
+  db.failWhen = (sql) => sql.includes("apply_identity_lifecycle") ? new PostgresDriverError("query", "P0001", "invalid identity lifecycle fields") : undefined;
+  await assert.rejects(createScimUser(config, newUser, "https://x/scim/v2/Users", "corr-1", db), (error) => !(error instanceof ScimError));
+});
+
 class QueueDb implements PostgresSqlApi {
   calls: Call[] = [];
   queryQueue: PostgresRow[][] = [];

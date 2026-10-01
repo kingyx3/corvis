@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
+import { scopeObservationsToSnapshot } from "../../core/review-scope.ts";
 import { ConflictError, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
 import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -151,6 +152,31 @@ test("empty resource allowlists fail closed before a broad Postgres read", async
   assert.deepEqual(await new PostgresProductionPlatform(db).listObservations(noResources), []);
   assert.deepEqual(await new PostgresProductionPlatform(db).listSnapshots(noResources), []);
   assert.equal(db.calls.length, 0);
+});
+
+test("Postgres snapshot and observation mappers carry what Review needs to scope a queue to one fund period", async () => {
+  class ScopeDb extends FakeDb {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+      if (sql.includes("corvis_serving.fund_period_snapshots")) {
+        return [
+          { snapshot_id: snapshotId, version: 1, fund_id: "fund-a", fund_name: "Fund A", report_period: "2026 Q2", status: "review", created_at: "2026-08-01" },
+          { snapshot_id: "00000000-0000-0000-0000-000000000402", version: 1, fund_id: "fund-b", fund_name: "Fund B", report_period: "2026 Q2", status: "review", created_at: "2026-08-01" },
+        ];
+      }
+      if (sql.includes("corvis_serving.observations")) {
+        const row = (id: string, fund_id: string, fund_name: string, economic_period: string | null) =>
+          ({ observation_id: id, fund_id, fund_name, company_id: "c", company_name: "Co", metric_code: "revenue", value_string: "1", economic_period, report_date: "2026-06-30", review_state: "review_required", confidence_score: 90, version: 1 });
+        return [row("a-q2", "fund-a", "Fund A", "2026 Q2"), row("b-q2", "fund-b", "Fund B", "2026 Q2"), row("a-q1", "fund-a", "Fund A", "2026 Q1"), row("a-dated", "fund-a", "Fund A", null)];
+      }
+      return super.query(sql, parameters);
+    }
+  }
+  const platform = new PostgresProductionPlatform(new ScopeDb());
+  const [snapshots, observations] = [await platform.listSnapshots(identity), await platform.listObservations(identity)];
+  assert.deepEqual(snapshots.map((item) => [item.fundId, item.period]), [["fund-a", "2026 Q2"], ["fund-b", "2026 Q2"]]);
+  assert.ok(observations.every((item) => item.snapshotId === undefined), "the serving view has no snapshot column");
+  assert.deepEqual(scopeObservationsToSnapshot(observations, snapshots[0]).map((item) => item.id), ["a-q2"]);
+  assert.deepEqual(scopeObservationsToSnapshot(observations, snapshots[1]).map((item) => item.id), ["b-q2"]);
 });
 
 test("review returns the persistence-authoritative next state for four-eyes workflows", async () => {
