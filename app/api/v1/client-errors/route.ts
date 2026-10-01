@@ -1,4 +1,5 @@
 import { parseClientErrorEvent } from "@/lib/client-error-report";
+import { readBoundedRequestText, RequestBodyTooLargeError } from "@/lib/server/bounded-body";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { logEvent } from "@/lib/server/telemetry";
@@ -15,8 +16,12 @@ export async function POST(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) return json({ error: "payload_too_large", correlationId: id }, { status: 413 });
+    let text: string;
+    try { text = await readBoundedRequestText(request, MAX_BODY_BYTES); }
+    catch (error) {
+      if (error instanceof RequestBodyTooLargeError) return json({ error: "payload_too_large", correlationId: id }, { status: 413 });
+      throw error;
+    }
     let body: unknown;
     try { body = JSON.parse(text); } catch { body = undefined; }
     const event = parseClientErrorEvent(body);
