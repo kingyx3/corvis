@@ -15,7 +15,6 @@ export async function GET(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAdminRequestIdentity(request);
-    if (identity.isTenantAdmin !== true) return json({ error: "tenant_admin_required", correlationId: id }, { status: 403 });
     const config = getServerConfig();
     const data = config.demoMode ? [] : await listTransportDeadLetters(identity, postgres(config.postgresDsn));
     return json({ data, correlationId: id });
@@ -26,7 +25,6 @@ export async function POST(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAdminRequestIdentity(request);
-    if (identity.isTenantAdmin !== true) return json({ error: "tenant_admin_required", correlationId: id }, { status: 403 });
     const body = await readJsonObject(request);
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const eventId = typeof body.eventId === "string" ? body.eventId.trim() : "";
