@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { gcs, type GcsObject, type UploadObjectStore } from "./gcs.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { logEvent } from "./telemetry.ts";
 import { canAccessUpload } from "./upload-access.ts";
 import { sealArtifactIntegrity } from "./upload-integrity.ts";
 
@@ -154,6 +155,22 @@ function assertSameInitiate(session: UploadSession, input: { fileName: string; c
     || (session.checksumSha256 ?? undefined) !== (input.checksumSha256 ?? undefined)) {
     throw new UploadRequestError("upload_idempotency_mismatch", "Upload idempotency key was reused for a different file");
   }
+}
+
+/** The object delete failed, so the session is not purged and a later sweep must retry it. */
+class ObjectPurgeError extends Error {
+  constructor(cause: unknown) {
+    super("Upload object could not be deleted; a later sweep retries the purge", { cause });
+    this.name = "ObjectPurgeError";
+  }
+}
+
+function sessionContext(session: UploadSession) {
+  return { correlationId: session.uploadId, tenantId: session.tenantId, workspaceId: session.workspaceId, actorSubject: session.actorSubject, documentId: session.documentId };
+}
+
+function errorText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 300);
 }
 
 function isConflict(error: unknown): boolean {
@@ -426,7 +443,10 @@ export class ProductionUploadSessions implements UploadSessionPort {
     await this.db.execute(`update corvis_source.document_artifact_version
       set quarantine_status='purged'
       where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')`,
-    [session.tenantId,session.artifactVersionId]).catch(() => undefined);
+    [session.tenantId,session.artifactVersionId]).catch((error) => {
+      // Best effort: the session is already aborted, but an unmarked row stays in the scheduled release's queue.
+      logEvent("warn", "upload.mark_artifact_purged_failed", sessionContext(session), { artifactVersionId: session.artifactVersionId, error: errorText(error) });
+    });
   }
 
   private async refreshScan(session: UploadSession): Promise<UploadSession> {
@@ -474,13 +494,28 @@ export class ProductionUploadSessions implements UploadSessionPort {
     await this.persist(session);
   }
 
-  private async purgeObject(session: UploadSession, now: number): Promise<void> {
+  /**
+   * Cancels the resumable session (best effort) and deletes the object. `purgedAt` is set only once
+   * the delete succeeded (the store treats an already-missing object as success); a failed delete
+   * returns its error with `purgedAt` unset, because sweep skips purged sessions and would never
+   * retry the bytes. Callers persist their state first and then surface the failure.
+   */
+  private async purgeObject(session: UploadSession, now: number): Promise<ObjectPurgeError | undefined> {
     if (session.resumableUploadUrl) await this.store.cancelResumableUpload(session.resumableUploadUrl).catch(() => undefined);
-    if (session.objectKey) await this.store.deleteObject(session.objectKey).catch(() => undefined);
+    if (session.objectKey) {
+      try {
+        await this.store.deleteObject(session.objectKey);
+      } catch (error) {
+        logEvent("error", "upload.purge_failed", sessionContext(session), { objectKey: session.objectKey, error: errorText(error) });
+        return new ObjectPurgeError(error);
+      }
+    }
     session.purgedAt = new Date(now).toISOString();
+    return undefined;
   }
 
   private async expire(session: UploadSession): Promise<void> {
+    // A failed delete leaves purgedAt unset; the caller is told the session expired either way and sweep retries the purge.
     await this.purgeObject(session, Date.now());
     session.state = "aborted";
     await this.markArtifactPurged(session);
@@ -603,7 +638,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
     session.malwareScanStatus = session.contentValidated ? "pending" : "error";
     await this.db.execute(`update corvis_source.document_artifact_version
       set storage_generation=$1,malware_scan_status=$2,quarantine_status='quarantined'
-      where tenant_id=$3 and document_artifact_version_id=$4::uuid`,
+      where tenant_id=$3 and document_artifact_version_id=$4::uuid and quarantine_status in ('pending','quarantined')`,
     [session.storageVersionId ?? null,session.contentValidated ? "pending" : "invalid_content",session.tenantId,session.artifactVersionId]);
     await this.db.execute(`update corvis_source.document set status=$1
       where tenant_id=$2 and document_id=$3::uuid`, [session.contentValidated ? "quarantined" : "rejected",session.tenantId,session.documentId]);
@@ -616,7 +651,11 @@ export class ProductionUploadSessions implements UploadSessionPort {
     for (let attempt = 0; ; attempt += 1) {
       const session = await this.load(identity, uploadId);
       this.assertUploader(identity, session);
-      if (session.state === "aborted") return;
+      if (session.state === "aborted") {
+        // Durably aborted but the bytes were never confirmed deleted (a previous delete failed): retry it.
+        if (!session.purgedAt) await this.finishAbort(session);
+        return;
+      }
       // Released source evidence is already queued for processing; aborting must
       // not relabel the registered document as aborted.
       if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
@@ -628,14 +667,21 @@ export class ProductionUploadSessions implements UploadSessionPort {
         if (isConflict(error) && attempt < 2) continue;
         throw error;
       }
-      await this.markArtifactPurged(session);
-      await this.purgeObject(session, Date.now());
-      await this.db.execute(`update corvis_source.document set status='aborted'
-        where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
-      // Recording purgedAt is best effort: the aborted state is already durable and sweep finishes any purge.
-      await this.persist(session).catch((error) => { if (!isConflict(error)) throw error; });
+      await this.finishAbort(session);
       return;
     }
+  }
+
+  /** Purges an aborted session's bytes and registry rows. Idempotent: also the retry for an abort whose delete failed. */
+  private async finishAbort(session: UploadSession): Promise<void> {
+    await this.markArtifactPurged(session);
+    const purgeFailure = await this.purgeObject(session, Date.now());
+    await this.db.execute(`update corvis_source.document set status='aborted'
+      where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
+    // The aborted state is already durable, so a failed delete is surfaced (the client may retry the
+    // abort, which re-runs this) and is otherwise left to sweep. Recording purgedAt is best effort.
+    if (purgeFailure) throw purgeFailure;
+    await this.persist(session).catch((error) => { if (!isConflict(error)) throw error; });
   }
 
   /**
@@ -668,8 +714,9 @@ export class ProductionUploadSessions implements UploadSessionPort {
       try {
         await this.sweepSession(session, now, abandonedAfterMs, quarantineRetentionMs, summary);
       } catch (error) {
-        // A concurrent request changed the session under us: leave it to that request / the next sweep.
-        if (!isConflict(error)) throw error;
+        // A concurrent request changed the session under us, or its object could not be deleted (already
+        // logged; purgedAt stays unset): leave it to that request / the next sweep.
+        if (!isConflict(error) && !(error instanceof ObjectPurgeError)) throw error;
         summary.skipped += 1;
       }
     }
@@ -701,26 +748,39 @@ export class ProductionUploadSessions implements UploadSessionPort {
       // Claim the registry row first, atomically and only while it is still unreleased: that claim is
       // what excludes a concurrent release (release_clean_artifact refuses a purged artifact), so the
       // bytes are deleted only after the artifact can no longer be released.
-      const claimed = await this.db.query(`update corvis_source.document_artifact_version
-        set quarantine_status='purged'
-        where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')
-        returning 1 as claimed`, [session.tenantId, session.artifactVersionId]);
-      if (claimed.length === 0) { summary.skipped += 1; return; }
-      await this.purgeObject(session, now);
+      // A row this same purge already claimed (its byte delete failed earlier) only needs the delete retried.
+      if (registry?.quarantine_status !== "purged") {
+        const claimed = await this.db.query(`update corvis_source.document_artifact_version
+          set quarantine_status='purged'
+          where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')
+          returning 1 as claimed`, [session.tenantId, session.artifactVersionId]);
+        if (claimed.length === 0) { summary.skipped += 1; return; }
+      }
+      const purgeFailure = await this.purgeObject(session, now);
+      if (purgeFailure) throw purgeFailure;
       await this.persist(session);
       summary.quarantinePurged += 1;
       return;
     }
 
-    if (session.state === "aborted") { await this.purgeObject(session, now); await this.persist(session); summary.abandoned += 1; return; }
+    if (session.state === "aborted") {
+      await this.markArtifactPurged(session);
+      const purgeFailure = await this.purgeObject(session, now);
+      if (purgeFailure) throw purgeFailure;
+      await this.persist(session);
+      summary.abandoned += 1;
+      return;
+    }
     if (ageMs(session, now) <= abandonedAfterMs) { summary.skipped += 1; return; }
 
-    await this.purgeObject(session, now);
+    const purgeFailure = await this.purgeObject(session, now);
     session.state = "aborted";
     await this.markArtifactPurged(session);
     await this.db.execute(`update corvis_source.document set status='aborted'
       where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]);
+    // Persisted even when the delete failed: the session is aborted without purgedAt, so the next sweep retries it.
     await this.persist(session);
+    if (purgeFailure) throw purgeFailure;
     summary.abandoned += 1;
   }
 }

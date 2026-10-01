@@ -48,7 +48,13 @@ class FakeObjectStore implements UploadObjectStore {
     this.hashed.push(key);
     return createHash("sha256").update(stored.bytes).digest("hex");
   }
-  async deleteObject(key: string): Promise<void> { this.deleted.push(key); this.objects.delete(key); }
+  /** Number of upcoming deleteObject calls that fail (GCS 5xx/timeout/403) without deleting anything. */
+  failDeletes = 0;
+  async deleteObject(key: string): Promise<void> {
+    if (this.failDeletes > 0) { this.failDeletes -= 1; throw new Error("GCS object deletion failed (503)"); }
+    this.deleted.push(key);
+    this.objects.delete(key);
+  }
   async listObjects(prefix: string, limit = 1000): Promise<string[]> {
     this.listCalls += 1;
     return [...this.json.keys()].filter((key) => key.startsWith(prefix)).sort().slice(0, limit);
@@ -725,4 +731,158 @@ test("an upload id that is not a server-issued UUID never reaches an object key"
     await assert.rejects(context.uploads.get(identity(), uploadId), (error: unknown) => error instanceof UploadRequestError && error.code === "upload_not_found", uploadId);
   }
   assert.deepEqual(reads, [], "a malformed id is refused before any storage read");
+});
+
+/** A purge failure is logged to the console as a structured event; keep it out of the test output. */
+function silenceLogs(t: { mock: { method: (object: object, name: "error" | "warn") => unknown } }): void {
+  t.mock.method(console, "error");
+  t.mock.method(console, "warn");
+}
+
+test("a failed byte delete on abort never records purgedAt, and a later sweep deletes and records it", async (t) => {
+  silenceLogs(t);
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  store.failDeletes = 1;
+
+  await rejects(uploads.abort(actor, session.uploadId), /could not be deleted/);
+  const failed = storedSession(store, session);
+  assert.equal(failed.state, "aborted", "the abort itself is durable");
+  assert.equal(failed.purgedAt, undefined, "an object that was not deleted is not purged");
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+
+  const result = await uploads.sweep(actor.tenantId);
+  assert.equal(result.abandoned, 1);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+
+  const again = await uploads.sweep(actor.tenantId);
+  assert.equal(again.abandoned, 0);
+  assert.equal(store.deleted.length, 1, "a purged session is never deleted twice");
+});
+
+test("repeating an abort whose delete failed retries the delete", async (t) => {
+  silenceLogs(t);
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  store.failDeletes = 1;
+  await rejects(uploads.abort(actor, session.uploadId), /could not be deleted/);
+
+  await uploads.abort(actor, session.uploadId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("a failed cancel of the resumable session is best effort and still purges the object", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  store.cancelResumableUpload = async () => { throw new Error("GCS resumable upload cancellation failed (503)"); };
+
+  await uploads.abort(actor, session.uploadId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("a failed delete of an abandoned session leaves it for the next sweep instead of failing the sweep", async (t) => {
+  silenceLogs(t);
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const stuck = await uploads.initiate(actor, initiateInput({ idempotencyKey: "oidc|uploader-1:stuck" }));
+  const other = await uploads.initiate(actor, initiateInput({ idempotencyKey: "oidc|uploader-1:other" }));
+  backdate(store, stuck, UPLOAD_SESSION_TTL_MS + 60_000);
+  backdate(store, other, UPLOAD_SESSION_TTL_MS + 60_000);
+  store.failDeletes = 1;
+
+  const first = await uploads.sweep(actor.tenantId);
+  assert.equal(first.scanned, 2);
+  assert.equal(first.skipped, 1, "the session whose delete failed is skipped");
+  assert.equal(first.abandoned, 1, "the rest of the page is still processed");
+  const afterFirst = [stuck, other].map((session) => storedSession(store, session));
+  assert.deepEqual(afterFirst.map((session) => session.state), ["aborted", "aborted"]);
+  assert.equal(afterFirst.filter((session) => session.purgedAt).length, 1);
+  assert.equal(db.documentStatuses().filter((status) => status === "aborted").length, 2);
+
+  const second = await uploads.sweep(actor.tenantId);
+  assert.equal(second.abandoned, 1);
+  assert.ok([stuck, other].every((session) => storedSession(store, session).purgedAt));
+  assert.equal(store.deleted.length, 2);
+});
+
+test("a failed delete while expiring a session still reports expiry and is retried by sweep", async (t) => {
+  silenceLogs(t);
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  backdate(store, session, UPLOAD_SESSION_TTL_MS + 60_000);
+  store.failDeletes = 1;
+
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "upload_expired", 410);
+  const expired = storedSession(store, session);
+  assert.equal(expired.state, "aborted");
+  assert.equal(expired.purgedAt, undefined);
+
+  await uploads.sweep(actor.tenantId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("a failed delete of purged quarantine bytes is retried even though the registry row is already claimed", async (t) => {
+  silenceLogs(t);
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  store.scan(session.objectKey ?? "", "threat");
+  await uploads.get(actor, session.uploadId);
+  store.failDeletes = 1;
+
+  const first = await uploads.sweep(actor.tenantId);
+  assert.equal(first.quarantinePurged, 0);
+  assert.equal(first.skipped, 1);
+  assert.equal(storedSession(store, session).purgedAt, undefined);
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+
+  db.artifact = { malware_scan_status: "threat", quarantine_status: "purged" }; // the first sweep's claim stuck
+  const second = await uploads.sweep(actor.tenantId);
+  assert.equal(second.quarantinePurged, 1);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("a registry failure while marking the artifact purged is logged and does not fail the abort", async (t) => {
+  const warn = t.mock.method(console, "warn");
+  const store = new FakeObjectStore();
+  const db = new (class extends FakeDb {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (sql.includes("quarantine_status='purged'")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+
+  await uploads.abort(actor, session.uploadId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]?.arguments[0]), /upload\.mark_artifact_purged_failed/);
+});
+
+test("completion never overwrites a registry row a concurrent abort already purged", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  const quarantine = db.calls.find((call) => call.sql.includes("set storage_generation="));
+  assert.ok(quarantine);
+  assert.match(quarantine.sql, /and quarantine_status in \('pending','quarantined'\)/);
 });
