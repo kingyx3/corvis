@@ -217,13 +217,15 @@ export class PostgresProductionPlatform implements PlatformPort {
     const { needsReview, stuckDocuments } = await this.workspace.attentionAggregates(identity, {
       includeDocuments: options.includeDocuments, stuckAfterHours: STUCK_DOCUMENT_AFTER_HOURS, stuckLimit: STUCK_DOCUMENT_ITEM_LIMIT,
     });
-    const byFund = new Map<string, NeedsReviewAggregate>();
+    const byFund = new Map<string, NeedsReviewAggregate>(); // keyed by fund + period
     for (const row of needsReview) {
       const fund = text(row,"fund_name") || "Unassigned fund";
-      const existing = byFund.get(fund);
+      const period = text(row,"economic_period") || undefined;
+      const key = JSON.stringify([fund, period ?? ""]);
+      const existing = byFund.get(key);
       if (existing) { existing.count += num(row,"review_count"); continue; }
-      byFund.set(fund, {
-        fund, count: num(row,"review_count"), observationId: text(row,"observation_id"),
+      byFund.set(key, {
+        fund, ...(period ? { period } : {}), count: num(row,"review_count"), observationId: text(row,"observation_id"),
         company: text(row,"company_name",text(row,"company_id","Unknown company")), metric: text(row,"metric_code"),
       });
     }

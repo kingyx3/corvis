@@ -5,6 +5,7 @@ import { usePreferences } from "@/features/preferences/preference-provider";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FundSnapshot, ObservationRecord } from "@/core/contracts";
 import type { ReconciliationException, ReconciliationResolutionAction } from "@/core/enterprise";
+import { applyReviewOutcome, awaitingSecondApproval } from "@/core/review-decision";
 import { scopeObservationsToSnapshot } from "@/core/review-scope";
 import type { SourceEvidence } from "@/core/workspace";
 import { safeGetItem, safeSetItem } from "@/lib/safe-storage";
@@ -111,13 +112,6 @@ function actionLabel(action: ReconciliationResolutionAction): string {
   return "Accept reconciliation";
 }
 
-// Critical observations require two independent approvals before they leave
-// "Needs review" (see corvis_facts.apply_review_decision); this makes that
-// dual-control state visible on the row instead of only enforcing it silently
-// on the next approve attempt (#182 D6).
-function awaitingSecondApproval(row: ObservationRecord): boolean {
-  return row.riskTier === "critical" && row.state === "Needs review" && (row.approvedReviewerCount ?? 0) >= 1;
-}
 function dualControlLabel(row: ObservationRecord): string | undefined {
   if (row.riskTier !== "critical") return undefined;
   if (awaitingSecondApproval(row)) return "1st approval recorded, 2nd required";
@@ -319,7 +313,7 @@ export function ReviewView({
     startBusy(row.id); setMessage(null);
     try {
       const outcome = await workspacePort.review({ observationId: row.id, decision, reasonCode: reasonCode || (decision === "approve" ? "reviewer_verified" : decision === "reject" ? "reviewer_rejected" : "reviewer_corrected"), correctedValue, expectedVersion: row.version || 1 });
-      const updated: ObservationRecord = { ...row, value: decision === "correct" && correctedValue ? correctedValue : row.value, state: outcome.nextState === "approved" ? "Approved" : outcome.nextState === "rejected" ? "Rejected" : "Needs review", version: outcome.newVersion };
+      const updated = applyReviewOutcome(row, decision, outcome, correctedValue);
       setOverrides((current) => ({ ...current, [row.id]: updated }));
       onObservationUpdated?.(updated);
       if (decision === "approve" && outcome.nextState === "review_required") setMessage({ text: "First critical approval recorded; an independent second reviewer is still required.", tone: "success" });

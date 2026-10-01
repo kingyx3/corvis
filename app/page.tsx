@@ -11,6 +11,7 @@ import { parseViewHash, viewHash } from "@/lib/view-hash";
 import { useDocumentTitle } from "@/components/ui/use-document-title";
 import { ViewErrorBoundary } from "@/components/ui/view-error-boundary";
 import { createLatestRequestGate } from "@/lib/latest-request";
+import { researchDraftForView, type ResearchDraft } from "@/lib/research-draft";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
@@ -54,7 +55,7 @@ function fallbackCapabilities(documentsAvailable: boolean, observationsAvailable
 export default function CorvisApp() {
   usePreferences();
   const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);
-  const [researchDraft, setResearchDraft] = useState<{ question: string; key: number } | null>(null);
+  const [researchDraft, setResearchDraft] = useState<ResearchDraft | null>(null);
   const [sourceLocation, setSourceLocation] = useState<SourceEvidence | null>(null);
   const [view, setView] = useState<View>("overview");
   const [docs, setDocs] = useState<DocumentRecord[]>([]);
@@ -245,7 +246,7 @@ export default function CorvisApp() {
     if (heading && !viewMovedFocus) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
   }, [activeLabel, activeView, loading]);
 
-  const navigate = useCallback((next: View) => { setReviewFocus(null); setAnalyticsFocus(null); changeView(next); }, [changeView]);
+  const navigate = useCallback((next: View) => { setReviewFocus(null); setAnalyticsFocus(null); setResearchDraft((current) => researchDraftForView(current, next)); changeView(next); }, [changeView]);
   const viewPositionFinancials = (row: ObservationRecord) => {
     if (!row.companyId) return;
     setAnalyticsFocus((current) => ({ companyId: row.companyId!, fundId: row.fundId, holdingId: row.holdingId, period: row.period, key: (current?.key ?? 0) + 1 }));

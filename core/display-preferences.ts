@@ -36,6 +36,8 @@ export function formatDisplayValue(value: string | number, preferences: DisplayP
     const parsed = new Date(`${value} 12:00:00 GMT`);
     if (!Number.isNaN(parsed.getTime())) return formatDisplayDate(parsed.toISOString().slice(0, 10), preferences);
   }
+  // A bare year ("2026") or zero-padded identifier ("0042") is a label, not a quantity: grouping it would corrupt it.
+  if (/^(?:0\d+|(?:19|20|21)\d{2})$/.test(value)) return value;
   const match = value.match(/^([+−-]?)([$€£]|[A-Z]{3} )?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)([%mbkx]|x)?$/);
   if (!match) return /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value) ? formatDisplayDate(value, preferences) : value;
   const decimals = match[3].split(".")[1]?.length ?? 0;

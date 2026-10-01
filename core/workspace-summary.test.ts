@@ -268,3 +268,39 @@ test("without aggregates the list-derived attention behaves as before", () => {
   assert.equal(summary.attention.counts.needs_review, 2);
   assert.equal(summary.attention.omittedStuckDocuments, undefined);
 });
+
+test("needs-review attention is one item per fund-period snapshot so counts and deep links match the destination", () => {
+  const snapshots = [snapshot({ id: "s1", period: "Q1 2026", status: "Review" }), snapshot({ id: "s2", period: "Q2 2026", status: "Review" })];
+  const summary = buildWorkspaceSummary({
+    ...empty,
+    snapshots,
+    observations: [
+      observation({ id: "o1", period: "Q1 2026" }),
+      observation({ id: "o2", period: "Q2 2026" }),
+      observation({ id: "o3", period: "Q2 2026" }),
+    ],
+  });
+  const items = summary.attention.items.filter((item) => item.kind === "needs_review");
+  assert.deepEqual(items.map((item) => [item.count, (item.target as { snapshotId?: string }).snapshotId]).sort(), [[1, "s1"], [2, "s2"]]);
+  assert.equal(new Set(items.map((item) => item.id)).size, 2);
+  assert.equal(summary.attention.counts.needs_review, 3);
+});
+
+test("SQL aggregates keyed per fund-period resolve each item to its own snapshot", () => {
+  const summary = buildWorkspaceSummary({
+    ...empty,
+    snapshots: [snapshot({ id: "s1", period: "Q1 2026", status: "Review" }), snapshot({ id: "s2", period: "Q2 2026", status: "Review" })],
+    attentionAggregates: {
+      needsReview: [
+        { fund: "Fund A", period: "Q1 2026", count: 1, observationId: "o-q1", company: "Co", metric: "Revenue" },
+        { fund: "Fund A", period: "Q2 2026", count: 2, observationId: "o-q2", company: "Co", metric: "Revenue" },
+      ],
+      stuckDocuments: [], stuckDocumentTotal: 0,
+    },
+  });
+  const targets = summary.attention.items.filter((item) => item.kind === "needs_review").map((item) => ({ count: item.count, ...item.target })).sort((a, b) => a.count - b.count);
+  assert.deepEqual(targets, [
+    { count: 1, view: "review", snapshotId: "s1", observationId: "o-q1" },
+    { count: 2, view: "review", snapshotId: "s2", observationId: "o-q2" },
+  ]);
+});

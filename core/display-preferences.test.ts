@@ -17,6 +17,16 @@ test("number preferences change presentation while leaving source tokens untouch
   assert.equal(formatDisplayNumber(1234.5, preferences), "1.234,5");
   assert.equal(formatDisplayValue("fund-1234", preferences), "fund-1234");
 });
+test("bare years and zero-padded identifiers pass through unchanged while ordinary quantities are still grouped", () => {
+  const preferences = { ...DEFAULT_DISPLAY, numberFormat: "de-DE" as const };
+  for (const token of ["2026", "1999", "0042", "007"]) assert.equal(formatDisplayValue(token, preferences), token);
+  assert.equal(formatDisplayValue("2026"), "2026");
+  assert.equal(formatDisplayValue("12345", preferences), "12.345");
+  assert.equal(formatDisplayValue("1234"), "1,234");
+  assert.equal(formatDisplayValue("0.5"), "0.5");
+  assert.equal(formatDisplayValue("0"), "0");
+  assert.equal(formatDisplayValue(2026), "2,026", "an actual number is still a quantity");
+});
 test("invalid zones, formats, and saved-view authorization fields are rejected", () => {
   assert.throws(() => normalizeDisplayPreferences({ ...DEFAULT_DISPLAY, timeZone: "Not/AZone" }));
   assert.throws(() => normalizeViewConfiguration("review", { entitlements: "all" }));
