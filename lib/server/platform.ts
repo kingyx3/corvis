@@ -287,7 +287,7 @@ export class PostgresProductionPlatform implements PlatformPort {
         metricCode: text(row,"metric_code") || undefined,
         summary: text(row,"summary","Reconciliation exception"),
         materiality: text(row,"materiality","unknown") as ReconciliationException["materiality"],
-        context: objectValue(row.context),
+        context: { ...objectValue(row.context), publishedHistory: objectArray(row.published_history) },
         status: text(row,"status","open") as ReconciliationException["status"],
         version: num(row,"version",1),
         allowedActions: allowedActions(type),

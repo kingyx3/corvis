@@ -185,3 +185,17 @@ test("rowFactIds returns a value row's own observation id and an aggregate row's
   assert.deepEqual(rowFactIds({ result_value: 1, source_observation_ids: "not-an-array" }), []);
   assert.deepEqual(rowFactIds({}), []);
 });
+
+
+test("exception explanation pins the subject in parameterized SQL without widening entitlements", async () => {
+  const db = new SemanticDb();
+  const result = await new GovernedSemanticQueryService(db).execute(identity, 'Explain fund-a revenue in Q2 2025 for subject company "company-a"');
+  assert.equal(result.shape.subjectType, "company");
+  assert.equal(result.shape.subjectId, "company-a");
+  const query = db.calls.find((call) => call.sql.includes("with scoped as"));
+  assert.ok(query);
+  assert.deepEqual(query.parameters.slice(-2), ["company", "company-a"]);
+  assert.match(query.sql, /\$8::text is null/);
+  assert.doesNotMatch(query.sql, /company-a/);
+  assert.equal(query.parameters[1], JSON.stringify(["fund-a"]));
+});

@@ -1,4 +1,6 @@
 "use client";
+import { displayNumberFormatter } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { useState } from "react";
 import { CompositionChart } from "./charts/composition-chart";
@@ -19,11 +21,12 @@ const EXAMPLE_ROWS: ExampleRow[] = [
 const EXAMPLE_COLUMNS: SortableColumn<ExampleRow>[] = [
   { id: "name", header: "Name", rowHeader: true, render: (row) => row.name, sortValue: (row) => row.name },
   { id: "kind", header: "Type", render: (row) => row.kind, sortValue: (row) => row.kind },
-  { id: "count", header: "Facts", align: "end", render: (row) => row.count.toLocaleString(), sortValue: (row) => row.count },
+  { id: "count", header: "Facts", align: "end", render: (row) => displayNumberFormatter().format(row.count), sortValue: (row) => row.count },
 ];
 
 /** Live examples for docs/design-system.md. This page is development-only. */
 export function DesignSystemCatalog() {
+  usePreferences();
   const [density, setDensity] = useState<TableDensity>("comfortable");
   return <main className="design-system-catalog">
     <PageHeading eyebrow="Developer catalog" title="Corvis design system" description="Live reference for reusable workspace primitives. Production surfaces should import these components instead of recreating their JSX patterns." />

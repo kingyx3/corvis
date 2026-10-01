@@ -318,6 +318,34 @@ export class PostgresReviewPublicationRepository {
       ? identity.entitlements.sourceDocumentIds ?? []
       : [];
     return this.db.query(`select e.*,
+        coalesce((select jsonb_agg(history.point order by history.published_at) from (
+          select selected.published_at,selected.point from (
+          select distinct on (prior.report_period) prior.report_period,prior.published_at, jsonb_build_object(
+            'reportPeriod',prior.report_period,'value',fact.value,
+            'preliminary',coalesce(fact.value->'preliminary','false'::jsonb),
+            'restated',coalesce(fact.value->'isRestatement','false'::jsonb),
+            'derived',coalesce(fact.value->'isDerived','false'::jsonb)
+          ) as point
+          from corvis_consolidated.fund_period_snapshot prior
+          cross join lateral unnest(prior.fact_ids) published_fact(fact_id)
+          join corvis_consolidated.consolidated_fact fact on fact.tenant_id=prior.tenant_id and fact.consolidated_fact_id=published_fact.fact_id
+          where prior.tenant_id=e.tenant_id and prior.fund_id=e.fund_id and prior.status='published'
+            and prior.report_period<>e.report_period and prior.snapshot_id<>e.snapshot_id
+            and prior.published_at<e.created_at and fact.subject_type=e.subject_type and fact.subject_id=e.subject_id and fact.metric_code=e.metric_code
+            and coalesce(fact.value->>'semanticGrainRelationship',fact.semantic_grain_relationship,'')<>'conflicting_alternative'
+            and cardinality(fact.source_observation_ids)>0
+            and coalesce(fact.value->>'currency','')=coalesce(e.context->'competingValues'->0->'value'->>'currency',e.context->'observations'->0->'value'->>'currency','')
+            and coalesce(fact.value->>'unit','')=coalesce(e.context->'competingValues'->0->'value'->>'unit',e.context->'observations'->0->'value'->>'unit','')
+            and not exists (select 1 from corvis_consolidated.fund_period_snapshot newer where newer.tenant_id=prior.tenant_id and newer.snapshot_id=prior.snapshot_id and newer.version>prior.version)
+            and not exists (select 1 from unnest(fact.source_observation_ids) source(id)
+              left join corvis_facts.observation observation on observation.tenant_id=fact.tenant_id and observation.observation_id=source.id
+              left join corvis_source.source_reference reference on reference.tenant_id=observation.tenant_id and reference.source_reference_id=observation.source_reference_id
+              where reference.document_id is null or not (reference.document_id::text in (select jsonb_array_elements_text($6::jsonb))))
+          order by prior.report_period desc,prior.published_at desc,fact.created_at desc
+          ) selected order by substring(selected.report_period from '(20[0-9]{2})')::int desc nulls last,
+            substring(upper(selected.report_period) from 'Q([1-4])')::int desc nulls last,selected.published_at desc
+          limit 4
+        ) history),'[]'::jsonb) as published_history,
         coalesce((
           select jsonb_agg(jsonb_build_object(
             'sourceReferenceId',r.source_reference_id::text,
@@ -336,7 +364,7 @@ export class PostgresReviewPublicationRepository {
       where e.tenant_id=$1 and e.snapshot_id=$2::uuid and e.snapshot_version=$3
         and e.fund_id in (select jsonb_array_elements_text($4::jsonb))
       order by case e.status when 'open' then 0 else 1 end, e.created_at, e.exception_id`,
-    [identity.tenantId,snapshotId,snapshotVersion,jsonIds(fundIds),jsonIds(sourceDocumentIds)]);
+    [identity.tenantId,snapshotId,snapshotVersion,jsonIds(fundIds),jsonIds(sourceDocumentIds),jsonIds(identity.entitlements.documentIds ?? [])]);
   }
 
   async reconciliationExceptionForResolution(

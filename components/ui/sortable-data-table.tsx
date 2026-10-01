@@ -4,7 +4,7 @@ import { useMemo, useState, type HTMLAttributes, type Key, type ReactNode } from
 import type { TableDensity } from "./table-density-toggle";
 
 type SortValue = string | number | null | undefined;
-type Direction = "ascending" | "descending";
+export type Direction = "ascending" | "descending";
 type SortableRowAttributes = HTMLAttributes<HTMLTableRowElement> & { "data-role"?: string };
 
 export type SortableColumn<Row> = {
@@ -32,7 +32,7 @@ function compareSortValues(left: SortValue, right: SortValue): number {
  * initiated by native header buttons and announced by aria-sort on <th>.
  */
 export function SortableDataTable<Row>({
-  caption,
+  caption, sort: controlledSort, onSortChange,
   rows,
   columns,
   rowKey,
@@ -41,6 +41,8 @@ export function SortableDataTable<Row>({
   getRowAttributes,
 }: {
   caption: string;
+  sort?: { columnId: string; direction: Direction } | null;
+  onSortChange?: (sort: { columnId: string; direction: Direction }) => void;
   rows: readonly Row[];
   columns: readonly SortableColumn<Row>[];
   rowKey: (row: Row) => Key;
@@ -48,7 +50,8 @@ export function SortableDataTable<Row>({
   className?: string;
   getRowAttributes?: (row: Row) => SortableRowAttributes;
 }) {
-  const [sort, setSort] = useState<{ columnId: string; direction: Direction } | null>(null);
+  const [localSort, setSort] = useState<{ columnId: string; direction: Direction } | null>(null);
+  const sort = controlledSort === undefined ? localSort : controlledSort;
   const orderedRows = useMemo(() => {
     if (!sort) return [...rows];
     const column = columns.find((candidate) => candidate.id === sort.columnId);
@@ -61,9 +64,8 @@ export function SortableDataTable<Row>({
   }, [columns, rows, sort]);
 
   const toggleSort = (columnId: string) => {
-    setSort((current) => current?.columnId === columnId
-      ? { columnId, direction: current.direction === "ascending" ? "descending" : "ascending" }
-      : { columnId, direction: "ascending" });
+    const next = sort?.columnId === columnId ? { columnId, direction: sort.direction === "ascending" ? "descending" as const : "ascending" as const } : { columnId, direction: "ascending" as const };
+    if (onSortChange) onSortChange(next); else setSort(next);
   };
 
   return (

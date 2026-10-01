@@ -406,6 +406,8 @@ jobs:
       - name: Verify concurrent independent database connections
         run: node db/postgres/tests/rate-limit-concurrency.mjs
       - run: npm ci --prefer-offline --no-audit
+      - name: Verify user preference ownership and workspace sharing
+        run: CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/user-preferences.mjs
       - name: Verify native application Postgres adapter
         env:
           CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable

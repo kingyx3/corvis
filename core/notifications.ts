@@ -1,3 +1,4 @@
+import { formatDisplayDate, formatDisplayNumber, type DisplayPreferences } from "./display-preferences.ts";
 /**
  * Email notification domain contract (#258).
  *
@@ -124,6 +125,7 @@ export type RenderedEmail = { subject: string; text: string; html: string };
 export type TemplateContext = {
   /** Public origin of the customer app, e.g. https://app.example.com */
   appUrl: string;
+  displayPreferences?: DisplayPreferences;
   workspaceName?: string;
 };
 
@@ -169,7 +171,8 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
   switch (category) {
     case "invitation": {
       const role = rawRoleLabel(safeInline(params.roleName, 40));
-      const expires = safeInline(params.expiresOn, 40);
+      const rawExpires = safeInline(params.expiresAt ?? params.expiresOn, 40);
+      const expires = rawExpires ? formatDisplayDate(rawExpires, context.displayPreferences, params.expiresAt ? { timeStyle: "short" } : {}) : "";
       return {
         subject: "You're invited to Corvis",
         lines: [
@@ -224,7 +227,7 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
         const entry = item as { category?: unknown; count?: unknown };
         const label = CATEGORY_LABELS[String(entry.category)] ?? "Update";
         const count = Number.isInteger(entry.count) && Number(entry.count) > 0 ? Number(entry.count) : 1;
-        return `• ${label}${count > 1 ? ` (${count})` : ""}`;
+        return `• ${label}${count > 1 ? ` (${formatDisplayNumber(count, context.displayPreferences)})` : ""}`;
       });
       return { subject: "Your Corvis daily summary", lines: ["Here is what happened in Corvis since your last summary:", ...lines], action: { label: "Open Corvis", url: home }, optional: true };
     }

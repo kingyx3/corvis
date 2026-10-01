@@ -256,14 +256,14 @@ export class GcsControlClient implements UploadObjectStore {
   }
 
   /** Streams an object's bytes instead of buffering them (export downloads, #231). */
-  async getObjectStream(key: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string; contentLength?: string } | null> {
+  async getObjectStream(key: string, generation?: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string; contentLength?: string } | null> {
     // An `AbortSignal.timeout` also aborts the response body, which would truncate any download that takes
     // longer than the request timeout. Bound only the wait for response headers; the client's own
     // disconnect (or the platform request limit) bounds the transfer.
     const controller = new AbortController();
     const headerTimer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     let response: Response;
-    try { response = await this.authorizedFetch(this.mediaUrl(key), { signal: controller.signal }); }
+    try { response = await this.authorizedFetch(`${this.mediaUrl(key)}${generation ? `&generation=${encodeURIComponent(generation)}` : ""}`, { signal: controller.signal }); }
     finally { clearTimeout(headerTimer); }
     if (response.status === 404) { await response.body?.cancel().catch(() => undefined); return null; }
     if (!response.ok || !response.body) { await response.body?.cancel().catch(() => undefined); throw new Error(`GCS object read failed (${response.status})`); }

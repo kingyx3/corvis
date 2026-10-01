@@ -1,4 +1,6 @@
 "use client";
+import { displayNumberFormatter } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { aggregateComposition, compositionOmissionNote, type CompositionInput } from "@/core/chart-data";
@@ -6,7 +8,7 @@ import { ChartFigure, type ChartTableColumn, type ChartTableRow } from "./chart-
 import { CHART_SERIES_OTHER_COLOR, CHART_SERIES_UNASSIGNED_COLOR, seriesColor } from "./chart-tokens";
 
 function formatDefault(value: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+  return displayNumberFormatter( { maximumFractionDigits: 0 }).format(value);
 }
 
 /**
@@ -36,6 +38,7 @@ export function CompositionChart({
    */
   mutedKeys?: Readonly<Record<string, "other" | "unassigned">>;
 }) {
+  usePreferences();
   const aggregated = aggregateComposition(items);
   const total = aggregated.total;
   const segments = mutedKeys
@@ -61,7 +64,7 @@ export function CompositionChart({
   const rows: ChartTableRow[] = segments.map((segment) => ({
     label: segment.label,
     value: valueFormatter(segment.value),
-    percent: `${segment.percent.toFixed(1)}%`,
+    percent: `${displayNumberFormatter({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(segment.percent)}%`,
   }));
 
   return (
@@ -80,7 +83,7 @@ export function CompositionChart({
             <li key={segment.key}>
               <span className="chart-legend-swatch" aria-hidden="true" style={{ background: colors[index] }} />
               <span>{segment.label}</span>
-              <b>{segment.percent.toFixed(0)}%</b>
+              <b>{displayNumberFormatter({ minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(segment.percent)}%</b>
             </li>
           ))}
         </ul>
@@ -98,7 +101,7 @@ export function CompositionChart({
                   {payload.map((entry) => {
                     const segment = segments.find((candidate) => candidate.key === entry.dataKey);
                     if (!segment || typeof entry.value !== "number" || entry.value <= 0) return null;
-                    return <div className="chart-tooltip-row" key={String(entry.dataKey)}><span>{segment.label}</span><span>{valueFormatter(entry.value)} ({segment.percent.toFixed(1)}%)</span></div>;
+                    return <div className="chart-tooltip-row" key={String(entry.dataKey)}><span>{segment.label}</span><span>{valueFormatter(entry.value)} ({displayNumberFormatter({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(segment.percent)}%)</span></div>;
                   })}
                 </div>
               );

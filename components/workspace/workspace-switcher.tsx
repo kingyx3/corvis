@@ -1,4 +1,6 @@
 "use client";
+import { displayDate } from "@/lib/display-format";
+import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { useEffect, useState } from "react";
 import type { WorkspaceMembershipSummary } from "@/core/enterprise";
@@ -14,6 +16,7 @@ type SwitcherMembership=WorkspaceMembershipSummary&{supportAccess?:{supportGrant
  * surface for the mobile workspace dialog, since the sidebar section is hidden at <=960px (#245).
  */
 export function WorkspaceSwitcher({ identity, variant = "sidebar" }: { identity: WorkspaceIdentity | null; variant?: "sidebar" | "panel" }) {
+  usePreferences();
   const [memberships, setMemberships] = useState<SwitcherMembership[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +50,7 @@ export function WorkspaceSwitcher({ identity, variant = "sidebar" }: { identity:
   return <div className={variant === "panel" ? "workspace-panel" : "sidebar-section"}><p>WORKSPACE</p>
     {memberships.length > 1 && identity?.tenantId ? <div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity.workspaceDisplayName ?? identity.tenantDisplayName ?? "W")[0].toUpperCase()}</span><div className="form-field"><select aria-label="Current workspace" disabled={busy} value={identity.workspaceId ?? ""} onChange={(event) => void select(event.target.value)}>{memberships.map((item) => <option key={item.workspaceId} value={item.workspaceId}>{item.workspaceDisplayName ?? item.workspaceId}</option>)}</select><small>{identity.tenantDisplayName}</small></div></div>
       : <div className="profile"><span className="workspace-dot" aria-hidden="true">{(identity?.workspaceDisplayName ?? "W")[0].toUpperCase()}</span><span><strong>{identity?.workspaceDisplayName ?? "Current workspace"}</strong><small>{identity?.tenantDisplayName ?? "Tenant-scoped"}</small></span></div>}
-    {current?.supportAccess&&<div className="lineage-note tone-warning" role="status" aria-label="Active Corvis support access"><strong>Corvis support session active</strong><span>{current.supportAccess.purpose} · expires {new Date(current.supportAccess.expiresAt).toLocaleString()}</span></div>}
+    {current?.supportAccess&&<div className="lineage-note tone-warning" role="status" aria-label="Active Corvis support access"><strong>Corvis support session active</strong><span>{current.supportAccess.purpose} · expires {displayDate(current.supportAccess.expiresAt, { timeStyle: "short" })}</span></div>}
     {identity?.tenantAdmin===true&&<a className="text-button" href="/access-self-service">Audit, bulk onboarding &amp; support access</a>}
     {busy && <p role="status">Switching workspace…</p>}{error && <div><p role="alert">{error}</p>{!identity && <button className="secondary-button" onClick={() => { safeRemoveItem("local", WORKSPACE_CONTEXT_KEY); window.location.reload(); }}>Reset workspace selection</button>}</div>}
   </div>;

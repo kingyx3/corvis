@@ -177,8 +177,8 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async listAccessInvitations() {
       return [];
     },
-    async listReconciliationExceptions() {
-      return [];
+    async listReconciliationExceptions(snapshotId, snapshotVersion) {
+      return secondaryWorkspace() ? [] : demoCustomerJourneyStore.listReconciliationExceptions(snapshotId, snapshotVersion);
     },
     async research(question, signal) {
       signal?.throwIfAborted();
@@ -223,6 +223,7 @@ export function createDemoWorkspacePort(): WorkspacePort {
       };
     },
     async resolveReconciliation(command) {
+      demoCustomerJourneyStore.resolveException(command.exceptionId);
       return { accepted: true, resolutionEventId: crypto.randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" as const };
     },
     async publish(command) {
