@@ -338,6 +338,9 @@ test("the Data issues surface is registered for the accessibility matrix and rea
   await openSurface(page, issues);
   await expect(page.getByRole("heading", { name: issues.heading }).first()).toBeVisible();
   await expect(sidebarItem(page)).toHaveAttribute("aria-current", "page");
+  // Export is disabled until the list has loaded; keyboard users reach it once it is enabled.
+  await expect(page.getByRole("list", { name: "Data issue reports" }).getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Export CSV" })).toBeEnabled();
   await page.getByRole("button", { name: "Export CSV" }).focus();
   await expect(page.getByRole("button", { name: "Export CSV" })).toBeFocused();
 });
