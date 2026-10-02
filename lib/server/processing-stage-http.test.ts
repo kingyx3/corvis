@@ -4,6 +4,8 @@ import { HttpDocumentRepresentationProducer } from "./processing-represented-sta
 import { HttpExtractionProvider } from "./processing-extracted-stage.ts";
 import {
   boundedFetch,
+  DEFAULT_PROVIDER_TIMEOUT_MS,
+  EXTRACTION_STAGE_EXECUTION_BUDGET_MS,
   MAX_PROVIDER_TIMEOUT_MS,
   METADATA_TIMEOUT_MS,
   STAGE_EXECUTION_BUDGET_MS,
@@ -11,15 +13,15 @@ import {
   withStageBudget,
 } from "./processing-stage-http.ts";
 
-/** A 200 response whose body never produces data and ignores the abort signal (worst case). */
 function stalledBodyResponse(): Response {
   const body = new ReadableStream<Uint8Array>({ start() { /* never enqueues, never closes */ } });
   return new Response(body, { status: 200 });
 }
 
-test("stage timeouts nest strictly under the router's hard limit", () => {
+test("short stages and long extraction keep nested execution bounds", () => {
   assert.ok(STAGE_EXECUTION_BUDGET_MS < STAGE_ROUTER_TIMEOUT_MS);
-  assert.ok(METADATA_TIMEOUT_MS + MAX_PROVIDER_TIMEOUT_MS < STAGE_EXECUTION_BUDGET_MS);
+  assert.ok(METADATA_TIMEOUT_MS + DEFAULT_PROVIDER_TIMEOUT_MS < STAGE_EXECUTION_BUDGET_MS);
+  assert.ok(METADATA_TIMEOUT_MS + MAX_PROVIDER_TIMEOUT_MS < EXTRACTION_STAGE_EXECUTION_BUDGET_MS);
 });
 
 test("boundedFetch keeps its timeout armed while the response body is read", async () => {
@@ -71,10 +73,10 @@ test("withStageBudget aborts the handler signal when the budget is spent and rel
     await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
     throw signal.reason;
   }, 30);
-  await assert.rejects(handler({} as never, new AbortController().signal), /execution budget timed out/);
+  await assert.rejects(handler({ stage: "represented" } as never, new AbortController().signal), /execution budget timed out/);
   assert.equal(observed?.aborted, true);
 
   const parent = new AbortController();
   const fast = withStageBudget(async () => ({ ok: true }), 60_000);
-  assert.deepEqual(await fast({} as never, parent.signal), { ok: true });
+  assert.deepEqual(await fast({ stage: "represented" } as never, parent.signal), { ok: true });
 });
