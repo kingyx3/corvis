@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type IconName = "home" | "file" | "table" | "spark" | "upload" | "search" | "arrow" | "dots" | "check" | "clock" | "alert" | "download" | "chevron" | "close" | "send" | "database" | "shield" | "source" | "pause" | "refresh" | "lock";
+export type IconName = "home" | "file" | "table" | "spark" | "upload" | "search" | "arrow" | "dots" | "check" | "clock" | "alert" | "download" | "chevron" | "close" | "send" | "database" | "shield" | "source" | "pause" | "refresh" | "lock" | "help";
 
 const iconPaths: Record<IconName, ReactNode> = {
   home: <><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.8V21h14V9.8"/><path d="M9 21v-7h6v7"/></>,
@@ -24,6 +24,7 @@ const iconPaths: Record<IconName, ReactNode> = {
   pause: <><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></>,
   refresh: <><path d="M20 11a8 8 0 0 0-14.5-4.2L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M4 13a8 8 0 0 0 14.5 4.2l1.5-1.7"/><path d="M20 20v-4.5h-4.5"/></>,
   lock: <><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></>,
+  help: <><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></>,
 };
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {

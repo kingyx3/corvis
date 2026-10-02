@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { createHttpWorkspacePort } from "../adapters/workspace/http-workspace.ts";
 import { ApiError, MalformedStreamError, SESSION_EXPIRED_EVENT, UnauthenticatedError, friendlyErrorMessage, SESSION_EXPIRED_MESSAGE } from "./api-errors.ts";
+import { latestRequestCorrelationId } from "./request-correlation.ts";
 
 // Lives in lib/ so `npm test` (which globs lib/*.test.ts) runs it without touching package.json.
 
@@ -174,4 +175,13 @@ test("a stream that ends without a result is an error", async () => {
 test("a final line without a trailing newline is still consumed", async () => {
   stubFetch(() => ndjsonResponse([JSON.stringify({ type: "result", data: answer })]));
   assert.deepEqual(await createHttpWorkspacePort().researchStream("q", () => {}), answer);
+});
+
+test("the correlation id of the latest successful read is remembered for Contact support", async () => {
+  stubFetch(() => json({ data: { subject: "user-1" }, correlationId: "corr-single-1" }));
+  await createHttpWorkspacePort().whoAmI();
+  assert.equal(latestRequestCorrelationId(), "corr-single-1");
+  stubFetch(() => json({ data: [], nextCursor: null, correlationId: "corr-collection-2" }));
+  await createHttpWorkspacePort().listDocuments();
+  assert.equal(latestRequestCorrelationId(), "corr-collection-2");
 });

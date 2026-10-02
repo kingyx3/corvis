@@ -54,9 +54,16 @@ These are the supported global styling hooks in `app/globals.css` and `app/desig
 - Status/feedback: `.status-pill`, `.status-dot`, `.status-stack`, `.lineage-note`, `.tone-warning`, `.empty-row`.
 - Lists/data: `.snapshot-list`, `.snapshot-row`, `.snapshot-main`, `.activity-list`, `.activity-row`, `.muted-time`, `.data-table-wrap`, `.data-table`, `.sortable-header-button`, `.table-density-toggle`.
 - Search/command palette: `.search-palette-input`, `.search-palette-results`, `.search-palette-empty`, `.search-result`, `.search-kind`, `.search-palette-footer`.
+- Help and support: `.help-button` (top bar), `.help-links`, `.help-link`, `.help-context` (Help dialog). Palette commands in the `Help` category are named `Help: <entry>`. Colours come from theme tokens only.
 - Charts: `.chart-figure`, `.chart-plot`, `.chart-description`, `.chart-empty`, `.chart-legend`, `.chart-legend-swatch`, `.chart-tooltip`, `.chart-data-toggle`, `.chart-data-table-wrap`, `.chart-data-table`, `.sparkline`, `.sparkline-plot`, `.sparkline-delta`, `.sparkline-caption`.
 
 If a reusable pattern is missing, promote it to a typed primitive first and document it here; do not add an unscoped one-off class to a feature.
+
+## Help and support
+
+`HelpDialog` (`components/help/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
+
+Error states use `ContactSupportLink` (`components/help/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](SUPPORT.md).
 
 ## Status vocabulary
 

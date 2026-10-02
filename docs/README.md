@@ -24,6 +24,7 @@ When the same subject appears in both systems:
 - [`DATA_PLATFORM.md`](DATA_PLATFORM.md) — GCS/Postgres/Snowflake boundaries, RLS, migrations and optional downstream CDC.
 - [`SOURCE_CONNECTORS.md`](SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
 - [`CONTROL_LOOP.md`](CONTROL_LOOP.md) — continuous business-build/documentation control loop: scanners, fingerprinting, health/watermark rules and what remains manual.
+- [`SUPPORT.md`](SUPPORT.md) — in-app help and support: Help menu, Contact support context (no financial data), error-state entry points and the `NEXT_PUBLIC_CORVIS_*` support/docs/status/release-notes configuration.
 - [`QUALITY_BUDGETS.md`](QUALITY_BUDGETS.md) — accessibility, browser/responsive matrix and performance gates in `e2e/`.
 - [`TESTING.md`](TESTING.md) — blocking coverage policy, changed-code 100% gate, whole-repo coverage ratchet, coverage-denominator integrity and escaped-defect prevention.
 - [`API_CONVENTIONS.md`](API_CONVENTIONS.md) — `/api/v1` envelope, error codes, cursor pagination and idempotency conventions.
