@@ -377,15 +377,17 @@ export async function reauthorizeSourceConnection(
   const providerKey = requiredText(row, "provider_key");
   const previousReference = requiredText(row, "secret_reference");
   const secretReference = await dependencies.secrets.write(identity.tenantId, providerKey, secret);
-  // Rotating a credential is not a resume: a paused connection stays paused (connectionTransition("reauthorize") in
-  // core/source-connection-health.ts states the same rule for the demo store and the UI).
+  // Rotating a credential is not a resume and not a test: a paused connection stays paused, and one still awaiting
+  // its first successful test stays pending rather than being activated on an unverified credential
+  // (connectionTransition("reauthorize") in core/source-connection-health.ts states the same rule for the demo
+  // store and the UI; only testSourceConnection's own verified result may move pending_authorization to active).
   // The status/secret predicates make this a compare-and-set, so a revoke (or
   // a second rotation) landing between the read above and this write is not
   // overwritten, and the credential just written is destroyed, not orphaned.
   let updated: PostgresRow[];
   try {
     updated = await db.query(`update corvis_source.source_connection set
-        secret_reference=$3, status=case when status='paused' then 'paused' else 'active' end,
+        secret_reference=$3, status=case when status='paused' then 'paused' when status='pending_authorization' then 'pending_authorization' else 'active' end,
         consecutive_failures=0, last_error_class=null, last_authorized_at=now(), updated_at=now()
       where tenant_id=$1 and source_connection_id=$2::uuid and status<>'revoked' and secret_reference=$4
       returning status`, [identity.tenantId, sourceConnectionId, secretReference, previousReference]);
