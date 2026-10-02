@@ -52,14 +52,18 @@ export type ConnectionTransition = { status: SourceConnectionStatus } | { refuse
  * The status a command moves a connection to, or the governance error code
  * that refuses it. Revoke is terminal and idempotent. Reauthorizing replaces
  * the credential, not the operator's intent: a paused connection stays paused,
- * every other live connection becomes active, and a revoked one is refused.
+ * a connection still awaiting its first successful test stays pending (only a
+ * verified `test` call may activate it, same as initial setup), every other
+ * live connection becomes active, and a revoked one is refused.
  */
 export function connectionTransition(action: ConnectionAction, current: SourceConnectionStatus): ConnectionTransition {
   if (action === "pause") return PAUSE_ALLOWED_FROM.includes(current) ? { status: "paused" } : { refused: `invalid_transition_from_${current}` };
   if (action === "resume") return RESUME_ALLOWED_FROM.includes(current) ? { status: "active" } : { refused: `invalid_transition_from_${current}` };
   if (action === "revoke") return { status: "revoked" };
   if (current === "revoked") return { refused: "connection_revoked" };
-  return { status: current === "paused" ? "paused" : "active" };
+  if (current === "paused") return { status: "paused" };
+  if (current === "pending_authorization") return { status: "pending_authorization" };
+  return { status: "active" };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,9 +415,11 @@ export function buildReauthorizeSecret(credentialType: string, raw: string): Sec
 
 /** Plain-language outcome of a reauthorization, by the status the connection had. */
 export function reauthorizeOutcome(previousStatus: string): string {
-  return previousStatus === "paused"
-    ? "Credential replaced. The connection stays paused until you resume it."
-    : "Credential replaced. Collection is active again and the previous credential was retired.";
+  if (previousStatus === "paused") return "Credential replaced. The connection stays paused until you resume it.";
+  if (previousStatus === "pending_authorization") {
+    return "Credential replaced. The previous credential was retired; run a connection test to finish setup.";
+  }
+  return "Credential replaced. Collection is active again and the previous credential was retired.";
 }
 
 /** Plain-language reason for an API failure of a connection command. Never echoes codes or request content. */

@@ -73,9 +73,10 @@ test("transition rules: pause and resume only from the states the server allows,
   }
 });
 
-test("reauthorizing keeps a paused connection paused, reactivates every other live one and refuses a revoked one", () => {
+test("reauthorizing keeps a paused connection paused, leaves a pending one pending, reactivates every other live one and refuses a revoked one", () => {
   assert.deepEqual(connectionTransition("reauthorize", "paused"), { status: "paused" });
-  for (const status of ["active", "pending_authorization", "reauthorization_required", "suspended"] as const) {
+  assert.deepEqual(connectionTransition("reauthorize", "pending_authorization"), { status: "pending_authorization" }, "a connection awaiting its first test must not be activated on an unverified credential");
+  for (const status of ["active", "reauthorization_required", "suspended"] as const) {
     assert.deepEqual(connectionTransition("reauthorize", status), { status: "active" }, status);
   }
   assert.deepEqual(connectionTransition("reauthorize", "revoked"), { refused: "connection_revoked" });
@@ -341,6 +342,7 @@ test("confirmation copy states exactly what each action stops and keeps", () => 
 test("outcome and failure messages are plain language for every case", () => {
   assert.match(reauthorizeOutcome("paused"), /stays paused/);
   assert.match(reauthorizeOutcome("suspended"), /active again/);
+  assert.match(reauthorizeOutcome("pending_authorization"), /finish setup/);
   assert.match(commandFailureMessage("pause", 403), /permission/);
   assert.match(commandFailureMessage("pause", 404), /no longer exists/);
   assert.match(commandFailureMessage("pause", 409), /changed state/);
