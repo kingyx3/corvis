@@ -12,6 +12,7 @@ export type NotificationCategoryId =
   | "export_ready"
   | "pinned_fund_published"
   | "source_attention"
+  | "data_issue_update"
   | "support_access"
   | "role_changed";
 
@@ -37,6 +38,7 @@ export type NotificationCategoryDefinition = {
 export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] = [
   { id: "export_ready", label: "Export ready", description: "An export you requested has finished and is ready to download.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "pinned_fund_published", label: "New data for pinned funds", description: "A new reporting period was published for a fund you pinned on your Overview.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "daily_digest" },
+  { id: "data_issue_update", label: "Data issue updates", description: "A data issue you reported on a published figure moved to a new status.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "source_attention", label: "Source connection needs attention", description: "A source connection in a workspace you administer needs to be reauthorized or was suspended.", mandatory: false, audience: "workspace_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "support_access", label: "Corvis support access", description: "Corvis support was granted access to your organization, or a grant is waiting for your acknowledgement.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "role_changed", label: "Your access changed", description: "Your role in a workspace was changed or removed.", mandatory: true, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
@@ -163,6 +165,14 @@ function inWorkspace(context: TemplateContext): string {
   return name ? ` in ${name}` : "";
 }
 
+/** Names the new status in words only: no fund, company, metric or figure ever appears in the email. */
+function dataIssueUpdateLine(status: unknown, where: string): string {
+  if (status === "investigating") return `Data Operations is investigating a data issue you reported${where}.`;
+  if (status === "corrected") return `A data issue you reported${where} was corrected. A replacement publication is available.`;
+  if (status === "no_change") return `A data issue you reported${where} was reviewed and no change was needed.`;
+  return `A data issue you reported${where} was updated.`;
+}
+
 type Body = { subject: string; lines: string[]; action: { label: string; url: string }; optional: boolean };
 
 function body(category: OutboxCategory, params: Record<string, unknown>, context: TemplateContext): Body {
@@ -188,6 +198,13 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
       return { subject: "Your Corvis export is ready", lines: [`An export you requested${where} has finished and is ready to download.`, "Download links expire, so retrieve it from Delivery soon."], action: { label: "Open Delivery", url: home }, optional: true };
     case "pinned_fund_published":
       return { subject: "New data for a fund you pinned", lines: [`A new reporting period was published for a fund you pinned${where}.`], action: { label: "Open Overview", url: home }, optional: true };
+    case "data_issue_update":
+      return {
+        subject: "Update on a data issue you reported",
+        lines: [dataIssueUpdateLine(params.status, where), "Open Corvis to see the current status and any replacement publication."],
+        action: { label: "Open Data issues", url: new URL("/#/issues", context.appUrl).toString() },
+        optional: true,
+      };
     case "source_attention": {
       const reauth = params.status === "reauthorization_required";
       return {
