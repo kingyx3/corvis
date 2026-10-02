@@ -1,6 +1,8 @@
 terraform {
   required_providers {
-    google = { source = "hashicorp/google" }
+    google = {
+      source = "hashicorp/google"
+    }
   }
 }
 
@@ -15,9 +17,18 @@ resource "terraform_data" "configuration_guard" {
       condition     = !local.ai_runtime_requested || local.ai_runtime_enabled
       error_message = "AI runtime activation requires immutable litellm_image, immutable extractor_image, and litellm_models_json together."
     }
+
     precondition {
       condition     = !local.ai_runtime_enabled || can(jsondecode(var.litellm_models_json))
       error_message = "litellm_models_json must be valid JSON when the AI runtime is enabled."
+    }
+
+    precondition {
+      condition = !local.ai_runtime_enabled || (
+        can(jsondecode(var.litellm_models_json)["corvis-extract-primary"]) &&
+        trimspace(tostring(jsondecode(var.litellm_models_json)["corvis-extract-primary"])) != ""
+      )
+      error_message = "litellm_models_json must define corvis-extract-primary."
     }
   }
 }
@@ -105,7 +116,10 @@ resource "google_cloud_run_v2_service" "litellm" {
   project  = var.project_id
   name     = "corvis-litellm-${var.environment}"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  # Cloud Run IAM remains the invocation boundary. There is deliberately no allUsers grant.
+  # The extractor needs the service URL to be network-reachable so it can invoke with Google OIDC.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = var.environment == "prod" && !var.decommission_mode
 
@@ -122,24 +136,40 @@ resource "google_cloud_run_v2_service" "litellm" {
     containers {
       image = var.litellm_image
 
-      ports { container_port = 4000 }
+      ports {
+        container_port = 4000
+      }
 
       startup_probe {
         timeout_seconds   = 5
         period_seconds    = 10
         failure_threshold = 18
-        tcp_socket { port = 4000 }
+
+        tcp_socket {
+          port = 4000
+        }
       }
 
       liveness_probe {
         timeout_seconds   = 5
         period_seconds    = 30
         failure_threshold = 3
-        tcp_socket { port = 4000 }
+
+        tcp_socket {
+          port = 4000
+        }
       }
 
-      env { name = "PORT" value = "4000" }
-      env { name = "CORVIS_LITELLM_MODELS_JSON" value = var.litellm_models_json }
+      env {
+        name  = "PORT"
+        value = "4000"
+      }
+
+      env {
+        name  = "CORVIS_LITELLM_MODELS_JSON"
+        value = var.litellm_models_json
+      }
+
       env {
         name = "CORVIS_AI_PROVIDER_CREDENTIALS_JSON"
         value_source {
@@ -149,6 +179,7 @@ resource "google_cloud_run_v2_service" "litellm" {
           }
         }
       }
+
       env {
         name = "LITELLM_MASTER_KEY"
         value_source {
@@ -160,7 +191,10 @@ resource "google_cloud_run_v2_service" "litellm" {
       }
 
       resources {
-        limits = { cpu = "1", memory = "1Gi" }
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
       }
     }
   }
@@ -184,7 +218,10 @@ resource "google_cloud_run_v2_service" "extractor" {
   project  = var.project_id
   name     = "corvis-extractor-${var.environment}"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  # The Corvis worker invokes this URL with a Google identity token. IAM, not obscurity,
+  # is the invocation boundary; only the worker service account receives run.invoker.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = var.environment == "prod" && !var.decommission_mode
 
@@ -201,29 +238,67 @@ resource "google_cloud_run_v2_service" "extractor" {
     containers {
       image = var.extractor_image
 
-      ports { container_port = 8080 }
+      ports {
+        container_port = 8080
+      }
 
       startup_probe {
         timeout_seconds   = 5
         period_seconds    = 10
         failure_threshold = 12
-        http_get { path = "/healthz" port = 8080 }
+
+        http_get {
+          path = "/healthz"
+          port = 8080
+        }
       }
 
       liveness_probe {
         timeout_seconds   = 5
         period_seconds    = 30
         failure_threshold = 3
-        http_get { path = "/healthz" port = 8080 }
+
+        http_get {
+          path = "/healthz"
+          port = 8080
+        }
       }
 
-      env { name = "PORT" value = "8080" }
-      env { name = "CORVIS_OBJECT_STORE_BUCKET" value = var.source_bucket_name }
-      env { name = "CORVIS_LITELLM_URL" value = google_cloud_run_v2_service.litellm[0].uri }
-      env { name = "CORVIS_LITELLM_AUDIENCE" value = google_cloud_run_v2_service.litellm[0].uri }
-      env { name = "CORVIS_LITELLM_MODELS_JSON" value = var.litellm_models_json }
-      env { name = "CORVIS_EXTRACTION_MODEL" value = "corvis-extract-primary" }
-      env { name = "CORVIS_EXTRACTION_VERIFIER_MODEL" value = "corvis-extract-verifier" }
+      env {
+        name  = "PORT"
+        value = "8080"
+      }
+
+      env {
+        name  = "CORVIS_OBJECT_STORE_BUCKET"
+        value = var.source_bucket_name
+      }
+
+      env {
+        name  = "CORVIS_LITELLM_URL"
+        value = google_cloud_run_v2_service.litellm[0].uri
+      }
+
+      env {
+        name  = "CORVIS_LITELLM_AUDIENCE"
+        value = google_cloud_run_v2_service.litellm[0].uri
+      }
+
+      env {
+        name  = "CORVIS_LITELLM_MODELS_JSON"
+        value = var.litellm_models_json
+      }
+
+      env {
+        name  = "CORVIS_EXTRACTION_MODEL"
+        value = "corvis-extract-primary"
+      }
+
+      env {
+        name  = "CORVIS_EXTRACTION_VERIFIER_MODEL"
+        value = "corvis-extract-verifier"
+      }
+
       env {
         name = "LITELLM_MASTER_KEY"
         value_source {
@@ -233,6 +308,7 @@ resource "google_cloud_run_v2_service" "extractor" {
           }
         }
       }
+
       env {
         name = "CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON"
         value_source {
@@ -244,7 +320,10 @@ resource "google_cloud_run_v2_service" "extractor" {
       }
 
       resources {
-        limits = { cpu = "1", memory = "1Gi" }
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
       }
     }
   }
