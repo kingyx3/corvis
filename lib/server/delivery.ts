@@ -141,8 +141,10 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
       }
       countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
       if(completed[0]) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
-        tenantId,exportId,workspaceId:row.workspace_id==null?null:String(row.workspace_id),
-        authMethod:String(row.auth_method??""),subject:String(row.requested_by??""),format:String(row.format),
+        // deliverExportArtifact only resolves after required() has rejected a null or blank workspace_id,
+        // auth_method and requested_by, so none of them can be absent here.
+        tenantId,exportId,workspaceId:String(row.workspace_id),
+        authMethod:String(row.auth_method),subject:String(row.requested_by),format:String(row.format),
       }));
       // Objects written by earlier (failed or abandoned) attempts are no longer referenced.
       if(attempt>1&&completed[0]) await deleteExportAttemptArtifacts(row,Array.from({length:attempt-1},(_,i)=>i+1),objectStore).catch(()=>undefined);
@@ -220,9 +222,13 @@ export const WEBHOOK_FANOUT_SWEEP_LIMIT = 1000;
  * Paused subscriptions count as still-possibly-eligible because pause is
  * reversible (unlike revoke) and resuming does not change `created_at`, so a
  * currently-paused subscription created before the event could still be
- * resumed and pick it up later; only when no active-or-paused subscription
- * exists at all can this sweep prove nothing will ever need the event.
- * Bounded to `WEBHOOK_FANOUT_SWEEP_LIMIT` rows per call so it can never hold
+ * resumed and pick it up later; only when every active-or-paused subscription
+ * has already finished (complete or failed) its delivery of the event, which
+ * includes there being none at all, can this sweep prove nothing will ever
+ * need it. That also releases an event whose last pending subscriber was
+ * revoked after the other subscribers finished: completion is otherwise only
+ * re-evaluated as a side effect of processing a delivery row, which a revoked
+ * subscriber never gets. Bounded to `WEBHOOK_FANOUT_SWEEP_LIMIT` rows per call so it can never hold
  * a long-running scan or lock.
  */
 export async function sweepUnsubscribedWebhookFanoutEvents(store: PostgresSqlApi = db(), limit = WEBHOOK_FANOUT_SWEEP_LIMIT): Promise<number> {
@@ -237,6 +243,11 @@ export async function sweepUnsubscribedWebhookFanoutEvents(store: PostgresSqlApi
           select 1 from corvis_control.webhook_subscription s
           where s.tenant_id=e2.tenant_id and s.status in ('active','paused') and e2.event_type=any(s.event_types)
             and s.created_at<=e2.created_at
+            and not exists (
+              select 1 from corvis_control.webhook_delivery d
+              where d.tenant_id=s.tenant_id and d.webhook_id=s.webhook_id and d.event_id=e2.event_id
+                and d.state in ('complete','failed')
+            )
         )
       order by e2.created_at
       limit $1

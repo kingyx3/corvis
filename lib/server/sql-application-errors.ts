@@ -70,6 +70,14 @@ export const SQL_APPLICATION_ERRORS = [
   "support grant not found",
   // corvis_source.release_clean_artifact (072)
   "artifact was purged and cannot be released",
+  // corvis_control.open/replay/resolve_data_correction_incident (022, 031, 068) and the publication guard (030)
+  "idempotency key reused with different correction scope",
+  "correction incident is not replayable",
+  "has no retained source document to replay",
+  "correction incident is not resolvable",
+  "replacement snapshot must already be published",
+  "replacement snapshot scope does not match correction incident",
+  "active data correction incident blocks publication",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -136,6 +144,14 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "support grant not found": { code: "support_grant_not_found", status: 404 },
   // A release that lost a race with abort/expiry/sweep: the session is no longer active.
   "artifact was purged and cannot be released": { code: "upload_not_active", status: 409 },
+  // Data-correction incidents: refusals of a command the incident's current state or key history cannot accept.
+  "idempotency key reused with different correction scope": { code: "idempotency_key_reused", status: 409 },
+  "correction incident is not replayable": { code: "correction_incident_not_replayable", status: 409 },
+  "has no retained source document to replay": { code: "correction_incident_no_source_document", status: 409 },
+  "correction incident is not resolvable": { code: "correction_incident_not_resolvable", status: 409 },
+  "replacement snapshot must already be published": { code: "replacement_snapshot_not_published", status: 409 },
+  "replacement snapshot scope does not match correction incident": { code: "replacement_snapshot_scope_mismatch", status: 409 },
+  "active data correction incident blocks publication": { code: "publication_blocked_by_correction", status: 409 },
 };
 
 /**

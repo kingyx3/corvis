@@ -103,6 +103,19 @@ function stringList(value: unknown): string[] {
   return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))].sort();
 }
 
+/**
+ * A selector that is omitted means "no restriction within the data classes"; one that is present must be a list of
+ * non-blank strings. Anything else (a bare string, a number, a blank entry) is refused: silently reading it as an
+ * empty list would widen an irreversible deletion to the whole data class.
+ */
+function selectorList(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim().length === 0)) {
+    throw new DeletionExecutionError("deletion_scope_invalid_selector");
+  }
+  return stringList(value);
+}
+
 export function evidenceHash(tenantId: string, requestId: string, attempt: number, evidence: unknown): string {
   return createHash("sha256").update(tenantId).update(requestId).update(String(attempt)).update(JSON.stringify(evidence ?? null)).digest("hex");
 }
@@ -117,9 +130,9 @@ export function parseDeletionScope(raw: unknown): DeletionScope {
   if (dataClasses.length === 0) throw new DeletionExecutionError("deletion_scope_missing_data_classes");
   return {
     dataClasses,
-    documentIds: stringList(scope.documentIds),
-    fundIds: stringList(scope.fundIds),
-    subjectIds: stringList(scope.subjectIds),
+    documentIds: selectorList(scope.documentIds),
+    fundIds: selectorList(scope.fundIds),
+    subjectIds: selectorList(scope.subjectIds),
   };
 }
 

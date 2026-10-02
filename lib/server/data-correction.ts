@@ -17,11 +17,11 @@ export type OpenDataCorrectionCommand = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A correction command the caller can fix (400) or that names no incident in this tenant (404). */
+/** A correction command the caller can fix (400), that names no incident in this tenant (404), or that lost a race and is safe to retry (409). */
 export class DataCorrectionRequestError extends Error {
   readonly code: string;
-  readonly status: 400 | 404;
-  constructor(code: string, status: 400 | 404, message = code) {
+  readonly status: 400 | 404 | 409;
+  constructor(code: string, status: 400 | 404 | 409, message = code) {
     super(message);
     this.name = "DataCorrectionRequestError";
     this.code = code;
@@ -29,14 +29,11 @@ export class DataCorrectionRequestError extends Error {
   }
 }
 
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a],[b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
+/** Key-sorted JSON of a flat command (only strings, numbers and null), so the hash does not depend on property order. */
+function stable(value: Record<string, string | number | null>): string {
+  return `{${Object.entries(value).sort(([a],[b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${JSON.stringify(entry)}`).join(",")}}`;
 }
-function requestHash(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
+function requestHash(value: Record<string, string | number | null>): string { return createHash("sha256").update(stable(value)).digest("hex"); }
 function required(value: string, name: string, max = 2000): string {
   const clean = value.trim();
   if (!clean || clean.length > max) throw new DataCorrectionRequestError("invalid_request", 400, `${name} is required and must be at most ${max} characters`);
@@ -78,12 +75,20 @@ export class PostgresDataCorrectionRepository {
       correctionIntent: required(command.correctionIntent, "correctionIntent"),
     };
     const incidentId = randomUUID();
-    const rows = await this.db.query(`select * from corvis_control.open_data_correction_incident(
-      $1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9,$10::uuid,$11,$12,$13)`, [
-      identity.tenantId,incidentId,normalized.idempotencyKey,requestHash(normalized),normalized.fundId,normalized.reportPeriod,
-      normalized.metricCode,normalized.snapshotId,normalized.snapshotVersion,normalized.documentId,normalized.rootCause,
-      normalized.correctionIntent,identity.subject,
-    ]);
+    let rows: PostgresRow[];
+    try {
+      rows = await this.db.query(`select * from corvis_control.open_data_correction_incident(
+        $1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9,$10::uuid,$11,$12,$13)`, [
+        identity.tenantId,incidentId,normalized.idempotencyKey,requestHash(normalized),normalized.fundId,normalized.reportPeriod,
+        normalized.metricCode,normalized.snapshotId,normalized.snapshotVersion,normalized.documentId,normalized.rootCause,
+        normalized.correctionIntent,identity.subject,
+      ]);
+    } catch (error) {
+      // Two concurrent opens of a new key both miss the function's lookup and the loser hits the key's unique
+      // index. That is a retryable conflict (the retry finds the winner's incident), not a server failure.
+      if ((error as { code?: unknown } | null)?.code === "23505") throw new DataCorrectionRequestError("correction_open_conflict", 409);
+      throw error;
+    }
     const row = rows[0];
     if (!row) throw new Error("correction incident was not created");
     return { incidentId: String(row.incident_id), state: String(row.state) };

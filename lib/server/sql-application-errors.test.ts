@@ -25,6 +25,18 @@ test("driver errors expose the allowlisted code but never the raw message", () =
   assert.equal(sqlApplicationErrorOf(new Error("invitation_not_pending")), "invitation_not_pending");
 });
 
+test("a non-driver value without a carried code falls back to its message or string form", () => {
+  assert.equal(sqlApplicationErrorOf("plain failure text"), "plain failure text");
+  assert.equal(sqlApplicationErrorOf(undefined), "undefined");
+  assert.equal(sqlApplicationErrorOf(null), "null");
+  assert.equal(sqlApplicationErrorOf(42), "42");
+  // An object that is neither an Error nor a driver error is stringified, not mined for a message.
+  assert.equal(sqlApplicationErrorOf({ message: "invitation_expired" }), "[object Object]");
+  // A carried code wins over the message, and a non-string carried code is ignored.
+  assert.equal(sqlApplicationErrorOf(Object.assign(new Error("raw"), { applicationError: "invitation_expired" })), "invitation_expired");
+  assert.equal(sqlApplicationErrorOf(Object.assign(new Error("raw"), { applicationError: 7 })), "raw");
+});
+
 test("every allowlisted fragment is authored in the SQL migrations", async () => {
   const { readdirSync, readFileSync } = await import("node:fs");
   const dir = new URL("../../db/postgres/migrations/", import.meta.url);
@@ -49,4 +61,23 @@ test("admin identity, access-policy and support-access fragments classify to a c
   assert.equal(adminSqlErrorClassification(new Error("invitation_expired")), undefined);
   assert.equal(adminSqlErrorClassification(new PostgresDriverError("query", "P0001")), undefined);
   assert.equal(adminSqlErrorClassification(new Error("something unrelated")), undefined);
+});
+
+test("data-correction refusals classify to stable conflict codes instead of surfacing as server errors", () => {
+  const expected: Record<string, string> = {
+    "idempotency key reused with different correction scope": "idempotency_key_reused",
+    "correction incident is not replayable": "correction_incident_not_replayable",
+    "correction incident abc has no retained source document to replay": "correction_incident_no_source_document",
+    "correction incident is not resolvable": "correction_incident_not_resolvable",
+    "replacement snapshot must already be published": "replacement_snapshot_not_published",
+    "replacement snapshot scope does not match correction incident": "replacement_snapshot_scope_mismatch",
+    "active data correction incident blocks publication": "publication_blocked_by_correction",
+  };
+  for (const [message, code] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status: 409 }, message);
+    // The native driver carries only the allowlisted fragment, never the raw message.
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.ok(fragment, message);
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status: 409 }, `driver: ${message}`);
+  }
 });

@@ -415,6 +415,22 @@ export class ProductionUploadSessions implements UploadSessionPort {
     [session.tenantId,session.artifactVersionId,session.documentId,session.ingestionId,objectUri,session.sizeBytes,session.checksumSha256 ?? null,session.createdAt]);
   }
 
+  /**
+   * Applies a session transition and persists it. When the conditional write loses (or fails) the transition is
+   * rolled back in memory: the caller then reports the winner's state, or, if the session object is gone, this
+   * session as it still stands, and neither may claim a completion that was never recorded.
+   */
+  private async persistTransition(session: UploadSession, change: Pick<UploadSession, "state" | "malwareScanStatus" | "releasedAt">): Promise<void> {
+    const before = { state: session.state, malwareScanStatus: session.malwareScanStatus, releasedAt: session.releasedAt };
+    Object.assign(session, change);
+    try {
+      await this.persist(session);
+    } catch (error) {
+      Object.assign(session, before);
+      throw error;
+    }
+  }
+
   private async release(session: UploadSession): Promise<void> {
     if (session.state === "complete") return;
     if (session.objectKey) {
@@ -444,21 +460,15 @@ export class ProductionUploadSessions implements UploadSessionPort {
         // unconditionally reset document.status back to 'queued' even if the
         // pipeline has since moved it past that stage, so just record the
         // session as complete without re-releasing.
-        session.state = "complete";
-        session.malwareScanStatus = "clean";
-        session.releasedAt = session.releasedAt ?? new Date().toISOString();
-        await this.persist(session);
+        await this.persistTransition(session, { state: "complete", malwareScanStatus: "clean", releasedAt: session.releasedAt ?? new Date().toISOString() });
         return;
       }
     }
-    session.state = "complete";
-    session.malwareScanStatus = "clean";
-    session.releasedAt = new Date().toISOString();
     // Claim the transition durably BEFORE the irreversible release. A concurrent abort claims
     // "aborted" the same way and then purges the bytes, so whichever conditional write lands first
     // wins and the loser stops (upload_conflict) instead of leaving purged bytes under a session
     // that says complete.
-    await this.persist(session);
+    await this.persistTransition(session, { state: "complete", malwareScanStatus: "clean", releasedAt: new Date().toISOString() });
     try {
       const rows = await this.db.query(`select corvis_source.release_clean_artifact($1::uuid,$2::uuid,$3::uuid,$4,$5) as job_id`,
         [session.tenantId,session.documentId,session.artifactVersionId,session.storageVersionId ?? null,session.ingestionId]);

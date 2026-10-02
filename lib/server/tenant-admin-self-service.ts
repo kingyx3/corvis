@@ -114,7 +114,7 @@ export async function acknowledgeSupportAccess(identity: RequestIdentity, suppor
 export async function revokeTenantInvitation(identity: RequestIdentity, invitationId: string, reason: string, correlationId: string, db: PostgresSqlApi): Promise<void> {
   requireTenantAdmin(identity);
   if (!UUID.test(invitationId) || reason.trim().length < 3 || reason.length > 1000) throw new TenantInvitationError("invalid_request", 400);
-  const changed = await db.query(`update corvis_control.tenant_invitation set status='revoked'
+  const changed = await db.query(`update corvis_control.tenant_invitation set status='revoked', revoked_at=now()
     where tenant_id=$1::uuid and invitation_id=$2::uuid and status='pending' and expires_at>now()
     returning workspace_id::text,email,role_name`, [identity.tenantId,invitationId]);
   if (!changed[0]) throw new TenantInvitationError("invitation_not_pending", 409);
