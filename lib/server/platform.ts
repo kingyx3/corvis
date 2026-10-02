@@ -72,6 +72,16 @@ function isoText(row: PostgresRow, key: string): string | undefined {
   if (value == null || value === "") return undefined;
   return value instanceof Date ? value.toISOString() : String(value);
 }
+/** Machine timestamps leave the server as ISO-8601 UTC; Postgres text ("2026-07-01 14:02:11+00") and offsets are normalized. */
+function timestampText(row: PostgresRow, key: string, fallback = ""): string {
+  const value = row[key];
+  if (value == null || value === "") return fallback;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? fallback : value.toISOString();
+  const raw = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString();
+}
 function num(row: PostgresRow, key: string, fallback = 0): number { const value = Number(row[key]); return Number.isFinite(value) ? value : fallback; }
 function displaySize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -91,7 +101,7 @@ function documentRecord(row: PostgresRow): DocumentRecord {
   return {
     id: text(row,"document_id"), name: text(row,"display_name","Untitled document"), fund: text(row,"fund_name","Unclassified"), period: text(row,"report_period","Detecting…"),
     type: text(row,"document_type","Source document"), pages: num(row,"page_count"), size: displaySize(num(row,"size_bytes")), status: documentStatus(text(row,"status","queued")),
-    progress: text(row,"processing_state") === "running" ? 50 : undefined, uploaded: text(row,"created_at","—"), quality: quality(text(row,"quality","pending")), observations: num(row,"observation_count"),
+    progress: text(row,"processing_state") === "running" ? 50 : undefined, uploaded: timestampText(row,"created_at","—"), quality: quality(text(row,"quality","pending")), observations: num(row,"observation_count"),
     processingState: text(row,"processing_state") || undefined, processingUpdatedAt: isoText(row,"processing_updated_at"),
   };
 }
@@ -260,7 +270,7 @@ export class PostgresProductionPlatform implements PlatformPort {
     return rows.map((row) => ({
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), fundId: text(row,"fund_id") || undefined, period: text(row,"report_period"),
       status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
-      changed: text(row,"published_at") || text(row,"created_at"), blockingExceptions: num(row,"blocking_exception_count"),
+      changed: timestampText(row,"published_at") || timestampText(row,"created_at"), blockingExceptions: num(row,"blocking_exception_count"),
       publishedAt: isoText(row,"published_at"),
     }));
   }

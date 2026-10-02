@@ -313,7 +313,6 @@ async function transitionStatus(
   sourceConnectionId: string,
   allowedFrom: ConnectionStatus[],
   to: ConnectionStatus,
-  extra: { revokedAt?: boolean } = {},
 ): Promise<void> {
   const row = await loadConnection(db, identity.tenantId, sourceConnectionId);
   const current = requiredText(row, "status") as ConnectionStatus;
@@ -321,7 +320,7 @@ async function transitionStatus(
   // Compare-and-set on the status just read, so a concurrent transition (for
   // example a sync suspending the connection while it is being resumed) is
   // never silently overwritten by this stale decision.
-  const updated = await db.query(`update corvis_source.source_connection set status=$3, updated_at=now()${extra.revokedAt ? ", revoked_at=now()" : ""}
+  const updated = await db.query(`update corvis_source.source_connection set status=$3, updated_at=now()
     where tenant_id=$1 and source_connection_id=$2::uuid and status=$4 returning status`,
   [identity.tenantId, sourceConnectionId, to, current]);
   if (updated.length === 0) throw new ConnectorGovernanceError("invalid_transition_from_concurrent_change");
@@ -342,12 +341,20 @@ export async function revokeSourceConnection(
   dependencies: { db?: PostgresSqlApi; secrets: SecretStore },
 ): Promise<void> {
   const db = dependencies.db ?? controlDb();
-  const row = await loadConnection(db, identity.tenantId, sourceConnectionId);
-  const current = requiredText(row, "status") as ConnectionStatus;
-  if (current === "revoked") return;
-  await dependencies.secrets.revoke(requiredText(row, "secret_reference"));
-  await db.execute(`update corvis_source.source_connection set status='revoked', revoked_at=now(), updated_at=now()
-    where tenant_id=$1 and source_connection_id=$2::uuid`, [identity.tenantId, sourceConnectionId]);
+  // A concurrent reauthorization can swap the secret between the read and the write below. The terminal status
+  // is therefore a compare-and-set on the reference whose credential was just destroyed: if a rotation landed
+  // in between, re-read and destroy the new credential too, so a revoked connection never leaves one live.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const row = await loadConnection(db, identity.tenantId, sourceConnectionId);
+    if (requiredText(row, "status") === "revoked") return;
+    const secretReference = requiredText(row, "secret_reference");
+    await dependencies.secrets.revoke(secretReference);
+    const updated = await db.query(`update corvis_source.source_connection set status='revoked', revoked_at=now(), updated_at=now()
+      where tenant_id=$1 and source_connection_id=$2::uuid and status<>'revoked' and secret_reference=$3
+      returning status`, [identity.tenantId, sourceConnectionId, secretReference]);
+    if (updated.length > 0) return;
+  }
+  throw new ConnectorGovernanceError("invalid_transition_from_concurrent_change");
 }
 
 /**

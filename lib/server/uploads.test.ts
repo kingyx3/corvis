@@ -5,7 +5,7 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { GcsObject, UploadObjectStore } from "./gcs.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, UploadRequestError, uploadIdempotencyKey, type UploadSession } from "./uploads.ts";
+import { ProductionUploadSessions, QUARANTINE_RETENTION_MS, UPLOAD_SESSION_TTL_MS, UploadRequestError, uploadIdempotencyKey, validateSourceMagic, type UploadSession } from "./uploads.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 type FakeObject = { bytes: Buffer; object: GcsObject };
@@ -872,6 +872,27 @@ test("a failed byte delete on abort never records purgedAt, and a later sweep de
   assert.equal(store.deleted.length, 1, "a purged session is never deleted twice");
 });
 
+test("a sweep retrying an aborted session whose delete fails again leaves it for the next sweep", async (t) => {
+  silenceLogs(t);
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  store.failDeletes = 2;
+  await rejects(uploads.abort(actor, session.uploadId), /could not be deleted/);
+
+  const first = await uploads.sweep(actor.tenantId);
+  assert.equal(first.abandoned, 0);
+  assert.equal(first.skipped, 1, "the failed retry is skipped, not fatal");
+  assert.equal(storedSession(store, session).purgedAt, undefined);
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+
+  const second = await uploads.sweep(actor.tenantId);
+  assert.equal(second.abandoned, 1);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
 test("repeating an abort whose delete failed retries the delete", async (t) => {
   silenceLogs(t);
   const { uploads, store } = harness();
@@ -970,9 +991,9 @@ test("a registry failure while marking the artifact purged is logged and does no
   const warn = t.mock.method(console, "warn");
   const store = new FakeObjectStore();
   const db = new (class extends FakeDb {
-    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
       if (sql.includes("quarantine_status='purged'")) throw new Error("postgres unavailable");
-      return super.execute(sql, parameters);
+      return super.query(sql, parameters);
     }
   })();
   const uploads = new ProductionUploadSessions(store, db);
@@ -1105,4 +1126,282 @@ test("a replayed initiate surfaces transient storage and database failures inste
   assert.equal(documents(), 1, "no second document was registered");
   const replayed = await uploads.initiate(actor, initiateInput());
   assert.equal(replayed.uploadId, first.uploadId, "the original session is still the one replayed");
+});
+
+async function quarantinedUpload() {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  assert.equal(storedSession(context.store, session).state, "quarantined", "precondition: scan still pending");
+  return { ...context, actor, session };
+}
+
+test("abort never deletes the bytes of an artifact the scheduled release already released", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  // The scheduled release updates only the registry, so the session JSON still reads `quarantined`.
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+
+  await rejectsWith(uploads.abort(actor, session.uploadId), "upload_not_active", 409);
+
+  assert.deepEqual(store.deleted, [], "released source bytes must survive an abort");
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+  assert.ok(!db.documentStatuses().includes("aborted"), "a released document is never relabelled aborted");
+  assert.equal(storedSession(store, session).state, "complete", "the session is repaired so no purge path targets it again");
+});
+
+test("abort deletes nothing when a release wins the race for the registry row", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "quarantined" };
+  db.loseClaimRace = true; // registry still reads 'quarantined', but the guarded claim matches no row
+
+  await rejectsWith(uploads.abort(actor, session.uploadId), "upload_conflict", 409);
+
+  assert.deepEqual(store.deleted, []);
+  assert.ok(!db.documentStatuses().includes("aborted"));
+});
+
+test("a retried abort after a failed byte delete still completes and purges the claimed artifact", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  const deleteObject = store.deleteObject.bind(store);
+  store.deleteObject = async () => { throw new Error("GCS delete failed (503)"); };
+  await assert.rejects(uploads.abort(actor, session.uploadId));
+  assert.equal(storedSession(store, session).state, "aborted");
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "purged" }; // the first attempt's claim stuck
+
+  store.deleteObject = deleteObject;
+  await uploads.abort(actor, session.uploadId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("the sweep never deletes released bytes under an aborted session that lost the race to the release", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  const stored = storedSession(store, session);
+  store.json.set(sessionStorageKey(session), JSON.stringify({ ...stored, state: "aborted" }));
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.retained, 1);
+  assert.equal(result.abandoned, 0);
+  assert.deepEqual(store.deleted, [], "released source bytes must survive the sweep");
+  assert.equal(storedSession(store, session).state, "complete");
+});
+
+test("validateSourceMagic accepts only the real signature of each permitted document type", () => {
+  const zip = (third: number) => Buffer.from([0x50, 0x4b, third, 0x04, 0x00]);
+  for (const name of ["a.xlsx", "a.docx", "a.pptx", "REPORT.XLSX"]) {
+    for (const third of [0x03, 0x05, 0x07]) assert.equal(validateSourceMagic(name, zip(third)), true, `${name} with PK 0x${third.toString(16)}`);
+    assert.equal(validateSourceMagic(name, zip(0x01)), false, `${name} with an unknown PK record`);
+    assert.equal(validateSourceMagic(name, Buffer.from([0x51, 0x4b, 0x03, 0x04])), false, `${name} without the P byte`);
+    assert.equal(validateSourceMagic(name, Buffer.from([0x50, 0x4a, 0x03, 0x04])), false, `${name} without the K byte`);
+    assert.equal(validateSourceMagic(name, Buffer.alloc(0)), false, `${name} empty`);
+  }
+
+  const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00]);
+  assert.equal(validateSourceMagic("legacy.xls", ole), true);
+  assert.equal(validateSourceMagic("legacy.xls", zip(0x03)), false, "an OOXML zip is not a legacy workbook");
+  assert.equal(validateSourceMagic("legacy.xls", ole.subarray(0, 4)), false, "a truncated header is not a signature");
+
+  assert.equal(validateSourceMagic("data.csv", Buffer.from("a,b\n1,2\n")), true);
+  assert.equal(validateSourceMagic("data.csv", Buffer.from([0x61, 0x2c, 0x00, 0x62])), false, "a NUL byte means binary content, not CSV");
+
+  assert.equal(validateSourceMagic("report.pdf", Buffer.from("%PDF-1.7\n")), true);
+  assert.equal(validateSourceMagic("report.pdf", Buffer.from("%PDX-1.7\n")), false);
+
+  assert.equal(validateSourceMagic("payload.exe", Buffer.from("%PDF-1.7\n")), false, "an extension outside the allow-list never validates");
+  assert.equal(validateSourceMagic("no-extension", Buffer.from("a,b\n")), false);
+});
+
+test("an object that reports no usable size can never match the authorized size", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes), { size: undefined });
+  await rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), /size does not match/);
+
+  store.mutate(session.objectKey ?? "", { size: "not-a-number" });
+  await rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), /size does not match/);
+  assert.equal(db.releases.length, 0);
+  assert.equal(storedSession(store, session).state, "initiated");
+});
+
+test("an object whose MD5 changes after verification is never released and is recorded as an integrity failure", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+
+  store.mutate(session.objectKey ?? "", { md5Hash: "ZZZZZZZZZZZZZZZZZZZZZw==" });
+  store.scan(session.objectKey ?? "", "clean");
+  await rejects(uploads.get(actor, session.uploadId), /checksum changed after verification/);
+  assert.equal(db.releases.length, 0);
+  assert.ok(db.artifactStatuses().includes("integrity_failed"));
+  const recorded = storedSession(store, session);
+  assert.equal(recorded.state, "quarantined");
+  assert.equal(recorded.rejection, "upload_integrity_failed");
+  await rejectsWith(uploads.complete(actor, session.uploadId, session.idempotencyKey), "upload_integrity_failed", 422);
+});
+
+test("an empty content type is treated as application/octet-stream and accepted", async () => {
+  const { uploads, store } = harness();
+  const session = await uploads.initiate(identity(), initiateInput({ contentType: "" }));
+  assert.equal(session.contentType, "");
+  assert.equal(store.resumable.get(session.resumableUploadUrl ?? "")?.contentType, "");
+});
+
+test("a degenerate tenant id never produces an empty object-key path segment", async () => {
+  const { uploads, store } = harness();
+  const session = await uploads.initiate(identity({ tenantId: "" }), initiateInput());
+  assert.ok(session.objectKey?.startsWith(`tenant=document/document=${session.documentId}/`), session.objectKey);
+  assert.equal(store.resumable.get(session.resumableUploadUrl ?? "")?.key, session.objectKey);
+});
+
+function withEnv(values: Record<string, string | undefined>, run: () => Promise<void>): Promise<void> {
+  const env = process.env;
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, env[key]]));
+  for (const [key, value] of Object.entries(values)) { if (value === undefined) delete env[key]; else env[key] = value; }
+  return run().finally(() => {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete env[key]; else env[key] = value; }
+  });
+}
+
+test("in production an upload must come from an explicitly allowed origin", { concurrency: false }, async () => {
+  await withEnv({
+    NODE_ENV: "production",
+    CORVIS_DEMO_MODE: undefined,
+    CORVIS_AUTH_ISSUER: "https://issuer.example",
+    CORVIS_AUTH_AUDIENCE: "corvis",
+    CORVIS_POSTGRES_DSN: "postgres://user:secret@127.0.0.1:5432/corvis",
+    CORVIS_OBJECT_STORE_BUCKET: "corvis-source-test",
+    CORVIS_UPLOAD_ALLOWED_ORIGINS: "https://app.corvis.example",
+  }, async () => {
+    const { uploads, store } = harness();
+    const actor = identity();
+    await rejectsWith(uploads.initiate(actor, initiateInput()), "upload_origin_not_allowed", 403);
+    await rejectsWith(uploads.initiate(actor, initiateInput({ origin: "https://attacker.example" })), "upload_origin_not_allowed", 403);
+    assert.equal(store.resumable.size, 0, "no resumable session is authorized for a disallowed origin");
+
+    const session = await uploads.initiate(actor, initiateInput({ origin: "https://app.corvis.example" }));
+    assert.equal(session.state, "initiated");
+    assert.equal(store.resumable.size, 1);
+  });
+});
+
+function setCreatedAt(store: FakeObjectStore, session: UploadSession, createdAt: string): void {
+  const key = sessionStorageKey(session);
+  const stored = JSON.parse(store.json.get(key) ?? "null") as UploadSession | null;
+  assert.ok(stored, "session was never persisted");
+  stored.createdAt = createdAt;
+  store.json.set(key, JSON.stringify(stored));
+}
+
+test("a session whose creation time cannot be parsed is treated as infinitely old", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const expiring = await uploads.initiate(actor, initiateInput({ idempotencyKey: "oidc|uploader-1:expiring" }));
+  const abandoned = await uploads.initiate(actor, initiateInput({ idempotencyKey: "oidc|uploader-1:abandoned" }));
+  store.finalize(expiring.resumableUploadUrl ?? "", pdfBytes(expiring.sizeBytes));
+  store.finalize(abandoned.resumableUploadUrl ?? "", pdfBytes(abandoned.sizeBytes));
+  setCreatedAt(store, expiring, "not a date");
+  setCreatedAt(store, abandoned, "");
+
+  await rejectsWith(uploads.complete(actor, expiring.uploadId, expiring.idempotencyKey), "upload_expired", 410);
+  assert.equal(storedSession(store, expiring).state, "aborted");
+
+  const result = await uploads.sweep(actor.tenantId);
+  assert.equal(result.scanned, 2);
+  assert.equal(result.abandoned, 1, "the unparseable session is abandoned");
+  assert.equal(result.skipped, 1, "the expired session was already purged");
+  assert.equal(storedSession(store, abandoned).state, "aborted");
+  assert.ok(storedSession(store, abandoned).purgedAt);
+  assert.deepEqual([...store.deleted].sort(), [expiring.objectKey, abandoned.objectKey].sort());
+});
+
+test("a delete failure is logged as bounded text whatever was thrown", async (t) => {
+  const error = t.mock.method(console, "error");
+  t.mock.method(console, "warn");
+  const { uploads, store } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+
+  store.deleteObject = async () => { throw "bucket offline"; };
+  await rejects(uploads.abort(actor, session.uploadId), /could not be deleted/);
+  const logged = JSON.parse(String(error.mock.calls[0]?.arguments[0])) as Record<string, unknown>;
+  assert.equal(logged.event, "upload.purge_failed");
+  assert.equal(logged.error, "bucket offline", "a non-Error rejection is stringified");
+
+  store.deleteObject = async () => { throw new Error("x".repeat(500)); };
+  await rejects(uploads.abort(actor, session.uploadId), /could not be deleted/);
+  const long = JSON.parse(String(error.mock.calls[1]?.arguments[0])) as Record<string, unknown>;
+  assert.equal(String(long.error).length, 300, "an Error message is truncated to 300 characters");
+});
+
+test("an initiated session with no object key cannot be completed", async () => {
+  const { uploads, store, db } = harness();
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  const key = sessionStorageKey(session);
+  const stored = JSON.parse(store.json.get(key) ?? "null") as UploadSession;
+  delete stored.objectKey;
+  store.json.set(key, JSON.stringify(stored));
+
+  await rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), /storage state is incomplete/);
+  assert.equal(db.releases.length, 0);
+});
+
+test("a sweep skips listed objects that are not sessions of the swept tenant", async () => {
+  const { uploads, store } = harness();
+  const actor = identity();
+  const mine = await uploads.initiate(actor, initiateInput());
+  const prefix = `_corvis/upload-sessions/tenant=${encodeURIComponent(actor.tenantId)}/`;
+  store.json.set(`${prefix}no-upload-id.json`, JSON.stringify({ tenantId: actor.tenantId, state: "initiated" }));
+  store.json.set(`${prefix}foreign.json`, JSON.stringify({ ...storedSession(store, mine), uploadId: "foreign", tenantId: "00000000-0000-0000-0000-0000000000ff" }));
+  const listObjects = store.listObjects.bind(store);
+  store.listObjects = async (listPrefix, limit) => [...await listObjects(listPrefix, limit), `${prefix}ghost.json`];
+
+  const result = await uploads.sweep(actor.tenantId);
+  assert.equal(result.scanned, 1, "only the genuine session counts as scanned");
+  assert.equal(result.skipped, 4, "the malformed, foreign and missing entries and the still-young session are skipped");
+  assert.equal(store.deleted.length, 0);
+  assert.equal(storedSession(store, mine).state, "initiated");
+});
+
+test("the sweep skips an aborted session whose registry row a release claimed first", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  store.json.set(sessionStorageKey(session), JSON.stringify({ ...storedSession(store, session), state: "aborted" }));
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "quarantined" };
+  db.loseClaimRace = true; // the guarded claim matches no row although the registry still reads 'quarantined'
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.skipped, 1);
+  assert.equal(result.abandoned, 0);
+  assert.deepEqual(store.deleted, [], "nothing is deleted until the purge claim is won");
+});
+
+test("a registry failure while marking an abandoned session's artifact purged is logged and the bytes are still purged", async (t) => {
+  const warn = t.mock.method(console, "warn");
+  const store = new FakeObjectStore();
+  const db = new (class extends FakeDb {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (sql.includes("quarantine_status='purged'")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  backdate(store, session, 365 * 24 * 60 * 60 * 1000);
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.abandoned, 1);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]?.arguments[0]), /upload\.mark_artifact_purged_failed/);
 });
