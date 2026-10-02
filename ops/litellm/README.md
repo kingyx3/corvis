@@ -1,43 +1,46 @@
 # Corvis LiteLLM gateway package
 
-This directory provides the provider-neutral gateway layer used **behind** a Corvis extraction harness. It is not itself a `CORVIS_EXTRACTION_ENDPOINT`: LiteLLM exposes model/harness APIs, while the Corvis endpoint must implement `/v1/extractions`, acquire the authorized skill/evidence, enforce the orchestration policy and write immutable GCS candidate output.
+This directory provides the provider-neutral model gateway used **behind** the governed Corvis extraction harness. It is not itself a `CORVIS_EXTRACTION_ENDPOINT`: LiteLLM exposes model APIs, while the Corvis endpoint implements `/v1/extractions`, acquires authorized skill/evidence, enforces orchestration policy and writes immutable GCS candidate output.
 
-See [`../../docs/AI_MODEL_GATEWAY.md`](../../docs/AI_MODEL_GATEWAY.md) for the end-to-end contract.
+See [`../../docs/AI_MODEL_GATEWAY.md`](../../docs/AI_MODEL_GATEWAY.md) and [`../extractor/README.md`](../extractor/README.md) for the end-to-end contract.
 
 ## Files
 
-- `config.example.yaml` — logical Corvis model aliases with environment-backed provider credentials. Copy/render it outside Git for each environment and replace `<approved-model-id>` placeholders.
-- `entrypoint.py` — validates `CORVIS_AI_PROVIDER_CREDENTIALS_JSON`, materializes individual provider environment variables without logging values, removes the aggregate JSON from the child environment and starts LiteLLM.
-- `Dockerfile` — thin wrapper around an upstream LiteLLM image. The build has no mutable default; the caller must provide an immutable digest with `--build-arg LITELLM_BASE_IMAGE=...@sha256:...`.
+- `config.example.yaml` — illustrative alias/provider syntax only; it is never copied into the live container configuration.
+- `entrypoint.py` — validates provider credentials and the non-secret Corvis model map, materializes provider environment variables without logging values, renders an ephemeral LiteLLM config with the gateway master key, removes the aggregate credential JSON from the child environment, and starts LiteLLM.
+- `Dockerfile` — thin wrapper around an upstream LiteLLM image. The release build has no mutable default; `CORVIS_LITELLM_BASE_IMAGE` must resolve to an immutable `...@sha256:<digest>` and is passed as `LITELLM_BASE_IMAGE`.
 
 ## Runtime inputs
 
-The gateway runtime should receive only the secrets/configuration it needs:
+The managed Cloud Run gateway receives only:
 
-- `CORVIS_AI_PROVIDER_CREDENTIALS_JSON` — JSON object mapping provider environment-variable names to credentials. The wrapper rejects process-control and Corvis/LiteLLM control-plane names.
-- `LITELLM_MASTER_KEY` — gateway root credential, supplied separately from provider credentials.
-- `CORVIS_LITELLM_CONFIG` — optional rendered config path; defaults to `/app/corvis-litellm.yaml`.
-- `PORT` — optional listen port; defaults to `4000`.
+- `CORVIS_AI_PROVIDER_CREDENTIALS_JSON` — Secret Manager value mapping provider environment-variable names to credentials. The wrapper rejects process-control and Corvis/LiteLLM control-plane names.
+- `LITELLM_MASTER_KEY` — separate Secret Manager gateway credential.
+- `CORVIS_LITELLM_MODELS_JSON` — non-secret JSON map of logical Corvis aliases to approved provider/model identifiers, for example `{"corvis-extract-primary":"anthropic/<approved-model-id>","corvis-extract-verifier":"openai/<approved-model-id>"}`.
+- `CORVIS_LITELLM_CONFIG` — optional explicit config path for exceptional deployments. When omitted, the entrypoint renders an ephemeral config from the approved model map; production no longer needs a checked-in or manually mounted YAML file.
+- `PORT` — optional listen port; managed Cloud Run uses `4000`.
 
-The repository's `config.example.yaml` is intentionally not copied to the default live config path. A production image/deployment must supply an explicit environment-approved config rather than accidentally starting with placeholder model IDs.
+The generated config references provider environment variables rather than embedding their values and sets `general_settings.master_key` from `LITELLM_MASTER_KEY`. The checked-in example can therefore never accidentally become the live configuration with placeholder model IDs.
 
-## Secret Manager sources
+## Deployment and IAM
 
-After applying Terraform, the following containers exist per UAT/prod environment:
+`infra/terraform/modules/ai-runtime` creates a dedicated `corvis-litellm-<env>` service account and Cloud Run service when the release-set LiteLLM/extractor images and `CORVIS_LITELLM_MODELS_JSON` are all present. There is no public invoker grant. Only `corvis-extractor-<env>` receives `roles/run.invoker` on LiteLLM; the API and worker do not.
 
-- `corvis-ai-provider-credentials-<env>`
-- `corvis-litellm-master-key-<env>`
-- `corvis-atlassian-skill-read-<env>`
-- `corvis-atlassian-skill-update-<env>`
+The LiteLLM identity receives `secretAccessor` only for:
 
-Run the **AI integration secret provisioning** workflow to rotate selected values from protected GitHub Environment secrets into those containers. Terraform manages container/IAM existence only; it never stores secret values in state.
+- `corvis-ai-provider-credentials-<env>`; and
+- `corvis-litellm-master-key-<env>`.
 
-Do not grant the LiteLLM service account the Atlassian skill credentials. Those belong to the extraction harness. Conversely, the Corvis API/worker does not need provider credentials or the LiteLLM master key.
+It deliberately receives neither Confluence credential. The extractor receives only the gateway key plus the Confluence read credential; the Corvis API/worker receive neither provider nor LiteLLM credentials. The post-acceptance known-good binding workflow verifies these live IAM/secret boundaries before recording the AI image digests as rollback-safe.
+
+Run **AI integration secret provisioning** to rotate selected values from protected GitHub Environment secrets into the Terraform-managed Secret Manager containers. Terraform manages container/IAM existence only; it never stores secret values in state.
 
 ## Database choice
 
-The baseline gateway config does not require a LiteLLM database. Add a separately governed database only when features such as persistent virtual keys, spend logs or Admin UI model management are required. Do not point LiteLLM at the Corvis canonical application database.
+The baseline gateway does not require a LiteLLM database. Add a separately governed database only when persistent virtual keys, spend logs or an administrative model-management surface are explicitly required. Never point LiteLLM at the Corvis canonical application database.
 
-## Harness clients
+## Claude Code, Codex and other harness clients
 
-The same gateway can serve ordinary model clients and supported agent/coding harnesses. Use separately scoped model aliases/virtual keys for a coding harness where possible. A harness connected through LiteLLM still must obey the Corvis extraction boundary: it cannot write canonical facts, bypass GCS evidence validation or obtain Confluence write authority during an ordinary extraction run.
+LiteLLM remains protocol/provider-neutral, so controlled development or a separately governed maintenance harness may connect Claude Code, Codex or another agent client to logical Corvis aliases. Ordinary production extraction intentionally does **not** depend on a personal Claude/ChatGPT login or an interactive coding-agent process: the managed extractor calls the private gateway with service/provider credentials and emits the same Corvis candidate contract regardless of provider.
+
+If a future coding-agent adapter is enabled for production extraction, it belongs behind the extractor boundary and must retain the same immutable evidence scope, source references, lineage, no-canonical-write rule and lack of Confluence write authority.
