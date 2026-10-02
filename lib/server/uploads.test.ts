@@ -970,9 +970,9 @@ test("a registry failure while marking the artifact purged is logged and does no
   const warn = t.mock.method(console, "warn");
   const store = new FakeObjectStore();
   const db = new (class extends FakeDb {
-    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
       if (sql.includes("quarantine_status='purged'")) throw new Error("postgres unavailable");
-      return super.execute(sql, parameters);
+      return super.query(sql, parameters);
     }
   })();
   const uploads = new ProductionUploadSessions(store, db);
@@ -1105,4 +1105,66 @@ test("a replayed initiate surfaces transient storage and database failures inste
   assert.equal(documents(), 1, "no second document was registered");
   const replayed = await uploads.initiate(actor, initiateInput());
   assert.equal(replayed.uploadId, first.uploadId, "the original session is still the one replayed");
+});
+
+async function quarantinedUpload() {
+  const context = harness();
+  const actor = identity();
+  const session = await context.uploads.initiate(actor, initiateInput());
+  context.store.finalize(session.resumableUploadUrl ?? "", pdfBytes(session.sizeBytes));
+  await context.uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  assert.equal(storedSession(context.store, session).state, "quarantined", "precondition: scan still pending");
+  return { ...context, actor, session };
+}
+
+test("abort never deletes the bytes of an artifact the scheduled release already released", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  // The scheduled release updates only the registry, so the session JSON still reads `quarantined`.
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+
+  await rejectsWith(uploads.abort(actor, session.uploadId), "upload_not_active", 409);
+
+  assert.deepEqual(store.deleted, [], "released source bytes must survive an abort");
+  assert.ok(store.objects.has(session.objectKey ?? ""));
+  assert.ok(!db.documentStatuses().includes("aborted"), "a released document is never relabelled aborted");
+  assert.equal(storedSession(store, session).state, "complete", "the session is repaired so no purge path targets it again");
+});
+
+test("abort deletes nothing when a release wins the race for the registry row", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "quarantined" };
+  db.loseClaimRace = true; // registry still reads 'quarantined', but the guarded claim matches no row
+
+  await rejectsWith(uploads.abort(actor, session.uploadId), "upload_conflict", 409);
+
+  assert.deepEqual(store.deleted, []);
+  assert.ok(!db.documentStatuses().includes("aborted"));
+});
+
+test("a retried abort after a failed byte delete still completes and purges the claimed artifact", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  const deleteObject = store.deleteObject.bind(store);
+  store.deleteObject = async () => { throw new Error("GCS delete failed (503)"); };
+  await assert.rejects(uploads.abort(actor, session.uploadId));
+  assert.equal(storedSession(store, session).state, "aborted");
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "purged" }; // the first attempt's claim stuck
+
+  store.deleteObject = deleteObject;
+  await uploads.abort(actor, session.uploadId);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.ok(storedSession(store, session).purgedAt);
+});
+
+test("the sweep never deletes released bytes under an aborted session that lost the race to the release", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  const stored = storedSession(store, session);
+  store.json.set(sessionStorageKey(session), JSON.stringify({ ...stored, state: "aborted" }));
+  db.artifact = { malware_scan_status: "clean", quarantine_status: "released" };
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.retained, 1);
+  assert.equal(result.abandoned, 0);
+  assert.deepEqual(store.deleted, [], "released source bytes must survive the sweep");
+  assert.equal(storedSession(store, session).state, "complete");
 });

@@ -488,6 +488,44 @@ export class ProductionUploadSessions implements UploadSessionPort {
     });
   }
 
+  /**
+   * Atomically claims the registry row for purging before any bytes are destroyed. The scheduled release
+   * (upload-release.ts) updates only the registry, so a session that still reads "quarantined" or "aborted" can
+   * already describe a RELEASED artifact; its source bytes are evidence and must never be deleted. A claim that
+   * matches no row is safe to proceed only when this purge already claimed the row (a retry after a failed
+   * delete) or the row was never registered; anything else means a release won the race.
+   */
+  private async claimArtifactForPurge(session: UploadSession): Promise<"claimed" | "released" | "lost"> {
+    try {
+      return await this.claimArtifactRow(session);
+    } catch (error) {
+      // Best effort, as before: a registry outage must not stop an abort. The session is already aborted, and an
+      // unmarked row stays in the scheduled release's queue until the next sweep claims it.
+      logEvent("warn", "upload.mark_artifact_purged_failed", sessionContext(session), { artifactVersionId: session.artifactVersionId, error: errorText(error) });
+      return "claimed";
+    }
+  }
+
+  private async claimArtifactRow(session: UploadSession): Promise<"claimed" | "released" | "lost"> {
+    const claimed = await this.db.query(`update corvis_source.document_artifact_version
+      set quarantine_status='purged'
+      where tenant_id=$1 and document_artifact_version_id=$2::uuid and quarantine_status in ('pending','quarantined')
+      returning 1 as claimed`, [session.tenantId, session.artifactVersionId]);
+    if (claimed.length > 0) return "claimed";
+    const status = (await this.db.query(`select malware_scan_status, quarantine_status from corvis_source.document_artifact_version
+      where tenant_id=$1 and document_artifact_version_id=$2::uuid`, [session.tenantId, session.artifactVersionId]))[0]?.quarantine_status;
+    if (status === "released") return "released";
+    return status === undefined || status === "purged" ? "claimed" : "lost";
+  }
+
+  /** Repairs a session whose bytes a concurrent release already registered, so no purge path ever targets it again. */
+  private async restoreReleasedSession(session: UploadSession): Promise<void> {
+    session.state = "complete";
+    session.malwareScanStatus = "clean";
+    session.releasedAt = session.releasedAt ?? new Date().toISOString();
+    await this.persist(session);
+  }
+
   private async refreshScan(session: UploadSession): Promise<UploadSession> {
     if (session.state !== "quarantined" || !session.objectKey) return session;
     // A rejected signature or purged bytes can never become releasable later.
@@ -756,7 +794,14 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
   /** Purges an aborted session's bytes and registry rows. Idempotent: also the retry for an abort whose delete failed. */
   private async finishAbort(session: UploadSession): Promise<void> {
-    await this.markArtifactPurged(session);
+    // The abort is already durable, but it must not outrun a release: claim the registry row first and stop
+    // (before deleting bytes or relabelling the document) when the artifact was already released.
+    const claim = await this.claimArtifactForPurge(session);
+    if (claim === "released") {
+      await this.restoreReleasedSession(session);
+      throw new UploadRequestError("upload_not_active", "Upload session has already completed");
+    }
+    if (claim === "lost") throw new UploadRequestError("upload_conflict", "Upload session was released concurrently; retry the request");
     const purgeFailure = await this.purgeObject(session, Date.now());
     await this.db.execute(`update corvis_source.document set status='aborted'
       where tenant_id=$1 and document_id=$2::uuid`, [session.tenantId,session.documentId]).catch(() => undefined);
@@ -846,7 +891,10 @@ export class ProductionUploadSessions implements UploadSessionPort {
     }
 
     if (session.state === "aborted") {
-      await this.markArtifactPurged(session);
+      // An abort that lost to the scheduled release must not take the released bytes down with it.
+      const claim = await this.claimArtifactForPurge(session);
+      if (claim === "released") { await this.restoreReleasedSession(session); summary.retained += 1; return; }
+      if (claim === "lost") { summary.skipped += 1; return; }
       const purgeFailure = await this.purgeObject(session, now);
       if (purgeFailure) throw purgeFailure;
       await this.persist(session);

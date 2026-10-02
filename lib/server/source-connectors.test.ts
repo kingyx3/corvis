@@ -96,6 +96,7 @@ class FakeConnectionDb implements PostgresSqlApi {
     if (sql.includes("and status='pending_authorization'") && row.status !== "pending_authorization") return [];
     if (sql.includes("status<>'revoked'") && row.status === "revoked") return [];
     if (sql.includes("secret_reference=$4") && row.secret_reference !== parameters[3]) return [];
+    if (sql.includes("status='revoked', revoked_at=now()") && sql.includes("secret_reference=$3") && row.secret_reference !== parameters[2]) return [];
     if (sql.includes("set status=$3, updated_at=now(), revoked_at=now()")) { row.status = parameters[2]; row.revoked_at = new Date().toISOString(); }
     else if (sql.includes("set status=$3, updated_at=now()") && !sql.includes("revoked_at")) { row.status = parameters[2]; }
     else if (sql.includes("status='revoked', revoked_at=now()")) { row.status = "revoked"; row.revoked_at = new Date().toISOString(); }
@@ -271,6 +272,34 @@ test("revoking a connection destroys its secret and the transition is terminal",
   // Revoking an already-revoked connection is a safe no-op, not a second secret destruction attempt.
   await revokeSourceConnection(identity(), "c1", { db, secrets });
   assert.equal(secrets.revoked.length, 1);
+});
+
+test("revoking while a reauthorization rotates the secret destroys the new credential too", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  // A reauthorization lands between the revoke's read and its terminal write: the connection now points at a new secret.
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { secret_reference: "projects/x/secrets/corvis-src-rotated", status: "active" }); db.beforeUpdate = undefined; };
+
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "revoked");
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old", "projects/x/secrets/corvis-src-rotated"], "no credential may stay live behind a revoked connection");
+});
+
+test("a failed secret destruction leaves the connection retryable instead of revoked with a live credential", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+  const revoke = secrets.revoke.bind(secrets);
+  secrets.revoke = async () => { throw new Error("secret manager unavailable"); };
+  await assert.rejects(() => revokeSourceConnection(identity(), "c1", { db, secrets }), /secret manager unavailable/);
+  assert.equal((await listSourceConnections(identity(), db))[0]?.status, "active");
+
+  secrets.revoke = revoke;
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+  assert.equal((await listSourceConnections(identity(), db))[0]?.status, "revoked");
 });
 
 test("reauthorization rotates the secret, reactivates the connection and clears the failure streak", async () => {

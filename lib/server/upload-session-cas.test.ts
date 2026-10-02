@@ -69,6 +69,8 @@ class Db implements PostgresSqlApi {
   releases = 0;
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.calls.push({ sql, parameters });
+    // The guarded purge claim: nothing here has been released, so the claim always wins.
+    if (sql.includes("returning 1 as claimed")) return [{ claimed: 1 }];
     if (sql.includes("select malware_scan_status, quarantine_status")) return [{ malware_scan_status: "pending", quarantine_status: "quarantined", sha256: null, size_bytes: 4096 }];
     if (sql.includes("set sha256=lower(coalesce(sha256")) return [{ sha_matches: true }];
     if (sql.includes("release_clean_artifact")) { this.releases += 1; return [{ job_id: "registered:x" }]; }

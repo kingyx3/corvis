@@ -145,6 +145,31 @@ test("workspace reads use the Postgres serving contract and explicit document al
   assert.equal(db.calls[0]?.parameters[1], JSON.stringify(identity.entitlements.documentIds));
 });
 
+test("document and snapshot timestamps leave the server as ISO-8601 UTC, whatever text form Postgres returned", async () => {
+  class TimestampDb extends FakeDb {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+      if (sql.includes("corvis_serving.documents")) {
+        return [
+          { document_id: "00000000-0000-0000-0000-000000000101", display_name: "a.pdf", created_at: "2026-07-01 14:02:11.123456+00" },
+          { document_id: "00000000-0000-0000-0000-000000000102", display_name: "b.pdf", created_at: new Date("2026-07-01T09:00:00.000Z") },
+          { document_id: "00000000-0000-0000-0000-000000000103", display_name: "c.pdf", created_at: "2026-07-01 09:00:00+08" },
+          { document_id: "00000000-0000-0000-0000-000000000104", display_name: "d.pdf", created_at: null },
+        ];
+      }
+      if (sql.includes("corvis_serving.fund_period_snapshots")) {
+        return [{ snapshot_id: snapshotId, version: 1, fund_id: "fund-a", fund_name: "Fund A", report_period: "2026 Q2", status: "published", created_at: "2026-08-01 01:00:00+00", published_at: "2026-08-02 10:30:00+08" }];
+      }
+      return super.query(sql, parameters);
+    }
+  }
+  const platform = new PostgresProductionPlatform(new TimestampDb());
+  assert.deepEqual((await platform.listDocuments(identity)).map((document) => document.uploaded), [
+    "2026-07-01T14:02:11.123Z", "2026-07-01T09:00:00.000Z", "2026-07-01T01:00:00.000Z", "—",
+  ]);
+  const [snapshot] = await platform.listSnapshots(identity);
+  assert.equal(snapshot?.changed, "2026-08-02T02:30:00.000Z", "the publish time wins over creation, normalized to UTC");
+});
+
 test("empty resource allowlists fail closed before a broad Postgres read", async () => {
   const db = new FakeDb();
   const noResources: RequestIdentity = { ...identity, entitlements: { ...identity.entitlements, fundIds: [], documentIds: [] } };
