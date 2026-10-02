@@ -29,14 +29,11 @@ export class DataCorrectionRequestError extends Error {
   }
 }
 
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a],[b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
+/** Key-sorted JSON of a flat command (only strings, numbers and null), so the hash does not depend on property order. */
+function stable(value: Record<string, string | number | null>): string {
+  return `{${Object.entries(value).sort(([a],[b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${JSON.stringify(entry)}`).join(",")}}`;
 }
-function requestHash(value: unknown): string { return createHash("sha256").update(stable(value)).digest("hex"); }
+function requestHash(value: Record<string, string | number | null>): string { return createHash("sha256").update(stable(value)).digest("hex"); }
 function required(value: string, name: string, max = 2000): string {
   const clean = value.trim();
   if (!clean || clean.length > max) throw new DataCorrectionRequestError("invalid_request", 400, `${name} is required and must be at most ${max} characters`);

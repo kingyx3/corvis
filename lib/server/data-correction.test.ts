@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
@@ -90,6 +91,108 @@ test("replay and resolve of an incident outside this tenant are typed 404s, not 
     (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 404 && error.code === "correction_incident_not_found");
   await assert.rejects(() => repository.resolve(identity, { incidentId, replacementSnapshotId: incidentId, replacementSnapshotVersion: 1 }),
     (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 404);
+});
+
+test("a valid open normalizes optional fields and binds an order-independent request hash over the trimmed command", async () => {
+  const snapshotId = "00000000-0000-4000-8000-000000000201";
+  const documentId = "00000000-0000-4000-8000-000000000202";
+  const db = new FakeDb([[{ incident_id: "incident-1", state: "open" }], [{ incident_id: "incident-2", state: "open" }]]);
+  const repository = new PostgresDataCorrectionRepository(db);
+  const result = await repository.open(identity, {
+    idempotencyKey: "  dq-1  ", fundId: " fund-1 ", reportPeriod: "2026-Q3", metricCode: "  nav  ",
+    snapshotId: ` ${snapshotId} `, snapshotVersion: 3, documentId, rootCause: " mapping ", correctionIntent: " replay ",
+  });
+  assert.deepEqual(result, { incidentId: "incident-1", state: "open" });
+  const call = db.calls[0]!;
+  assert.equal(call.parameters[0], identity.tenantId);
+  assert.match(String(call.parameters[1]), /^[0-9a-f-]{36}$/, "incident id is generated server-side");
+  assert.equal(call.parameters[2], "dq-1");
+  assert.equal(call.parameters[4], "fund-1");
+  assert.equal(call.parameters[5], "2026-Q3");
+  assert.equal(call.parameters[6], "nav");
+  assert.equal(call.parameters[7], snapshotId);
+  assert.equal(call.parameters[8], 3);
+  assert.equal(call.parameters[9], documentId);
+  assert.equal(call.parameters[10], "mapping");
+  assert.equal(call.parameters[11], "replay");
+  assert.equal(call.parameters[12], identity.subject);
+  // The hash is over the key-sorted normalized command; pin the exact serialization so stored hashes stay comparable.
+  const canonical = `{"correctionIntent":"replay","documentId":${JSON.stringify(documentId)},"fundId":"fund-1","idempotencyKey":"dq-1","metricCode":"nav",`
+    + `"reportPeriod":"2026-Q3","rootCause":"mapping","snapshotId":${JSON.stringify(snapshotId)},"snapshotVersion":3}`;
+  assert.equal(call.parameters[3], createHash("sha256").update(canonical).digest("hex"));
+
+  // Omitted optionals and a blank metric code become SQL nulls; the hash serializes them as JSON null.
+  await repository.open(identity, {
+    idempotencyKey: "dq-2", fundId: "fund-1", reportPeriod: "2026-Q3", metricCode: "   ", snapshotId: "  ", rootCause: "mapping", correctionIntent: "replay",
+  });
+  const sparse = db.calls[1]!;
+  assert.deepEqual(sparse.parameters.slice(6, 10), [null, null, null, null]);
+  const sparseCanonical = `{"correctionIntent":"replay","documentId":null,"fundId":"fund-1","idempotencyKey":"dq-2","metricCode":null,`
+    + `"reportPeriod":"2026-Q3","rootCause":"mapping","snapshotId":null,"snapshotVersion":null}`;
+  assert.equal(sparse.parameters[3], createHash("sha256").update(sparseCanonical).digest("hex"));
+});
+
+test("an open that the database answers with no row is a server error, not a fabricated incident", async () => {
+  await assert.rejects(
+    () => new PostgresDataCorrectionRepository(new FakeDb([[]])).open(identity, {
+      idempotencyKey: "dq-3", fundId: "fund-1", reportPeriod: "2026-Q3", rootCause: "mapping", correctionIntent: "replay",
+    }),
+    (error: unknown) => !(error instanceof DataCorrectionRequestError) && /was not created/.test(String((error as Error).message)),
+  );
+});
+
+test("a non-integer, zero, negative or non-finite snapshot version is a typed 400 naming the field", async () => {
+  const db = new FakeDb([]);
+  const repository = new PostgresDataCorrectionRepository(db);
+  for (const snapshotVersion of [0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      () => repository.open(identity, { idempotencyKey: "dq-4", fundId: "fund-1", reportPeriod: "2026-Q3", snapshotVersion, rootCause: "mapping", correctionIntent: "replay" }),
+      (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 400 && error.code === "invalid_request" && /snapshotVersion must be a positive integer/.test(error.message),
+      String(snapshotVersion),
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("over-long and blank required fields are typed 400s that name the field and its limit", async () => {
+  const db = new FakeDb([]);
+  const repository = new PostgresDataCorrectionRepository(db);
+  const base = { idempotencyKey: "dq-5", fundId: "fund-1", reportPeriod: "2026-Q3", rootCause: "mapping", correctionIntent: "replay" };
+  const cases: Array<[Partial<typeof base>, RegExp]> = [
+    [{ idempotencyKey: "k".repeat(257) }, /idempotencyKey .* at most 256/],
+    [{ fundId: " " }, /fundId is required/],
+    [{ reportPeriod: "p".repeat(129) }, /reportPeriod .* at most 128/],
+    [{ correctionIntent: "i".repeat(2001) }, /correctionIntent .* at most 2000/],
+  ];
+  for (const [override, message] of cases) {
+    await assert.rejects(() => repository.open(identity, { ...base, ...override }),
+      (error: unknown) => error instanceof DataCorrectionRequestError && error.status === 400 && error.code === "invalid_request" && message.test(error.message));
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("listing, replaying and resolving are scoped to the caller's tenant and actor", async () => {
+  const incidentId = "00000000-0000-4000-8000-000000000301";
+  const snapshotId = "00000000-0000-4000-8000-000000000302";
+  const listed = [{ incident_id: incidentId, state: "open" }];
+  const db = new FakeDb([listed, [{ job_id: "job-9" }], [{ resolved: true }], [{ resolved: "true" }]]);
+  const repository = new PostgresDataCorrectionRepository(db);
+
+  assert.deepEqual(await repository.list(identity), listed);
+  assert.match(db.calls[0]!.sql, /where tenant_id=\$1 order by opened_at desc limit 500/);
+  assert.deepEqual(db.calls[0]!.parameters, [identity.tenantId]);
+
+  assert.deepEqual(await repository.replay(identity, incidentId), { jobId: "job-9" });
+  assert.match(db.calls[1]!.sql, /request_data_correction_replay/);
+  assert.deepEqual(db.calls[1]!.parameters, [identity.tenantId, incidentId, identity.subject]);
+
+  await repository.resolve(identity, { incidentId, replacementSnapshotId: snapshotId, replacementSnapshotVersion: 2, evidence: { reviewedBy: "ops" } });
+  assert.match(db.calls[2]!.sql, /resolve_data_correction_incident/);
+  assert.deepEqual(db.calls[2]!.parameters, [identity.tenantId, incidentId, snapshotId, 2, identity.subject, JSON.stringify({ reviewedBy: "ops" })]);
+
+  // Evidence defaults to an empty object, and a driver that reports the boolean as text still counts as resolved.
+  await repository.resolve(identity, { incidentId, replacementSnapshotId: snapshotId, replacementSnapshotVersion: 2 });
+  assert.equal(db.calls[3]!.parameters[5], "{}");
 });
 
 test("data-correction route maps typed errors and audits every mutation", async () => {

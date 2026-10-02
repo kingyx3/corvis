@@ -6,6 +6,7 @@ import {
   LegalHoldError,
   evidenceHash,
   executeDeletionRequest,
+  listDeletionExecutionEvidence,
   parseDeletionScope,
 } from "./data-lifecycle.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -387,4 +388,90 @@ test("persisted last_error is redacted and bounded", async () => {
     assert.equal(/ya29|zzz/.test(stored), false);
     assert.match(stored, /^Error: adapter down/);
   });
+});
+
+test("the lifecycle adapter receives a bearer token only when one is configured", async () => {
+  const previous = process.env.CORVIS_DATA_LIFECYCLE_TOKEN;
+  const headersSeen: Array<Record<string, string>> = [];
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    headersSeen.push(init?.headers as Record<string, string>);
+    return new Response(JSON.stringify({ evidence: {} }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await withAdapter(async () => {
+      delete process.env.CORVIS_DATA_LIFECYCLE_TOKEN;
+      await executeDeletionRequest(identity(), REQUEST_ID, { db: new FakeDb(baseRequest()), fetchImpl });
+      process.env.CORVIS_DATA_LIFECYCLE_TOKEN = "lifecycle-secret";
+      await executeDeletionRequest(identity(), REQUEST_ID, { db: new FakeDb(baseRequest()), fetchImpl });
+    });
+  } finally {
+    if (previous === undefined) delete process.env.CORVIS_DATA_LIFECYCLE_TOKEN;
+    else process.env.CORVIS_DATA_LIFECYCLE_TOKEN = previous;
+  }
+  assert.equal(headersSeen.length, 2);
+  assert.equal("authorization" in headersSeen[0], false);
+  assert.equal(headersSeen[1].authorization, "Bearer lifecycle-secret");
+  for (const headers of headersSeen) {
+    assert.equal(headers["content-type"], "application/json");
+    assert.equal(headers["idempotency-key"], `${TENANT}:${REQUEST_ID}`);
+  }
+});
+
+test("evidenceHash treats an absent evidence payload as JSON null, and binds tenant and request", () => {
+  assert.equal(evidenceHash(TENANT, REQUEST_ID, 1, undefined), evidenceHash(TENANT, REQUEST_ID, 1, null));
+  assert.notEqual(evidenceHash(TENANT, REQUEST_ID, 1, null), evidenceHash(TENANT, REQUEST_ID, 1, {}));
+  assert.notEqual(evidenceHash(TENANT, REQUEST_ID, 1, null), evidenceHash("00000000-0000-0000-0000-0000000000a2", REQUEST_ID, 1, null));
+  assert.match(evidenceHash(TENANT, REQUEST_ID, 1, null), /^[0-9a-f]{64}$/);
+});
+
+test("a blocking legal hold reports each hold's source, class and reference, normalizing driver value types", async () => {
+  const db = new FakeDb(baseRequest());
+  const heldAt = new Date("2026-03-01T00:00:00.000Z");
+  db.legalHolds = [
+    { source: "retention_policy", data_class: "financials", reference: "policy-v3" },
+    { source: "legal_hold", data_class: "financials", reference: heldAt },
+    { source: "anything-else", data_class: null, reference: null },
+  ];
+  await assert.rejects(
+    () => executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: async () => { throw new Error("must not call the adapter"); } }),
+    (error: unknown) => {
+      assert.ok(error instanceof LegalHoldError);
+      assert.equal(error.code, "deletion_blocked_by_legal_hold");
+      assert.deepEqual(error.holds, [
+        { source: "retention_policy", dataClass: "financials", reference: "policy-v3" },
+        { source: "legal_hold", dataClass: "financials", reference: "2026-03-01T00:00:00.000Z" },
+        { source: "retention_policy", dataClass: "", reference: "" },
+      ]);
+      return true;
+    },
+  );
+  const hold = db.calls.find((call) => call.sql.includes("union all"))!;
+  assert.deepEqual(hold.parameters, [TENANT, JSON.stringify(["financials"])]);
+  assert.equal(db.evidenceRows.at(-1)?.outcome, "blocked");
+});
+
+test("replaying a completed request with an unreadable attempt counter reports attempt 0 and recomputes the evidence hash", async () => {
+  const db = new FakeDb(baseRequest({ state: "completed", execution_attempts: "not-a-number", completion_evidence: JSON.stringify({ rowsDeleted: 1 }) }));
+  const result = await executeDeletionRequest(identity(), REQUEST_ID, { db, fetchImpl: async () => { throw new Error("must not re-run"); } });
+  assert.equal(result.replayed, true);
+  assert.equal(result.attempt, 0);
+  assert.deepEqual(result.evidence, { rowsDeleted: 1 });
+  assert.equal(result.evidenceHash, evidenceHash(TENANT, REQUEST_ID, 0, { rowsDeleted: 1 }));
+});
+
+test("listDeletionExecutionEvidence returns the tenant's evidence rows for one request in attempt order", async () => {
+  const rows: PostgresRow[] = [
+    { attempt: 1, outcome: "failed", evidence_hash: "h1", recorded_by: "oidc|admin-1" },
+    { attempt: 2, outcome: "completed", evidence_hash: "h2", recorded_by: "oidc|admin-1" },
+  ];
+  const db = new FakeDb(baseRequest());
+  db.evidenceRows = rows;
+  const listed = await listDeletionExecutionEvidence(identity(), REQUEST_ID, db);
+  assert.deepEqual(listed, rows);
+  assert.equal(db.calls.length, 1);
+  const [call] = db.calls;
+  assert.deepEqual(call.parameters, [TENANT, REQUEST_ID]);
+  assert.match(call.sql, /where tenant_id=\$1 and deletion_request_id=\$2::uuid/);
+  assert.match(call.sql, /order by attempt\s*$/);
+  assert.match(call.sql, /from corvis_control\.deletion_execution_evidence/);
 });
