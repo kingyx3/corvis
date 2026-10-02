@@ -1,12 +1,8 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { reauthorizeAuditedSourceConnection } from "@/lib/server/source-connector-governance";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
-import {
-  assertSourceConnectionId,
-  type SourceConnection,
-} from "@/lib/server/source-connectors";
+import { sourceConnectionService } from "@/lib/server/source-connection-service";
+import { assertSourceConnectionId, type SourceConnection } from "@/lib/server/source-connectors";
 
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
   const { secretReference, ...rest } = connection;
@@ -32,13 +28,7 @@ export async function POST(request: Request, context: { params: Promise<{ source
     }
     assertSourceConnectionId(sourceConnectionId);
 
-    const data = await reauthorizeAuditedSourceConnection(
-      identity,
-      sourceConnectionId,
-      body.secret as Record<string, unknown>,
-      id,
-      { secrets: sourceConnectorSecretStore() },
-    );
+    const data = await sourceConnectionService().reauthorize(identity, sourceConnectionId, body.secret as Record<string, unknown>, id);
     return json({ data: toResponse(data), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
