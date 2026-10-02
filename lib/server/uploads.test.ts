@@ -1188,6 +1188,7 @@ test("the sweep never deletes released bytes under an aborted session that lost 
   assert.equal(result.abandoned, 0);
   assert.deepEqual(store.deleted, [], "released source bytes must survive the sweep");
   assert.equal(storedSession(store, session).state, "complete");
+});
 
 test("validateSourceMagic accepts only the real signature of each permitted document type", () => {
   const zip = (third: number) => Buffer.from([0x50, 0x4b, third, 0x04, 0x00]);
@@ -1368,4 +1369,39 @@ test("a sweep skips listed objects that are not sessions of the swept tenant", a
   assert.equal(result.skipped, 4, "the malformed, foreign and missing entries and the still-young session are skipped");
   assert.equal(store.deleted.length, 0);
   assert.equal(storedSession(store, mine).state, "initiated");
+});
+
+test("the sweep skips an aborted session whose registry row a release claimed first", async () => {
+  const { uploads, store, db, actor, session } = await quarantinedUpload();
+  store.json.set(sessionStorageKey(session), JSON.stringify({ ...storedSession(store, session), state: "aborted" }));
+  db.artifact = { malware_scan_status: "pending", quarantine_status: "quarantined" };
+  db.loseClaimRace = true; // the guarded claim matches no row although the registry still reads 'quarantined'
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.skipped, 1);
+  assert.equal(result.abandoned, 0);
+  assert.deepEqual(store.deleted, [], "nothing is deleted until the purge claim is won");
+});
+
+test("a registry failure while marking an abandoned session's artifact purged is logged and the bytes are still purged", async (t) => {
+  const warn = t.mock.method(console, "warn");
+  const store = new FakeObjectStore();
+  const db = new (class extends FakeDb {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (sql.includes("quarantine_status='purged'")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const actor = identity();
+  const session = await uploads.initiate(actor, initiateInput());
+  backdate(store, session, 365 * 24 * 60 * 60 * 1000);
+
+  const result = await uploads.sweep(actor.tenantId);
+
+  assert.equal(result.abandoned, 1);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]?.arguments[0]), /upload\.mark_artifact_purged_failed/);
 });
