@@ -66,7 +66,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
   valid: boolean;
   onSuccess: () => Promise<void>;
   children: ReactNode;
-  method?: "POST" | "PUT";
+  method?: "POST" | "PUT" | "PATCH";
   destructive?: boolean;
   onReceipt?: (result: unknown) => string | undefined;
 }) {
@@ -339,6 +339,26 @@ function DataCorrection({ onSuccess }: FormProps) {
   </GovernedMutation>;
 }
 
+function DataIssueTriage({ onSuccess }: FormProps) {
+  const [caseId, setCaseId] = useState("");
+  const [action, setAction] = useState("investigate");
+  const [expectedStatus, setExpectedStatus] = useState("");
+  const [correctionIncidentId, setCorrectionIncidentId] = useState("");
+  const [note, setNote] = useState("");
+  const noChange = action === "no_change";
+  const body = { action, ...(expectedStatus ? { expectedStatus } : {}), ...(correctionIncidentId && !noChange ? { correctionIncidentId } : {}), ...(note ? { note } : {}) };
+  const valid = Boolean(UUID.test(caseId) && (!noChange || note.trim()) && (!correctionIncidentId || UUID.test(correctionIncidentId)));
+  return <GovernedMutation title="Data issue triage" description="Move a customer data-issue case: investigate (optionally linking the governed correction), mark corrected by naming a resolved correction, or close with no change and a reason. The reporter is notified. This never edits or republishes data." endpoint={`/api/v1/admin/data-issues/${encodeURIComponent(caseId)}`} method="PATCH" body={body} valid={valid} onSuccess={onSuccess}>
+    <div className="form-grid">
+      <label className="form-field">Case ID<Text value={caseId} onChange={setCaseId} placeholder="UUID from the Data issue queue"/></label>
+      <label className="form-field">Action<Select value={action} onChange={setAction}><option value="investigate">Investigate (Received → Investigating)</option><option value="correct">Mark corrected (Investigating → Corrected)</option><option value="no_change">Close with no change (Investigating → No change)</option></Select></label>
+      <label className="form-field">Expected current status (optional)<Select value={expectedStatus} onChange={setExpectedStatus}><option value="">Any</option><option value="received">Received</option><option value="investigating">Investigating</option></Select></label>
+      {!noChange && <label className="form-field">Correction incident ID{action === "correct" ? "" : " (optional)"}<Text value={correctionIncidentId} onChange={setCorrectionIncidentId} placeholder="UUID of the data correction"/><span className="field-hint">{action === "correct" ? "Required unless the case was already linked. The correction must be resolved; the replacement snapshot is copied from it." : "Linking now lets resolving that correction close this case automatically."}</span></label>}
+      <label className="form-field">Note{noChange ? "" : " (optional)"}<Text value={note} onChange={setNote}/></label>
+    </div>
+  </GovernedMutation>;
+}
+
 function Deletion({ onSuccess }: FormProps) {
   const [action, setAction] = useState("request");
   const [dataClasses, setDataClasses] = useState("");
@@ -367,6 +387,7 @@ export function GovernanceForms({ onSuccess, featureFlags }: FormProps & { featu
     <FeatureFlag onSuccess={onSuccess} flags={featureFlags}/>
     <SessionRevocation onSuccess={onSuccess}/>
     <DataCorrection onSuccess={onSuccess}/>
+    <DataIssueTriage onSuccess={onSuccess}/>
     <Deletion onSuccess={onSuccess}/>
   </div>;
 }

@@ -118,6 +118,12 @@ reconciliation compares each document against the other documents of that draft
 - Observations whose grain differs (for example a different `report_date` or
   `period_start`) are different grains and remain separate facts.
 
+### Data-issue reports (migration 083)
+
+Customer reports on published figures (F5) live in `corvis_control.data_issue_case` (current state; scope, comment and reporter are immutable by trigger) and the append-only `data_issue_case_event` history (ordered by `event_seq`). Both are server-managed: RLS enabled and forced, no client policy, because a case is visible to its reporter and to Organization Admins only, which is a predicate on the reporter's identity that tenant membership cannot express. `data_issue_case.correction_incident_id` links a case to the governed `data_correction_incident` (022); a `corrected` case copies the replacement snapshot id and version from that incident.
+
+Three `security invoker` functions own the writes: `report_data_issue` (idempotent per reporter and key, validates that a named snapshot exists for the fund, writes only the case and its first history row), `transition_data_issue_case` (the `received -> investigating -> corrected | no_change` machine with compare-and-set on the expected status) and `close_data_issue_cases_for_correction` (corrects every linked investigating case once a correction has resolved). **Reporting never touches `fund_period_snapshot`, observations, facts, publication events, `data_correction_incident`, processing jobs or the outbox**; `db/postgres/tests/data-issue-reports.sql` asserts that by fingerprinting those tables around a report, alongside the state machine, immutability, tenant isolation and the forced-RLS/no-policy shape, and `data-issue-reports.mjs` drives the same SQL through the application repository. Migration 083 also adds `data_issue_update` to the `email_outbox` and `notification_preference` category checks (see `NOTIFICATIONS.md`). API surface: `API_CONVENTIONS.md` (Data issues).
+
 ## Application adapter boundary
 
 Application/domain code must not depend on Supabase SDK-specific semantics, direct physical table assumptions or Snowflake SQL as product contracts. Repository/service adapters own persistence details.

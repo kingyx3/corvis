@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { createHttpDeliveryPort } from "../adapters/delivery/http-delivery.ts";
 import { SESSION_EXPIRED_EVENT, UnauthenticatedError } from "./api-errors.ts";
+import { latestRequestCorrelationId } from "./request-correlation.ts";
 
 // Lives in lib/ so `npm test` (which globs lib/*.test.ts) runs it.
 
@@ -58,4 +59,10 @@ test("a 401 from any delivery call is an UnauthenticatedError and fires the sess
   } finally {
     Reflect.deleteProperty(globalThis, "window");
   }
+});
+
+test("the correlation id of the latest export response is remembered for Contact support", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ data: [], correlationId: "corr-exports-9" }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+  await createHttpDeliveryPort().listExports();
+  assert.equal(latestRequestCorrelationId(), "corr-exports-9");
 });

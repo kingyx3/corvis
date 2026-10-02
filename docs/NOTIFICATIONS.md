@@ -9,6 +9,7 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 | `invitation` | Invitation issued or resent (C2/C3/C12/C15) | The invited address | No (transactional) |
 | `export_ready` | Export job reaches `complete` | The requesting person | On/off, immediate or daily digest (default: on, immediate) |
 | `pinned_fund_published` | Snapshot published | Everyone who pinned that fund, per workspace | On/off, immediate or daily digest (default: on, digest) |
+| `data_issue_update` | A data issue case you reported moves to Investigating, Corrected or No change (F5) | The person who reported it (a verified human identity; service identities get the in-app status only) | On/off, immediate or daily digest (default: on, immediate) |
 | `source_attention` | Sync moves a connection to `reauthorization_required` or `suspended` | `tenant_admin` and `accountadmin` members of the workspace | On/off, immediate or daily digest (default: on, immediate) |
 | `support_access` | Support access granted (active or pending acknowledgement) | Every `tenant_admin` | No: always sent immediately |
 | `role_changed` | Tenant admin changes or removes a member's role | The affected member | No: always sent immediately |
@@ -16,7 +17,13 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 
 `source_attention` is a one-shot email enqueued when a sync moves a connection to `reauthorization_required` or `suspended`; it is deduplicated per run and there is no stored in-app notification record to clear. The in-app signal (the attention banner on Documents and the connection list) is derived from the live connection status, so it disappears as soon as the connection is healthy again. Only reauthorization returns a `reauthorization_required` or `suspended` connection to `active`: a successful sync cannot, because `runConnectionSync` refuses any connection that is not already `active`.
 
-The catalog, audiences and templates live in `core/notifications.ts`. Stories that don't exist yet (F3 assignment/mentions, F5 data-issue updates, F7 sign-in policy) add a category there when they ship.
+The catalog, audiences and templates live in `core/notifications.ts`. Stories that don't exist yet (F3 assignment/mentions, F7 sign-in policy) add a category there when they ship. F5 data-issue updates shipped as `data_issue_update` (below).
+
+### F5 data-issue updates
+
+`data_issue_update` is enqueued in the same transaction as the case's status change (`lib/server/data-issue.ts`, through `bestEffortNotification` and `enqueueForUser`, so a notification fault never blocks the change), once per case and status (`dedupe_key = data_issue_update:<caseId>:<status>`). It happens on every Data Operations move (`PATCH /api/v1/admin/data-issues/{caseId}`) and when resolving a governed correction closes the cases linked to it (`POST /api/v1/admin/data-corrections` `resolve`). The outbox row carries only the reporter's user id, the workspace, the case's `fund_id` (so send-time eligibility re-checks the fund entitlement and workspace membership, exactly as for `pinned_fund_published`) and `template_params = {"status": "..."}`.
+
+The email says only that a data issue the person reported moved to a status ("Data Operations is investigating...", "was corrected. A replacement publication is available.", "was reviewed and no change was needed.") and links to `/#/issues`. It never names the fund, company, metric, period or snapshot, never quotes the comment or a resolution note, and never carries a figure: those live in the Data issues view, behind normal authorization. The in-app signal is independent of email: the reporter's case list shows an **Updated** badge and the sidebar a count until they open or acknowledge the case (`reporter_seen_status` on the case, cleared by `PATCH /api/v1/data-issues/{caseId}` `{"seen": true}`), so a person with no verified address, a service identity, or one who switched the category off still sees the change in the app.
 
 ## Content rules
 
@@ -74,5 +81,7 @@ Until then, the settings dialog says "Email delivery isn't switched on yet", and
 - `core/notifications.test.ts` — audiences, mandatory rules, preference validation, template content and escaping.
 - `lib/server/notifications.test.ts` — savepoint isolation, provider selection, recipient capture rules, invitation outcomes (the token is never written).
 - `lib/server/route-authorization.test.ts` — service identities are refused; mandatory and hidden categories cannot be changed.
+- `core/notifications.test.ts` also pins the `data_issue_update` template: status wording only, no figure, name or case detail.
+- `db/postgres/tests/data-issue-reports.mjs` — the F5 notice end to end against real Postgres in CI: queued with status-only params, dispatched in words without any fund, company, metric or comment text, suppressed when the person opted out.
 - `db/postgres/tests/email-notifications.mjs` — end to end against real Postgres in CI: capture, preferences, audience enqueueing, deduplication, send-time eligibility, retries, digests, invitation records.
 - `e2e/notification-settings.spec.ts` — dialog reachable from the sidebar, the mobile workspace dialog, the command palette and the email link; axe in light and dark.

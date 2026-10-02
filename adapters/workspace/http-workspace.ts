@@ -1,5 +1,6 @@
 import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
 import { MalformedStreamError, apiResponseError } from "../../lib/api-errors.ts";
+import { recordResponseCorrelation } from "../../lib/request-correlation.ts";
 import type {
   MemberRoleReceipt,
   DeactivateTenantAccessResult,
@@ -37,6 +38,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
     const response = await fetch(`${base}${path}`, { ...init, credentials: "include", headers: { "content-type": "application/json", ...workspaceContextHeaders(), ...(init?.headers || {}) } });
     if (!response.ok) throw await apiResponseError(response);
     const body = await response.json() as Envelope<T>;
+    recordResponseCorrelation(response.headers, body);
     return body.data;
   }
 
@@ -58,6 +60,7 @@ export function createHttpWorkspacePort(apiBase = ""): WorkspacePort {
       });
       if (!response.ok) throw await apiResponseError(response);
       const body = await response.json() as CollectionEnvelope<T>;
+      recordResponseCorrelation(response.headers, body);
       items.push(...body.data);
       if (body.nextCursor && seen.has(body.nextCursor)) throw new Error("pagination_cursor_cycle");
       cursor = body.nextCursor;

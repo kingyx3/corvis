@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { ContactSupportLink } from "@/components/help/contact-support-link";
 import { reportClientError } from "@/lib/client-error-report";
 
 export default function ErrorBoundary({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
@@ -19,6 +20,7 @@ export default function ErrorBoundary({ error, retry }: { error: Error & { diges
         <div className="state-actions">
           <button className="primary-button" onClick={() => retry()}>Retry</button>
           <Link className="secondary-button" href="/">Return to workspace</Link>
+          <ContactSupportLink className="secondary-button" reference={error.digest}/>
         </div>
         {error.digest && <p className="field-hint state-reference">Reference <code>{error.digest}</code></p>}
       </section>

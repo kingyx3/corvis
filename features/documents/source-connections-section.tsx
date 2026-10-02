@@ -2,6 +2,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Icon } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
+import { ContactSupportLink } from "@/components/help/contact-support-link";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
   CONNECTION_ACTION_COPY,
@@ -158,7 +159,7 @@ function ConnectionCard({ connection, health, hasRunHistory, onOpenRunHistory, o
       <div><dt>Last successful sync</dt><dd>{health.lastSuccess.at ? <><time dateTime={health.lastSuccess.at}>{time(health.lastSuccess.at)}</time><span className="table-secondary">{health.lastSuccess.relative}</span></> : "Never"}</dd></div>
       <div><dt>Last attempt</dt><dd>{health.lastAttempt ? <><time dateTime={health.lastAttempt.at}>{time(health.lastAttempt.at)}</time><span className="table-secondary">{health.lastAttempt.relative}{health.lastAttempt.failed ? " · did not succeed" : ""}</span></> : "No attempt yet"}</dd></div>
       <div><dt>Next sync</dt><dd>{health.nextSync}</dd></div>
-      <div className="source-connection-required"><dt>Required action</dt><dd><strong>{action.label}</strong><span className="table-secondary">{action.detail}</span></dd></div>
+      <div className="source-connection-required"><dt>Required action</dt><dd><strong>{action.label}</strong><span className="table-secondary">{action.detail}</span>{action.kind === "contact_support" && <ContactSupportLink className="text-button" view="documents"/>}</dd></div>
     </dl>
     <div className="source-connection-controls">
       {controls.reauthorize && <button className={reauthorizeIsNext ? "primary-button" : "secondary-button"} aria-label={`Reauthorize ${label}`} onClick={() => onAction("reauthorize")}>Reauthorize</button>}

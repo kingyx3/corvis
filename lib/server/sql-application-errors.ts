@@ -78,6 +78,17 @@ export const SQL_APPLICATION_ERRORS = [
   "replacement snapshot must already be published",
   "replacement snapshot scope does not match correction incident",
   "active data correction incident blocks publication",
+  // corvis_control.report_data_issue / transition_data_issue_case (083)
+  "idempotency key reused with different data issue report",
+  "data issue snapshot not found for fund",
+  "data issue case status changed",
+  "data issue transition not allowed",
+  "data issue correction not found",
+  "data issue correction scope mismatch",
+  "data issue correction was cancelled",
+  "data issue correction required",
+  "data issue correction is not resolved",
+  "data issue resolution note required",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -152,6 +163,17 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "replacement snapshot must already be published": { code: "replacement_snapshot_not_published", status: 409 },
   "replacement snapshot scope does not match correction incident": { code: "replacement_snapshot_scope_mismatch", status: 409 },
   "active data correction incident blocks publication": { code: "publication_blocked_by_correction", status: 409 },
+  // Data-issue reports (F5): refusals of a report or a case command that its key history or current status cannot accept.
+  "idempotency key reused with different data issue report": { code: "idempotency_key_reused", status: 409 },
+  "data issue snapshot not found for fund": { code: "data_issue_snapshot_not_found", status: 404 },
+  "data issue case status changed": { code: "data_issue_status_changed", status: 409 },
+  "data issue transition not allowed": { code: "data_issue_transition_not_allowed", status: 409 },
+  "data issue correction not found": { code: "data_issue_correction_not_found", status: 404 },
+  "data issue correction scope mismatch": { code: "data_issue_correction_scope_mismatch", status: 409 },
+  "data issue correction was cancelled": { code: "data_issue_correction_cancelled", status: 409 },
+  "data issue correction required": { code: "data_issue_correction_required", status: 409 },
+  "data issue correction is not resolved": { code: "data_issue_correction_not_resolved", status: 409 },
+  "data issue resolution note required": { code: "invalid_note", status: 400 },
 };
 
 /**

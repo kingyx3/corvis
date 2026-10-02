@@ -10,6 +10,7 @@ import {
   sessionExpiredError,
   throwIfUnauthenticated,
 } from "./api-errors.ts";
+import { latestRequestCorrelationId } from "./request-correlation.ts";
 
 afterEach(() => { Reflect.deleteProperty(globalThis, "window"); });
 
@@ -37,6 +38,13 @@ test("throwIfUnauthenticated throws the typed error with user-facing copy and fi
 
 test("sessionExpiredError is safe outside a browser", () => {
   assert.ok(sessionExpiredError() instanceof UnauthenticatedError);
+});
+
+test("apiResponseError remembers the failing request's correlation id for Contact support", async () => {
+  await apiResponseError(new Response(JSON.stringify({ error: "internal_error", correlationId: "corr-body-1" }), { status: 500 }));
+  assert.equal(latestRequestCorrelationId(), "corr-body-1");
+  await apiResponseError(new Response("<html>bad gateway</html>", { status: 502, headers: { "x-correlation-id": "corr-header-2" } }));
+  assert.equal(latestRequestCorrelationId(), "corr-header-2");
 });
 
 test("apiResponseError maps 401 to UnauthenticatedError (keeping the server code) and other statuses to ApiError", async () => {

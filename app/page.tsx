@@ -12,10 +12,15 @@ import { parseViewHash, viewHash } from "@/lib/view-hash";
 import { useDocumentTitle } from "@/components/ui/use-document-title";
 import { ViewErrorBoundary } from "@/components/ui/view-error-boundary";
 import { createLatestRequestGate } from "@/lib/latest-request";
+import { CONTACT_SUPPORT, helpLinks } from "@/lib/support";
+import { setSupportScope } from "@/lib/support-scope";
 import { researchDraftForView, type ResearchDraft } from "@/lib/research-draft";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
+import { ContactSupportLink } from "@/components/help/contact-support-link";
+import { HelpDialog } from "@/components/help/help-dialog";
+import { useSupportConfig } from "@/components/help/use-support-request";
 import { PageHeading } from "@/components/ui/page-heading";
 import { SidebarNavItem } from "@/components/ui/sidebar-nav-item";
 import { OverviewView } from "@/features/overview/overview-view";
@@ -35,6 +40,8 @@ import { ResearchView } from "@/features/research/research-view";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { AccessAdminView } from "@/features/access/access-admin-view";
 import { FundPeriodStatusChip, type FundPeriodStatus } from "@/components/ui/fund-period-status-chip";
+import { DataIssuesView } from "@/features/data-issues/data-issues-view";
+import { useDataIssueIndicator } from "@/features/data-issues/use-data-issue-indicator";
 
 type ReadModule = "capabilities" | "documents" | "snapshots" | "observations" | "summary";
 type ModuleErrors = Partial<Record<ReadModule, string>>;
@@ -42,7 +49,7 @@ type SearchResult =
   | { kind: "document"; key: string; title: string; detail: string; document: DocumentRecord }
   | { kind: "fund"; key: string; title: string; detail: string; snapshot: FundSnapshot }
   | { kind: "observation"; key: string; title: string; detail: string; observation: ObservationRecord };
-type CommandResult = { kind: "command"; category: "Navigation" | "Action"; key: string; title: string; detail: string; keywords: string; run: () => void };
+type CommandResult = { kind: "command"; category: "Navigation" | "Action" | "Help"; key: string; title: string; detail: string; keywords: string; run: () => void };
 type PaletteResult = SearchResult | CommandResult;
 
 function errorMessage(reason: unknown): string { return friendlyErrorMessage(reason, "This module is temporarily unavailable. Retry, or contact support if it persists."); }
@@ -73,6 +80,8 @@ export default function CorvisApp() {
   // The sidebar workspace section is hidden at <=960px; this dialog carries it on tablets and phones (#245).
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const supportConfig = useSupportConfig();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeResult, setActiveResult] = useState(0);
   const [reviewFocus, setReviewFocus] = useState<ReviewFocusRequest | null>(null);
@@ -100,6 +109,9 @@ export default function CorvisApp() {
     void loadDemoUiFixtures().then((fixtures) => { if (active) setDemoFixtures(fixtures); }).catch(() => {});
     return () => { active = false; };
   }, []);
+
+  // Contact support quotes the workspace the shell loaded, even from an error page that replaces the shell.
+  useEffect(() => { if (identity) setSupportScope({ tenantId: identity.tenantId, workspaceId: identity.workspaceId }); }, [identity]);
 
   useEffect(() => {
     let active = true;
@@ -169,6 +181,7 @@ export default function CorvisApp() {
   const canExport = allowed("exports:create") && capabilities?.redistributionAllowed === true;
   const canReadSources = allowed("sources:read") && capabilities?.sourceDocumentAccessAllowed === true;
   const canSearch = canReadDocuments || canReadObservations;
+  const dataIssues = useDataIssueIndicator(canReadObservations, view);
 
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.id && snapshot.id === selectedSnapshotId) ?? snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
@@ -195,8 +208,9 @@ export default function CorvisApp() {
     { id: "review" as View, label: "Data review", icon: "table" as IconName, badge: observations.filter((row) => row.state === "Needs review").length, visible: canReadObservations },
     { id: "delivery" as View, label: "Data delivery", icon: "download" as IconName, visible: canExport },
     { id: "research" as View, label: "Ask Corvis", icon: "spark" as IconName, visible: canResearch },
+    { id: "issues" as View, label: "Data issues", icon: "alert" as IconName, badge: dataIssues.unseen, visible: canReadObservations },
     { id: "access" as View, label: "Access administration", icon: "shield" as IconName, visible: canAdmin && identity?.tenantAdmin === true },
-  ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, docs, identity?.tenantAdmin, observations]);
+  ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, dataIssues.unseen, docs, identity?.tenantAdmin, observations]);
   const activeView: View = nav.some((item) => item.id === view) ? view : "overview";
   const activeLabel = nav.find((item) => item.id === activeView)?.label ?? "Overview";
 
@@ -315,13 +329,15 @@ export default function CorvisApp() {
       { kind: "command", category: "Action", key: "action:refresh", title: "Refresh workspace", detail: "Re-fetch entitled workspace data", keywords: "reload refresh sync data", run: () => { closeSearch(); void refreshWorkspace(); } },
       { kind: "command", category: "Action", key: "action:display", title: "Display preferences", detail: "Time zone, date and number formats", keywords: "timezone time zone number date display preferences settings", run: () => { closeSearch(); setDisplaySettingsOpen(true); } },
       { kind: "command", category: "Action", key: "action:notifications", title: "Notification settings", detail: "Choose which events email you", keywords: "notifications email alerts preferences digest settings", run: () => { closeSearch(); setNotificationsOpen(true); } },
+      { kind: "command", category: "Help", key: "help:contact", title: `Help: ${CONTACT_SUPPORT.label}`, detail: CONTACT_SUPPORT.description, keywords: CONTACT_SUPPORT.keywords, run: () => { closeSearch(); setHelpOpen(true); } },
+      ...helpLinks(supportConfig).map((link) => ({ kind: "command" as const, category: "Help" as const, key: `help:${link.id}`, title: `Help: ${link.label}`, detail: link.description, keywords: link.keywords, run: () => { closeSearch(); window.open(link.href, "_blank", "noopener,noreferrer"); } })),
       ...(canUpload ? [{ kind: "command" as const, category: "Action" as const, key: "action:upload", title: "Upload documents", detail: "Open the governed document upload flow", keywords: "upload add document files", run: () => { closeSearch(); setUploadOpen(true); } }] : []),
       ...(canReview && canReadObservations ? [{ kind: "command" as const, category: "Action" as const, key: "action:review", title: "Review data", detail: "Open observations that need review", keywords: "review approve observations exceptions", run: () => { closeSearch(); navigate("review"); } }] : []),
     ];
     const query = searchQuery.trim().toLowerCase();
     const matchingCommands = commands.filter((command) => !query || `${command.title} ${command.detail} ${command.keywords}`.toLowerCase().includes(query));
     return [...matchingCommands, ...searchResults].slice(0, 20);
-  }, [canReadObservations, canReview, canUpload, nav, navigate, refreshWorkspace, searchQuery, searchResults]);
+  }, [canReadObservations, canReview, canUpload, nav, navigate, refreshWorkspace, searchQuery, searchResults, supportConfig]);
   const activeResultIndex = Math.min(activeResult, Math.max(paletteResults.length - 1, 0));
 
   const choosePaletteResult = (result: PaletteResult) => {
@@ -348,15 +364,15 @@ export default function CorvisApp() {
     }
   };
 
-  const scopedUnavailable = (title: string, detail: string) => <div role="alert"><PageHeading eyebrow="Module unavailable" title={title} description={detail}><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button></PageHeading></div>;
+  const scopedUnavailable = (title: string, detail: string) => <div role="alert"><PageHeading eyebrow="Module unavailable" title={title} description={detail}><button className="secondary-button" onClick={() => void refreshWorkspace()}>Retry this workspace</button><ContactSupportLink className="text-button" view={activeView}/></PageHeading></div>;
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="sidebar" aria-label="Workspace navigation"><div className="brand"><span className="brand-mark" aria-hidden="true">C</span><span>CORVIS</span></div><nav aria-label="Workspace sections">{nav.map((item) => <SidebarNavItem key={item.id} label={item.label} icon={item.icon} badge={item.badge} active={activeView === item.id} onSelect={() => navigate(item.id)}/>)}<button type="button" className="sidebar-workspace-button" aria-label="Workspace and access" aria-haspopup="dialog" onClick={() => setWorkspaceOpen(true)}><Icon name="shield"/><span>Workspace</span></button></nav><WorkspaceSwitcher identity={identity}/><div className="sidebar-bottom"><div className="cycle-card"><span>Reporting cycle</span><strong>{snapshots.length} fund periods</strong><p>Tenant-scoped serving data</p></div><button className="sidebar-notifications-button" onClick={() => setDisplaySettingsOpen(true)}>Display preferences</button><div className="profile"><span className="avatar" aria-hidden="true">U</span><span><strong>{identity?.subject ?? "Signed-in user"}</strong><small>Enterprise session</small></span></div><button type="button" className="sidebar-notifications-button" aria-haspopup="dialog" onClick={() => setNotificationsOpen(true)}><Icon name="send" size={15}/><span>Notification settings</span></button></div></aside>
-    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
+    <main className="main-area" id="main-content" tabIndex={-1}><header className="topbar" role="banner"><div className="breadcrumb" aria-label="Breadcrumb"><span>Workspace</span><Icon name="chevron" size={13}/><strong>{nav.find((item) => item.id === activeView)?.label ?? "Overview"}</strong></div><div className="top-actions">{fundPeriodStatus && <FundPeriodStatusChip status={fundPeriodStatus} onOpen={() => openSnapshot(reviewSnapshot!)}/>}<button className="global-search" aria-label="Search workspace or run a command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span className="global-search-label">Search or run a command</span><kbd aria-hidden="true">⌘K</kbd></button><button type="button" className="help-button" aria-label="Help and support" aria-haspopup="dialog" onClick={() => setHelpOpen(true)}><Icon name="help" size={16}/><span className="help-button-label">Help</span></button></div></header><div className={`content ${activeView === "research" ? "research-content" : ""}`}>
       {sessionExpired && <div className="lineage-note tone-warning" role="alert" aria-label="Session expired"><Icon name="alert"/><div><strong>Your session has expired</strong><span>Sign in again to continue. Data that was already saved is not affected.</span></div><button className="primary-button" onClick={() => window.location.reload()}>Sign in again</button></div>}
       {loading && <PageHeading eyebrow="Workspace" title="Loading trusted data…" description="Fetching entitled documents, snapshots and observations."/>}
-      {!loading && !sessionExpired && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button></div>}
+      {!loading && !sessionExpired && degradedModules.length > 0 && <div className="lineage-note tone-warning" role="status" aria-label="Workspace degraded"><Icon name="alert"/><div><strong>Some workspace modules are degraded</strong><span>{degradedModules.join(", ")}. Healthy modules remain available; capability failures fail closed for mutating actions.</span></div><button className="text-button" onClick={() => void refreshWorkspace()}>Retry</button><ContactSupportLink className="text-button" view={activeView}/></div>}
       <ViewErrorBoundary key={activeView} view={activeView} label={activeLabel}>
       {!loading && activeView === "overview" && <><DashboardDepthSections summary={summary} observations={observations} canAdmin={canAdmin} onOpenSnapshotId={openSnapshotById} onOpenPositionFinancials={viewPositionFinancials} onSummaryChanged={() => void refreshSummary()}/><div id="customer-overview"><OverviewView snapshots={snapshots} summary={summary} summaryError={canReadObservations ? moduleErrors.summary : undefined} onRetrySummary={() => void refreshSummary()} onOpenAttention={openAttention} onOpenSnapshotId={openSnapshotById} onSummaryChanged={() => void refreshSummary()} activity={identity?.workspaceId !== "demo-secondary" ? demoFixtures.recentActivity : []} onNavigate={navigate} onUpload={() => setUploadOpen(true)} onSnapshotSelect={openSnapshot} canUpload={canUpload} canReadDocuments={canReadDocuments} canReadObservations={canReadObservations} canResearch={canResearch} canReview={canReview} canAdmin={canAdmin}/></div></>}
       {!loading && activeView === "analytics" && canReadObservations && <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={canReadDocuments ? openDocumentById : undefined} focusRequest={analyticsFocus}/>}
@@ -364,11 +380,13 @@ export default function CorvisApp() {
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} snapshots={snapshots} onSelectSnapshot={setSelectedSnapshotId} canResearch={canResearch} onExplainException={explainException} onOpenDocument={canReadDocuments && canReadSources ? openDocumentById : undefined} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)}
       {!loading && activeView === "delivery" && canExport && <DeliveryView publishedSnapshots={publishedSnapshots}/>}
       {!loading && activeView === "research" && canResearch && <ResearchView draftRequest={researchDraft} onOpenDocument={canReadDocuments && canReadSources ? openDocumentById : undefined} suggestions={demoFixtures.researchSuggestions} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
+      {!loading && activeView === "issues" && canReadObservations && <DataIssuesView canViewAll={canAdmin && identity?.tenantAdmin === true} onChanged={dataIssues.refresh}/>}
       {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
       </ViewErrorBoundary>
     </div><div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{announcement}</div></main>
-    {workspaceOpen && <Modal label="Workspace and access" onClose={() => setWorkspaceOpen(false)} width="min(460px, 100%)"><div className="dialog-body"><h2>Workspace and access</h2><button type="button" className="secondary-button" onClick={() => { setWorkspaceOpen(false); setDisplaySettingsOpen(true); }}>Display preferences</button><WorkspaceSwitcher identity={identity} variant="panel"/><button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => { setWorkspaceOpen(false); setNotificationsOpen(true); }}>Notification settings</button><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setWorkspaceOpen(false)}>Close</button></div></div></Modal>}
+    {workspaceOpen && <Modal label="Workspace and access" onClose={() => setWorkspaceOpen(false)} width="min(460px, 100%)"><div className="dialog-body"><h2>Workspace and access</h2><button type="button" className="secondary-button" onClick={() => { setWorkspaceOpen(false); setDisplaySettingsOpen(true); }}>Display preferences</button><WorkspaceSwitcher identity={identity} variant="panel"/><button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => { setWorkspaceOpen(false); setNotificationsOpen(true); }}>Notification settings</button><button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => { setWorkspaceOpen(false); setHelpOpen(true); }}>Help and support</button><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setWorkspaceOpen(false)}>Close</button></div></div></Modal>}
     {searchOpen && <Modal label="Workspace command palette" onClose={closeSearch} align="top" width="min(680px, 100%)"><label className="search-palette-input"><Icon name="search" size={18}/><input autoFocus role="combobox" aria-expanded={paletteResults.length > 0} aria-controls="global-search-results" aria-autocomplete="list" aria-activedescendant={paletteResults.length ? `search-result-${activeResultIndex}` : undefined} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setActiveResult(0); }} onKeyDown={onSearchKeyDown} placeholder="Search or run a command" aria-label="Search workspace or run a command"/><kbd>Esc</kbd></label><div className="search-palette-results">{searchQuery.trim() && paletteResults.length === 0 && <p role="status" className="search-palette-empty">No commands or entitled workspace data match “{searchQuery}”.</p>}{paletteResults.length > 0 && <div id="global-search-results" role="listbox" aria-label="Commands and search results">{paletteResults.map((result, index) => <div key={result.key} id={`search-result-${index}`} role="option" aria-selected={index === activeResultIndex} className="search-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (index !== activeResultIndex) setActiveResult(index); }} onClick={() => choosePaletteResult(result)}><span><strong>{result.title}</strong><small>{result.detail}</small></span><span className="search-kind">{result.kind === "command" ? result.category : result.kind}</span></div>)}</div>}</div><div className="search-palette-footer" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Run/open</span><span><kbd>Esc</kbd> Close</span></div></Modal>}
+    {helpOpen && <HelpDialog view={activeView} onClose={() => setHelpOpen(false)}/>}
     {displaySettingsOpen && <DisplaySettings onClose={() => setDisplaySettingsOpen(false)}/>}
     {notificationsOpen && <NotificationSettingsDialog onClose={() => setNotificationsOpen(false)}/>}
     {uploadOpen && canUpload && <UploadModal onClose={() => { setUploadOpen(false); navigate("documents"); }} onCompleted={(record) => { setDocs((prev) => [record, ...prev.filter((item) => item.id !== record.id)]); void refreshWorkspace(); }}/>}

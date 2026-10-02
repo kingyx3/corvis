@@ -19,9 +19,9 @@ const appUrl = "https://app.corvis.test";
 
 test("categories are visible only to the audience that can receive them", () => {
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
-  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "role_changed"]);
-  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "source_attention", "support_access", "role_changed"]);
+  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "role_changed"]);
+  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "source_attention", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "source_attention", "support_access", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -48,6 +48,12 @@ test("preference changes reject mandatory, hidden, duplicate and malformed categ
   assert.equal(code({ categories: [{ id: "export_ready", enabled: true, delivery: "weekly" }] }), "invalid_request");
   assert.equal(code({ categories: [] }), "invalid_request");
   assert.equal(code([]), "invalid_request");
+  // A non-object entry, and an id that is not even a string, are malformed requests or unknown categories, never a crash.
+  assert.equal(code({ categories: [null] }), "invalid_request");
+  assert.equal(code({ categories: ["export_ready"] }), "invalid_request");
+  assert.equal(code({ categories: [{ id: 7, enabled: true, delivery: "immediate" }] }), "unknown_category");
+  assert.equal(code({ categories: [{ enabled: true, delivery: "immediate" }] }), "unknown_category");
+  assert.equal(code({ categories: [{ id: "data_issue_update", enabled: false, delivery: "daily_digest" }] }), "ok", "data issue updates are optional for everyone");
 });
 
 test("every email links back to the app, and optional ones link to notification settings", () => {
@@ -55,6 +61,7 @@ test("every email links back to the app, and optional ones link to notification 
     ["export_ready", { format: "csv" }, true],
     ["pinned_fund_published", {}, true],
     ["source_attention", { status: "suspended" }, true],
+    ["data_issue_update", { status: "corrected" }, true],
     ["support_access", { status: "pending_ack" }, false],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],
@@ -96,4 +103,44 @@ test("email metadata respects recipient formats and calendar dates remain calend
   assert.match(calendar.text, /2026-10-01/);
   const digest = renderEmail("digest", { items: [{ category: "export_ready", count: 1234 }] }, { appUrl, displayPreferences });
   assert.match(digest.text, /1\.234/);
+});
+
+test("digest lines name known categories, fall back for unknown ones and only show counts above one", () => {
+  const digest = renderEmail("digest", {
+    items: [
+      { category: "data_issue_update", count: 3 },
+      { category: "export_ready", count: 1 },
+      { category: "export_ready" },
+      { category: "export_ready", count: 0 },
+      { category: "export_ready", count: 1.5 },
+      { category: "no_such_category", count: 2 },
+    ],
+  }, { appUrl });
+  assert.match(digest.text, /• Data issue updates \(3\)/);
+  assert.equal(digest.text.match(/• Export ready\n/g)?.length, 4, "a missing, zero or fractional count is shown once without a number");
+  assert.match(digest.text, /• Update \(2\)/, "an unknown category falls back to a generic label");
+  const none = renderEmail("digest", { items: "nope" }, { appUrl });
+  assert.doesNotMatch(none.text, /•/, "a malformed item list renders no lines");
+});
+
+test("a data issue update email names the new status in words and carries no figure, name or case detail", () => {
+  const expectations: Array<[unknown, RegExp]> = [
+    ["investigating", /Data Operations is investigating a data issue you reported in Growth Workspace\./],
+    ["corrected", /was corrected\. A replacement publication is available\./],
+    ["no_change", /reviewed and no change was needed\./],
+    ["received", /was updated\./],
+    [undefined, /was updated\./],
+    [{ nested: true }, /was updated\./],
+  ];
+  for (const [status, line] of expectations) {
+    const email = renderEmail("data_issue_update", { status, fundName: "Secret Fund", value: "$125.0m", caseId: "case-1", comment: "Revenue is wrong" }, { appUrl, workspaceName: "Growth Workspace" });
+    assert.equal(email.subject, "Update on a data issue you reported");
+    assert.match(email.text, line);
+    assert.match(email.text, /https:\/\/app\.corvis\.test\/#\/issues/, "links to the Data issues view, where normal authorization applies");
+    assert.ok(email.text.includes(settingsUrl(appUrl)) && email.html.includes("Change notification settings"), "optional, so it links to settings");
+    for (const secret of ["Secret Fund", "$125.0m", "case-1", "Revenue is wrong"]) {
+      assert.ok(!email.text.includes(secret) && !email.html.includes(secret) && !email.subject.includes(secret), `${secret} must never be emailed`);
+    }
+  }
+  assert.doesNotMatch(renderEmail("data_issue_update", { status: "corrected" }, { appUrl }).text, / in /, "no workspace name, no clause");
 });

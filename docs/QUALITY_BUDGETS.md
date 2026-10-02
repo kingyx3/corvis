@@ -9,7 +9,7 @@ Human-facing role terminology follows [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND
 
 `e2e/accessibility.spec.ts` runs [axe-core](https://github.com/dequelabs/axe-core)
 against every critical customer surface (Overview, Documents, Data review,
-Data delivery, Ask Corvis), the upload dialog, and the production admin console,
+Data delivery, Ask Corvis), the Help menu (`e2e/support/surfaces.ts`, light and dark), the upload dialog, and the production admin console,
 tagged against WCAG 2.1 A/AA (`e2e/quality-budgets.ts` →
 `accessibilityBudget.tags`). A `serious` or `critical` finding fails the run;
 `moderate`/`minor` findings do not, since the contractual bar is WCAG 2.1 AA,
