@@ -777,9 +777,9 @@ paths:
       - $ref: '#/components/parameters/cursor'
     get:
       operationId: listWebhookDeliveries
-      description: Customer-visible delivery diagnostics for one subscription. This endpoint has no unpaginated caller, so pagination is its only mode.
+      description: 'Customer-visible delivery diagnostics for one subscription, newest first: ordered by `createdAt` descending with the delivery id breaking ties, so the latest failures lead. This endpoint has no unpaginated caller, so pagination is its only mode. The `cursor` is opaque and encodes the last delivery''s (`createdAt`, delivery id) position; a cursor that was not issued by this ordering (for example one obtained before delivery diagnostics became chronological) is rejected with `invalid_cursor` (400) and the client restarts from the first page.'
       responses:
-        '200': { description: 'Paginated delivery attempts (state, attempt, status code, last error)' }
+        '200': { description: 'Paginated delivery attempts, newest first (state, attempt, status code, last error)' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }

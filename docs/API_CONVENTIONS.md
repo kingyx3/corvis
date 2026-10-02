@@ -66,6 +66,18 @@ silently ignored, clamped without complaint, or crashing.
 collections and use pagination as their collection contract. `GET /exports`
 uses its separately bounded requester-history contract.
 
+**Chronological collections:** the id-ordered rule above is the default, not
+a requirement. `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` is a
+diagnostic feed whose useful order is newest first, and its delivery ids are
+random v4 UUIDs, so it orders by `(created_at desc, delivery_id desc)` and its
+cursor encodes that composite position (a microsecond-precision UTC timestamp
+plus the delivery id). It does not go through `paginate()` (which sorts
+ascending by one key); the repository applies the row-value keyset predicate in
+SQL and returns the page with its `nextCursor`. A cursor that does not decode
+to the composite position, including one issued before the ordering changed, is
+rejected as `invalid_cursor` (400); cursors are opaque, so clients restart from
+the first page rather than reuse them across deployments.
+
 Production Postgres repositories now push the requested page into SQL with
 a keyset predicate and `limit + 1` fetch for the document/job/observation/
 snapshot lists and the governed serving-resource collections above. This
@@ -177,7 +189,7 @@ Subscription administration and per-subscription signing-key rotation
   so a subscription is never left with zero or two active keys. The new
   secret is returned exactly once, in this response.
 - `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` — paginated
-  customer-visible delivery diagnostics (state, attempt, status code, last
+  customer-visible delivery diagnostics, newest first (state, attempt, status code, last
   error).
 
 A signing secret is per tenant and per subscription, never shared across

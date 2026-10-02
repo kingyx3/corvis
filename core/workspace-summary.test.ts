@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "./contracts.ts";
-import { buildWorkspaceSummary, comparePeriods, MIXED_INSTRUMENT_TYPES, periodEndDate, STALE_AFTER_DAYS, type ExposureDimensionFact, type PortfolioValueFact } from "./workspace-summary.ts";
+import { buildWorkspaceSummary, comparePeriods, compareSnapshotValues, MIXED_INSTRUMENT_TYPES, periodEndDate, STALE_AFTER_DAYS, type ExposureDimensionFact, type PortfolioValueFact } from "./workspace-summary.ts";
 
 const now = new Date("2026-09-25T12:00:00Z");
 
@@ -303,4 +303,156 @@ test("SQL aggregates keyed per fund-period resolve each item to its own snapshot
     { count: 1, view: "review", snapshotId: "s1", observationId: "o-q1" },
     { count: 2, view: "review", snapshotId: "s2", observationId: "o-q2" },
   ]);
+});
+
+test("a bare year-month period ends on the last day of that month, and undated labels sort after dated ones", () => {
+  assert.equal(periodEndDate("2026-06"), "2026-06-30");
+  assert.equal(periodEndDate("2024-02"), "2024-02-29");
+  assert.ok(comparePeriods("Detecting…", "Q1 2026") > 0);
+  assert.ok(comparePeriods("Q1 2026", "Detecting…") < 0);
+  assert.ok(comparePeriods("Alpha", "Beta") < 0);
+  assert.deepEqual(["Beta", "Q3 2025", "Alpha"].sort(comparePeriods), ["Q3 2025", "Alpha", "Beta"]);
+});
+
+test("snapshot values of one period order by publication time, then by id; unusable timestamps fall back to the id", () => {
+  const at = (snapshotId: string, publishedAt: string | null) => ({ period: "Q2 2026", snapshotId, publishedAt });
+  assert.equal(compareSnapshotValues(at("a", null), at("b", "2026-08-01T00:00:00Z")), -1, "unpublished-time sorts before any timestamp");
+  assert.equal(compareSnapshotValues(at("a", "2026-09-01T00:00:00Z"), at("b", "2026-08-01T00:00:00Z")), 1);
+  assert.equal(compareSnapshotValues(at("a", "2026-08-01T00:00:00Z"), at("b", "2026-09-01T00:00:00Z")), -1);
+  assert.ok(compareSnapshotValues(at("a", null), at("b", null)) < 0);
+  assert.ok(compareSnapshotValues(at("b", "2026-08-01T00:00:00Z"), at("a", "2026-08-01T00:00:00Z")) > 0);
+  assert.ok(compareSnapshotValues(at("a", "not a date"), at("b", "2026-08-01T00:00:00Z")) < 0, "an unparseable timestamp cannot order rows");
+  assert.ok(compareSnapshotValues(at("a", "2026-08-01T00:00:00Z"), at("b", "also bad")) < 0);
+  assert.ok(compareSnapshotValues({ ...at("a", null), period: "Q1 2026" }, at("a", null)) < 0, "the period always wins");
+});
+
+test("reporting-currency-less facts roll up, and exposure ties break by fund name, breakdown ties by label", () => {
+  const summary = buildWorkspaceSummary({ ...empty,
+    valueFacts: [
+      fact({ currency: null, value: 100 }),
+      fact({ snapshotId: "b1", fundId: "fund-b", fund: "Fund B", currency: null, value: 100 }),
+    ],
+    dimensionFacts: [
+      dimension({ currency: null, subjectLevel: null, category: "senior_debt", value: 40 }),
+      dimension({ currency: null, subjectLevel: null, category: "common_equity", value: 40 }),
+    ],
+  });
+  assert.equal(summary.currency, null);
+  assert.deepEqual(summary.exposure.items.map((item) => [item.fund, item.value]), [["Fund A", 100], ["Fund B", 100]]);
+  assert.deepEqual(summary.exposure.byAssetType.map((row) => [row.label, row.value]), [["Common equity", 40], ["Senior debt", 40], ["Not attributed", 120]]);
+});
+
+// A publish appends v2 as published and keeps the draft v1 as immutable history; a withdrawal appends v3.
+function publishedHistory(id = "a", overrides: Partial<FundSnapshot> = {}): FundSnapshot[] {
+  return [
+    snapshot({ id, version: 2, status: "Published", publishedAt: "2026-09-01T00:00:00Z", ...overrides }),
+    snapshot({ id, version: 1, status: "Review", ...overrides, publishedAt: undefined }),
+  ];
+}
+function withdrawnHistory(id = "a", overrides: Partial<FundSnapshot> = {}): FundSnapshot[] {
+  return [snapshot({ id, version: 3, status: "Withdrawn", ...overrides, publishedAt: undefined }), ...publishedHistory(id, overrides)];
+}
+
+test("a freshly published period is final, not also preliminary: freshness reads the current version only", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: publishedHistory("a") });
+  const [row] = summary.freshness.funds;
+  assert.equal(row?.preliminaryPeriods, 0, "the superseded draft v1 is history, not a preliminary period");
+  assert.equal(row?.latestPublishedPeriod, "Q2 2026");
+  assert.equal(row?.snapshotId, "a");
+  assert.equal(row?.publishedAt, "2026-09-01T00:00:00Z");
+  assert.equal(row?.stale, false);
+  assert.equal(summary.freshness.staleFunds, 0);
+});
+
+test("an unpublished draft still counts as one preliminary period however many drafts of it exist", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [snapshot({ id: "a", version: 2, status: "Review" }), snapshot({ id: "a", version: 1, status: "Review" })] });
+  assert.equal(summary.freshness.funds[0]?.preliminaryPeriods, 1);
+  assert.equal(summary.freshness.funds[0]?.latestPublishedPeriod, null);
+  assert.equal(summary.freshness.funds[0]?.stale, true);
+});
+
+test("a withdrawn snapshot is neither the latest published period nor preliminary, and the fund goes stale", () => {
+  // Q2 is current (v3 withdrawn) but older Q1 was published and is still the latest published period.
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [
+    ...withdrawnHistory("a2", { period: "Q2 2026" }),
+    snapshot({ id: "a1", version: 1, period: "Q1 2026", status: "Published", publishedAt: "2026-05-01T00:00:00Z" }),
+  ] });
+  const [row] = summary.freshness.funds;
+  assert.equal(row?.latestPublishedPeriod, "Q1 2026", "the withdrawn Q2 no longer counts as published");
+  assert.equal(row?.snapshotId, "a1");
+  assert.equal(row?.preliminaryPeriods, 0, "a withdrawal is not a period waiting on review");
+  assert.equal(row?.stale, true, "Q1 ended 2026-03-31, past the staleness threshold");
+
+  // Withdrawing the only published period leaves the fund with nothing published at all.
+  const alone = buildWorkspaceSummary({ ...empty, snapshots: withdrawnHistory("a") });
+  assert.deepEqual(alone.freshness.funds.map((item) => [item.latestPublishedPeriod, item.snapshotId, item.publishedAt, item.asOf, item.stale, item.preliminaryPeriods]), [[null, null, null, null, true, 0]]);
+  assert.equal(alone.freshness.asOf, null);
+  assert.equal(alone.freshness.staleFunds, 1);
+});
+
+test("a superseded snapshot is retired from freshness the same way", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [snapshot({ id: "a", version: 3, status: "Superseded" }), ...publishedHistory("a")] });
+  assert.deepEqual(summary.freshness.funds.map((row) => [row.latestPublishedPeriod, row.preliminaryPeriods, row.stale]), [[null, 0, true]]);
+});
+
+test("freshness is unchanged for single-version data and mixes histories across funds", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [
+    ...publishedHistory("a", { period: "Q2 2026" }),
+    snapshot({ id: "a3", version: 1, period: "Q3 2026", status: "Review" }),
+    snapshot({ id: "b1", version: 1, fund: "Fund B", period: "Q1 2026" }),
+  ] });
+  assert.deepEqual(summary.freshness.funds.map((row) => [row.fund, row.latestPublishedPeriod, row.preliminaryPeriods, row.stale]), [
+    ["Fund A", "Q2 2026", 1, false],
+    ["Fund B", "Q1 2026", 0, true],
+  ]);
+});
+
+test("blocking-exception attention follows the current version: a published v2 no longer carries v1's blockers", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [
+    snapshot({ id: "a", version: 2, status: "Published", blockingExceptions: 0 }),
+    snapshot({ id: "a", version: 1, status: "Review", blockingExceptions: 3 }),
+    snapshot({ id: "b", version: 1, fund: "Fund B", status: "Review", blockingExceptions: 2 }),
+  ] });
+  assert.deepEqual(summary.attention.items.map((item) => [item.kind, item.id, item.count]), [["blocking_exception", "blocking_exception:b", 2]]);
+  assert.equal(summary.attention.counts.blocking_exception, 2);
+});
+
+test("needs-review attention resolves a fund period to its current snapshot, not a historical draft", () => {
+  const summary = buildWorkspaceSummary({
+    ...empty,
+    snapshots: [
+      snapshot({ id: "a", version: 2, status: "Published" }),
+      snapshot({ id: "a", version: 1, status: "Review" }),
+      snapshot({ id: "a-next", version: 1, period: "Q3 2026", status: "Review" }),
+    ],
+    observations: [observation({ id: "o-q3", period: "Q3 2026" })],
+  });
+  assert.equal(summary.attention.items[0]?.target.view === "review" ? summary.attention.items[0].target.snapshotId : undefined, "a-next");
+  assert.match(summary.attention.items[0]!.detail, /Q3 2026/);
+});
+
+test("current-version freshness agrees with the published value rollup after a withdrawal", () => {
+  // The value rollup only ever sees the latest version (PUBLISHED_VALUE_FACTS); freshness must not disagree.
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: withdrawnHistory("a"), valueFacts: [] });
+  assert.equal(summary.exposure.items.length, 0);
+  assert.equal(summary.freshness.funds[0]?.latestPublishedPeriod, null);
+  assert.equal(summary.freshness.funds[0]?.stale, true);
+});
+
+test("freshness takes the latest published period of a fund by date, whatever order the list arrives in", () => {
+  const summary = buildWorkspaceSummary({ ...empty, snapshots: [
+    snapshot({ id: "q2", period: "Q2 2026", publishedAt: "2026-08-01T00:00:00Z" }),
+    snapshot({ id: "q4", period: "Q4 2025", publishedAt: "2026-02-01T00:00:00Z" }),
+    snapshot({ id: "q1", period: "Q1 2026", publishedAt: "2026-05-01T00:00:00Z" }),
+  ] });
+  assert.deepEqual(summary.freshness.funds.map((row) => [row.latestPublishedPeriod, row.snapshotId, row.publishedAt]), [["Q2 2026", "q2", "2026-08-01T00:00:00Z"]]);
+});
+
+test("a document stuck without a processing state is surfaced without a state suffix", () => {
+  const summary = buildWorkspaceSummary({ ...empty, documents: [document({ id: "d-old", status: "Queued", processingUpdatedAt: "2026-09-01T00:00:00Z" })] });
+  const [item] = summary.attention.items;
+  assert.equal(item?.kind, "stuck_document");
+  assert.equal(item?.title, "Document stuck in queued");
+  assert.equal(item?.detail, "Report.pdf · Fund A.");
+  assert.equal(item?.severity, "high");
 });

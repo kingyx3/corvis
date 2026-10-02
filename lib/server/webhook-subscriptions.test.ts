@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { decodeCursor, InvalidCursorError, paginate, type Page } from "./pagination.ts";
+import { encodeCursor, InvalidCursorError } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import {
   createWebhookSubscription, listWebhookDeliveries, listWebhookSubscriptions, pauseWebhookSubscription,
@@ -9,7 +9,7 @@ import {
   webhookSubscriptionTransition,
   WebhookSubscriptionError,
   MAX_WEBHOOK_ENDPOINT_URL_LENGTH, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT,
-  type WebhookDeliveryDiagnostic,
+  type WebhookDeliveryPage,
 } from "./webhook-subscriptions.ts";
 
 const TENANT_A = "00000000-0000-0000-0000-0000000000a1";
@@ -23,6 +23,12 @@ type SubscriptionRow = { tenant_id: string; webhook_id: string; endpoint_url: st
 type SigningKeyRow = { tenant_id: string; webhook_id: string; key_id: string; secret: string; status: string; retire_by: string | null };
 type DeliveryRow = { tenant_id: string; webhook_id: string; delivery_id: string; event_id: string; attempt: number; state: string; status_code: number | null; last_error: string | null; created_at: string; completed_at: string | null };
 
+/** The canonical microsecond UTC form the SQL `to_char(...)` produces for a created_at (input may already carry 6 fractional digits). */
+function micros(timestamp: string): string {
+  const fractional = /\.(\d{6})Z$/.exec(timestamp);
+  return fractional ? timestamp : new Date(timestamp).toISOString().replace(/\.(\d{3})Z$/, ".$1000Z");
+}
+
 function parsePgTextArray(literal: string): string[] {
   const inner = literal.slice(1, -1);
   if (!inner) return [];
@@ -34,6 +40,7 @@ class FakeWebhookDb implements PostgresSqlApi {
   signingKeys: SigningKeyRow[] = [];
   deliveries: DeliveryRow[] = [];
   deliveryQueries = 0;
+  lastDeliveryQuery: { sql: string; parameters: PostgresPrimitive[] } | undefined;
   locks = 0;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
@@ -81,15 +88,21 @@ class FakeWebhookDb implements PostgresSqlApi {
       row.updated_at = new Date().toISOString();
       return [{ ...row }];
     }
-    if (sql.includes("from corvis_control.webhook_delivery") && sql.includes("order by delivery_id")) {
-      const [tenantId, webhookId, limit, afterDeliveryId] = parameters as [string, string, number, string | null];
+    if (sql.includes("from corvis_control.webhook_delivery") && sql.includes("order by created_at desc, delivery_id desc")) {
+      const [tenantId, webhookId, limit, afterCreatedAt, afterDeliveryId] = parameters as [string, string, number, string | null, string | null];
       this.deliveryQueries += 1;
+      this.lastDeliveryQuery = { sql, parameters };
+      // Mirrors `(created_at, delivery_id) < ($4, $5)` ordered by created_at desc, delivery_id desc at microsecond precision.
+      const ordering = (a: DeliveryRow, b: DeliveryRow): number =>
+        micros(b.created_at).localeCompare(micros(a.created_at)) || b.delivery_id.localeCompare(a.delivery_id);
       return this.deliveries
         .filter((row) => row.tenant_id === tenantId && row.webhook_id === webhookId)
-        .filter((row) => afterDeliveryId == null || row.delivery_id > afterDeliveryId)
-        .sort((a, b) => (a.delivery_id < b.delivery_id ? -1 : 1))
+        .filter((row) => afterCreatedAt == null || afterDeliveryId == null
+          || micros(row.created_at) < afterCreatedAt
+          || (micros(row.created_at) === afterCreatedAt && row.delivery_id < afterDeliveryId))
+        .sort(ordering)
         .slice(0, limit)
-        .map((row) => ({ ...row }));
+        .map((row) => ({ ...row, cursor_created_at: micros(row.created_at) }));
     }
     if (sql.includes("update corvis_control.webhook_signing_key") && sql.includes("status='revoked'")) {
       const now = Date.now();
@@ -205,45 +218,130 @@ test("sweepExpiredWebhookSigningKeys revokes only past-due retiring keys", async
   assert.equal(db.signingKeys.find((key) => key.key_id === "k2")?.status, "retiring", "a key not yet past its grace deadline must remain untouched");
 });
 
-test("listWebhookDeliveries returns diagnostics scoped to the tenant and subscription", async () => {
-  const db = new FakeWebhookDb();
-  db.deliveries.push(
-    { tenant_id: TENANT_A, webhook_id: "00000000-0000-4000-8000-0000000000c1", delivery_id: "d1", event_id: "e1", attempt: 1, state: "failed", status_code: 500, last_error: "boom", created_at: "2026-01-01T00:00:00Z", completed_at: null },
-    { tenant_id: TENANT_B, webhook_id: "00000000-0000-4000-8000-0000000000c1", delivery_id: "d2", event_id: "e2", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T00:00:01Z" },
-  );
-  const diagnostics = await listWebhookDeliveries(identity(TENANT_A), "00000000-0000-4000-8000-0000000000c1", db);
-  assert.equal(diagnostics.length, 1);
-  assert.equal(diagnostics[0]?.deliveryId, "d1");
-  assert.equal(diagnostics[0]?.lastError, "boom");
-});
+const HOOK_ID = "00000000-0000-4000-8000-0000000000c1";
 
-test("listWebhookDeliveries pages in SQL so every delivery is reachable, even past the per-fetch cap", async () => {
-  const db = new FakeWebhookDb();
-  const webhookId = "00000000-0000-4000-8000-0000000000c1";
-  const total = 2105;
-  for (let index = 0; index < total; index++) {
-    const deliveryId = `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
-    db.deliveries.push({ tenant_id: TENANT_A, webhook_id: webhookId, delivery_id: deliveryId, event_id: "e1", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: "2026-01-01T00:00:00Z", completed_at: null });
-  }
-  // Mirrors the deliveries route: fetch limit+1 after the cursor key, then paginate().
+function delivery(tenantId: string, deliveryId: string, createdAt: string, overrides: Partial<DeliveryRow> = {}): DeliveryRow {
+  return { tenant_id: tenantId, webhook_id: HOOK_ID, delivery_id: deliveryId, event_id: "e1", attempt: 1, state: "complete", status_code: 200, last_error: null, created_at: createdAt, completed_at: null, ...overrides };
+}
+
+/** The route's behavior: walk every page via nextCursor. */
+async function walkDeliveries(db: FakeWebhookDb, limit: number): Promise<string[]> {
   const seen: string[] = [];
   let cursor: string | null = null;
   do {
-    const rows = await listWebhookDeliveries(identity(TENANT_A), webhookId, db, { afterDeliveryId: cursor ? decodeCursor(cursor) : null, limit: 201 });
-    assert.ok(rows.length <= 201, "one page fetch never loads more than a page plus one row");
-    const page: Page<WebhookDeliveryDiagnostic> = paginate(rows, (delivery) => delivery.deliveryId, 200, cursor);
-    seen.push(...page.items.map((delivery) => delivery.deliveryId));
+    const page: WebhookDeliveryPage = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { cursor, limit });
+    assert.ok(page.items.length <= limit, "a page never exceeds its size");
+    seen.push(...page.items.map((item) => item.deliveryId));
     cursor = page.nextCursor;
   } while (cursor);
-  assert.equal(seen.length, total);
-  assert.equal(new Set(seen).size, total);
+  return seen;
+}
 
-  const queriesBefore = db.deliveryQueries;
-  await assert.rejects(
-    () => listWebhookDeliveries(identity(TENANT_A), webhookId, db, { afterDeliveryId: "not-a-uuid'); drop table x;--" }),
-    InvalidCursorError,
+function deliveryUuid(index: number): string {
+  return `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+}
+
+test("listWebhookDeliveries returns diagnostics scoped to the tenant and subscription", async () => {
+  const db = new FakeWebhookDb();
+  db.deliveries.push(
+    delivery(TENANT_A, deliveryUuid(1), "2026-01-01T00:00:00Z", { state: "failed", status_code: 500, last_error: "boom" }),
+    delivery(TENANT_B, deliveryUuid(2), "2026-01-01T00:00:00Z", { completed_at: "2026-01-01T00:00:01Z" }),
+    { ...delivery(TENANT_A, deliveryUuid(3), "2026-01-01T00:00:00Z"), webhook_id: "00000000-0000-4000-8000-0000000000c2" },
   );
-  assert.equal(db.deliveryQueries, queriesBefore, "a tampered cursor key never reaches the ::uuid cast");
+  const { items, nextCursor } = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db);
+  assert.equal(nextCursor, null);
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.deliveryId, deliveryUuid(1));
+  assert.equal(items[0]?.lastError, "boom");
+  assert.equal(items[0]?.statusCode, 500);
+  assert.equal(items[0]?.state, "failed");
+  assert.equal(items[0]?.completedAt, undefined);
+});
+
+test("listWebhookDeliveries maps a retryable delivery with an absent status code", async () => {
+  const db = new FakeWebhookDb();
+  db.deliveries.push(delivery(TENANT_A, deliveryUuid(1), "2026-01-01T00:00:00Z", { status_code: null, completed_at: "2026-01-01T00:00:01Z", state: "retryable", attempt: 3 }));
+  const { items } = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db);
+  assert.equal(items[0]?.statusCode, undefined);
+  assert.equal(items[0]?.completedAt, "2026-01-01T00:00:01Z");
+  assert.equal(items[0]?.attempt, 3);
+});
+
+test("listWebhookDeliveries lists the latest deliveries first, regardless of their random delivery ids", async () => {
+  const db = new FakeWebhookDb();
+  // Ids deliberately anti-correlated with time: a delivery_id ordering would put the oldest row first.
+  db.deliveries.push(
+    delivery(TENANT_A, deliveryUuid(1), "2026-03-01T00:00:03Z", { state: "failed" }),
+    delivery(TENANT_A, deliveryUuid(2), "2026-03-01T00:00:02Z"),
+    delivery(TENANT_A, deliveryUuid(3), "2026-03-01T00:00:01Z"),
+    delivery(TENANT_A, deliveryUuid(4), "2026-03-01T00:00:03Z", { state: "retryable" }),
+  );
+  const first = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { limit: 2 });
+  // Equal created_at ties break by delivery_id descending; the newest instant leads.
+  assert.deepEqual(first.items.map((item) => item.deliveryId), [deliveryUuid(4), deliveryUuid(1)]);
+  assert.ok(first.nextCursor);
+  const second = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { limit: 2, cursor: first.nextCursor });
+  assert.deepEqual(second.items.map((item) => item.deliveryId), [deliveryUuid(2), deliveryUuid(3)]);
+  assert.equal(second.nextCursor, null);
+});
+
+test("listWebhookDeliveries pages by a composite cursor so rows sharing a timestamp are neither skipped nor repeated", async () => {
+  const db = new FakeWebhookDb();
+  const total = 2105;
+  for (let index = 0; index < total; index++) {
+    // Many rows share each instant (7 per second), and sub-millisecond digits differ between some of them.
+    const second = String(Math.floor(index / 7) % 60).padStart(2, "0");
+    const minute = String(Math.floor(index / 420)).padStart(2, "0");
+    const fraction = index % 2 === 0 ? ".000000" : ".000500";
+    db.deliveries.push(delivery(TENANT_A, deliveryUuid((index * 7919) % 100_003), `2026-01-01T00:${minute}:${second}${fraction}Z`));
+  }
+  const seen = await walkDeliveries(db, 200);
+  assert.equal(seen.length, total);
+  assert.equal(new Set(seen).size, total, "no delivery is repeated across pages");
+  const expected = [...db.deliveries]
+    .sort((a, b) => micros(b.created_at).localeCompare(micros(a.created_at)) || b.delivery_id.localeCompare(a.delivery_id))
+    .map((row) => row.delivery_id);
+  assert.deepEqual(seen, expected, "the walk is chronological, newest first");
+  // Page fetches stay bounded at page + 1 rows.
+  assert.equal(db.lastDeliveryQuery?.parameters[2], 201);
+});
+
+test("listWebhookDeliveries clamps the page size to 1..200, defaulting to 50", async () => {
+  const db = new FakeWebhookDb();
+  for (let index = 0; index < 260; index++) db.deliveries.push(delivery(TENANT_A, deliveryUuid(index), "2026-01-01T00:00:00Z"));
+  assert.equal((await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db)).items.length, 50);
+  assert.equal((await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { limit: 0 })).items.length, 1);
+  assert.equal((await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { limit: 10_000 })).items.length, 200);
+  assert.equal((await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { limit: 2.9 })).items.length, 2);
+});
+
+test("listWebhookDeliveries rejects pre-existing, tampered or impossible cursors as invalid_cursor before any query", async () => {
+  const db = new FakeWebhookDb();
+  const goodStamp = "2026-01-01T00:00:00.000000Z";
+  const goodId = deliveryUuid(1);
+  const rejected = [
+    encodeCursor(goodId), // a cursor issued before the ordering change: bare delivery id
+    encodeCursor(`${goodStamp}|not-a-uuid'); drop table x;--`),
+    encodeCursor(`2026-01-01T00:00:00Z|${goodId}`), // missing microsecond digits
+    encodeCursor(`0000-01-01T00:00:00.000000Z|${goodId}`), // no year zero in Postgres
+    encodeCursor(`2026-02-30T00:00:00.000000Z|${goodId}`), // impossible date Date.parse would roll over
+    encodeCursor(`2026-01-01T24:00:00.000000Z|${goodId}`),
+    encodeCursor(`${goodStamp}|`),
+    encodeCursor(`|${goodId}`),
+    encodeCursor(`${goodStamp}${goodId}`), // no separator
+    "not-base64-json",
+  ];
+  for (const cursor of rejected) {
+    await assert.rejects(() => listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { cursor }), InvalidCursorError, cursor);
+  }
+  assert.equal(db.deliveryQueries, 0, "a bad cursor never reaches the ::timestamptz / ::uuid casts");
+
+  // A well-formed composite cursor (upper-case id included) is accepted and normalized.
+  const hexId = deliveryUuid(0xab);
+  const accepted = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID, db, { cursor: encodeCursor(`${goodStamp}|${hexId.toUpperCase()}`) });
+  assert.deepEqual(accepted.items, []);
+  assert.equal(db.lastDeliveryQuery?.parameters[3], goodStamp);
+  assert.equal(db.lastDeliveryQuery?.parameters[4], hexId);
 });
 
 async function rejectsWithCode(promise: () => Promise<unknown>, code: string): Promise<void> {
@@ -362,4 +460,58 @@ test("createWebhookSubscription caps non-revoked subscriptions per tenant, locks
   );
   await revokeWebhookSubscription(identity(TENANT_A), created[0]!, db);
   await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/again", eventTypes: HOOK_EVENTS }, db);
+});
+
+test("createWebhookSubscription rejects non-array event types and missing, non-string or unparseable endpoint URLs", async () => {
+  const db = new FakeWebhookDb();
+  const create = (input: unknown) => createWebhookSubscription(identity(TENANT_A), input as { endpointUrl: string; eventTypes: string[] }, db);
+  await rejectsWithCode(() => create({ endpointUrl: "https://example.com/hook", eventTypes: "SnapshotPublicationChanged" }), "event_types_required");
+  await rejectsWithCode(() => create({ endpointUrl: 42, eventTypes: HOOK_EVENTS }), "endpoint_url_required");
+  await rejectsWithCode(() => create({ endpointUrl: "   ", eventTypes: HOOK_EVENTS }), "endpoint_url_required");
+  await rejectsWithCode(() => create({ endpointUrl: "not a url", eventTypes: HOOK_EVENTS }), "endpoint_url_invalid");
+  await rejectsWithCode(() => create({ endpointUrl: "http://example.com/hook", eventTypes: HOOK_EVENTS }), "endpoint_url_must_be_https");
+  assert.equal(db.subscriptions.length, 0);
+});
+
+test("createWebhookSubscription treats an empty count result as zero existing subscriptions", async () => {
+  const db = new FakeWebhookDb();
+  const original = db.query.bind(db);
+  db.query = async (sql, parameters) => sql.includes("select count(*)::int") ? [] : original(sql, parameters);
+  const created = await createWebhookSubscription(identity(TENANT_A), { endpointUrl: "https://example.com/hook", eventTypes: HOOK_EVENTS }, db);
+  assert.equal(created.status, "active");
+  assert.equal(db.subscriptions.length, 1);
+});
+
+test("listWebhookSubscriptions defaults a row without status to active and without event types to none", async () => {
+  const db = new FakeWebhookDb();
+  const sparse = { tenant_id: TENANT_A, webhook_id: "w-sparse", endpoint_url: "https://example.com/s", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+  db.subscriptions.push(sparse as unknown as SubscriptionRow);
+  const [record] = await listWebhookSubscriptions(identity(TENANT_A), db);
+  assert.equal(record?.status, "active");
+  assert.deepEqual(record?.eventTypes, []);
+});
+
+test("webhook functions default to the configured control-plane database", async () => {
+  const previousDsn = process.env.CORVIS_POSTGRES_DSN;
+  const previousFetch = globalThis.fetch;
+  const requests: Array<{ url: string; sql: string; parameters: unknown[] }> = [];
+  process.env.CORVIS_POSTGRES_DSN = "https://control-plane.example.test/sql";
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { sql: string; parameters: unknown[] };
+    requests.push({ url: String(url), sql: body.sql, parameters: body.parameters });
+    return Response.json({ rows: [{ delivery_id: deliveryUuid(7), event_id: "e1", attempt: 2, state: "failed", status_code: 502, last_error: "bad gateway", created_at: "2026-01-02T03:04:05.123456Z", completed_at: null, cursor_created_at: "2026-01-02T03:04:05.123456Z" }] });
+  }) as typeof fetch;
+  try {
+    const page = await listWebhookDeliveries(identity(TENANT_A), HOOK_ID);
+    assert.equal(page.items[0]?.lastError, "bad gateway");
+    assert.equal(page.nextCursor, null);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.url, "https://control-plane.example.test/sql");
+    assert.match(requests[0]!.sql, /order by created_at desc, delivery_id desc/);
+    assert.deepEqual(requests[0]!.parameters.slice(0, 3), [TENANT_A, HOOK_ID, 51]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousDsn === undefined) delete process.env.CORVIS_POSTGRES_DSN;
+    else process.env.CORVIS_POSTGRES_DSN = previousDsn;
+  }
 });

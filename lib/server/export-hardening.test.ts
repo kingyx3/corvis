@@ -178,7 +178,14 @@ test("a Position Financials export renders its own columns instead of the observ
   const [read] = await parquetReadObjects({ file });
   assert.equal(read!.source_label, "Revenue, net");
   assert.equal(read!.report_period, "2026-Q2");
-  assert.equal(read!.fiscal_year, "2026");
+  // Typed like CSV/XLSX: integers and flags are not stringified (a string fiscal_year sorted "10" before "2").
+  assert.equal(read!.fiscal_year, 2026);
+  assert.equal(read!.fiscal_quarter, 2);
+  assert.equal(read!.display_order, 1);
+  assert.equal(read!.depth, 0);
+  assert.equal(read!.preliminary, false);
+  assert.equal(read!.is_restatement, false);
+  assert.equal(read!.is_derived, true);
   assert.equal(Object.keys(read!).length, POSITION_EXPORT_COLUMNS.length);
 });
 

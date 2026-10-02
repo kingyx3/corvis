@@ -321,6 +321,30 @@ export function renderXlsx(rows: readonly ExportRow[], columns: ExportColumns = 
   return zipStored(files);
 }
 
+/**
+ * Position Financials columns backed by Postgres `integer`. Parquet writes them as INT32 so a warehouse sorts and
+ * aggregates them numerically (as CSV/XLSX consumers already can); as UTF8 they sorted "10" before "2".
+ */
+const PARQUET_INT32_COLUMNS: ReadonlySet<string> = new Set(["display_order", "depth", "fiscal_year", "fiscal_quarter"]);
+/** Position Financials boolean flags, written as Parquet BOOLEAN rather than the strings "true"/"false". */
+const PARQUET_BOOLEAN_COLUMNS: ReadonlySet<string> = new Set(["preliminary", "is_restatement", "is_derived"]);
+
+function parquetInt32(name: string, value: ExportCell | undefined): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  // A value outside INT32 would wrap silently in the file; fail the export instead of publishing a wrong number.
+  if (!Number.isInteger(parsed) || parsed < -2_147_483_648 || parsed > 2_147_483_647) {
+    throw new Error(`Parquet column ${name} must hold a 32-bit integer, got ${JSON.stringify(value)}`);
+  }
+  return parsed;
+}
+
+function parquetBoolean(name: string, value: ExportCell | undefined): boolean | null {
+  if (value == null) return null;
+  if (typeof value !== "boolean") throw new Error(`Parquet column ${name} must hold a boolean, got ${JSON.stringify(value)}`);
+  return value;
+}
+
 export function renderParquet(rows: readonly ExportRow[], columns: ExportColumns = EXPORT_COLUMNS): Buffer {
   // value_number is numeric(38,10): write it as an exact Parquet DECIMAL(38,10)
   // (16-byte fixed-length, unscaled bigint), never as a lossy DOUBLE.
@@ -333,6 +357,14 @@ export function renderParquet(rows: readonly ExportRow[], columns: ExportColumns
     if (name === "version") {
       schema.push({ name, type: "DOUBLE", repetition_type: "OPTIONAL" });
       return { name, data: rows.map((row) => row[name] == null || row[name] === "" ? null : Number(row[name])) };
+    }
+    if (PARQUET_INT32_COLUMNS.has(name)) {
+      schema.push({ name, type: "INT32", repetition_type: "OPTIONAL" });
+      return { name, data: rows.map((row) => parquetInt32(name, row[name])) };
+    }
+    if (PARQUET_BOOLEAN_COLUMNS.has(name)) {
+      schema.push({ name, type: "BOOLEAN", repetition_type: "OPTIONAL" });
+      return { name, data: rows.map((row) => parquetBoolean(name, row[name])) };
     }
     schema.push({ name, type: "BYTE_ARRAY", converted_type: "UTF8", repetition_type: "OPTIONAL" });
     return { name, data: rows.map((row) => row[name] == null ? null : String(row[name])) };

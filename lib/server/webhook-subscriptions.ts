@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { InvalidCursorError } from "./pagination.ts";
+import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor, InvalidCursorError, MAX_PAGE_LIMIT } from "./pagination.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { isWebhookEventType, webhookEndpointBlockReason } from "./webhook-endpoint-policy.ts";
 
@@ -237,41 +237,75 @@ export async function rotateWebhookSigningKey(
   return { webhookId, signingKeyId: keyId, signingSecret: secret };
 }
 
-/** Upper bound on one fetch; the route asks for at most one page plus one row. */
-const DELIVERY_DIAGNOSTIC_FETCH_CAP = 2000;
+export type WebhookDeliveryPage = { items: WebhookDeliveryDiagnostic[]; nextCursor: string | null };
 
 /**
- * Keyset-paginated in SQL: `afterDeliveryId` is the previous page's last
- * delivery id and `limit` the number of rows to fetch. Paging in memory over a
- * capped fetch made every delivery past the cap unreachable and read the
- * whole capped set on every page request.
+ * Canonical, microsecond-precision UTC form of `created_at` carried in the cursor. `created_at` is a timestamptz
+ * with microsecond precision; a JS Date or a millisecond string would drop digits and let rows that share a
+ * millisecond be skipped or repeated at a page boundary.
+ */
+const CURSOR_TIMESTAMP_PATTERN = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+type DeliveryCursor = { createdAt: string; deliveryId: string };
+
+/**
+ * Cursor keys issued before deliveries were ordered chronologically held a bare delivery id. They have no
+ * timestamp half and are rejected like any other malformed cursor (400 `invalid_cursor`) rather than guessed at;
+ * cursors are opaque, so a client simply restarts from the first page.
+ */
+function decodeDeliveryCursor(cursor: string): DeliveryCursor {
+  const key = decodeCursor(cursor);
+  const separator = key.indexOf("|");
+  const createdAt = key.slice(0, separator);
+  const deliveryId = key.slice(separator + 1);
+  if (separator === -1 || !CURSOR_TIMESTAMP_PATTERN.test(createdAt) || !UUID_PATTERN.test(deliveryId)) throw new InvalidCursorError();
+  // Date.parse rolls impossible dates over (Feb 30, hour 24), which Postgres' cast would reject with a 500; a round trip catches them here.
+  const millis = `${createdAt.slice(0, 23)}Z`;
+  if (new Date(Date.parse(millis)).toISOString() !== millis) throw new InvalidCursorError();
+  return { createdAt, deliveryId: deliveryId.toLowerCase() };
+}
+
+/**
+ * Delivery diagnostics, newest first: ordered by (created_at desc, delivery_id desc), so the latest failures lead
+ * and `delivery_id` (a random v4 uuid) only breaks ties. The cursor is the composite position of the last row on
+ * the previous page, applied as a row-value keyset predicate in SQL, so every delivery stays reachable and a
+ * page request never reads more than a page plus one row. `limit` is the page size.
  */
 export async function listWebhookDeliveries(
   identity: RequestIdentity,
   webhookId: string,
   db: PostgresSqlApi = controlDb(),
-  page: { afterDeliveryId?: string | null; limit?: number } = {},
-): Promise<WebhookDeliveryDiagnostic[]> {
+  page: { cursor?: string | null; limit?: number } = {},
+): Promise<WebhookDeliveryPage> {
   assertWebhookId(webhookId);
-  const afterDeliveryId = page.afterDeliveryId ?? null;
-  // A cursor key that is not a UUID was tampered with; never let it reach the `::uuid` cast.
-  if (afterDeliveryId !== null && !UUID_PATTERN.test(afterDeliveryId)) throw new InvalidCursorError();
-  const limit = Math.max(1, Math.min(DELIVERY_DIAGNOSTIC_FETCH_CAP, Math.trunc(page.limit ?? DELIVERY_DIAGNOSTIC_FETCH_CAP)));
-  const rows = await db.query(`select delivery_id, event_id, attempt, state, status_code, last_error, created_at, completed_at
+  // Decoded before any query: a tampered cursor never reaches the `::timestamptz` / `::uuid` casts.
+  const after = page.cursor ? decodeDeliveryCursor(page.cursor) : null;
+  const limit = Math.max(1, Math.min(MAX_PAGE_LIMIT, Math.trunc(page.limit ?? DEFAULT_PAGE_LIMIT)));
+  const rows = await db.query(`select delivery_id, event_id, attempt, state, status_code, last_error, created_at, completed_at,
+      to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_created_at
     from corvis_control.webhook_delivery
-    where tenant_id=$1 and webhook_id=$2::uuid and ($4::uuid is null or delivery_id > $4::uuid)
-    order by delivery_id
-    limit $3`, [identity.tenantId, webhookId, limit, afterDeliveryId]);
-  return rows.map((row) => ({
-    deliveryId: String(row.delivery_id),
-    eventId: String(row.event_id),
-    attempt: Number(row.attempt),
-    state: String(row.state) as WebhookDeliveryDiagnostic["state"],
-    statusCode: row.status_code == null ? undefined : Number(row.status_code),
-    lastError: text(row, "last_error"),
-    createdAt: String(row.created_at),
-    completedAt: text(row, "completed_at"),
-  }));
+    where tenant_id=$1 and webhook_id=$2::uuid
+      and ($4::timestamptz is null or (created_at, delivery_id) < ($4::timestamptz, $5::uuid))
+    order by created_at desc, delivery_id desc
+    limit $3`, [identity.tenantId, webhookId, limit + 1, after?.createdAt ?? null, after?.deliveryId ?? null]);
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows[limit - 1];
+  return {
+    items: pageRows.map((row) => ({
+      deliveryId: String(row.delivery_id),
+      eventId: String(row.event_id),
+      attempt: Number(row.attempt),
+      state: String(row.state) as WebhookDeliveryDiagnostic["state"],
+      statusCode: row.status_code == null ? undefined : Number(row.status_code),
+      lastError: text(row, "last_error"),
+      createdAt: String(row.created_at),
+      completedAt: text(row, "completed_at"),
+    })),
+    // The extra row fetched beyond the page proves another page exists; `last` is then always the page's final row.
+    nextCursor: last && rows.length > limit
+      ? encodeCursor(`${String(last.cursor_created_at)}|${String(last.delivery_id)}`)
+      : null,
+  };
 }
 
 /** Marks past-due retiring keys revoked. Purely cleanup; delivery never signs with a non-active key regardless. */

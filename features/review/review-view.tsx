@@ -273,7 +273,9 @@ export function ReviewView({
   const useGovernedExceptionCount = canReview && exceptionsLoaded && (exceptions.length > 0 || (snapshot?.blockingExceptions ?? 0) === 0);
   const blockingExceptions = useGovernedExceptionCount ? openExceptions.length : snapshot?.blockingExceptions ?? 0;
   const alreadyPublished = snapshot?.status === "Published";
-  const publishBlocked = unavailableSavedScope || !snapshot?.id || !snapshot.version || alreadyPublished || needsReview > 0 || blockingExceptions > 0;
+  // A withdrawn or superseded version cannot be published again (the server answers 409).
+  const retired = snapshot?.status === "Withdrawn" || snapshot?.status === "Superseded";
+  const publishBlocked = unavailableSavedScope || !snapshot?.id || !snapshot.version || alreadyPublished || retired || needsReview > 0 || blockingExceptions > 0;
   const requestedFocusIndex = "observationId" in queueFocus ? visible.findIndex((row) => row.id === queueFocus.observationId) : queueFocus.index;
   const clampedFocusedIndex = Math.min(Math.max(requestedFocusIndex, 0), Math.max(visible.length - 1, 0));
   const focused = visible[clampedFocusedIndex];
@@ -381,7 +383,7 @@ export function ReviewView({
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">Trusted data</p><h1>Data review</h1><p className="lede">{snapshot ? `${snapshot.fund} · ${snapshot.period}${snapshot.version ? ` · Snapshot v${snapshot.version}` : ""}` : "Select a review-ready fund-period snapshot"}</p></div><div className="heading-actions">{canExport && snapshot?.id && <button className="secondary-button" disabled={unavailableSavedScope || !alreadyPublished || busy.has("export")} title={alreadyPublished ? undefined : "Publish this snapshot first: the governed export pipeline only exports published, audited data"} onClick={() => void requestExport()}><Icon name="download"/>{busy.has("export") ? "Requesting export…" : "Export this snapshot"}</button>}{canPublish && <button className="primary-button" disabled={publishBlocked || busy.has("publish")} onClick={() => void publish()}><Icon name="check"/>{busy.has("publish") ? "Publishing…" : alreadyPublished ? "Published" : "Publish snapshot"}</button>}</div></section>
-    {canPublish && publishBlocked && !alreadyPublished && snapshot?.id && <div className="lineage-note tone-warning" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{formatValue(needsReview)} {needsReview === 1 ? "observation needs" : "observations need"} review and {formatValue(blockingExceptions)} reconciliation {blockingExceptions === 1 ? "exception remains" : "exceptions remain"} open.</span></div></div>}
+    {canPublish && publishBlocked && !alreadyPublished && !retired && snapshot?.id && <div className="lineage-note tone-warning" role="status"><Icon name="alert"/><div><strong>Publication gate is closed</strong><span>{formatValue(needsReview)} {needsReview === 1 ? "observation needs" : "observations need"} review and {formatValue(blockingExceptions)} reconciliation {blockingExceptions === 1 ? "exception remains" : "exceptions remain"} open.</span></div></div>}
     {!canReview && <div className="lineage-note" role="status"><Icon name="shield"/><div><strong>Read-only trusted data</strong><span>Your current role can inspect observations but cannot approve, correct or resolve review exceptions.</span></div></div>}
     <SavedViews screen="review" configuration={savedConfiguration} onApply={applySavedConfiguration} onColumns={setVisibleColumns} skipDefault={!!focusRequest}/>
     {unavailableSavedScope && <p role="status">This saved view references a snapshot you cannot currently access. Choose another view or clear this filter. <button type="button" className="text-button" onClick={() => setUnavailableSavedScope(false)}>Clear saved snapshot filter</button></p>}

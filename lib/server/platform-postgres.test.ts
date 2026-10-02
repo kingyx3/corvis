@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
 import { scopeObservationsToSnapshot } from "../../core/review-scope.ts";
-import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT } from "../../core/workspace-summary.ts";
+import { currentSnapshots } from "../../core/current-snapshots.ts";
+import { buildWorkspaceSummary, STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT } from "../../core/workspace-summary.ts";
 import { ConflictError, platform, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
 import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -1011,4 +1012,42 @@ test("platform() selects the Postgres platform outside demo mode and memoises it
     assert.ok(selected instanceof PostgresProductionPlatform);
     assert.equal(platform(), selected);
   });
+});
+
+test("snapshot listing keeps every version with a truthful status, and the current-version reduction drives the summary", async () => {
+  const otherId = "00000000-0000-0000-0000-000000000402";
+  class HistoryDb extends FakeDb {
+    override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+      if (sql.includes("corvis_serving.fund_period_snapshots")) {
+        const row = (id: string, version: number, status: string, fund: string, extra: PostgresRow = {}): PostgresRow =>
+          ({ snapshot_id: id, version, fund_id: fund, fund_name: fund, report_period: "Q2 2026", status, created_at: "2026-08-01", published_at: null, blocking_exception_count: 0, ...extra });
+        return [
+          // Newest first, as the unpaged listing returns it: v3 withdrawn, v2 published, v1 draft.
+          row(snapshotId, 3, "withdrawn", "Fund A"),
+          row(snapshotId, 2, "published", "Fund A", { published_at: "2026-09-01T00:00:00Z" }),
+          row(snapshotId, 1, "draft", "Fund A", { blocking_exception_count: 2 }),
+          row(otherId, 2, "PUBLISHED", "Fund B", { published_at: "2026-09-02T00:00:00Z" }),
+          row(otherId, 1, "blocked", "Fund B"),
+          row("00000000-0000-0000-0000-000000000403", 2, "superseded", "Fund C"),
+        ];
+      }
+      return super.query(sql, parameters);
+    }
+  }
+  const listed = await new PostgresProductionPlatform(new HistoryDb()).listSnapshots(identity);
+  // The Postgres list stays the full append-only history (the keyset-paged /snapshots listing relies on that)...
+  assert.deepEqual(listed.map((item) => [item.id?.slice(-3), item.version, item.status]), [
+    ["401", 3, "Withdrawn"], ["401", 2, "Published"], ["401", 1, "Review"],
+    ["402", 2, "Published"], ["402", 1, "Review"], ["403", 2, "Superseded"],
+  ]);
+  assert.equal(new Set(listed.map(snapshotPaginationKey)).size, listed.length, "every version keeps a unique cursor key");
+  // ...while consumers that need current state reduce it.
+  assert.deepEqual(currentSnapshots(listed).map((item) => [item.id?.slice(-3), item.version, item.status]), [["401", 3, "Withdrawn"], ["402", 2, "Published"], ["403", 2, "Superseded"]]);
+  const summary = buildWorkspaceSummary({ snapshots: listed, observations: [], documents: [], valueFacts: [], now: new Date("2026-09-25T12:00:00Z") });
+  assert.deepEqual(summary.freshness.funds.map((row) => [row.fund, row.latestPublishedPeriod, row.preliminaryPeriods, row.stale]), [
+    ["Fund A", null, 0, true],
+    ["Fund B", "Q2 2026", 0, false],
+    ["Fund C", null, 0, true],
+  ]);
+  assert.equal(summary.attention.counts.blocking_exception, 0, "the withdrawn snapshot's draft history carries no live blockers");
 });
