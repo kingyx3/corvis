@@ -436,6 +436,23 @@ test("a poll that loses its release claim to a vanished session reports a view i
   const seen = await uploads.get(actor, session.uploadId);
   assert.equal(seen.uploadId, session.uploadId);
   assert.equal(db.releases, 0, "the claim never landed, so nothing was released");
+  assert.equal(seen.state, "quarantined", "the view must not claim a completion that never happened");
+  assert.equal(seen.releasedAt, undefined);
+  assert.equal(seen.malwareScanStatus, "pending");
+});
+
+test("a poll that finds the artifact already released but loses the session write does not report a completion either", async () => {
+  const { store, db, uploads, session } = await quarantinedUpload();
+  const original = db.query.bind(db);
+  // The scheduled release already registered the artifact: only the session object is stale.
+  db.query = async (sql, parameters) => sql.includes("select malware_scan_status, quarantine_status")
+    ? [{ malware_scan_status: "clean", quarantine_status: "released" }]
+    : original(sql, parameters);
+  store.beforeConditionalPut = async (key) => { store.json.delete(key); };
+  const seen = await uploads.get(actor, session.uploadId);
+  assert.equal(seen.state, "quarantined", "the unsaved transition is rolled back in memory");
+  assert.equal(seen.releasedAt, undefined);
+  assert.equal(db.releases, 0);
 });
 
 test("a poll of a quarantined session whose object has vanished leaves it quarantined", async () => {
