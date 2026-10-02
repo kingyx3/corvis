@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { parseBulkInviteCsv, tenantAccessAuditCsv, SUPPORT_ACK_THRESHOLD_HOURS } from "./tenant-admin-self-service.ts";
+import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { parseBulkInviteCsv, revokeTenantInvitation, tenantAccessAuditCsv, SUPPORT_ACK_THRESHOLD_HOURS } from "./tenant-admin-self-service.ts";
 import { supportAccessRequiresTenantAck } from "./support-access-self-service.ts";
 
 const workspace="11111111-1111-4111-8111-111111111111";
@@ -47,4 +49,46 @@ test("customer and operations UI surfaces all #181 controls",async()=>{
 test("SCIM endpoints are token authenticated and lifecycle-backed",async()=>{
   const scim=await readFile("lib/server/scim.ts","utf8");assert.match(scim,/token_sha256/);assert.match(scim,/PostgresIdentityLifecycleRepository/);assert.match(scim,/reactivate_identity_admin/);assert.match(scim,/SCIM deprovision/);
   const users=await readFile("app/api/v1/scim/v2/Users/route.ts","utf8");const user=await readFile("app/api/v1/scim/v2/Users/[id]/route.ts","utf8");assert.match(users,/authenticateScim/);assert.match(user,/setScimUserActive/);
+});
+
+/** Enforces migration 056's `check ((status = 'revoked') = (revoked_at is not null))` on the invitation update. */
+class InvitationDb implements PostgresSqlApi {
+  readonly statements: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
+  async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    this.statements.push({ sql, parameters });
+    if (sql.includes("update corvis_control.tenant_invitation set status='revoked'")) {
+      if (!/revoked_at\s*=/.test(sql)) throw Object.assign(new Error("new row violates check constraint \"tenant_invitation_check\""), { code: "23514" });
+      return [{ workspace_id: workspace, email: "jane@example.com", role_name: "reviewer" }];
+    }
+    return [];
+  }
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> { this.statements.push({ sql, parameters }); }
+  async health(): Promise<boolean> { return true; }
+}
+
+const tenantAdmin: RequestIdentity = {
+  subject: "admin@example.com", tenantId: "22222222-2222-4222-8222-222222222222", workspaceId: workspace, roles: ["admin"],
+  entitlements: { workspaceIds: [workspace], sourceDocumentAccessAllowed: false }, authMethod: "oidc", sessionId: "session-1", isTenantAdmin: true,
+};
+const invitationId = "33333333-3333-4333-8333-333333333333";
+
+test("revoking a pending invitation stamps revoked_at so the database's revoked-state check accepts it", async () => {
+  const db = new InvitationDb();
+  await revokeTenantInvitation(tenantAdmin, invitationId, "  no longer joining  ", "corr-1", db);
+  const update = db.statements.find((statement) => statement.sql.includes("update corvis_control.tenant_invitation"));
+  assert.match(update?.sql ?? "", /set status='revoked', revoked_at=now\(\)/);
+  assert.deepEqual(update?.parameters, [tenantAdmin.tenantId, invitationId]);
+  assert.ok(db.statements.some((statement) => statement.sql.includes("audit_event") && statement.parameters.includes("tenant_invitation.revoked")), "the revocation is audited");
+});
+
+test("revoking an invitation is refused for non-admins, malformed ids and thin reasons, and when nothing is pending", async () => {
+  const db = new InvitationDb();
+  await assert.rejects(revokeTenantInvitation({ ...tenantAdmin, isTenantAdmin: false }, invitationId, "reason", "c", db), (error: unknown) => error instanceof AuthorizationError && error.requiredPermission === "admin:tenant_manage");
+  await assert.rejects(revokeTenantInvitation(tenantAdmin, "not-a-uuid", "reason", "c", db), (error: unknown) => (error as { status?: number }).status === 400);
+  await assert.rejects(revokeTenantInvitation(tenantAdmin, invitationId, "ab", "c", db), (error: unknown) => (error as { status?: number }).status === 400);
+  assert.equal(db.statements.length, 0, "nothing reaches the database for a refused request");
+
+  const none = new InvitationDb();
+  none.query = async () => [];
+  await assert.rejects(revokeTenantInvitation(tenantAdmin, invitationId, "reason", "c", none), (error: unknown) => (error as { status?: number; message?: string }).status === 409);
 });
