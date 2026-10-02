@@ -86,6 +86,7 @@ test("admin application surface uses only allowlisted privileged APIs", async ()
     "/api/v1/admin/support-access",
     "/api/v1/admin/session-revocations",
     "/api/v1/admin/data-corrections",
+    "/api/v1/admin/data-issues",
     "/api/v1/admin/deletion-requests",
   ]) assert.ok(surface.includes(endpoint), `admin console must expose ${endpoint}`);
 
