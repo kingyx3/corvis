@@ -88,6 +88,18 @@ test("parseDeletionScope rejects a scope with no data classes rather than treati
   assert.throws(() => parseDeletionScope({ dataClasses: [] }), DeletionExecutionError);
 });
 
+test("parseDeletionScope refuses a malformed selector instead of widening the deletion to the whole data class", () => {
+  const invalidSelector = (error: unknown) => error instanceof DeletionExecutionError && error.code === "deletion_scope_invalid_selector";
+  for (const key of ["documentIds", "fundIds", "subjectIds"]) {
+    for (const bad of ["doc-1", 7, null, { id: "u1" }, [7], ["  "], ["doc-1", null], [""]]) {
+      assert.throws(() => parseDeletionScope({ dataClasses: ["financials"], [key]: bad }), invalidSelector, `${key}=${JSON.stringify(bad)}`);
+    }
+  }
+  // Omitted selectors stay "no restriction within the classes"; an explicit empty list is the same.
+  assert.deepEqual(parseDeletionScope({ dataClasses: ["financials"] }), { dataClasses: ["financials"], documentIds: [], fundIds: [], subjectIds: [] });
+  assert.deepEqual(parseDeletionScope({ dataClasses: ["financials"], fundIds: [] }).fundIds, []);
+});
+
 test("parseDeletionScope normalizes, dedupes and sorts identifier lists", () => {
   const scope = parseDeletionScope({ dataClasses: ["financials", "financials"], documentIds: ["b", "a"] });
   assert.deepEqual(scope.dataClasses, ["financials"]);

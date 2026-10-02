@@ -32,6 +32,21 @@ test("opening a correction binds tenant, actor, idempotency and an immutable req
   assert.equal(db.calls[0]?.parameters.at(-1), identity.subject);
 });
 
+test("a concurrent open of the same new key surfaces as a retryable conflict, other failures pass through", async () => {
+  const command = {
+    idempotencyKey: "dq-2026-q3-2", fundId: "fund-1", reportPeriod: "2026-Q3",
+    rootCause: "source mapping defect", correctionIntent: "replay retained source with corrected mapping",
+  };
+  const unique = new FakeDb([]);
+  unique.query = async () => { throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" }); };
+  await assert.rejects(() => new PostgresDataCorrectionRepository(unique).open(identity, command),
+    (error: unknown) => error instanceof DataCorrectionRequestError && error.code === "correction_open_conflict" && error.status === 409);
+
+  const down = new FakeDb([]);
+  down.query = async () => { throw new Error("connection reset"); };
+  await assert.rejects(() => new PostgresDataCorrectionRepository(down).open(identity, command), /connection reset/);
+});
+
 test("correction commands reject empty root cause rather than creating an unowned replay", async () => {
   const db = new FakeDb([]);
   await assert.rejects(() => new PostgresDataCorrectionRepository(db).open(identity, {

@@ -19,7 +19,7 @@ export function normalizeViewConfiguration(screen: SavedScreen, raw: unknown): V
       if (!Array.isArray(value) || !value.length || value.length > VIEW_COLUMNS[screen].length || value.some((v) => typeof v !== "string" || !VIEW_COLUMNS[screen].includes(v))) throw new Error("invalid_view_columns");
       result.columns = [...new Set(value)]; continue;
     }
-    if (!(key in fields[screen]) || typeof value !== "string" || value.length > 300 || (fields[screen][key] && !fields[screen][key]!.includes(value))) throw new Error("invalid_view_configuration");
+    if (!Object.hasOwn(fields[screen], key) || typeof value !== "string" || value.length > 300 || (fields[screen][key] && !fields[screen][key]!.includes(value))) throw new Error("invalid_view_configuration");
     result[key] = value;
   }
   return result;

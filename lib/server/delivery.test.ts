@@ -228,6 +228,8 @@ test("sweepUnsubscribedWebhookFanoutEvents marks fan-out complete only when no a
   assert.match(statement.sql, /s\.status in \('active','paused'\)/, "a currently-paused subscription can still be resumed, so it still counts as a possible future subscriber");
   assert.match(statement.sql, /e2\.event_type=any\(s\.event_types\)/);
   assert.match(statement.sql, /s\.created_at<=e2\.created_at/, "must mirror the live fan-out query's created_at<=event.created_at semantics");
+  assert.match(statement.sql, /and not exists \(\s*select 1 from corvis_control\.webhook_delivery d\s+where d\.tenant_id=s\.tenant_id and d\.webhook_id=s\.webhook_id and d\.event_id=e2\.event_id\s+and d\.state in \('complete','failed'\)/,
+    "a subscriber that already finished its delivery must not hold the event open once the others were revoked");
   for (const transportType of ["DocumentRegistered", "ProcessingStageReady", "ProcessingStageRetryScheduled", "ProcessingJobRetryRequested"]) {
     assert.match(statement.sql, new RegExp(`not in \\([^)]*'${transportType}'`), `${transportType} must be excluded from the sweep`);
   }
