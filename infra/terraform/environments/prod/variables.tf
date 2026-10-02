@@ -31,6 +31,24 @@ variable "auth_jwks_url" {
   default     = ""
 }
 
+variable "extraction_endpoint" {
+  description = "Optional governed extraction-harness HTTPS endpoint. Empty keeps extraction fail-closed."
+  type        = string
+  default     = ""
+}
+
+variable "extraction_audience" {
+  description = "Optional Google OIDC audience for the extraction harness. Empty defaults to the endpoint in application code."
+  type        = string
+  default     = ""
+}
+
+variable "extraction_timeout_ms" {
+  description = "Bounded extraction-provider timeout in milliseconds."
+  type        = number
+  default     = 20000
+}
+
 variable "postgres_ca_cert" {
   description = "Optional PEM CA bundle for Postgres TLS (e.g. the Supabase root CA). Public certificate material supplied via the CORVIS_POSTGRES_CA_CERT GitHub Environment variable."
   type        = string
