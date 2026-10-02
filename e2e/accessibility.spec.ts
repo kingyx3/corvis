@@ -86,17 +86,17 @@ test("primary navigation is reachable and operable by keyboard alone", async ({ 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   const navButtons = page.getByRole("navigation", { name: /workspace sections/i }).getByRole("button");
-  await expect(navButtons).toHaveCount(6);
+  await expect(navButtons).toHaveCount(7);
   await navButtons.first().focus();
   const labels: string[] = [];
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < 7; index += 1) {
     labels.push(((await page.evaluate(() => document.activeElement?.textContent ?? "")) || "").trim());
-    if (index < 5) await page.keyboard.press("Tab");
+    if (index < 6) await page.keyboard.press("Tab");
   }
-  expect(labels.map((item) => item.replace(/\d+$/, "").toLowerCase())).toEqual(["overview","portfolio analytics","documents","data review","data delivery","ask corvis"]);
+  expect(labels.map((item) => item.replace(/\d+$/, "").toLowerCase())).toEqual(["overview","portfolio analytics","documents","data review","data delivery","ask corvis","data issues"]);
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: /^ask corvis$/i })).toBeVisible();
-  await expect(page.locator('nav [aria-current="page"]')).toHaveText(/ask corvis/i);
+  await expect(page.getByRole("heading", { name: /^data issues$/i })).toBeVisible();
+  await expect(page.locator('nav [aria-current="page"]')).toHaveText(/data issues/i);
 });
 
 test("every focusable control in the workspace shell exposes an accessible name", async ({ page }) => {

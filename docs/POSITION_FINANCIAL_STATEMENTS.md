@@ -105,6 +105,8 @@ The same long-form model is appropriate for API, Parquet and warehouse delivery 
 
 `fund_id + holding_id + company_id + statement_type + semantic_line_key + economic period + scenario/actuality`
 
+Scoped Position Financials exports render the columns in `POSITION_EXPORT_COLUMNS`. In Parquet, `display_order`, `depth`, `fiscal_year` and `fiscal_quarter` are `INT32`, the flags `preliminary`, `is_restatement` and `is_derived` are `BOOLEAN` (all nullable), `value_number` is an exact `DECIMAL(38,10)` and the remaining columns are UTF8 text, matching the typing CSV/XLSX consumers already see. This replaced an earlier layout that wrote the integers and flags as strings; see "Customer export file formats" in `docs/DATA_PLATFORM.md` for the migration note for existing consumers.
+
 Consumers that require a wide financial statement should pivot at delivery time using `semantic_line_key` (or their own mapped account code) while retaining `source_label` and `line_key` for traceability. Never make a client's destination chart of accounts the Corvis canonical schema.
 
 For change-data pipelines, treat source statement/value records as immutable disclosures. Restatements, re-reported prior periods and preliminary-to-final transitions are additional versioned records; downstream selection policy decides which is current while historical variants remain queryable.

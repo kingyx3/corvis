@@ -45,8 +45,9 @@ export async function listTenantAccessAudit(identity: RequestIdentity, db: Postg
     from corvis_control.audit_event
     where tenant_id=$1::uuid and (
       action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
-      or action like 'identity.lifecycle.%' or action like 'access.scim.%'
-      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration')
+      or action like 'identity.lifecycle.%' or action like 'access.scim.%' or action like 'source_connection.%'
+      or action like 'data_issue.%'
+      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case')
     )
     order by occurred_at desc,audit_event_id desc limit 2000`, [identity.tenantId]);
   return rows.map((row) => ({

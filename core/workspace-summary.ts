@@ -1,4 +1,5 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "./contracts.ts";
+import { currentSnapshots } from "./current-snapshots.ts";
 
 /**
  * Customer Overview rollup (issue #175 A3/A4/A5/A7/A9). The server composes it
@@ -566,7 +567,9 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
     .map((value) => ({ fundId: value.fundId, fund: value.fund, period: value.period, snapshotId: value.snapshotId, value: value.value, metricCode: value.metricCode }))
     .sort((a, b) => b.value - a.value || a.fund.localeCompare(b.fund));
 
-  const items = attentionItems(input);
+  // The snapshot list is a version history; attention and freshness describe each snapshot's current version only.
+  const current = { ...input, snapshots: currentSnapshots(input.snapshots) };
+  const items = attentionItems(current);
   const counts = { blocking_exception: 0, needs_review: 0, stuck_document: 0, unhealthy_source: 0, total: 0 };
   for (const item of items) { counts[item.kind] += item.count; counts.total += item.count; }
   // The stuck list is bounded but its count is exact.
@@ -588,6 +591,6 @@ export function buildWorkspaceSummary(input: WorkspaceSummaryInput): WorkspaceSu
       bySector: exposureBreakdown(exposureItems, input.dimensionFacts ?? [], "sector", currency),
     },
     attention: omittedStuckDocuments > 0 ? { items, counts, omittedStuckDocuments } : { items, counts },
-    freshness: freshness(input),
+    freshness: freshness(current),
   };
 }

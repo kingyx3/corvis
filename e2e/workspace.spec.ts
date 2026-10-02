@@ -91,8 +91,9 @@ test("a read-only identity only sees the workflows its capabilities allow", asyn
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   const nav = page.getByRole("navigation", { name: /workspace sections/i });
-  await expect(nav.getByRole("button")).toHaveCount(4);
+  await expect(nav.getByRole("button")).toHaveCount(5);
   await expect(nav.getByRole("button", { name: /portfolio analytics/i })).toHaveCount(1);
+  await expect(nav.getByRole("button", { name: /^data issues$/i })).toHaveCount(1);
   await expect(nav.getByRole("button", { name: /data delivery/i })).toHaveCount(0);
   await expect(nav.getByRole("button", { name: /ask corvis/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /upload documents/i })).toHaveCount(0);

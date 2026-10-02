@@ -10,6 +10,18 @@ The worker requires an authoritative `service_account` identity whose tenant mat
 
 Stage success/failure remains authoritative in Postgres. The worker delegates completion, retry scheduling and dead-letter transitions to the atomic stage repository; application code must not independently recompute retry timing or emit duplicate downstream stage events. A governed human-review wait is **not** a technical failure: it uses the persisted `blocked` job state described below and does not consume retry/dead-letter attempts.
 
+## Retry backoff schedule
+
+Every automatic retry is a new `ProcessingStageRetryScheduled` outbox event delivered through a fresh `event_inbox` row, so the inbox attempt is always 1 and cannot drive a backoff. Migration 081 therefore derives the delay in `fail_processing_stage_delivery` from the **job's** attempt counter:
+
+`delay = least(900 s, 60 s * 2^(job.attempt - 1))`
+
+| Failed attempt (default budget `max_attempts = 5`) | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Delay before the next attempt | 60 s | 120 s | 240 s | 480 s | none, job moves to `dead_letter` |
+
+The four retries span 15 minutes, comfortably inside the 60 minute publication freshness SLO (`ops/slos.yaml`) and long enough to ride out a provider incident; a larger job budget keeps doubling until the 900 s cap. The computed instant is written once and read from three places that always agree: the failed delivery's `event_inbox.next_attempt_at` (also returned as `next_attempt_at`), the retry signal's `payload.nextAttemptAt` (the Cloud Tasks schedule time in `lib/server/processing-transport.ts`) and the retry signal's `outbox_event.next_attempt_at`, which `claim_processing_transport_events` already honors, so the transport does not pick the retry up before its backoff elapses. Dead-letter signals carry no retry time. The signal id stays deterministic, so replays remain idempotent. Operator recovery (`recover_dead_letter_processing_job`) resets the job's attempts and is unaffected. `db/postgres/tests/stage-retry-backoff.sql` asserts the schedule, the cap and the unchanged exhaustion behavior.
+
 ## Authenticated production ingress
 
 `POST /api/internal/processing-stage` is the application ingress for approved Pub/Sub push and Cloud Tasks HTTP delivery. Both transports use the same `ProcessingStageDelivery` contract: Cloud Tasks posts it directly, while Pub/Sub wraps the same JSON in the standard base64 `message.data` envelope.

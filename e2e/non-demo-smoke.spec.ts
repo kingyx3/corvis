@@ -23,3 +23,16 @@ test("an unauthenticated visit shows the sign-in prompt and no demo fixtures", a
   await expect(page.locator("body")).not.toContainText(DEMO_FIXTURE);
   expect(await page.content()).not.toMatch(DEMO_FIXTURE);
 });
+
+test("Contact support quotes the correlation id of the failed API request and attaches no demo data", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("alert", { name: /session expired/i })).toBeVisible();
+  await page.getByRole("button", { name: /^help and support$/i }).first().click();
+  const dialog = page.getByRole("dialog", { name: /^help and support$/i });
+  const href = (await dialog.getByRole("link", { name: /^contact support$/i }).getAttribute("href"))!;
+  const body = new URL(href).searchParams.get("body")!;
+  // The 401 from /api/v1/me carries the server's correlation id, which support can find in the logs.
+  expect(body).toMatch(/Latest request ID: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  expect(body).toContain("Current view: overview");
+  expect(body).not.toMatch(DEMO_FIXTURE);
+});

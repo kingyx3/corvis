@@ -101,8 +101,10 @@ class FakeConnectionDb implements PostgresSqlApi {
     if (sql.includes("set status=$3, updated_at=now(), revoked_at=now()")) { row.status = parameters[2]; row.revoked_at = new Date().toISOString(); }
     else if (sql.includes("set status=$3, updated_at=now()") && !sql.includes("revoked_at")) { row.status = parameters[2]; }
     else if (sql.includes("status='revoked', revoked_at=now()")) { row.status = "revoked"; row.revoked_at = new Date().toISOString(); }
-    else if (sql.includes("secret_reference=$3, status=case when status='paused' then 'paused' else 'active' end")) {
-      row.secret_reference = parameters[2]; row.status = row.status === "paused" ? "paused" : "active"; row.consecutive_failures = 0; row.last_error_class = null;
+    else if (sql.includes("secret_reference=$3, status=case when status='paused' then 'paused' when status='pending_authorization' then 'pending_authorization' else 'active' end")) {
+      row.secret_reference = parameters[2];
+      row.status = row.status === "paused" || row.status === "pending_authorization" ? row.status : "active";
+      row.consecutive_failures = 0; row.last_error_class = null;
     }
     else if (sql.includes("status='active', last_authorized_at=now()")) { row.status = "active"; }
     else if (sql.includes("set status=$3, last_error_class=$4, updated_at=now()")) { row.status = parameters[2]; row.last_error_class = parameters[3]; }
@@ -475,6 +477,16 @@ test("reauthorizing a paused connection rotates the credential but keeps it paus
   await reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets });
   const [connection] = await listSourceConnections(identity(), db);
   assert.equal(connection?.status, "paused", "a credential rotation must not silently resume a paused connection");
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
+});
+
+test("reauthorizing a pending connection rotates the credential but does not activate it on an unverified test", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "pending_authorization" });
+  await reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "pending_authorization", "only a verified testSourceConnection call may activate a connection awaiting its first setup test");
   assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
 });
 

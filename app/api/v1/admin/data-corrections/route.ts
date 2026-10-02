@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "@/core/enterprise";
 import { getServerConfig } from "@/lib/server/config";
+import { closeDataIssuesForCorrection } from "@/lib/server/data-issue";
 import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/lib/server/data-correction";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
@@ -75,11 +76,14 @@ export async function POST(request: Request) {
         return json({ error: "invalid_request", correlationId: id }, { status: 400 });
       }
       const evidence = body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence) ? body.evidence as Record<string, unknown> : {};
-      await withTransaction(db, async (tx) => {
+      const dataIssuesCorrected = await withTransaction(db, async (tx) => {
         await new PostgresDataCorrectionRepository(tx).resolve(identity, { incidentId, replacementSnapshotId, replacementSnapshotVersion, evidence });
         await audit(tx, identity, id, "data_correction.resolve", incidentId, { replacementSnapshotId, replacementSnapshotVersion });
+        // F5: customer data-issue cases linked to this incident become "Corrected" and point at the replacement publication.
+        // Isolated by a savepoint: a fault there never fails the governed correction itself.
+        return (await closeDataIssuesForCorrection(tx, identity, incidentId, id, (event) => new PostgresOperationsRepository(tx).audit(event))).length;
       });
-      return json({ data: { incidentId, state: "resolved" }, correlationId: id });
+      return json({ data: { incidentId, state: "resolved", dataIssuesCorrected }, correlationId: id });
     }
     return json({ error: "invalid_request", correlationId: id }, { status: 400 });
   } catch (error) { return correctionError(error, id); }

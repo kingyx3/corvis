@@ -81,3 +81,24 @@ test("data-correction refusals classify to stable conflict codes instead of surf
     assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status: 409 }, `driver: ${message}`);
   }
 });
+
+test("data-issue refusals classify to stable codes, 404 for what does not exist and 409 for what the case cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "idempotency key reused with different data issue report": ["idempotency_key_reused", 409],
+    "data issue snapshot not found for fund": ["data_issue_snapshot_not_found", 404],
+    "data issue case status changed": ["data_issue_status_changed", 409],
+    "data issue transition not allowed": ["data_issue_transition_not_allowed", 409],
+    "data issue correction not found": ["data_issue_correction_not_found", 404],
+    "data issue correction scope mismatch": ["data_issue_correction_scope_mismatch", 409],
+    "data issue correction was cancelled": ["data_issue_correction_cancelled", 409],
+    "data issue correction required": ["data_issue_correction_required", 409],
+    "data issue correction is not resolved": ["data_issue_correction_not_resolved", 409],
+    "data issue resolution note required": ["invalid_note", 400],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});

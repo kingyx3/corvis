@@ -212,6 +212,18 @@ resource "google_cloud_run_v2_service" "worker" {
         value = var.auth_jwks_url
       }
       env {
+        name  = "CORVIS_EXTRACTION_ENDPOINT"
+        value = var.extraction_endpoint
+      }
+      env {
+        name  = "CORVIS_EXTRACTION_AUDIENCE"
+        value = var.extraction_audience
+      }
+      env {
+        name  = "CORVIS_EXTRACTION_TIMEOUT_MS"
+        value = tostring(var.extraction_timeout_ms)
+      }
+      env {
         name  = "CORVIS_OBJECT_STORE_BUCKET"
         value = var.source_bucket_name
       }

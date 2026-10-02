@@ -3,6 +3,7 @@ import { formatReceivedTime } from "@/lib/received-time";
 import { usePreferences } from "@/features/preferences/preference-provider";
 import { useState, type ReactNode } from "react";
 import type { ActivityRecord, FundSnapshot, View } from "@/core/contracts";
+import { currentSnapshots, snapshotCounts } from "@/core/current-snapshots";
 import { comparePeriods, type AttentionItem, type AttentionTarget, type ExposureBreakdownRow, type FundFreshness, type WorkspaceSummary } from "@/core/workspace-summary";
 import { CompositionChart } from "@/components/ui/charts/composition-chart";
 import { Sparkline } from "@/components/ui/charts/sparkline";
@@ -12,6 +13,8 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeading } from "@/components/ui/page-heading";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SectorClassificationDialog } from "@/features/overview/sector-classification-dialog";
+import { overviewReportContext } from "@/features/data-issues/report-contexts";
+import { ReportIssueButton } from "@/features/data-issues/report-issue-dialog";
 
 const ATTENTION_ICON: Record<AttentionItem["kind"], IconName> = {
   blocking_exception: "alert",
@@ -43,8 +46,10 @@ function targetLabel(target: AttentionTarget): string {
   return target.observationId ? "Review observations" : "Open in Data review";
 }
 
+const SNAPSHOT_STATE_LABEL: Record<FundSnapshot["status"], string> = { Published: "Final", Review: "Preliminary", Withdrawn: "Withdrawn", Superseded: "Superseded" };
+
 export function OverviewView({
-  snapshots,
+  snapshots: snapshotHistory,
   summary,
   summaryError,
   onRetrySummary,
@@ -83,12 +88,9 @@ export function OverviewView({
 }) {
   usePreferences();
   const [classifying, setClassifying] = useState(false);
-  const published = snapshots.filter((snapshot) => snapshot.status === "Published").length;
-  const review = snapshots.filter((snapshot) => snapshot.status === "Review").length;
-  const factCount = snapshots.reduce((sum, snapshot) => sum + snapshot.facts, 0);
-  const holdingCount = snapshots.reduce((sum, snapshot) => sum + snapshot.holdings, 0);
-  const blockingExceptions = snapshots.reduce((sum, snapshot) => sum + (snapshot.blockingExceptions || 0), 0);
-  const completion = snapshots.length ? Math.round((published / snapshots.length) * 100) : 0;
+  // The list may hold every version of a snapshot; counts describe each fund period's current version only.
+  const snapshots = currentSnapshots(snapshotHistory);
+  const { published, review, facts: factCount, holdings: holdingCount, blockingExceptions, completion } = snapshotCounts(snapshots);
   const holdingsByFund = new Map<string, FundSnapshot>();
   for (const snapshot of snapshots) {
     const current = holdingsByFund.get(snapshot.fund);
@@ -179,7 +181,7 @@ export function OverviewView({
     </section>
     {reviewFirst || audience === "admin" ? <>{attentionSection}{exposureSection}{breakdownSection}</> : <>{exposureSection}{breakdownSection}{attentionSection}</>}
     {!exposure && holdingsItems.length > 0 && <section className="panel"><CompositionChart eyebrow="Exposure" title="Holdings by fund" description="How your entitled fund holdings break down across the current reporting cycle." items={holdingsItems} unitLabel="Holdings" /></section>}
-    <section className="two-column"><div className="panel"><div className="panel-heading"><div><p className="eyebrow">Fund periods</p><h2>Current reporting cycle</h2></div>{canReadDocuments && <button className="text-button" onClick={() => onNavigate("documents")}>View documents <Icon name="arrow" size={15}/></button>}</div><div className="snapshot-list">{snapshots.length ? snapshots.map((item) => { const fresh = freshnessByFund.get(item.fund); const stale = item.status === "Published" && fresh?.stale === true && fresh.snapshotId === item.id; const detail = <><strong>{item.fund}</strong><span>{item.period} · {item.status === "Published" ? "Final" : "Preliminary"} · {item.holdings} holdings · {item.facts} facts</span></>; return canReadObservations ? <button className="snapshot-row" key={`${item.id || item.fund}-${item.period}`} onClick={() => onSnapshotSelect(item)} aria-label={`Open ${item.fund} ${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{formatReceivedTime(item.changed, (value) => displayDate(value, { timeStyle: "short" }))}</span><Icon name="chevron" size={16}/></button> : <div className="snapshot-row" key={`${item.id || item.fund}-${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{formatReceivedTime(item.changed, (value) => displayDate(value, { timeStyle: "short" }))}</span></div>; }) : <div className="empty-row"><strong>No snapshots yet</strong><span>{canUpload ? "Upload a source document to start a reporting cycle." : "No entitled fund-period snapshots are available."}</span></div>}</div></div><div className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">Activity</p><h2>What changed</h2></div></div><div className="activity-list">{activity.length ? activity.map((item, i) => <div className="activity-row" key={`${item.title}-${item.time}`}><span className={`activity-marker marker-${i % 4}`} aria-hidden="true"></span><div><strong>{item.title}</strong><span>{item.detail}</span></div><time>{item.time}</time></div>) : <div className="activity-row empty"><div><strong>No recent activity</strong><span>Production activity appears here when audit/read-model events are available.</span></div></div>}</div></div></section>
+    <section className="two-column"><div className="panel"><div className="panel-heading"><div><p className="eyebrow">Fund periods</p><h2>Current reporting cycle</h2></div><div className="heading-actions">{canReadObservations && <ReportIssueButton context={overviewReportContext(snapshots)}/>}{canReadDocuments && <button className="text-button" onClick={() => onNavigate("documents")}>View documents <Icon name="arrow" size={15}/></button>}</div></div><div className="snapshot-list">{snapshots.length ? snapshots.map((item) => { const fresh = freshnessByFund.get(item.fund); const stale = item.status === "Published" && fresh?.stale === true && fresh.snapshotId === item.id; const detail = <><strong>{item.fund}</strong><span>{item.period} · {SNAPSHOT_STATE_LABEL[item.status]} · {item.holdings} holdings · {item.facts} facts</span></>; return canReadObservations ? <button className="snapshot-row" key={`${item.id || item.fund}-${item.period}`} onClick={() => onSnapshotSelect(item)} aria-label={`Open ${item.fund} ${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{formatReceivedTime(item.changed, (value) => displayDate(value, { timeStyle: "short" }))}</span><Icon name="chevron" size={16}/></button> : <div className="snapshot-row" key={`${item.id || item.fund}-${item.period}`}><div className="fund-mark" aria-hidden="true">{item.fund.split(" ").slice(0,2).map((word) => word[0]).join("")}</div><div className="snapshot-main">{detail}</div><span className="status-stack"><StatusPill status={item.status}/>{stale && <StatusPill status="Stale"/>}</span><span className="muted-time">{formatReceivedTime(item.changed, (value) => displayDate(value, { timeStyle: "short" }))}</span></div>; }) : <div className="empty-row"><strong>No snapshots yet</strong><span>{canUpload ? "Upload a source document to start a reporting cycle." : "No entitled fund-period snapshots are available."}</span></div>}</div></div><div className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">Activity</p><h2>What changed</h2></div></div><div className="activity-list">{activity.length ? activity.map((item, i) => <div className="activity-row" key={`${item.title}-${item.time}`}><span className={`activity-marker marker-${i % 4}`} aria-hidden="true"></span><div><strong>{item.title}</strong><span>{item.detail}</span></div><time>{item.time}</time></div>) : <div className="activity-row empty"><div><strong>No recent activity</strong><span>Production activity appears here when audit/read-model events are available.</span></div></div>}</div></div></section>
     {classifying && <SectorClassificationDialog onClose={() => setClassifying(false)} onChanged={() => onSummaryChanged?.()} />}
     {canResearch && <button type="button" className="research-callout" onClick={() => onNavigate("research")}><span className="research-symbol" aria-hidden="true"><Icon name="spark" size={22}/></span><span className="research-callout-text"><span className="eyebrow">Ask Corvis</span><span className="research-callout-title">What changed in my portfolio this quarter?</span><span className="research-callout-detail">Query trusted fund data and source documents together, with evidence.</span></span><span className="research-arrow" aria-hidden="true"><Icon name="arrow"/></span></button>}
   </>;

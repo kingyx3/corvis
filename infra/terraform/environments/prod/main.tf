@@ -95,6 +95,9 @@ module "api_runtime" {
   auth_issuer                       = var.auth_issuer
   auth_audience                     = var.auth_audience
   auth_jwks_url                     = var.auth_jwks_url
+  extraction_endpoint               = var.extraction_endpoint
+  extraction_audience               = var.extraction_audience
+  extraction_timeout_ms             = var.extraction_timeout_ms
   postgres_ca_cert                  = var.postgres_ca_cert
   upload_allowed_origins            = local.edge_enabled ? ["https://${local.customer_hostname}"] : []
   public_app_url                    = local.edge_enabled ? "https://${local.customer_hostname}" : ""

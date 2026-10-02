@@ -79,15 +79,21 @@ const { GET: listGet, POST: createPost } = await import("@/app/api/v1/source-con
 const { GET: itemGet, PATCH: itemPatch } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/route");
 const { POST: reauthorizePost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/reauthorize/route");
 const { POST: testPost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/test/route");
+const { GET: activityGet } = await import("@/app/api/v1/source-connections/activity/route");
 const { sourceConnectorDrivers } = await import("./source-connector-runtime.ts");
+const { overrideSourceConnectionService, postgresSourceConnectionService } = await import("./source-connection-service.ts");
+
+// Demo mode (set above for the demo identity headers) would otherwise serve these routes from the in-memory demo
+// store; this file exists to drive the real library path against the fake Postgres backend above.
+overrideSourceConnectionService(postgresSourceConnectionService);
 
 const TENANT_A = "tenant-alpha";
 const TENANT_B = "tenant-beta";
 
-function request(method: string, path: string, options: { tenant?: string; roles?: string; body?: unknown } = {}): Request {
+function request(method: string, path: string, options: { tenant?: string; roles?: string; body?: unknown; workspace?: string } = {}): Request {
   const headers = new Headers({
     "x-corvis-demo-tenant": options.tenant ?? TENANT_A,
-    "x-corvis-demo-workspace": "workspace-1",
+    "x-corvis-demo-workspace": options.workspace ?? "workspace-1",
     "x-corvis-demo-subject": "demo-admin",
     "x-corvis-demo-roles": options.roles ?? "admin",
   });
@@ -106,8 +112,8 @@ function validCreateBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function createConnection(tenant = TENANT_A): Promise<{ sourceConnectionId: string }> {
-  const response = await createPost(request("POST", "/api/v1/source-connections", { tenant, body: validCreateBody() }));
+async function createConnection(tenant = TENANT_A, workspace?: string): Promise<{ sourceConnectionId: string }> {
+  const response = await createPost(request("POST", "/api/v1/source-connections", { tenant, workspace, body: validCreateBody() }));
   assert.equal(response.status, 201);
   const payload = await response.json() as { data: { sourceConnectionId: string } };
   return payload.data;
@@ -302,4 +308,27 @@ test("POST /source-connections rejects a label over 200 characters with 400", as
   const response = await createPost(request("POST", "/api/v1/source-connections", { body: validCreateBody({ connectionLabel: "x".repeat(201) }) }));
   assert.equal(response.status, 400);
   assert.equal((await response.json() as { error: string }).error, "connection_label_too_long");
+});
+
+test("a workspace admin sees and reads only their own workspace's connections, even within one tenant", async () => {
+  const mine = await createConnection(TENANT_A, "workspace-1");
+  const theirs = await createConnection(TENANT_A, "workspace-2");
+
+  const list = await (await listGet(request("GET", "/api/v1/source-connections", { tenant: TENANT_A, workspace: "workspace-1" }))).json() as { data: Array<{ sourceConnectionId: string }> };
+  assert.ok(list.data.some((connection) => connection.sourceConnectionId === mine.sourceConnectionId));
+  assert.ok(list.data.every((connection) => connection.sourceConnectionId !== theirs.sourceConnectionId));
+
+  const crossWorkspaceRead = await itemGet(request("GET", `/api/v1/source-connections/${theirs.sourceConnectionId}`, { tenant: TENANT_A, workspace: "workspace-1" }), params(theirs.sourceConnectionId));
+  assert.equal(crossWorkspaceRead.status, 404);
+  assert.equal((await crossWorkspaceRead.json() as { error: string }).error, "connection_not_found");
+});
+
+test("GET /source-connections/activity is admin-only and answers from the Postgres activity listing", async () => {
+  const allowed = await activityGet(request("GET", "/api/v1/source-connections/activity"));
+  assert.equal(allowed.status, 200);
+  const activity = (await allowed.json() as { data: Array<Record<string, unknown>> }).data;
+  assert.ok(Array.isArray(activity) && activity.length > 0, "the Postgres listing answered");
+  assert.ok(activity.every((connection) => !("secretReference" in connection) && Array.isArray(connection.runs)));
+  const denied = await activityGet(request("GET", "/api/v1/source-connections/activity", { roles: "analyst" }));
+  assert.equal(denied.status, 403);
 });

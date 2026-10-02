@@ -14,6 +14,8 @@ import { VIEW_COLUMNS, type ViewConfiguration } from "@/core/saved-views";
 import { apiUrl } from "@/lib/api-url";
 import { throwIfUnauthenticated } from "@/lib/api-errors";
 import { compareReceivedNewestFirst, formatReceivedTime } from "@/lib/received-time";
+import { acquisitionDispositionLabel, connectionStatusLabel, runErrorSummary, runStateLabel } from "@/core/source-connection-health";
+import { SourceConnectionsSection } from "@/features/documents/source-connections-section";
 
 type SourceActivityAcquisition = { acquisitionId: string; disposition: string; remotePath: string; remoteVersion: string; acquiredAt: string; documentId?: string; reason: string };
 type SourceActivityRun = { runId: string; trigger: string; state: string; discoveredCount: number; acceptedCount: number; duplicateCount: number; rejectedCount: number; startedAt: string; finishedAt?: string; zeroDiscoveryLongRunning: boolean; errorClass?: string; acquisitions: SourceActivityAcquisition[] };
@@ -27,7 +29,7 @@ function originLabel(doc: DocumentRecord, lifecycleState: LifecycleState): strin
   return origin.kind === "connector" ? `${origin.providerKey} · ${origin.connectionLabel}` : `Upload · ${origin.actor}`;
 }
 
-export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: DocumentRecord[]; onUpload: () => void; onSelect: (doc: DocumentRecord) => void; canUpload: boolean }) {
+export function DocumentsView({ docs, onUpload, onSelect, canUpload, canManageSources = false }: { docs: DocumentRecord[]; onUpload: () => void; onSelect: (doc: DocumentRecord) => void; canUpload: boolean; canManageSources?: boolean }) {
   usePreferences();
   const [visibleColumns, setVisibleColumns] = useState(VIEW_COLUMNS.documents);
   const [sortMode, setSortMode] = useState("name");
@@ -37,26 +39,29 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
   const [lifecycles, setLifecycles] = useState<DocumentLifecycle[]>([]);
   const [sourceActivity, setSourceActivity] = useState<SourceActivityConnection[]>([]);
   const demoMode = process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true";
-  // The demo workspace has no lifecycle/connector API behind it, so there is nothing to load or to fail.
+  // The demo workspace has no lifecycle API behind it, so there is nothing to load or to fail there. Its connector
+  // API is served in memory, so administrators still load source activity in demo mode.
   const [lifecycleState, setLifecycleState] = useState<LifecycleState>(demoMode ? "ready" : "loading");
   const [activityFailed, setActivityFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const retryProvenance = () => { setLifecycleState("loading"); setActivityFailed(false); setReloadKey((key) => key + 1); };
 
   useEffect(() => {
-    if (demoMode) return;
+    if (demoMode && !canManageSources) return;
     const controller = new AbortController();
     const init = { signal: controller.signal, credentials: "include" as const, headers: workspaceContextHeaders() };
-    void fetch(apiUrl("/api/v1/document-lifecycle"), init)
-      .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)); })
-      .then((payload) => { setLifecycles(payload.data ?? []); setLifecycleState("ready"); })
-      .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setLifecycles([]); setLifecycleState("error"); } });
+    if (!demoMode) {
+      void fetch(apiUrl("/api/v1/document-lifecycle"), init)
+        .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)); })
+        .then((payload) => { setLifecycles(payload.data ?? []); setLifecycleState("ready"); })
+        .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setLifecycles([]); setLifecycleState("error"); } });
+    }
     void fetch(apiUrl("/api/v1/source-connections/activity"), init)
       .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)); })
       .then((payload) => setSourceActivity(payload.data ?? []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setSourceActivity([]); setActivityFailed(true); } });
     return () => controller.abort();
-  }, [demoMode, reloadKey]);
+  }, [demoMode, canManageSources, reloadKey]);
 
   const lifecycleByDocument = useMemo(() => new Map(lifecycles.map((item) => [item.documentId, item])), [lifecycles]);
   const documents = useMemo(() => docs.map((doc) => ({ ...doc, lifecycle: lifecycleByDocument.get(doc.id) })), [docs, lifecycleByDocument]);
@@ -73,10 +78,19 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
   const configuration: ViewConfiguration = { query, period, status, sortMode, columns: visibleColumns };
   const applyView = (v: ViewConfiguration) => { setQuery(String(v.query ?? "")); setPeriod(String(v.period ?? "all")); setStatus(String(v.status ?? "all")); setSortMode(String(v.sortMode ?? "name")); setVisibleColumns(v.columns as string[] ?? VIEW_COLUMNS.documents); };
   const attention = sourceActivity.filter((connection) => connection.needsAttention);
+  const runHistoryIds = useMemo(() => new Set(sourceActivity.map((connection) => connection.sourceConnectionId)), [sourceActivity]);
+  // Lets a connection card jump to its row in the run history below; the row takes focus so the move is announced.
+  const openRunHistory = (sourceConnectionId: string) => {
+    const row = document.getElementById(`source-run-history-${sourceConnectionId}`);
+    row?.scrollIntoView({ block: "center" });
+    row?.focus();
+  };
+  // A command changes connection status, so the attention banner and run history are reloaded without touching provenance.
+  const refreshSourceActivity = () => setReloadKey((key) => key + 1);
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">Source library</p><h1>Documents</h1><p className="lede">Every source file, its provenance, processing state, and relationship to a fund period.</p></div>{canUpload && <button className="primary-button" onClick={onUpload}><Icon name="upload"/>Upload documents</button>}</section>
-    {attention.length > 0 && <div className="table-card" role="alert"><div className="empty-cell"><strong>{formatValue(attention.length)} source connection{attention.length === 1 ? " needs" : "s need"} attention.</strong> {attention.map((item) => `${item.connectionLabel}: ${item.attentionReason ?? item.status}`).join(" · ")}</div></div>}
+    {attention.length > 0 && <div className="table-card" role="alert"><div className="empty-cell"><strong>{formatValue(attention.length)} source connection{attention.length === 1 ? " needs" : "s need"} attention.</strong> {attention.map((item) => `${item.connectionLabel}: ${item.attentionReason ?? connectionStatusLabel(item.status)}`).join(" · ")}</div></div>}
     {(lifecycleState === "error" || activityFailed) && <div className="table-card" role="alert"><div className="empty-cell"><strong>{lifecycleState === "error" && activityFailed ? "Document provenance and source run history are unavailable." : lifecycleState === "error" ? "Document provenance is unavailable." : "Source run history is unavailable."}</strong> The documents below are unaffected. <button className="text-button" onClick={retryProvenance}>Retry</button></div></div>}
     <SavedViews screen="documents" configuration={configuration} onApply={applyView} onColumns={setVisibleColumns}/>
     <div className="toolbar" role="search" aria-label="Document filters">
@@ -96,10 +110,12 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload }: { docs: D
       })}
     </tbody></table></div>
 
+    {canManageSources && <SourceConnectionsSection runHistoryAvailable={runHistoryIds} onOpenRunHistory={openRunHistory} onChanged={refreshSourceActivity}/>}
+
     {sourceActivity.length > 0 && <section aria-labelledby="source-activity-heading"><section className="page-heading"><div><p className="eyebrow">Connector audit</p><h2 id="source-activity-heading">Source run history</h2><p className="lede">Discovery outcomes use the same document lifecycle as uploads; rejected and duplicate acquisitions remain visible as audit evidence.</p></div></section>
       <div className="table-card" role="region" aria-label="Source connector run history"><table className="data-table"><thead><tr><th>Connection</th><th>Status</th><th>Runs</th><th>Latest run</th></tr></thead><tbody>{sourceActivity.map((connection) => {
         const latest = connection.runs[0];
-        return <tr key={connection.sourceConnectionId}><td><strong className="table-primary">{connection.connectionLabel}</strong><span className="table-secondary">{connection.providerKey}</span></td><td><StatusPill status={connection.needsAttention ? "Blocked" : connection.status}/>{connection.attentionReason && <span className="table-secondary">{connection.attentionReason}</span>}</td><td>{formatValue(connection.runs.length)}</td><td>{latest ? <details><summary>{latest.zeroDiscoveryLongRunning ? "Running · no documents after 15+ min" : `${latest.state} · ${latest.discoveredCount} discovered`}</summary><div className="table-muted">Started {displayTime(latest.startedAt)} · accepted {latest.acceptedCount} · duplicate {latest.duplicateCount} · rejected {latest.rejectedCount}</div>{connection.runs.map((run) => <details key={run.runId}><summary>{displayTime(run.startedAt)} · {run.state} · {run.discoveredCount}/{run.acceptedCount}/{run.duplicateCount}/{run.rejectedCount}</summary>{run.zeroDiscoveryLongRunning && <p><strong>No documents discovered yet after 15 minutes.</strong></p>}{run.errorClass && <p>Failure class: {run.errorClass}</p>}<ul>{run.acquisitions.map((acquisition) => <li key={acquisition.acquisitionId}><strong>{acquisition.disposition}</strong> — {acquisition.remotePath} ({acquisition.remoteVersion}) · {acquisition.reason} {acquisition.documentId && documentsById.has(acquisition.documentId) && <button className="text-button" onClick={() => onSelect(documentsById.get(acquisition.documentId!)!)}>Open document</button>}</li>)}</ul></details>)}</details> : "No runs yet"}</td></tr>;
+        return <tr key={connection.sourceConnectionId} id={`source-run-history-${connection.sourceConnectionId}`} tabIndex={-1}><td><strong className="table-primary">{connection.connectionLabel}</strong></td><td><StatusPill status={connectionStatusLabel(connection.status)}/>{connection.attentionReason && <span className="table-secondary">{connection.attentionReason}</span>}</td><td>{formatValue(connection.runs.length)}</td><td>{latest ? <details><summary>{latest.zeroDiscoveryLongRunning ? "Running · no documents after 15+ min" : `${runStateLabel(latest.state)} · ${latest.discoveredCount} discovered`}</summary><div className="table-muted">Started {displayTime(latest.startedAt)} · accepted {latest.acceptedCount} · duplicate {latest.duplicateCount} · rejected {latest.rejectedCount}</div>{connection.runs.map((run) => <details key={run.runId}><summary>{displayTime(run.startedAt)} · {runStateLabel(run.state)} · {run.discoveredCount}/{run.acceptedCount}/{run.duplicateCount}/{run.rejectedCount}</summary>{run.zeroDiscoveryLongRunning && <p><strong>No documents discovered yet after 15 minutes.</strong></p>}{run.errorClass && <p>Failure: {runErrorSummary(run.errorClass)}</p>}<ul>{run.acquisitions.map((acquisition) => <li key={acquisition.acquisitionId}><strong>{acquisitionDispositionLabel(acquisition.disposition)}</strong> — {acquisition.remotePath} ({acquisition.remoteVersion}) · {acquisition.reason} {acquisition.documentId && documentsById.has(acquisition.documentId) && <button className="text-button" onClick={() => onSelect(documentsById.get(acquisition.documentId!)!)}>Open document</button>}</li>)}</ul></details>)}</details> : "No runs yet"}</td></tr>;
       })}</tbody></table></div>
     </section>}
   </>;

@@ -3,7 +3,7 @@
  * reload, Back/Forward and shared links land on the same view. The `/` prefix keeps these hashes
  * from colliding with element-id anchors such as the skip link's `#main-content`.
  */
-export const WORKSPACE_VIEWS = ["overview", "analytics", "documents", "review", "delivery", "research", "access"] as const;
+export const WORKSPACE_VIEWS = ["overview", "analytics", "documents", "review", "delivery", "research", "access", "issues"] as const;
 export type WorkspaceViewId = typeof WORKSPACE_VIEWS[number];
 
 /** The view named by a location hash, or null when the hash is empty or not a view route. */

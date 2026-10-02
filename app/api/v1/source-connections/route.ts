@@ -3,9 +3,9 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { createAuditedSourceConnection } from "@/lib/server/source-connector-governance";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
+import { sourceConnectionService } from "@/lib/server/source-connection-service";
 import {
   ConnectorGovernanceError,
-  listSourceConnections,
   type CredentialType,
   type SourceConnection,
   type SourceScope,
@@ -38,13 +38,10 @@ export async function GET(request: Request) {
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
-    const connections = await listSourceConnections(identity);
-    // `accountadmin` is workspace-scoped. The repository listing remains
-    // tenant-scoped, so enforce the authoritative workspace boundary before
-    // returning any row. The individual mutation/read paths additionally put
-    // workspace_id into their SQL predicates.
-    const workspaceConnections = connections.filter((connection) => connection.workspaceId === identity.workspaceId);
-    return json({ data: workspaceConnections.map(toResponse), correlationId: id });
+    // The service enforces the workspace boundary (`accountadmin` is workspace-scoped while the repository
+    // listing is tenant-scoped); the mutation/read paths additionally put workspace_id into their SQL predicates.
+    const connections = await sourceConnectionService().list(identity);
+    return json({ data: connections.map(toResponse), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
 

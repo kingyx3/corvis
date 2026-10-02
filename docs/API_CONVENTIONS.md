@@ -66,6 +66,18 @@ silently ignored, clamped without complaint, or crashing.
 collections and use pagination as their collection contract. `GET /exports`
 uses its separately bounded requester-history contract.
 
+**Chronological collections:** the id-ordered rule above is the default, not
+a requirement. `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` is a
+diagnostic feed whose useful order is newest first, and its delivery ids are
+random v4 UUIDs, so it orders by `(created_at desc, delivery_id desc)` and its
+cursor encodes that composite position (a microsecond-precision UTC timestamp
+plus the delivery id). It does not go through `paginate()` (which sorts
+ascending by one key); the repository applies the row-value keyset predicate in
+SQL and returns the page with its `nextCursor`. A cursor that does not decode
+to the composite position, including one issued before the ordering changed, is
+rejected as `invalid_cursor` (400); cursors are opaque, so clients restart from
+the first page rather than reuse them across deployments.
+
 Production Postgres repositories now push the requested page into SQL with
 a keyset predicate and `limit + 1` fetch for the document/job/observation/
 snapshot lists and the governed serving-resource collections above. This
@@ -177,7 +189,7 @@ Subscription administration and per-subscription signing-key rotation
   so a subscription is never left with zero or two active keys. The new
   secret is returned exactly once, in this response.
 - `GET /admin/webhooks/subscriptions/{webhookId}/deliveries` — paginated
-  customer-visible delivery diagnostics (state, attempt, status code, last
+  customer-visible delivery diagnostics, newest first (state, attempt, status code, last
   error).
 
 A signing secret is per tenant and per subscription, never shared across
@@ -217,6 +229,38 @@ the route and authoritatively in SQL (migration 048). Workspace/product
 routes such as `/api/v1/source-connections/**` remain available to
 `accountadmin`, but are scoped to the caller's own workspace
 (`lib/server/source-connector-governance.ts`), never tenant-wide.
+
+## Data issues (F5)
+
+Implementation tracker: GitHub issue #261. A customer who doubts a **published** figure reports it with the figure, its scope and a comment; the report becomes a tenant-scoped case routed to Data Operations. Reporting records a claim only: it never changes observations, snapshots or publication, which remain the business of the governed correction flow (`/admin/data-corrections`, migration 022). The routes are product surfaces, classified `workspace_control` in `openapi/v1-route-classification.json` rather than part of the stable integration contract in `openapi/corvis-v1.yaml` (the Data Operations routes fall under `/admin/**`).
+
+| Route | Who | Purpose |
+| --- | --- | --- |
+| `POST /api/v1/data-issues` | `observations:read`, entitled to the fund | Report. Body `{ idempotencyKey, figure, scope, comment }`; `201` with the case, or `200` with `replayed: true` on an idempotent retry. |
+| `GET /api/v1/data-issues` | `observations:read` | The caller's own reports, newest first; `?scope=all` lists the whole tenant (Organization Admins only, else `403 tenant_admin_required`); `?status=` filters; `?limit=` / `?cursor=` page; the response carries `unseenUpdateCount` (the caller's own cases that changed since they last looked). |
+| `GET /api/v1/data-issues?format=csv` or `format=json` | as above | Export every matching case for the customer's own records, as a download. |
+| `GET /api/v1/data-issues/{caseId}` | the reporter, or an Organization Admin | One case with its status history. Anyone else, and a missing or malformed id, get the same `404 data_issue_not_found`. |
+| `PATCH /api/v1/data-issues/{caseId}` | the reporter | `{ "seen": true }`: acknowledge the current status (clears the "Updated" indicator). Touches nothing else. |
+| `GET /api/v1/admin/data-issues`, `GET /api/v1/admin/data-issues/{caseId}` | Organization Admins (`tenant_admin`) | The Data Operations queue (same list and export parameters, always tenant-wide). |
+| `PATCH /api/v1/admin/data-issues/{caseId}` | Organization Admins | Move a case: `{ action: "investigate" or "correct" or "no_change", expectedStatus?, correctionIncidentId?, note? }`. |
+
+**Scope and comment.** `figure` is `overview`, `position_financials` or `review` (the fund scorecard, F1, will add its own). `scope` is `{ fundId, reportPeriod }` plus optional `companyId`, `metricCode`, `snapshotId` and `snapshotVersion` (a version needs its snapshot) and display labels (`fundLabel`, `companyLabel`, `metricLabel`, at most 200 characters each). `comment` is 1 to 2,000 characters. The caller must be entitled to `fundId`; the snapshot, when named, must exist in the tenant for that fund (and version). The scope is stored with the case and never changes afterwards (a database trigger enforces it).
+
+**Status machine.** `received -> investigating -> corrected | no_change`. `investigate` only from `received` (optionally linking a governed correction incident of the same fund and period that is not cancelled); `correct` only from `investigating`, naming (or already linked to) a **resolved** incident of the same fund and period, from which the replacement snapshot id and version are copied onto the case; `no_change` only from `investigating`, with a note. `expectedStatus` makes a move a compare-and-set. Resolving a governed correction (`POST /admin/data-corrections` `resolve`) corrects every linked `investigating` case in the same transaction (isolated by a savepoint, so it can never fail the correction itself) and reports the count as `dataIssuesCorrected`. A corrected case exposes `replacement: { snapshotId, snapshotVersion }`; only Organization Admins also see `correctionIncidentId`.
+
+**Who moves a case.** Corvis Data Operations is not a tenant role (see `ROLE_AND_ACTOR_TERMINOLOGY.md`). Cases are routed to Data Operations (`routedTo: "data_operations"`) and moved from the admin console / `/admin/data-issues` by an Organization Admin, which is how a Corvis operator acts inside a tenant through an explicit, audited support-access grant. The customer-facing Data issues view is read-only for everyone.
+
+**Visibility.** A case is visible to its reporter (while still entitled to the fund) and to Organization Admins, never to other members of the tenant, even with the same fund entitlement. The tables are server-managed with RLS enabled and forced and deliberately no client policy (the 071 pattern, not 022's tenant-wide select), and every query carries the tenant and reporter predicate.
+
+**Idempotency.** `idempotencyKey` (body) or the `Idempotency-Key` header (one namespace; both present and different is `400 invalid_idempotency_key`; neither is `400 idempotency_key_required`) is scoped to the reporter. The same key and content returns the original case; the same key with different content is `409 idempotency_key_reused`; two concurrent first submissions are `409 data_issue_report_conflict` (retry).
+
+**Errors** follow the usual `{ error, correlationId }` shape: `invalid_request`, `invalid_figure`, `invalid_scope`, `invalid_comment`, `invalid_action`, `invalid_status`, `invalid_correction`, `invalid_note`, `invalid_format`, `fund_not_entitled` (403), `tenant_admin_required` (403), `data_issue_not_found` (404), `data_issue_snapshot_not_found` (404), `data_issue_correction_not_found` (404), and 409s `data_issue_status_changed`, `data_issue_transition_not_allowed`, `data_issue_correction_required`, `data_issue_correction_not_resolved`, `data_issue_correction_scope_mismatch`, `data_issue_correction_cancelled`. The SQL refusals behind them are allow-listed in `lib/server/sql-application-errors.ts`.
+
+**Audit.** Report and every status move write an `audit_event` (`data_issue.report`, `data_issue.investigate`, `data_issue.correct`, `data_issue.no_change`; target `data_issue_case`) in the same transaction as the change. Events carry identifiers and the status only, never the comment or a note, and appear in the tenant access audit listing and its CSV.
+
+**Export.** `GET /api/v1/data-issues?format=csv` (or `json`) reuses the list endpoint instead of the asynchronous physical-export pipeline: cases are small, tenant-owned records, so the file is rendered synchronously, with spreadsheet formulas neutralised in CSV (`lib/csv.ts`), a `Content-Disposition: attachment` and an `x-corvis-export-truncated` header (true only past 10,000 cases). Columns: `case_id, status, figure, fund, fund_id, company, company_id, metric, metric_code, report_period, snapshot_id, snapshot_version, comment, reported_by, reported_at, status_changed_at, resolution_note, replacement_snapshot_id, replacement_snapshot_version, correction_incident_id` (the last only for Organization Admins).
+
+**Demo mode** serves the same routes from an in-memory per-tenant store (`adapters/demo/data-issue-store.ts`, selected in `lib/server/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
 
 ## Versioning and deprecation
 

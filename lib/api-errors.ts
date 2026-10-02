@@ -1,3 +1,5 @@
+import { recordResponseCorrelation } from "./request-correlation.ts";
+
 /**
  * Typed errors for the browser-side API adapters. Screens map these to plain-language copy; raw
  * codes (`research_timeout`, `HTTP 500`) are never shown to users directly.
@@ -61,7 +63,9 @@ export function throwIfUnauthenticated(response: { status: number }): void {
 
 /** Typed error for a non-2xx API response; a 401 additionally fires the session-expired flow. */
 export async function apiResponseError(response: Response): Promise<ApiError> {
-  const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[] };
+  const body = await response.json().catch(() => ({})) as { error?: string; reasons?: string[]; correlationId?: string };
+  // Remembered so "Contact support" can quote the request that just failed (lib/support.ts).
+  recordResponseCorrelation(response.headers, body);
   const message = body.reasons?.length
     ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}`
     : body.error || `Corvis API request failed (${response.status})`;

@@ -407,9 +407,11 @@ jobs:
           set -euo pipefail
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-retry-exhaustion.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-stage-recovery-hardening.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/stage-retry-backoff.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/outbox-event-authenticity-guard.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/sector-taxonomy.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-invitation-acceptance.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/identity-lifecycle-unknown-workspace.sql
       - name: Exercise the RLS invariant and the end-to-end processing stage pipeline
         shell: bash
         run: |
@@ -418,9 +420,15 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rls-invariant.sql
           # canonicalize -> reconcile -> consolidate -> publish, replay safety, and correction replay. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/processing-stage-pipeline.sql
+          # two documents on one fund-period: conflicting values block, identical values merge lineage. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/cross-document-conflicts.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/integrity-hardening.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/pipeline-durability-066.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
+          # Data-issue reports (F5): reporting is inert, the case state machine and its link to the governed correction, immutability, tenant/RLS. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/data-issue-reports.sql
+          # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
           # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.

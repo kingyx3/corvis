@@ -77,6 +77,9 @@ jobs:
       TF_VAR_auth_issuer: ${{ vars.CORVIS_AUTH_ISSUER }}
       TF_VAR_auth_audience: ${{ vars.CORVIS_AUTH_AUDIENCE || 'corvis' }}
       TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
+      TF_VAR_extraction_endpoint: ${{ vars.CORVIS_EXTRACTION_ENDPOINT || '' }}
+      TF_VAR_extraction_audience: ${{ vars.CORVIS_EXTRACTION_AUDIENCE || '' }}
+      TF_VAR_extraction_timeout_ms: ${{ vars.CORVIS_EXTRACTION_TIMEOUT_MS || '20000' }}
       TF_VAR_postgres_ca_cert: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
@@ -119,6 +122,14 @@ jobs:
           fi
           if [[ ! "${TF_VAR_monthly_budget_amount_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN { exit !(${TF_VAR_monthly_budget_amount_usd} > 0) }"; then
             echo "GCP_MONTHLY_BUDGET_USD must be a positive numeric amount."
+            exit 1
+          fi
+          if [[ ! "${TF_VAR_extraction_timeout_ms}" =~ ^[0-9]+$ ]] || (( TF_VAR_extraction_timeout_ms < 1000 || TF_VAR_extraction_timeout_ms > 25000 )); then
+            echo "CORVIS_EXTRACTION_TIMEOUT_MS must be an integer between 1000 and 25000."
+            exit 1
+          fi
+          if [[ -n "${TF_VAR_extraction_endpoint}" && ! "${TF_VAR_extraction_endpoint}" =~ ^https:// ]]; then
+            echo "CORVIS_EXTRACTION_ENDPOINT must use HTTPS when configured."
             exit 1
           fi
           if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then

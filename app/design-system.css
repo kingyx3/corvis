@@ -68,6 +68,9 @@
      them here so every workspace surface clears the accessibility contrast matrix
      in dark theme too. */
   .metric-card strong { color: var(--text-strong); }
+  /* --danger is a light tint in dark theme, so the destructive button needs dark text (white on it is 2:1). */
+  .danger-button { color: #2a0f0c; }
+  .danger-button:hover:not(:disabled) { background: #f7bdb6; border-color: #f7bdb6; }
   .metric-card.warning {
     background: var(--warning-bg);
     border-color: var(--warning-border);
@@ -426,4 +429,99 @@
     width: 100vw;
     height: 100dvh;
   }
+}
+
+/* Source connections (B5/B8). Severity is carried by icon, wording and border style as well as colour. */
+.source-connections { display: grid; gap: 12px; margin-top: 24px; }
+.source-connections-status:empty { display: none; }
+.source-connections-status { padding: 10px 14px; border: 1px solid var(--success-border); border-radius: var(--radius); background: var(--success-bg); color: var(--success); font-size: 13px; font-weight: 600; }
+.source-connections-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.source-connection-card { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-sm); min-width: 0; }
+.source-connection-card[data-severity="reauthorization"] { border-inline-start: 6px solid var(--danger); }
+.source-connection-card[data-severity="suspended"] { border-inline-start: 6px double var(--danger); }
+.source-connection-card[data-severity="attention"] { border-inline-start: 6px solid var(--warning); }
+.source-connection-card[data-severity="transient"] { border-inline-start: 6px dashed var(--info); }
+.source-connection-card[data-severity="stale"] { border-inline-start: 6px dotted var(--warning); }
+.source-connection-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.source-connection-head h3 { margin: 0 0 2px; font-size: 16px; color: var(--text-strong); }
+.source-connection-head h3:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: var(--radius-sm); }
+.source-connection-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.source-connection-notice { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-sunken); color: var(--text-body); }
+.source-connection-notice > svg { flex: none; margin-top: 1px; }
+.source-connection-notice > div { display: grid; gap: 2px; min-width: 0; }
+.source-connection-notice strong { font-size: 13px; font-weight: 650; color: inherit; overflow-wrap: anywhere; }
+.source-connection-notice span { font-size: 12px; overflow-wrap: anywhere; }
+.source-connection-notice[data-severity="healthy"] { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+.source-connection-notice[data-severity="stale"] { background: var(--warning-bg) repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, currentColor 7%, transparent) 8px 10px); border: 2px dotted var(--warning); color: var(--warning); }
+.source-connection-notice[data-severity="attention"] { background: var(--warning-bg); border: 2px solid var(--warning-border); color: var(--warning); }
+.source-connection-notice[data-severity="transient"] { background: var(--info-bg); border: 2px dashed var(--info); color: var(--info); }
+.source-connection-notice[data-severity="reauthorization"] { background: var(--danger-bg); border: 2px solid var(--danger); color: var(--danger); }
+.source-connection-notice[data-severity="suspended"] { background: var(--danger-bg); border: 4px double var(--danger); color: var(--danger); }
+.source-connection-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 20px; margin: 0; }
+.source-connection-facts dt { font-size: 12px; color: var(--text-muted); }
+.source-connection-facts dd { display: grid; gap: 2px; margin: 2px 0 0; overflow-wrap: anywhere; }
+.source-connection-facts details ul { margin: 4px 0 0; padding-left: 18px; }
+.source-connection-required { grid-column: 1 / -1; }
+.source-connection-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.source-connection-controls button[aria-disabled="true"] { opacity: 0.7; cursor: not-allowed; }
+.source-connection-unavailable { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--text-muted); }
+.source-connection-consequences { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-body); }
+.source-connection-dialog-error { margin: 0; color: var(--danger); font-weight: 600; }
+.source-connection-secret-json { font-family: var(--mono); -webkit-text-security: disc; text-security: disc; }
+
+/* Data issues (F5): reports on published figures, their status and the "updated" indicator. A changed case carries a leading bar AND an "Updated" pill, so the signal is never colour alone. */
+.data-issues { display: grid; gap: 12px; }
+.data-issues-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
+.data-issues-status:empty { display: none; }
+.data-issues-status { padding: 10px 14px; border: 1px solid var(--success-border); border-radius: var(--radius); background: var(--success-bg); color: var(--success); font-size: 13px; font-weight: 600; }
+.data-issues-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.data-issue-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-sm); min-width: 0; }
+.data-issue-card[data-unseen="true"] { border-inline-start: 6px solid var(--info); }
+.data-issue-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.data-issue-head h3 { margin: 0 0 2px; font-size: 16px; color: var(--text-strong); overflow-wrap: anywhere; }
+.data-issue-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.data-issue-comment { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-body); }
+.data-issue-summary, .data-issue-replacement { margin: 0; font-size: 13px; color: var(--text-body); overflow-wrap: anywhere; }
+.data-issue-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+.data-issue-actions details { min-width: 0; flex: 1 1 260px; }
+.data-issue-actions summary { cursor: pointer; font-size: 13px; color: var(--text-body); }
+.data-issue-history { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; color: var(--text-body); overflow-wrap: anywhere; }
+.data-issues-more { display: flex; justify-content: center; }
+.data-issue-form textarea { width: 100%; resize: vertical; }
+.data-issue-scope dd { overflow-wrap: anywhere; }
+
+/* An absolutely positioned visually-hidden header cell inside a scrolling table card used to escape its clipping and widen the whole page on phones. */
+.table-card { position: relative; }
+
+/* In-app help and support (F9). Colours come from theme tokens only, so both themes are covered. */
+a.text-button { text-decoration: none; }
+.help-button { height: 38px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-body); font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.help-button:hover { border-color: var(--text-muted); box-shadow: var(--shadow-sm); color: var(--text-strong); }
+.help-button svg { flex: none; }
+.help-links { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 8px; }
+.help-link { position: relative; display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
+.help-link:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.help-link a { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 14px; font-weight: 650; color: var(--text-strong); text-decoration: none; }
+.help-link a:hover { text-decoration: underline; }
+/* The whole row is the click target; the focus ring is drawn around the row. */
+.help-link a::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.help-link a:focus-visible { outline: none; }
+.help-link:has(a:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.help-link small { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.help-link svg { flex: none; color: var(--text-muted); }
+.help-context { padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--surface-sunken); }
+.help-context h3 { margin: 0 0 6px; font-size: 13px; font-weight: 650; color: var(--text-strong); }
+.help-context ul { margin: 0 0 8px; padding-left: 18px; display: grid; gap: 2px; font-family: var(--mono); font-size: 12px; color: var(--text-body); overflow-wrap: anywhere; }
+.help-context p { margin: 0; font-size: 12px; color: var(--text-muted); }
+/* The Help button joins the top bar, so the fund-period chip yields space on narrow screens instead of pushing the actions off-screen. */
+.top-actions { min-width: 0; }
+.top-actions > * { flex: none; }
+.top-actions > .fund-period-status-chip { flex: 0 1 auto; min-width: 0; }
+.fund-period-status-text { min-width: 0; }
+.fund-period-status-period { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) {
+  .help-button { width: 40px; height: 40px; padding: 0; justify-content: center; }
+  .help-button-label { display: none; }
+  /* Phones keep the icon and the count; the fund and period stay in the chip's accessible name. */
+  .fund-period-status-text { display: none; }
 }

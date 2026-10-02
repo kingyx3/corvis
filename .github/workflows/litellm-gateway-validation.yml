@@ -1,0 +1,76 @@
+name: LiteLLM gateway validation
+
+on:
+  pull_request:
+    paths:
+      - "ops/litellm/**"
+      - ".github/workflows/litellm-gateway-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ops/litellm/**"
+      - ".github/workflows/litellm-gateway-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Compile and exercise credential loader
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/litellm/entrypoint.py
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path("ops/litellm/entrypoint.py")
+          spec = importlib.util.spec_from_file_location("corvis_litellm_entrypoint", path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+
+          assert module.provider_credentials('{"OPENAI_API_KEY":"secret"}') == {"OPENAI_API_KEY": "secret"}
+          assert module.provider_credentials('{"AWS_ACCESS_KEY_ID":"id","AWS_SECRET_ACCESS_KEY":"secret"}') == {
+              "AWS_ACCESS_KEY_ID": "id",
+              "AWS_SECRET_ACCESS_KEY": "secret",
+          }
+          for payload in [
+              '{"PATH":"/tmp/evil"}',
+              '{"LITELLM_MASTER_KEY":"wrong-layer"}',
+              '{"HTTP_PROXY":"https://attacker.invalid"}',
+              '{"OPENAI_API_KEY":""}',
+              '["not-an-object"]',
+              '{not-json}',
+          ]:
+              try:
+                  module.provider_credentials(payload)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(f"unsafe provider credential payload was accepted: {payload!r}")
+          PY
+
+      - name: Lint gateway Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
+          docker run --rm -i "${image}" hadolint --failure-threshold warning - < ops/litellm/Dockerfile
+
+      - name: Guard production image contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'ARG LITELLM_BASE_IMAGE' ops/litellm/Dockerfile >/dev/null
+          grep -F 'FROM ${LITELLM_BASE_IMAGE}' ops/litellm/Dockerfile >/dev/null
+          if grep -Eq 'FROM .*:(latest|main-latest)([[:space:]]|$)' ops/litellm/Dockerfile; then
+            echo "::error::LiteLLM production wrapper must not bake a mutable upstream tag."
+            exit 1
+          fi
