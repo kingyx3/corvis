@@ -1,0 +1,97 @@
+name: Bind AI images to known-good release
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      expected_api_image:
+        required: true
+        type: string
+      expected_control_loop_image:
+        required: true
+        type: string
+      expected_extractor_image:
+        required: false
+        type: string
+        default: ""
+      expected_litellm_image:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      EXPECTED_API_IMAGE: ${{ inputs.expected_api_image }}
+      EXPECTED_CONTROL_LOOP_IMAGE: ${{ inputs.expected_control_loop_image }}
+      EXPECTED_EXTRACTOR_IMAGE: ${{ inputs.expected_extractor_image }}
+      EXPECTED_LITELLM_IMAGE: ${{ inputs.expected_litellm_image }}
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.environment }}" in uat|prod) ;; *) echo "Only uat/prod are supported."; exit 1 ;; esac
+          [[ "${EXPECTED_API_IMAGE}" =~ /api@sha256:[0-9a-f]{64}$ ]] || { echo "Expected API image is invalid."; exit 1; }
+          [[ "${EXPECTED_CONTROL_LOOP_IMAGE}" =~ /control-loop@sha256:[0-9a-f]{64}$ ]] || { echo "Expected control-loop image is invalid."; exit 1; }
+          if [[ -n "${EXPECTED_EXTRACTOR_IMAGE}" || -n "${EXPECTED_LITELLM_IMAGE}" ]]; then
+            [[ "${EXPECTED_EXTRACTOR_IMAGE}" =~ /extractor@sha256:[0-9a-f]{64}$ ]] || { echo "Expected extractor image is invalid."; exit 1; }
+            [[ "${EXPECTED_LITELLM_IMAGE}" =~ /litellm@sha256:[0-9a-f]{64}$ ]] || { echo "Expected LiteLLM image is invalid."; exit 1; }
+          fi
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Verify live AI runtime and bind accepted release
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
+          gcloud storage cat "${manifest}" > known-good.json || { echo "Security acceptance did not create known-good.json."; exit 1; }
+          [[ "$(jq -r '.image // empty' known-good.json)" == "${EXPECTED_API_IMAGE}" ]] || { echo "Known-good API image differs from accepted deployment."; exit 1; }
+          [[ "$(jq -r '.controlLoopImage // empty' known-good.json)" == "${EXPECTED_CONTROL_LOOP_IMAGE}" ]] || { echo "Known-good control-loop image differs from accepted deployment."; exit 1; }
+
+          extractor_live=""
+          litellm_live=""
+          if [[ -n "${EXPECTED_EXTRACTOR_IMAGE}" ]]; then
+            extractor_live="$(gcloud run services describe "corvis-extractor-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
+            litellm_live="$(gcloud run services describe "corvis-litellm-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
+            [[ "${extractor_live}" == "${EXPECTED_EXTRACTOR_IMAGE}" ]] || { echo "Live extractor differs from accepted deployment."; exit 1; }
+            [[ "${litellm_live}" == "${EXPECTED_LITELLM_IMAGE}" ]] || { echo "Live LiteLLM differs from accepted deployment."; exit 1; }
+          fi
+
+          jq \
+            --arg schemaVersion "corvis.known-good-release.v3" \
+            --arg extractorImage "${extractor_live}" \
+            --arg litellmImage "${litellm_live}" \
+            '.schemaVersion=$schemaVersion | .extractorImage=$extractorImage | .litellmImage=$litellmImage' \
+            known-good.json > known-good-v3.json
+          gcloud storage cp known-good-v3.json "${manifest}"
+          {
+            echo "### Known-good AI release binding"
+            echo "- Extractor: \`${extractor_live:-disabled}\`"
+            echo "- LiteLLM: \`${litellm_live:-disabled}\`"
+            echo "- Manifest: \`${manifest}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
