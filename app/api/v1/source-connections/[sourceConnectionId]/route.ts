@@ -1,14 +1,8 @@
 import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { transitionAuditedSourceConnection } from "@/lib/server/source-connector-governance";
 import { apiError, correlationId, json } from "@/lib/server/http";
-import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
-import {
-  assertSourceConnectionId,
-  ConnectorGovernanceError,
-  getSourceConnection,
-  type SourceConnection,
-} from "@/lib/server/source-connectors";
+import { sourceConnectionService } from "@/lib/server/source-connection-service";
+import { assertSourceConnectionId, type SourceConnection } from "@/lib/server/source-connectors";
 
 /** Never returns the secret reference; it is an internal resource pointer, not customer-facing state. */
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
@@ -23,8 +17,7 @@ export async function GET(request: Request, context: { params: Promise<{ sourceC
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "admin:manage");
     const { sourceConnectionId } = await context.params;
-    const connection = await getSourceConnection(identity, sourceConnectionId);
-    if (connection.workspaceId !== identity.workspaceId) throw new ConnectorGovernanceError("connection_not_found");
+    const connection = await sourceConnectionService().get(identity, sourceConnectionId);
     return json({ data: toResponse(connection), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }
@@ -41,9 +34,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ sourc
     }
     assertSourceConnectionId(sourceConnectionId);
 
-    const data = await transitionAuditedSourceConnection(identity, sourceConnectionId, body.action, id, {
-      secrets: sourceConnectorSecretStore(),
-    });
+    const data = await sourceConnectionService().transition(identity, sourceConnectionId, body.action, id);
     return json({ data: toResponse(data), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

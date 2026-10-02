@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
+import { connectionTransition } from "../../core/source-connection-health.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
@@ -311,27 +312,28 @@ async function transitionStatus(
   db: PostgresSqlApi,
   identity: RequestIdentity,
   sourceConnectionId: string,
-  allowedFrom: ConnectionStatus[],
-  to: ConnectionStatus,
+  action: "pause" | "resume",
 ): Promise<void> {
   const row = await loadConnection(db, identity.tenantId, sourceConnectionId);
   const current = requiredText(row, "status") as ConnectionStatus;
-  if (!allowedFrom.includes(current)) throw new ConnectorGovernanceError(`invalid_transition_from_${current}`);
+  // The allowed transitions live in core/source-connection-health.ts so the demo store and the UI follow the same rules.
+  const outcome = connectionTransition(action, current);
+  if ("refused" in outcome) throw new ConnectorGovernanceError(outcome.refused);
   // Compare-and-set on the status just read, so a concurrent transition (for
   // example a sync suspending the connection while it is being resumed) is
   // never silently overwritten by this stale decision.
   const updated = await db.query(`update corvis_source.source_connection set status=$3, updated_at=now()
     where tenant_id=$1 and source_connection_id=$2::uuid and status=$4 returning status`,
-  [identity.tenantId, sourceConnectionId, to, current]);
+  [identity.tenantId, sourceConnectionId, outcome.status, current]);
   if (updated.length === 0) throw new ConnectorGovernanceError("invalid_transition_from_concurrent_change");
 }
 
 export async function pauseSourceConnection(identity: RequestIdentity, sourceConnectionId: string, db: PostgresSqlApi = controlDb()): Promise<void> {
-  await transitionStatus(db, identity, sourceConnectionId, ["active", "reauthorization_required"], "paused");
+  await transitionStatus(db, identity, sourceConnectionId, "pause");
 }
 
 export async function resumeSourceConnection(identity: RequestIdentity, sourceConnectionId: string, db: PostgresSqlApi = controlDb()): Promise<void> {
-  await transitionStatus(db, identity, sourceConnectionId, ["paused"], "active");
+  await transitionStatus(db, identity, sourceConnectionId, "resume");
 }
 
 /** Terminal: a revoked connection can never be reactivated under the same row and its secret is destroyed. */
@@ -375,7 +377,8 @@ export async function reauthorizeSourceConnection(
   const providerKey = requiredText(row, "provider_key");
   const previousReference = requiredText(row, "secret_reference");
   const secretReference = await dependencies.secrets.write(identity.tenantId, providerKey, secret);
-  // Rotating a credential is not a resume: a paused connection stays paused.
+  // Rotating a credential is not a resume: a paused connection stays paused (connectionTransition("reauthorize") in
+  // core/source-connection-health.ts states the same rule for the demo store and the UI).
   // The status/secret predicates make this a compare-and-set, so a revoke (or
   // a second rotation) landing between the read above and this write is not
   // overwritten, and the credential just written is destroyed, not orphaned.

@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 // The critical customer flows. Every accessibility, performance and resilience assertion is driven
 // from this list so a new surface cannot be added without being covered.
 export type Surface = {
-  id: "overview" | "analytics" | "documents" | "review" | "delivery" | "research" | "access";
+  id: "overview" | "analytics" | "documents" | "sources" | "review" | "delivery" | "research" | "access";
   label: string;
   role?: "admin";
   nav: RegExp | null;
@@ -15,6 +15,8 @@ export const surfaces: Surface[] = [
   { id: "overview", label: "Overview", nav: null, heading: /reporting overview/i },
   { id: "analytics", label: "Portfolio analytics", nav: /^portfolio analytics$/i, heading: /^position financials$/i },
   { id: "documents", label: "Documents", nav: /^documents$/i, heading: /^documents$/i },
+  // Source connections live in the Documents view and only exist for administrators (B5/B8).
+  { id: "sources", label: "Source connections", role: "admin", nav: /^documents$/i, heading: /^source connections$/i },
   { id: "review", label: "Data review", nav: /^data review$/i, heading: /^data review$/i },
   { id: "delivery", label: "Data delivery", nav: /^data delivery$/i, heading: /deliver structured data/i },
   { id: "research", label: "Ask Corvis", nav: /^ask corvis$/i, heading: /^ask corvis$/i },

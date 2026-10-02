@@ -35,7 +35,9 @@ routing, and the migration's own RLS/constraint contract).
 **Implemented since this module landed:** `GcpSecretManagerSecretStore`
 (`lib/server/source-connector-runtime.ts`) is the production `SecretStore`, and
 the customer/admin routes under `app/api/v1/source-connections/**` (list,
-create, test, reauthorize, activity) call the module above.
+create, test, pause/resume/revoke via `PATCH`, reauthorize, activity) call the module above.
+The Documents view now has a **Source connections** section for administrators
+(stories B5 #252 and B8 #253); see "Customer connection list and controls" below.
 
 **Not yet implemented — the next integration step, in order:**
 1. At least one real `ConnectorDriver` for an approved representative
@@ -48,14 +50,30 @@ create, test, reauthorize, activity) call the module above.
    `runConnectionSync` for each due `active` connection using
    `source_connection.next_scheduled_at`. `runConnectionSync` has no caller
    outside tests today.
-3. Pause, resume and revoke commands (only create, list, test and
-   reauthorize are routed).
+3. A customer-facing `Connect source` flow (create with scope confirmation, OAuth
+   redirect) and a connection-test button in the UI. Pause, resume, revoke and
+   reauthorize are routed and have UI (below); creating and testing a connection
+   are API-only.
 4. Provider-specific UAT fixtures per the "Testing" section below, run
    against synthetic/test portal accounts.
 
 Building 1–4 unlocks the customer-facing `Connect source` flow this
 document otherwise describes; until then this is a tested, reusable
 foundation, not a working connector.
+
+## Customer connection list and controls
+
+`features/documents/source-connections-section.tsx` renders one card per connection in the Documents view. It is shown only to administrators of the workspace: the page gates on `admin:manage`, and an HTTP 403 from `GET /api/v1/source-connections` renders nothing, exactly like the run-history section. All wording comes from `core/source-connection-health.ts`, which is pure and unit-tested.
+
+- **Status and the one next action.** Every `ConnectorErrorClass` has plain-language copy and exactly one required action (`CONNECTOR_ERROR_COPY`); a compile-time and run-time contract test (`lib/server/source-connection-health-contract.test.ts`) fails when a class is added to the server without copy. `reauthorization_required` ("Needs reauthorization") and `suspended` ("Suspended") are separate from transient failures ("Retrying", told to wait) in label, icon and border style. No stored enum, provider key or secret reference is rendered.
+- **Stale.** An `active` connection with no successful sync in the last 48 hours (`STALE_AFTER_HOURS`), or never synced 48 hours after its scope was confirmed, is stale: a `Stale` pill, a clock icon, a dotted border and the sentence "No successful sync for N days". Other states are never stale.
+- **Next sync is not invented.** No scheduler calls `runConnectionSync` yet, so an active connection reads "Scheduled sync is not enabled yet"; paused, revoked, suspended and reauthorization-required connections say why sync is stopped. When a scheduler lands, this becomes data-driven in `describeConnection`.
+- **Controls.** Pause (from `active` or `reauthorization_required`), Resume (from `paused`), Reauthorize (any live connection; a paused one stays paused) and Revoke (terminal) call `PATCH /api/v1/source-connections/{id}` and `POST …/reauthorize`. The transition rules live once in `connectionTransition` (core) and are used by the Postgres path, the demo store and the UI. Revoke uses the same modal destructive-confirmation pattern as the admin console (Cancel focused first) and lists exactly what stops and what is retained. After a command the list is reloaded, focus moves to the affected connection and the result is announced in a `role="status"` region.
+- **Reauthorize payload.** `scoped_api_token` and `browser_session` send `{ "secret": { "token": "<value>" } }`; `service_account` sends the pasted JSON key object as `secret`. The field is masked, uncontrolled, `autocomplete="off"`, read once on submit and emptied immediately (also on failure and close); it is never rendered back, stored in the browser or echoed by the API. `oauth_*` connections show the action disabled with an explanation until the OAuth redirect flow (story B1) exists.
+- **Run history link.** Each card links to its row in the existing "Source run history" section (focus moves to the row). That section now uses plain words for run states, outcomes and failure classes.
+- **Attention.** The `source_attention` notification is a one-shot email (see `docs/NOTIFICATIONS.md`); the in-app attention banner is derived from live status and clears when the connection is reauthorized.
+- **Audit.** Every command writes `source_connection.<action>` in the same transaction as the change, and the tenant access audit (`GET /api/v1/access/audit`, JSON and CSV) lists them.
+- **Demo mode.** With `CORVIS_DEMO_MODE` the routes are served from an in-memory store (`adapters/demo/source-connection-store.ts`) seeded per demo tenant with healthy, stale, paused, reauthorization-required, suspended, transient-failure and revoked connections. It applies the same transition rules and never holds a credential. Production refuses demo mode.
 
 ## Goal
 

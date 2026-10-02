@@ -14,6 +14,8 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 | `role_changed` | Tenant admin changes or removes a member's role | The affected member | No: always sent immediately |
 | `digest` | Oldest deferred item for a person is 24 hours old | That person | Follows the categories it bundles |
 
+`source_attention` is a one-shot email enqueued when a sync moves a connection to `reauthorization_required` or `suspended`; it is deduplicated per run and there is no stored in-app notification record to clear. The in-app signal (the attention banner on Documents and the connection list) is derived from the live connection status, so it disappears as soon as the connection is healthy again. Only reauthorization returns a `reauthorization_required` or `suspended` connection to `active`: a successful sync cannot, because `runConnectionSync` refuses any connection that is not already `active`.
+
 The catalog, audiences and templates live in `core/notifications.ts`. Stories that don't exist yet (F3 assignment/mentions, F5 data-issue updates, F7 sign-in policy) add a category there when they ship.
 
 ## Content rules
