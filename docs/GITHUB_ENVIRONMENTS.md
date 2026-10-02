@@ -13,6 +13,9 @@ Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow r
 | `CORVIS_AUTH_ISSUER` | variable | `uat`, `prod` (and `dev` with a runtime) | before a runtime deploy | terraform-deploy, gcp-decommission | Approved HTTPS OIDC issuer. |
 | `CORVIS_AUTH_AUDIENCE` | variable | as above | no (default `corvis`) | terraform-deploy, gcp-decommission | Approved OIDC audience/client identifier. |
 | `CORVIS_AUTH_JWKS_URL` | variable | as above | no | terraform-deploy, gcp-decommission | Explicit JWKS URL; OIDC discovery is preferred. |
+| `CORVIS_EXTRACTION_ENDPOINT` | variable | `uat`, `prod` | when governed extraction is enabled | terraform-deploy | HTTPS endpoint implementing Corvis `/v1/extractions`. Leave unset to keep extraction fail-closed; do not point this directly at LiteLLM or a raw model API. |
+| `CORVIS_EXTRACTION_AUDIENCE` | variable | `uat`, `prod` | no | terraform-deploy | Google OIDC audience for the extraction harness; when empty application code defaults it to `CORVIS_EXTRACTION_ENDPOINT`. |
+| `CORVIS_EXTRACTION_TIMEOUT_MS` | variable | `uat`, `prod` | no (default `20000`) | terraform-deploy | Extraction-provider request timeout in milliseconds; deployment validation accepts 1000-25000. |
 | `CORVIS_CONTROL_TENANT_ID` | variable | `uat`, `prod` | for security acceptance | security-acceptance | Tenant used for retained sanitized control evidence. |
 | `CORVIS_POSTGRES_CA_CERT` | variable | `dev`, `uat`, `prod` | when the provider uses a private CA (Supabase) | terraform-deploy, security-acceptance | Public PEM CA bundle for verified Postgres TLS (not a secret; see RUNTIME_SECRETS.md). |
 | `GCP_BILLING_ACCOUNT_ID` | variable | `dev`, `uat`, `prod` | no | gcp-bootstrap, gcp-decommission, terraform-deploy | Attaches a monthly budget. |
@@ -49,6 +52,12 @@ Before promoting a production-like UAT/prod runtime, also configure:
 `CORVIS_AUTH_JWKS_URL` is optional; standards-based OIDC discovery is preferred.
 
 `CORVIS_POSTGRES_CA_CERT` is optional: set the provider's public PEM CA bundle when its certificates chain to a private root (Supabase), so Postgres TLS stays verified.
+
+### Governed extraction harness
+
+Quarterly-report extraction remains disabled until an approved harness is available. Configure `CORVIS_EXTRACTION_ENDPOINT` only with an HTTPS service that implements Corvis's governed `/v1/extractions` contract, produces the deterministic immutable JSONL bundle and orchestration manifest, and accepts the worker's Google-signed OIDC token. `CORVIS_EXTRACTION_AUDIENCE` is optional and `CORVIS_EXTRACTION_TIMEOUT_MS` defaults to `20000`.
+
+The extraction endpoint is deliberately one layer above the model gateway. A LiteLLM proxy exposes model APIs such as `/v1/responses`, `/v1/messages`, and `/v1/chat/completions`; it does **not** implement the Corvis extraction contract and must therefore sit behind an extraction harness. This separation lets the harness use LiteLLM, a direct provider SDK, a coding/agent harness, or another compatible gateway without changing Corvis's canonical data/review pipeline. See [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
 
 `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` (per environment, default `false`): set `true` after adding an enabled version to the Terraform-managed `corvis-control-loop-github-token-<env>` secret (a read-only, fine-grained token for this repository); only then do the control-loop jobs receive `GITHUB_TOKEN` instead of the 60-requests-per-hour anonymous GitHub API budget.
 
@@ -125,6 +134,8 @@ Do not hardcode `corvis.com`, `corvis.ai`, or another candidate TLD anywhere in 
 
 Runtime secret values belong in GCP Secret Manager or the relevant provider-managed store, not ordinary GitHub variables. The Postgres DSN is written directly to `corvis-postgres-dsn-${environment}` and read through WIF/IAM by migrations and runtime workloads. Terraform generates the restricted API Gateway edge key and passes it to the Worker as a sensitive binding.
 
+Model-provider API keys, LiteLLM master/virtual keys, and Atlassian credentials must follow the same rule: keep them in the extraction-harness or gateway runtime's secret store, never in `CORVIS_EXTRACTION_ENDPOINT`, Terraform variables, LiteLLM YAML committed to Git, extraction candidate JSONL, logs, or model prompts. GitHub Environment **secrets** may be used as one-time provisioning inputs for a separately governed gateway/harness workflow, but the deployed runtime should consume the resulting secret from GCP Secret Manager (or an equivalently controlled provider secret store). The model/skill configuration contract is documented in [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
+
 ## Setup order
 
 1. Create the billed GCP project.
@@ -135,7 +146,8 @@ Runtime secret values belong in GCP Secret Manager or the relevant provider-mana
 6. When a domain is selected, activate it as the single Cloudflare zone and set repository `CLOUDFLARE_ZONE_NAME`.
 7. Configure `CLOUDFLARE_ZONE_POLICY_TOKEN`; run **Cloudflare shared zone policy** plan then apply from `main`.
 8. Configure the environment `CLOUDFLARE_API_TOKEN`; deploy UAT/prod through the normal immutable-release Terraform path.
-9. Run Security acceptance before treating the release as known-good.
+9. When extraction is ready, configure the governed extraction harness endpoint/audience and its separately secret-managed model gateway/provider credentials.
+10. Run Security acceptance before treating the release as known-good.
 
 Steps 1-4 require no domain, Cloudflare, Postgres or IdP.
 
@@ -158,6 +170,7 @@ Steps 1-4 require no domain, Cloudflare, Postgres or IdP.
 - [ ] `RELEASE_GOVERNANCE_TOKEN` is configured for each environment.
 - [ ] GCP foundation bootstrap succeeds before runtime activation.
 - [ ] production-like Postgres/IdP roots are configured before runtime promotion.
+- [ ] when extraction is enabled, `CORVIS_EXTRACTION_ENDPOINT` targets the governed extraction harness (not LiteLLM/raw model APIs) and the harness's model/skill credentials are secret-managed.
 - [ ] when Cloudflare is enabled, one repository `CLOUDFLARE_ZONE_NAME` is used by both UAT and prod.
 - [ ] shared Cloudflare zone policy has been applied with the dedicated policy token.
 - [ ] UAT/prod each have an environment edge token only when needed.
