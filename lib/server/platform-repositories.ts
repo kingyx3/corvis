@@ -64,7 +64,7 @@ export class PostgresWorkspaceRepository {
    * The unpaged lists are capped (1000 documents / 5000 observations, newest
    * first), so counts taken from them lose exactly the oldest, stuck items.
    *
-   * needsReview: one row per fund with the exact count of waiting observations
+   * needsReview: one row per fund-period (the Postgres serving view has no snapshot column; a snapshot is one fund and one period) with the exact count of waiting observations
    * and the most recently updated one as the deep link. The predicate mirrors
    * the list mapping: everything the serving view exposes that is not
    * approved or rejected is "Needs review".
@@ -80,16 +80,16 @@ export class PostgresWorkspaceRepository {
   ): Promise<{ needsReview: PostgresRow[]; stuckDocuments: PostgresRow[] }> {
     const fundIds = identity.entitlements.fundIds ?? [];
     const documentIds = identity.entitlements.documentIds ?? [];
-    const needsReview = fundIds.length === 0 || documentIds.length === 0 ? [] : await this.db.query(`select x.fund_id,x.fund_name,x.review_count,x.observation_id,x.company_id,x.company_name,x.metric_code
+    const needsReview = fundIds.length === 0 || documentIds.length === 0 ? [] : await this.db.query(`select x.fund_id,x.fund_name,x.economic_period,x.review_count,x.observation_id,x.company_id,x.company_name,x.metric_code
       from (
         select o.fund_id,
           -- The serving observations view carries no fund name; use the fund's snapshot name so the
           -- attention item lines up with (and can deep-link to) its snapshot, else the fund id.
           coalesce((select max(fs.fund_name) from corvis_serving.fund_period_snapshots fs
                     where fs.tenant_id=o.tenant_id and fs.fund_id=o.fund_id), o.fund_id) as fund_name,
-          o.observation_id,o.company_id,o.company_name,o.metric_code,
-          count(*) over (partition by o.fund_id) as review_count,
-          row_number() over (partition by o.fund_id order by o.updated_at desc, o.observation_id) as rn
+          o.economic_period,o.observation_id,o.company_id,o.company_name,o.metric_code,
+          count(*) over (partition by o.fund_id,o.economic_period) as review_count,
+          row_number() over (partition by o.fund_id,o.economic_period order by o.updated_at desc, o.observation_id) as rn
         from corvis_serving.observations o
         join corvis_source.source_reference r
           on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -99,7 +99,7 @@ export class PostgresWorkspaceRepository {
           and lower(o.review_state) not in ('approved','rejected')
       ) x
       where x.rn=1
-      order by x.fund_name nulls last, x.fund_id`, [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
+      order by x.fund_name nulls last, x.fund_id, x.economic_period nulls last`, [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds)]);
     const stuckDocuments = !options.includeDocuments || documentIds.length === 0 ? [] : await this.db.query(`select d.*, count(*) over () as stuck_total
       from corvis_serving.documents d
       where d.tenant_id=$1

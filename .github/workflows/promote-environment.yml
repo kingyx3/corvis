@@ -86,6 +86,9 @@ jobs:
     uses: ./.github/workflows/security-acceptance.yml
     with:
       environment: ${{ inputs.environment }}
+      expected_api_image: ${{ needs.deploy.outputs.api_image }}
+      expected_control_loop_image: ${{ needs.deploy.outputs.control_loop_image }}
+      require_expected_release: true
     secrets: inherit
 
   # A prod release that fails acceptance must not stay live (#235): redeploy the

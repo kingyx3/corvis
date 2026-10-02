@@ -15,6 +15,21 @@ on:
         description: Production-like environment to verify
         required: true
         type: string
+      expected_api_image:
+        description: Immutable API/worker image the deploy job resolved; the live revision must match it before known-good advances
+        required: false
+        type: string
+        default: ""
+      expected_control_loop_image:
+        description: Immutable control-loop image the deploy job resolved; the live job must match it before known-good advances
+        required: false
+        type: string
+        default: ""
+      require_expected_release:
+        description: Fail closed when the expected digests are empty (set by promotion; false only for direct manual runs)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -286,9 +301,9 @@ jobs:
             scheduler="$(gcloud scheduler jobs describe "${name}" --location="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
             policy="$(gcloud run jobs get-iam-policy "${name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
 
-            image="$(jq -r '.template.template.containers[0].image // empty' <<<"${job}")"
-            job_sa="$(jq -r '.template.template.serviceAccount // empty' <<<"${job}")"
-            mode="$(jq -r '.template.template.containers[0].args[1] // empty' <<<"${job}")"
+            image="$(jq -r '.spec.template.spec.template.spec.containers[0].image // empty' <<<"${job}")"
+            job_sa="$(jq -r '.spec.template.spec.template.spec.serviceAccountName // empty' <<<"${job}")"
+            mode="$(jq -r '.spec.template.spec.template.spec.containers[0].args[1] // empty' <<<"${job}")"
             invoker_count="$(jq --arg member "serviceAccount:${service_account}" '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]? | select(. == $member)] | length' <<<"${policy}")"
             uri="https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/jobs/${name}:run"
 
@@ -305,7 +320,7 @@ jobs:
             if [[ -z "${daily_image}" ]]; then daily_image="${image}"; elif [[ "${image}" != "${daily_image}" ]]; then result="fail"; fi
           done
 
-          bucket="$(gcloud storage buckets describe "gs://${state_bucket}" --format=json)"
+          bucket="$(gcloud storage buckets describe "gs://${state_bucket}" --raw --format=json)"
           bucket_policy="$(gcloud storage buckets get-iam-policy "gs://${state_bucket}" --format=json)"
           state_admin_count="$(jq --arg member "serviceAccount:${service_account}" '[.bindings[]? | select(.role == "roles/storage.objectAdmin") | .members[]? | select(. == $member)] | length' <<<"${bucket_policy}")"
           public_members="$(jq '[.bindings[]?.members[]? | select(. == "allUsers" or . == "allAuthenticatedUsers")] | length' <<<"${bucket_policy}")"
@@ -351,6 +366,9 @@ jobs:
       GCP_REGION: asia-southeast1
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      EXPECTED_API_IMAGE: ${{ inputs.expected_api_image || '' }}
+      EXPECTED_CONTROL_LOOP_IMAGE: ${{ inputs.expected_control_loop_image || '' }}
+      REQUIRE_EXPECTED_RELEASE: ${{ inputs.require_expected_release && 'true' || 'false' }}
     steps:
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -368,11 +386,28 @@ jobs:
           set -euo pipefail
           image="$(gcloud run services describe "corvis-api-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
           control_loop_job="$(gcloud run jobs describe "corvis-control-loop-daily-${{ inputs.environment }}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
-          control_loop_image="$(jq -r '.template.template.containers[0].image // empty' <<<"${control_loop_job}")"
+          control_loop_image="$(jq -r '.spec.template.spec.template.spec.containers[0].image // empty' <<<"${control_loop_job}")"
           expected_api_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api@sha256:"
           expected_control_loop_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/control-loop@sha256:"
           if [[ ! "${image}" =~ ^${expected_api_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted API revision is not pinned to the expected Artifact Registry digest."; exit 1; fi
           if [[ ! "${control_loop_image}" =~ ^${expected_control_loop_prefix}[0-9a-f]{64}$ ]]; then echo "Accepted control-loop job is not pinned to the expected Artifact Registry digest."; exit 1; fi
+          # Promotion passes the digests its deploy job resolved. Only the release
+          # that was actually accepted may become the rollback target, so a
+          # concurrent or out-of-band deploy that changed the live image after
+          # the acceptance probes ran fails closed here instead of being recorded.
+          # A direct manual dispatch passes nothing and keeps the live-image behaviour.
+          if [[ "${REQUIRE_EXPECTED_RELEASE}" == "true" && ( -z "${EXPECTED_API_IMAGE}" || -z "${EXPECTED_CONTROL_LOOP_IMAGE}" ) ]]; then
+            echo "Promotion did not supply the deploy-resolved release digests; refusing to record known-good."
+            exit 1
+          fi
+          if [[ -n "${EXPECTED_API_IMAGE}" || -n "${EXPECTED_CONTROL_LOOP_IMAGE}" ]]; then
+            if [[ ! "${EXPECTED_API_IMAGE}" =~ ^${expected_api_prefix}[0-9a-f]{64}$ ]]; then echo "Deploy-resolved API image is not the expected immutable digest."; exit 1; fi
+            if [[ ! "${EXPECTED_CONTROL_LOOP_IMAGE}" =~ ^${expected_control_loop_prefix}[0-9a-f]{64}$ ]]; then echo "Deploy-resolved control-loop image is not the expected immutable digest."; exit 1; fi
+            if [[ "${image}" != "${EXPECTED_API_IMAGE}" ]]; then echo "Live API revision differs from the release this run accepted; refusing to record known-good."; exit 1; fi
+            if [[ "${control_loop_image}" != "${EXPECTED_CONTROL_LOOP_IMAGE}" ]]; then echo "Live control-loop job differs from the release this run accepted; refusing to record known-good."; exit 1; fi
+          else
+            echo "::warning::No expected release digests were supplied (manual dispatch); recording the live release set."
+          fi
           accepted_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n --arg schemaVersion "corvis.known-good-release.v2" --arg environment "${{ inputs.environment }}" --arg image "${image}" --arg controlLoopImage "${control_loop_image}" --arg acceptedAt "${accepted_at}" --arg acceptanceWorkflowSha "${GITHUB_SHA}" --arg acceptanceRunId "${GITHUB_RUN_ID}" '{schemaVersion:$schemaVersion,environment:$environment,image:$image,controlLoopImage:$controlLoopImage,acceptedAt:$acceptedAt,acceptanceWorkflowSha:$acceptanceWorkflowSha,acceptanceRunId:$acceptanceRunId}' > known-good.json
           destination="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"

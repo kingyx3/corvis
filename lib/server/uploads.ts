@@ -590,9 +590,15 @@ export class ProductionUploadSessions implements UploadSessionPort {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const prior = await this.readIdempotency(idempotencyObject);
       if (prior?.uploadId) {
-        const loaded = await this.load(identity, prior.uploadId).catch(() => null);
+        // Only "the prior session is gone" falls through to a fresh session. A transient storage or database
+        // failure must propagate: minting a new session while the quarantined original is still releasable
+        // would ingest the same file twice.
+        const loaded = await this.load(identity, prior.uploadId).catch((error) => {
+          if (error instanceof UploadRequestError && error.code === "upload_not_found") return null;
+          throw error;
+        });
         if (loaded) assertSameUploader(identity, loaded);
-        const existing = loaded ? await this.refreshScan(loaded).catch(() => null) : null;
+        const existing = loaded ? await this.refreshScanForReplay(identity, loaded) : null;
         // Aborted and rejected/infected sessions are terminal: replaying one would hand the client a session
         // with no upload URL forever, so the same file starts a fresh session (its sweep purges the old bytes).
         if (existing && existing.state !== "aborted" && !isRejectedSession(existing)) { assertSameInitiate(existing, input); return existing; }
@@ -601,6 +607,22 @@ export class ProductionUploadSessions implements UploadSessionPort {
       if (created) return created;
     }
     throw new UploadRequestError("upload_conflict", "Concurrent uploads with the same idempotency key; retry the request");
+  }
+
+  /**
+   * Refreshes the scan verdict for an idempotent replay. A rejection raised by the refresh itself (for example an
+   * integrity failure, which persists the rejected state first) means the session is terminal, so the replay starts a
+   * fresh one; any other failure, including transient infrastructure errors, is surfaced so the client retries.
+   */
+  private async refreshScanForReplay(identity: RequestIdentity, session: UploadSession): Promise<UploadSession | null> {
+    try {
+      return await this.refreshScan(session);
+    } catch (error) {
+      if (!(error instanceof UploadRequestError)) throw error;
+      const current = await this.load(identity, session.uploadId);
+      if (current.state === "aborted" || isRejectedSession(current)) return null;
+      throw error;
+    }
   }
 
   private async createSession(

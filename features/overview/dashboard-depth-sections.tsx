@@ -2,7 +2,7 @@
 import { displayValue as formatValue, displayNumberFormatter, displayDate } from "@/lib/display-format";
 import { usePreferences } from "@/features/preferences/preference-provider";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ObservationRecord } from "@/core/contracts";
 import type { WorkspaceDashboardSummary } from "@/core/workspace-dashboard";
 import type { WorkspaceSummary } from "@/core/workspace-summary";
@@ -11,6 +11,7 @@ import { Icon } from "@/components/ui/icon";
 import { StatusPill } from "@/components/ui/status-pill";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 import { apiUrl } from "@/lib/api-url";
+import { claimVisitAcknowledgement } from "@/lib/visit-acknowledgement";
 import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
 
 type DrillPoint = { fundId: string; fund: string; period: string; snapshotId: string };
@@ -91,19 +92,19 @@ export function DashboardDepthSections({
     }
   }
 
-  // Advance the visit cursor only after the summary has mounted successfully.
+  // Advance the visit cursor only after the summary has mounted successfully, and only once per
+  // mount: a refresh must not acknowledge (and so erase) a digest the user has not read yet.
   const generatedAt = dashboard?.generatedAt;
+  const visitAcknowledgement = useRef({ acknowledged: false });
   useEffect(() => {
-    if (!generatedAt) return;
-    const controller = new AbortController();
+    const seenAt = claimVisitAcknowledgement(visitAcknowledgement.current, generatedAt);
+    if (!seenAt) return;
     void fetch(apiUrl("/api/v1/workspace-preferences"), {
       method: "POST",
-      signal: controller.signal,
       credentials: "include",
       headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ seenAt: generatedAt }),
+      body: JSON.stringify({ seenAt }),
     }).catch(() => undefined);
-    return () => controller.abort();
   }, [generatedAt]);
 
   const exactRows = useMemo(() => {

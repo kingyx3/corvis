@@ -307,6 +307,41 @@ resource "google_storage_bucket_iam_member" "worker_source_reader" {
   member = "serviceAccount:${google_service_account.worker.email}"
 }
 
+# The scheduled /api/internal/delivery drain runs on the worker and mutates
+# objects: the upload sweep deletes abandoned/quarantined source objects
+# (tenant=...) and rewrites upload-session and sweep-cursor JSON
+# (_corvis/upload-sessions/, _corvis/upload-sweep-cursors/), and export delivery
+# deletes superseded or failed attempt artifacts (exports/). Overwrite and delete
+# both need storage.objects.delete, which Viewer/Creator lack. Grant the narrow
+# predefined object CRUD role, limited by an IAM condition to exactly those
+# prefixes. The unconditional Viewer above keeps bucket-level listing working
+# (object-prefix conditions do not apply to list requests). Object User does not
+# grant bucket administration or IAM changes.
+locals {
+  worker_source_object_prefixes = [
+    "tenant=",
+    "exports/",
+    "_corvis/upload-sessions/",
+    "_corvis/upload-sweep-cursors/",
+  ]
+  worker_source_object_condition = join(" || ", [
+    for prefix in local.worker_source_object_prefixes :
+    "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.source.name}/objects/${prefix}\")"
+  ])
+}
+
+resource "google_storage_bucket_iam_member" "worker_source_objects" {
+  bucket = google_storage_bucket.source.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.worker.email}"
+
+  condition {
+    title       = "worker-source-lifecycle-prefixes"
+    description = "Worker may create/overwrite/delete only upload-sweep, upload-session and export-attempt objects."
+    expression  = local.worker_source_object_condition
+  }
+}
+
 # The API owns the durable outbox dispatch loop. Give it only the two transport
 # permissions required to move processing work into the managed topic/queue.
 resource "google_pubsub_topic_iam_member" "api_processing_publisher" {

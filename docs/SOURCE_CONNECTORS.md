@@ -19,12 +19,14 @@ port: it fails closed before ever calling the driver for anything but an
 `active` connection, computes the idempotent `acquisitionKey` from remote
 id + remote version + content hash (so a genuine remote content
 replacement is retained as a new acquisition rather than either being
-skipped or overwriting the prior one), classifies every driver error into
-one of the contracted classes and moves a non-retryable class
-(`auth`/`reauthorization`/`permission`/`provider_change`/`validation`) to
-`reauthorization_required` or `suspended` rather than retrying it forever,
-and records a per-document failure as a rejection without aborting the
-whole run. All of this is covered by `lib/server/source-connectors.test.ts`,
+skipped or overwriting the prior one), and classifies every driver error
+into one of the contracted classes. A fail-closed class
+(`auth`/`reauthorization`/`permission`/`provider_change`/`validation`) —
+whether raised at discovery or while downloading a single document —
+aborts the whole run and moves the connection to `reauthorization_required`
+or `suspended` rather than retrying it forever or looking like one rejected
+file; any other per-document download failure is instead recorded as a
+rejection and the run continues. All of this is covered by `lib/server/source-connectors.test.ts`,
 `lib/server/source-connector-sync.test.ts` and
 `lib/server/source-connectors-contract.test.ts` (cross-tenant isolation,
 secret redaction, idempotent duplicate/replacement discovery, error-class
