@@ -126,13 +126,13 @@ test("the read and transition operations also default to the control database", 
 });
 
 test("revokeSourceConnection destroys the secret and marks the row revoked via the default control database", async (t) => {
-  const gateway = withGateway((call) => (call.sql.startsWith("select *") ? [connectionRow()] : []));
+  const gateway = withGateway((call) => (call.sql.startsWith("select *") ? [connectionRow()] : [{ status: "revoked" }]));
   t.after(gateway.restore);
   const secrets = new RecordingSecrets();
   await revokeSourceConnection(identity, CONNECTION_ID, { secrets });
   assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
   const update = gateway.calls.find((call) => call.sql.includes("status='revoked'"));
-  assert.deepEqual(update?.parameters, [TENANT, CONNECTION_ID]);
+  assert.deepEqual(update?.parameters, [TENANT, CONNECTION_ID, "projects/x/secrets/corvis-src-old"], "the terminal write is conditioned on the destroyed reference");
 });
 
 test("reauthorizeSourceConnection rotates the secret and revokes the previous one via the default control database", async (t) => {
