@@ -22,7 +22,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ caseI
   const id = correlationId(request);
   try {
     const identity = await resolveAdminRequestIdentity(request);
-    const command = parseTransitionCommand(await readJsonObject(request));
+    const body = await readJsonObject(request);
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const command = parseTransitionCommand(body);
     const { caseId } = await context.params;
     return json({ data: await dataIssueService().transition(identity, caseId, command, id), correlationId: id });
   } catch (error) { return dataIssueErrorResponse(error, id); }
