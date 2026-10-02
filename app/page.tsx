@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { DocumentRecord, FundSnapshot, ObservationRecord, View } from "@/core/contracts";
+import { currentSnapshots } from "@/core/current-snapshots";
 import type { Permission } from "@/core/enterprise";
 import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace";
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
@@ -115,7 +116,7 @@ export default function CorvisApp() {
     // A successful re-fetch (Retry after signing in again) clears the prompt.
     setSessionExpired([capabilitiesResult, documentsResult, snapshotsResult, observationsResult].some((result) => result.status === "rejected" && isUnauthenticatedError(result.reason)));
     if (documentsResult.status === "fulfilled") setDocs(documentsResult.value); else nextErrors.documents = errorMessage(documentsResult.reason);
-    if (snapshotsResult.status === "fulfilled") setSnapshots(snapshotsResult.value); else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
+    if (snapshotsResult.status === "fulfilled") setSnapshots(currentSnapshots(snapshotsResult.value)); else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
     if (observationsResult.status === "fulfilled") setObservations(observationsResult.value); else nextErrors.observations = errorMessage(observationsResult.reason);
     if (capabilitiesResult.status === "fulfilled") setCapabilities(capabilitiesResult.value);
     else {

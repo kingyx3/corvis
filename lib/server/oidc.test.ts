@@ -69,6 +69,16 @@ test("OIDC verifier carries a normalized email only from a signed, explicitly ve
   }), /verified OIDC email is missing/);
 });
 
+/**
+ * Changes the signature's FIRST character, which carries six significant bits, so the signature bytes always change.
+ * Overwriting the last characters is not safe: a 256-byte signature's final base64url character carries only two
+ * significant bits, so replacing the tail left the token byte-identical (and valid) for about one random key in 256.
+ */
+function tamperSignature(jwt: string): string {
+  const [header, claims, signature] = jwt.split(".");
+  return `${header}.${claims}.${signature![0] === "A" ? "B" : "A"}${signature!.slice(1)}`;
+}
+
 test("OIDC verifier rejects wrong audience, expiry and signature tampering", async () => {
   const verifier = new OidcVerifier(fetchFixture());
   await assert.rejects(verifier.verify({
@@ -85,7 +95,7 @@ test("OIDC verifier rejects wrong audience, expiry and signature tampering", asy
   }), /expired/);
   const valid = token();
   await assert.rejects(verifier.verify({
-    authorization: `Bearer ${valid.slice(0, -2)}aa`,
+    authorization: `Bearer ${tamperSignature(valid)}`,
     issuer,
     audience,
     now: new Date(1_800_000_100_000),

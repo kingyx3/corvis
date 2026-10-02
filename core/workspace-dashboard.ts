@@ -1,4 +1,5 @@
 import type { FundSnapshot } from "./contracts.ts";
+import { currentSnapshots } from "./current-snapshots.ts";
 import {
   PORTFOLIO_VALUE_METRICS,
   VALUE_SUBJECT_LEVELS,
@@ -167,7 +168,7 @@ export function buildTrendContributors(series: FundTrendSeries[], periods: strin
   return result;
 }
 
-function parseTime(value: string | null): number | null {
+function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -180,7 +181,8 @@ function moneyDelta(value: number, currency: string | null): string {
   } catch {
     formatted = new Intl.NumberFormat("en", { maximumFractionDigits: 0 }).format(Math.abs(value));
   }
-  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
+  // Only called with a non-zero delta: an unchanged value never produces a digest item.
+  return `${value < 0 ? "−" : "+"}${formatted}`;
 }
 
 /**
@@ -203,10 +205,14 @@ export function buildWorkspaceDigest(input: {
   let newPublishes = 0;
   let valueDeltas = 0;
 
-  const publishedAfter = input.snapshots
-    .filter((snapshot) => snapshot.status === "Published" && (parseTime(snapshot.publishedAt ?? null) ?? -Infinity) > sinceTime)
-    .sort((a, b) => (parseTime(b.publishedAt ?? null) ?? 0) - (parseTime(a.publishedAt ?? null) ?? 0));
-  for (const snapshot of publishedAfter) {
+  // Only a snapshot's current version can be "newly published": a later withdrawal retracts the earlier publish.
+  const publishedAfter = currentSnapshots(input.snapshots)
+    .flatMap((snapshot) => {
+      const publishedAt = parseTime(snapshot.publishedAt);
+      return snapshot.status === "Published" && publishedAt !== null && publishedAt > sinceTime ? [{ snapshot, publishedAt }] : [];
+    })
+    .sort((a, b) => b.publishedAt - a.publishedAt);
+  for (const { snapshot } of publishedAfter) {
     newPublishes += 1;
     items.push({ id: `publish:${snapshot.id ?? `${snapshot.fund}:${snapshot.period}`}`, kind: "publish", title: `${snapshot.fund} published ${snapshot.period}`, detail: "A new final fund period is available.", period: snapshot.period, snapshotId: snapshot.id });
   }

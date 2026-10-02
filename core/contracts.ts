@@ -97,7 +97,12 @@ export type FundSnapshot = {
   fundId?: string;
   /** The snapshot's report period (matches the observations' economic period). */
   period: string;
-  status: "Published" | "Review";
+  /**
+   * Lifecycle of this snapshot version. "Review" covers a draft or blocked
+   * snapshot still working toward publication; a withdrawn or superseded one
+   * is no longer published and is not preliminary either (see fundSnapshotStatus).
+   */
+  status: "Published" | "Review" | "Withdrawn" | "Superseded";
   holdings: number;
   facts: number;
   changed: string;

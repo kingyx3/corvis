@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "../../adapters/demo/catalog.ts";
 import { demoCompanySectorStore } from "../../adapters/demo/company-sector-store.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../core/contracts.ts";
+import { fundSnapshotStatus } from "../../core/current-snapshots.ts";
 import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT, type AttentionAggregates, type ExposureDimension, type ExposureDimensionFact, type NeedsReviewAggregate, type PortfolioValueFact } from "../../core/workspace-summary.ts";
 import {
   assertRedistributionAllowed,
@@ -269,7 +270,7 @@ export class PostgresProductionPlatform implements PlatformPort {
     const rows = await this.workspace.listSnapshots(identity, page);
     return rows.map((row) => ({
       id: text(row,"snapshot_id"), version: num(row,"version",1), fund: text(row,"fund_name",text(row,"fund_id","Unknown fund")), fundId: text(row,"fund_id") || undefined, period: text(row,"report_period"),
-      status: text(row,"status").toLowerCase() === "published" ? "Published" : "Review", holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
+      status: fundSnapshotStatus(text(row,"status")), holdings: num(row,"holding_count"), facts: num(row,"fact_count"),
       changed: timestampText(row,"published_at") || timestampText(row,"created_at"), blockingExceptions: num(row,"blocking_exception_count"),
       publishedAt: isoText(row,"published_at"),
     }));

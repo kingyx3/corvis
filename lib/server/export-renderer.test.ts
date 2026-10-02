@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crc32, renderCsv, renderParquet, renderXlsx, type ExportRow } from "./export-renderer.ts";
+import { parquetMetadata, parquetReadObjects } from "hyparquet";
+import { crc32, decimalToUnscaled, POSITION_EXPORT_COLUMNS, renderCsv, renderParquet, renderXlsx, type ExportRow } from "./export-renderer.ts";
 
 const row: ExportRow = {
   observation_id: "obs-1",
@@ -113,4 +114,84 @@ test("every entry of an XLSX archive stores the CRC-32 of its bytes", () => {
     entries += 1;
   }
   assert.ok(entries >= 4, `expected the workbook parts, found ${entries}`);
+});
+
+const POSITION_ROW: ExportRow = {
+  statement_id: "st-1", document_id: "d-1", fund_id: "f-1", holding_id: "h-1", company_id: "c-1", statement_type: "income_statement",
+  report_period: "2026-Q2", source_label: "Revenue", metric_code: null, line_role: "line", display_order: 2, depth: 1,
+  value_raw: "1", value_number: "1.0000000000", value_string: null, currency: "USD", unit: null, period_type: "quarter",
+  period_start: null, period_end: null, as_of_date: null, fiscal_year: 2026, fiscal_quarter: 2, source_column_label: null,
+  preliminary: true, is_restatement: false, is_derived: false, derivation_formula: null, source_reference_ids: "[]",
+};
+
+async function readParquet(bytes: Buffer): Promise<{ schema: Map<string, { type?: string; converted_type?: string }>; rows: Array<Record<string, unknown>> }> {
+  const file = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const schema = new Map(parquetMetadata(file).schema.map((element) => [element.name, element]));
+  return { schema, rows: await parquetReadObjects({ file }) };
+}
+
+test("Position Financials Parquet writes integer columns as INT32 and flags as BOOLEAN, sorting numerically", async () => {
+  const rows = [10, 2, 1, 100].map((order, index) => ({ ...POSITION_ROW, statement_id: `st-${index}`, display_order: order, fiscal_year: 2020 + order }));
+  const { schema, rows: read } = await readParquet(renderParquet(rows, POSITION_EXPORT_COLUMNS));
+  for (const name of ["display_order", "depth", "fiscal_year", "fiscal_quarter"]) {
+    assert.equal(schema.get(name)?.type, "INT32", `${name} is a typed integer`);
+    assert.equal(schema.get(name)?.converted_type, undefined, `${name} is not a UTF8 string`);
+  }
+  for (const name of ["preliminary", "is_restatement", "is_derived"]) assert.equal(schema.get(name)?.type, "BOOLEAN", `${name} is a typed boolean`);
+  // Text columns keep their UTF8 contract.
+  assert.equal(schema.get("source_label")?.type, "BYTE_ARRAY");
+  assert.equal(schema.get("source_label")?.converted_type, "UTF8");
+  assert.equal(schema.get("source_reference_ids")?.converted_type, "UTF8");
+
+  assert.deepEqual(read.map((entry) => entry.display_order), [10, 2, 1, 100]);
+  assert.deepEqual(read.map((entry) => entry.display_order).sort((a, b) => Number(a) - Number(b)), [1, 2, 10, 100], "numeric order, not lexical");
+  assert.equal(read[0]!.depth, 1);
+  assert.equal(read[0]!.fiscal_quarter, 2);
+  assert.equal(read[0]!.preliminary, true);
+  assert.equal(read[0]!.is_restatement, false);
+});
+
+test("Position Financials Parquet keeps null integers and flags null, and reads numeric strings as integers", async () => {
+  const { rows } = await readParquet(renderParquet([
+    { ...POSITION_ROW, fiscal_year: null, fiscal_quarter: null, preliminary: null, is_restatement: null, is_derived: null },
+    { ...POSITION_ROW, fiscal_year: "", display_order: "7", depth: 0, fiscal_quarter: 4 },
+    { ...POSITION_ROW, fiscal_year: -2_147_483_648, display_order: 2_147_483_647 },
+  ], POSITION_EXPORT_COLUMNS));
+  assert.equal(rows[0]!.fiscal_year, null);
+  assert.equal(rows[0]!.fiscal_quarter, null);
+  assert.equal(rows[0]!.preliminary, null);
+  assert.equal(rows[0]!.is_restatement, null);
+  assert.equal(rows[0]!.is_derived, null);
+  assert.equal(rows[1]!.fiscal_year, null, "an empty cell is null, not 0");
+  assert.equal(rows[1]!.display_order, 7);
+  assert.equal(rows[1]!.depth, 0, "zero is a value, not a null");
+  assert.equal(rows[2]!.fiscal_year, -2_147_483_648);
+  assert.equal(rows[2]!.display_order, 2_147_483_647);
+});
+
+test("Position Financials Parquet refuses values that cannot be typed instead of writing a wrong number or flag", () => {
+  const render = (overrides: ExportRow) => () => renderParquet([{ ...POSITION_ROW, ...overrides }], POSITION_EXPORT_COLUMNS);
+  assert.throws(render({ fiscal_year: 2026.5 }), /fiscal_year must hold a 32-bit integer/);
+  assert.throws(render({ depth: "abc" }), /depth must hold a 32-bit integer/);
+  assert.throws(render({ display_order: 2_147_483_648 }), /display_order must hold a 32-bit integer/);
+  assert.throws(render({ fiscal_quarter: -2_147_483_649 }), /fiscal_quarter must hold a 32-bit integer/);
+  assert.throws(render({ preliminary: "true" }), /preliminary must hold a boolean/);
+  assert.throws(render({ is_derived: 1 }), /is_derived must hold a boolean/);
+});
+
+test("observation exports keep their column types: version stays DOUBLE and everything else text or decimal", async () => {
+  const { schema, rows } = await readParquet(renderParquet([row, { ...row, version: null }, { ...row, version: "" }]));
+  assert.equal(schema.get("version")?.type, "DOUBLE");
+  assert.deepEqual(rows.map((entry) => entry.version), [3, null, null]);
+  assert.equal(schema.get("observation_id")?.converted_type, "UTF8");
+  assert.equal(schema.get("value_number")?.converted_type, "DECIMAL");
+});
+
+test("decimalToUnscaled yields null for non-finite numbers and values beyond DECIMAL(38,10)", () => {
+  assert.equal(decimalToUnscaled(Number.NaN), null);
+  assert.equal(decimalToUnscaled(Number.POSITIVE_INFINITY), null);
+  assert.equal(decimalToUnscaled("1".repeat(29)), null, "29 whole digits plus 10 scale digits overflows precision 38");
+  assert.equal(decimalToUnscaled("1".repeat(28)), BigInt(`${"1".repeat(28)}0000000000`));
+  assert.equal(decimalToUnscaled(null), null);
+  assert.equal(decimalToUnscaled(""), null);
 });

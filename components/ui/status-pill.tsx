@@ -18,6 +18,7 @@ export const STATUS_PILL_VOCABULARY = {
   Pending: "warning",
   Stale: "warning",
   Draft: "neutral",
+  Superseded: "neutral",
   Queued: "neutral",
   Inactive: "neutral",
   "Not started": "neutral",
@@ -33,6 +34,7 @@ export const STATUS_PILL_VOCABULARY = {
   Rejected: "danger",
   Unhealthy: "danger",
   Expired: "danger",
+  Withdrawn: "danger",
 } as const satisfies Record<string, StatusPillTone>;
 
 export type KnownStatusPill = keyof typeof STATUS_PILL_VOCABULARY;

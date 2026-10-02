@@ -88,11 +88,55 @@ against a provisioned UAT/prod Supabase project, backup/restore and PITR
 exercises, and representative large-dataset/performance tests. Those require
 #13's environment provisioning and are tracked there, not simulated here.
 
+### Cross-document reconciliation semantics (migration 080)
+
+Documents for the same fund-period deliberately share one draft snapshot, so
+reconciliation compares each document against the other documents of that draft
+(not only against itself). The policy is fail-closed and never drops lineage:
+
+- **Conflicting values.** The same exact semantic grain (subject, metric
+  definition dimensions, period, scenario, currency/unit, adjustment and
+  breakdown dimensions) with a different normalized value in another document's
+  reconciliation run opens a `reconciliation_conflict` exception on the later
+  document's run (`context.conflictScope = 'cross_document'`, every competing
+  observation listed). That run and its stage job block and the snapshot cannot
+  publish while the exception is open. Resolution is the existing governed
+  `accept_reconciliation` flow, which resumes the blocked job without re-checking
+  documents that arrived later. Accepting a conflict publishes the values only as
+  retained `conflicting_alternative` facts (all documents' facts of that grain are
+  relabelled, none deleted); they are excluded from published totals and never
+  selected or summed. Choosing one value requires the governed correction path.
+- **Backstop.** `assert_snapshot_publishable` refuses a snapshot whose facts
+  disagree on a grain unless every such fact is a `conflicting_alternative` with
+  an attributable resolved exception, so facts that bypassed reconciliation still
+  cannot be summed.
+- **Identical values.** An identical fact from a second document merges into the
+  existing deterministic fact (same snapshot + grain + value): it keeps its first
+  `reconciliation_run_id`, gains the union of `source_observation_ids`, is marked
+  `equivalent_grain`, and appears in both documents' consolidation runs. Replays
+  inside the same reconciliation run still require exact lineage.
+- Observations whose grain differs (for example a different `report_date` or
+  `period_start`) are different grains and remain separate facts.
+
 ## Application adapter boundary
 
 Application/domain code must not depend on Supabase SDK-specific semantics, direct physical table assumptions or Snowflake SQL as product contracts. Repository/service adapters own persistence details.
 
 The Postgres-primary application migration is complete. Application persistence and governed research paths use Postgres-backed repositories; obsolete Snowflake-primary DDL and the unused application SQL API adapter have been removed. Any future Snowflake implementation must be introduced only as an explicitly activated downstream analytics/sharing path behind a dedicated replication or delivery boundary.
+
+## Customer export file formats
+
+Customer exports (`POST /exports`, CSV / XLSX / Parquet) render in `lib/server/export-renderer.ts`. Parquet column types are part of the delivery contract that warehouse consumers load against:
+
+| Export | Column | Parquet type |
+| --- | --- | --- |
+| Observations and Position Financials | `value_number` | `DECIMAL(38,10)` (exact; never DOUBLE) |
+| Observations | `version` | `DOUBLE` |
+| Position Financials | `display_order`, `depth`, `fiscal_year`, `fiscal_quarter` | `INT32` (nullable) |
+| Position Financials | `preliminary`, `is_restatement`, `is_derived` | `BOOLEAN` (nullable) |
+| both | every other column | `BYTE_ARRAY` / `UTF8` |
+
+Change note (Position Financials Parquet): the integer and boolean columns above were previously written as UTF8 strings (`"2026"`, `"true"`), unlike CSV/XLSX, so a warehouse sorted `"10"` before `"2"`. They are now typed. A consumer that loaded these columns as `STRING` must switch its table definition to `INT` / `BOOLEAN`; files already delivered keep the old string schema and expire with their artifact TTL. A value that cannot be represented (a non-integer or beyond-INT32 integer column, a non-boolean flag) fails the export instead of writing a wrong value. Observation exports are unchanged. There is no file-format version field to bump: the manifest's `schemaVersion` is the published snapshot's data schema version, not the file layout, so this change is recorded here and in `docs/POSITION_FINANCIAL_STATEMENTS.md` rather than in the manifest.
 
 ## Retrieval and AI
 
