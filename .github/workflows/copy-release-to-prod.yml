@@ -74,9 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud artifacts repositories describe corvis \
-            --project="${SOURCE_PROJECT_ID}" \
-            --location="${GCP_REGION}" >/dev/null
+          gcloud artifacts repositories describe corvis --project="${SOURCE_PROJECT_ID}" --location="${GCP_REGION}" >/dev/null
           gcloud artifacts repositories add-iam-policy-binding corvis \
             --project="${SOURCE_PROJECT_ID}" \
             --location="${GCP_REGION}" \
@@ -88,7 +86,7 @@ jobs:
   copy:
     needs: [source-metadata, target-metadata, reconcile-source-read-trust]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: prod
     env:
       GCP_REGION: asia-southeast1
@@ -125,10 +123,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Built from the pinned module version. The Go toolchain verifies the
-          # module against the public checksum database (sum.golang.org), a
-          # transparency log independent of the release assets, instead of
-          # trusting a checksums.txt served by the same release as the binary.
           GOFLAGS=-mod=mod GOSUMDB=sum.golang.org GOPROXY=https://proxy.golang.org \
             go install "github.com/google/go-containerregistry/cmd/gcrane@${GCRANE_VERSION}"
           sudo install -m 0755 "$(go env GOPATH)/bin/gcrane" /usr/local/bin/gcrane
@@ -141,19 +135,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for image in api control-loop; do
+          for image in api control-loop extractor litellm; do
             source_ref="${GCP_REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
             target_ref="${GCP_REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
-            # The reader binding was just granted by reconcile-source-read-trust;
-            # IAM propagation can take minutes, so retry the source read only.
             source_digest=""
             for attempt in $(seq 1 "${SOURCE_READ_ATTEMPTS}"); do
-              if source_digest="$(gcrane digest "${source_ref}")"; then
-                break
-              fi
+              if source_digest="$(gcrane digest "${source_ref}")"; then break; fi
               source_digest=""
               if (( attempt == SOURCE_READ_ATTEMPTS )); then
-                echo "Unable to read UAT ${image} release after ${SOURCE_READ_ATTEMPTS} attempts (cross-project reader IAM may not have propagated)."
+                echo "Unable to read UAT ${image} release after ${SOURCE_READ_ATTEMPTS} attempts."
                 exit 1
               fi
               echo "UAT ${image} release not yet readable (attempt ${attempt}/${SOURCE_READ_ATTEMPTS}); retrying in ${SOURCE_READ_RETRY_SECONDS}s."
@@ -166,10 +156,7 @@ jobs:
               echo "Refusing to overwrite prod ${image} tag with a different digest."
               exit 1
             fi
-
-            if [[ -z "${existing_digest}" ]]; then
-              gcrane cp "${source_ref}" "${target_ref}"
-            fi
+            if [[ -z "${existing_digest}" ]]; then gcrane cp "${source_ref}" "${target_ref}"; fi
 
             target_digest="$(gcrane digest "${target_ref}")"
             [[ "${target_digest}" == "${source_digest}" ]] || { echo "Digest mismatch after copying ${image}."; exit 1; }
@@ -181,14 +168,14 @@ jobs:
         run: |
           set -euo pipefail
           jq -n \
-            --arg schemaVersion "corvis.release-copy.v1" \
+            --arg schemaVersion "corvis.release-copy.v2" \
             --arg sourceEnvironment "uat" \
             --arg sourceProjectId "${SOURCE_PROJECT_ID}" \
             --arg targetEnvironment "prod" \
             --arg targetProjectId "${TARGET_PROJECT_ID}" \
             --arg sourceSha "${RELEASE_SHA}" \
             --arg copiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,copiedAt:$copiedAt,mechanism:"gcrane-copy-digest-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
+            '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,copiedAt:$copiedAt,images:["api","control-loop","extractor","litellm"],mechanism:"gcrane-copy-digest-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
