@@ -60,6 +60,8 @@ If a reusable pattern is missing, promote it to a typed primitive first and docu
 
 ## Status vocabulary
 
+Source connections (stories B5/B8) added `Paused` and `Revoked` (neutral), `Retrying` (info), and `Suspended` and `Needs reauthorization` (danger) so a blocked connection never shares a label or tone with a transient failure; `Stale` and `Needs attention` (warning) and `Healthy` (success) already existed. The connection list also pairs each state with an icon (`Icon` gained `pause`, `refresh` and `lock`) and a distinct border treatment on its notice (solid, double, dashed, dotted), so no state is carried by colour alone. The classes are `source-connection-*` in `app/design-system.css`.
+
 `STATUS_PILL_VOCABULARY` is the source of truth. Known states map to `success`, `warning`, `danger`, `info`, or `neutral`. `StatusPill` intentionally accepts future server-provided strings, but an unknown value uses the neutral fallback and keeps its original label. This prevents a new backend state from accidentally inheriting a misleading color through class-name construction.
 
 ## Dense-table rules
