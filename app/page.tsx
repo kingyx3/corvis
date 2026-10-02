@@ -40,6 +40,8 @@ import { ResearchView } from "@/features/research/research-view";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { AccessAdminView } from "@/features/access/access-admin-view";
 import { FundPeriodStatusChip, type FundPeriodStatus } from "@/components/ui/fund-period-status-chip";
+import { DataIssuesView } from "@/features/data-issues/data-issues-view";
+import { useDataIssueIndicator } from "@/features/data-issues/use-data-issue-indicator";
 
 type ReadModule = "capabilities" | "documents" | "snapshots" | "observations" | "summary";
 type ModuleErrors = Partial<Record<ReadModule, string>>;
@@ -179,6 +181,7 @@ export default function CorvisApp() {
   const canExport = allowed("exports:create") && capabilities?.redistributionAllowed === true;
   const canReadSources = allowed("sources:read") && capabilities?.sourceDocumentAccessAllowed === true;
   const canSearch = canReadDocuments || canReadObservations;
+  const dataIssues = useDataIssueIndicator(canReadObservations, view);
 
   const reviewSnapshot = snapshots.find((snapshot) => snapshot.id && snapshot.id === selectedSnapshotId) ?? snapshots.find((snapshot) => snapshot.status === "Review") ?? snapshots[0];
   const publishedSnapshots = snapshots.filter((snapshot) => snapshot.status === "Published").length;
@@ -205,8 +208,9 @@ export default function CorvisApp() {
     { id: "review" as View, label: "Data review", icon: "table" as IconName, badge: observations.filter((row) => row.state === "Needs review").length, visible: canReadObservations },
     { id: "delivery" as View, label: "Data delivery", icon: "download" as IconName, visible: canExport },
     { id: "research" as View, label: "Ask Corvis", icon: "spark" as IconName, visible: canResearch },
+    { id: "issues" as View, label: "Data issues", icon: "alert" as IconName, badge: dataIssues.unseen, visible: canReadObservations },
     { id: "access" as View, label: "Access administration", icon: "shield" as IconName, visible: canAdmin && identity?.tenantAdmin === true },
-  ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, docs, identity?.tenantAdmin, observations]);
+  ].filter((item) => item.visible), [canAdmin, canExport, canReadDocuments, canReadObservations, canResearch, dataIssues.unseen, docs, identity?.tenantAdmin, observations]);
   const activeView: View = nav.some((item) => item.id === view) ? view : "overview";
   const activeLabel = nav.find((item) => item.id === activeView)?.label ?? "Overview";
 
@@ -376,6 +380,7 @@ export default function CorvisApp() {
       {!loading && activeView === "review" && canReadObservations && (moduleErrors.observations || moduleErrors.snapshots ? scopedUnavailable("Data review is temporarily unavailable", moduleErrors.observations || moduleErrors.snapshots || "Required review state is unavailable") : <ReviewView observations={observations} snapshot={reviewSnapshot} canReview={canReview} canPublish={canPublish} canReadSources={canReadSources} canExport={canExport} focusRequest={reviewFocus} snapshots={snapshots} onSelectSnapshot={setSelectedSnapshotId} canResearch={canResearch} onExplainException={explainException} onOpenDocument={canReadDocuments && canReadSources ? openDocumentById : undefined} onViewPositionFinancials={viewPositionFinancials} onObservationUpdated={(updated) => setObservations((current) => current.map((row) => row.id === updated.id ? updated : row))} onPublished={(published) => { setSelectedSnapshotId(published.id); setSnapshots((current) => current.map((snapshot) => snapshot.id === published.id ? published : snapshot)); void refreshWorkspace(); }}/>)}
       {!loading && activeView === "delivery" && canExport && <DeliveryView publishedSnapshots={publishedSnapshots}/>}
       {!loading && activeView === "research" && canResearch && <ResearchView draftRequest={researchDraft} onOpenDocument={canReadDocuments && canReadSources ? openDocumentById : undefined} suggestions={demoFixtures.researchSuggestions} canReadSources={canReadSources} onOpenReviewObservation={canReadObservations ? openReviewObservation : undefined}/>}
+      {!loading && activeView === "issues" && canReadObservations && <DataIssuesView canViewAll={canAdmin && identity?.tenantAdmin === true} onChanged={dataIssues.refresh}/>}
       {!loading && activeView === "access" && canAdmin && identity?.tenantAdmin === true && <AccessAdminView/>}
       </ViewErrorBoundary>
     </div><div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{announcement}</div></main>

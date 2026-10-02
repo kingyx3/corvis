@@ -469,6 +469,27 @@
 .source-connection-dialog-error { margin: 0; color: var(--danger); font-weight: 600; }
 .source-connection-secret-json { font-family: var(--mono); -webkit-text-security: disc; text-security: disc; }
 
+/* Data issues (F5): reports on published figures, their status and the "updated" indicator. A changed case carries a leading bar AND an "Updated" pill, so the signal is never colour alone. */
+.data-issues { display: grid; gap: 12px; }
+.data-issues-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
+.data-issues-status:empty { display: none; }
+.data-issues-status { padding: 10px 14px; border: 1px solid var(--success-border); border-radius: var(--radius); background: var(--success-bg); color: var(--success); font-size: 13px; font-weight: 600; }
+.data-issues-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.data-issue-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-sm); min-width: 0; }
+.data-issue-card[data-unseen="true"] { border-inline-start: 6px solid var(--info); }
+.data-issue-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.data-issue-head h3 { margin: 0 0 2px; font-size: 16px; color: var(--text-strong); overflow-wrap: anywhere; }
+.data-issue-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.data-issue-comment { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-body); }
+.data-issue-summary, .data-issue-replacement { margin: 0; font-size: 13px; color: var(--text-body); overflow-wrap: anywhere; }
+.data-issue-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+.data-issue-actions details { min-width: 0; flex: 1 1 260px; }
+.data-issue-actions summary { cursor: pointer; font-size: 13px; color: var(--text-body); }
+.data-issue-history { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; color: var(--text-body); overflow-wrap: anywhere; }
+.data-issues-more { display: flex; justify-content: center; }
+.data-issue-form textarea { width: 100%; resize: vertical; }
+.data-issue-scope dd { overflow-wrap: anywhere; }
+
 /* An absolutely positioned visually-hidden header cell inside a scrolling table card used to escape its clipping and widen the whole page on phones. */
 .table-card { position: relative; }
 

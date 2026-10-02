@@ -22,6 +22,8 @@ import { apiUrl } from "@/lib/api-url";
 import { friendlyErrorMessage, throwIfUnauthenticated } from "@/lib/api-errors";
 import { SavedViews } from "@/features/preferences/saved-views";
 import { VIEW_COLUMNS, type ViewConfiguration } from "@/core/saved-views";
+import { positionFinancialsReportContext } from "@/features/data-issues/report-contexts";
+import { ReportIssueButton } from "@/features/data-issues/report-issue-dialog";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
@@ -346,6 +348,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     <TableDensityToggle value={density} onChange={setDensity} label="Financial table density"/>
     <button type="button" className="secondary-button" aria-expanded={compareOpen} disabled={positions.length < 2} onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Hide comparison" : "Compare positions"}</button>
     <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>
+    <ReportIssueButton context={positionFinancialsReportContext(chosen, selectedRows)}/>
   </div>;
 
   const compareColumns: SortableColumn<typeof compareRows[number]>[] = [

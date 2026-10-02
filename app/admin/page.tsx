@@ -17,7 +17,7 @@ async function loadJson(path: string): Promise<PanelState> {
   } catch { return { loading: false, status: null, data: null, error: "Request unavailable" }; }
 }
 
-type Panels = [PanelState, PanelState, PanelState, PanelState, PanelState, PanelState];
+type Panels = [PanelState, PanelState, PanelState, PanelState, PanelState, PanelState, PanelState];
 
 async function loadPanels(): Promise<Panels> {
   return Promise.all([
@@ -27,6 +27,7 @@ async function loadPanels(): Promise<Panels> {
     loadJson("/api/v1/admin/access-review"),
     loadJson("/api/v1/admin/audit?limit=100"),
     loadJson("/api/v1/admin/feature-flags/governance"),
+    loadJson("/api/v1/admin/data-issues?limit=100"),
   ]);
 }
 
@@ -76,12 +77,13 @@ export default function AdminPage() {
   const [accessReview, setAccessReview] = useState<PanelState>(EMPTY);
   const [audit, setAudit] = useState<PanelState>(EMPTY);
   const [flagGovernance, setFlagGovernance] = useState<PanelState>(EMPTY);
+  const [dataIssues, setDataIssues] = useState<PanelState>(EMPTY);
 
   const applyPanels = useCallback((states: Panels) => {
-    setReadiness(states[0]); setFlags(states[1]); setEvidence(states[2]); setAccessReview(states[3]); setAudit(states[4]); setFlagGovernance(states[5]);
+    setReadiness(states[0]); setFlags(states[1]); setEvidence(states[2]); setAccessReview(states[3]); setAudit(states[4]); setFlagGovernance(states[5]); setDataIssues(states[6]);
   }, []);
   const refresh = useCallback(async () => {
-    setReadiness(EMPTY); setFlags(EMPTY); setEvidence(EMPTY); setAccessReview(EMPTY); setAudit(EMPTY); setFlagGovernance(EMPTY);
+    setReadiness(EMPTY); setFlags(EMPTY); setEvidence(EMPTY); setAccessReview(EMPTY); setAudit(EMPTY); setFlagGovernance(EMPTY); setDataIssues(EMPTY);
     applyPanels(await loadPanels());
   }, [applyPanels]);
 
@@ -98,6 +100,7 @@ export default function AdminPage() {
 
       <div className="admin-grid"><StructuredPanel title="Runtime readiness" state={readiness}/><StructuredPanel title="Feature flags" state={flags}/><StructuredPanel title="Control evidence" state={evidence}/></div>
       <div className="admin-grid wide"><StructuredPanel title="Access review" state={accessReview}/><StructuredPanel title="Privileged audit" state={audit}/></div>
+      <div className="admin-grid wide"><StructuredPanel title="Data issue queue" state={dataIssues}/></div>
 
       <section className="admin-section-heading"><p className="eyebrow">Privileged operations</p><h2>Governed production workflows</h2><p>Use identifiers from Access review and the relevant incident/change record. Consequential changes require explicit preview/confirmation and return an attributable operation receipt.</p></section>
       <GovernanceForms onSuccess={refresh} featureFlags={governanceFlags(flagGovernance)}/>
