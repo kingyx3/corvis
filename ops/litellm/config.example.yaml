@@ -1,0 +1,36 @@
+# Example only. Render an environment-specific production config outside Git and pin the
+# gateway image by immutable digest. Provider credentials are environment references, not
+# literal values. The extraction harness calls these logical aliases; Corvis core does not.
+model_list:
+  - model_name: corvis-extract-primary
+    litellm_params:
+      model: openai/<approved-model-id>
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: corvis-extract-primary
+    litellm_params:
+      model: anthropic/<approved-model-id>
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: corvis-extract-secondary
+    litellm_params:
+      model: gemini/<approved-model-id>
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: corvis-extract-verifier
+    litellm_params:
+      model: anthropic/<independently-approved-verifier-model-id>
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+router_settings:
+  fallbacks:
+    - corvis-extract-primary:
+        - corvis-extract-secondary
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+# A database is intentionally not assumed by this baseline. Add DATABASE_URL and the
+# corresponding LiteLLM database configuration only if virtual keys, persistent spend
+# tracking or Admin UI model management are required. Keep that database separate from
+# the Corvis canonical Postgres authority.
