@@ -220,6 +220,7 @@ jobs:
           extractor_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${EXTRACTOR_IMAGE_NAME}"
           litellm_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${LITELLM_IMAGE_NAME}"
           api_image=""; control_loop_image=""; extractor_image=""; litellm_image=""
+          legacy_ai_rollback="false"
 
           resolve_tag() {
             local repo="$1" label="$2"
@@ -241,9 +242,17 @@ jobs:
             if [[ "${{ inputs.environment }}" != "dev" ]]; then
               [[ "${control_loop_image}" =~ ^${control_loop_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest is missing the production-like control-loop image."; exit 1; }
             fi
-            if [[ -n "${TF_VAR_litellm_models_json}" ]]; then
-              [[ "${extractor_image}" =~ ^${extractor_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest predates the governed extractor runtime. Promote a fresh accepted release."; exit 1; }
-              [[ "${litellm_image}" =~ ^${litellm_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest predates the LiteLLM runtime. Promote a fresh accepted release."; exit 1; }
+            if [[ -n "${extractor_image}" || -n "${litellm_image}" ]]; then
+              [[ "${extractor_image}" =~ ^${extractor_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid extractor image."; exit 1; }
+              [[ "${litellm_image}" =~ ^${litellm_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid LiteLLM image."; exit 1; }
+            elif [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+              # A known-good release accepted before managed AI existed must remain usable
+              # during the first AI rollout. Remove the AI pair and the worker endpoint in
+              # the same Terraform apply so rollback is fail-closed, never half-connected.
+              legacy_ai_rollback="true"
+              echo "TF_VAR_litellm_models_json=" >> "${GITHUB_ENV}"
+              echo "TF_VAR_extraction_endpoint=" >> "${GITHUB_ENV}"
+              echo "TF_VAR_extraction_audience=" >> "${GITHUB_ENV}"
             fi
           elif [[ -n "${RELEASE_SHA}" ]]; then
             api_image="$(resolve_tag "${api_repo}" API)"
@@ -273,9 +282,11 @@ jobs:
             echo "### Terraform release selection"
             [[ -z "${api_image}" ]] && echo "- API/worker runtime: disabled" || echo "- API/worker image: \`${api_image}\`"
             [[ -z "${control_loop_image}" ]] || echo "- Control-loop image: \`${control_loop_image}\`"
-            if [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+            if [[ -n "${extractor_image}" ]]; then
               echo "- Extractor image: \`${extractor_image}\`"
               echo "- LiteLLM image: \`${litellm_image}\`"
+            elif [[ "${legacy_ai_rollback}" == "true" ]]; then
+              echo "- AI runtime: disabled fail-closed because the accepted rollback release predates managed AI"
             else
               echo "- AI runtime: disabled until CORVIS_LITELLM_MODELS_JSON is configured"
             fi
@@ -291,9 +302,10 @@ jobs:
           if [[ "${{ inputs.environment }}" != "dev" && -n "${TF_VAR_api_image}" && ! "${TF_VAR_control_loop_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
             echo "Production-like promotion requires an immutable control-loop image from the same release commit."; exit 1
           fi
-          if [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+          if [[ -n "${TF_VAR_extractor_image}" || -n "${TF_VAR_litellm_image}" ]]; then
             [[ "${TF_VAR_extractor_image}" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "AI activation requires immutable extractor image."; exit 1; }
             [[ "${TF_VAR_litellm_image}" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "AI activation requires immutable LiteLLM image."; exit 1; }
+            [[ -n "${TF_VAR_litellm_models_json}" ]] || { echo "AI activation requires CORVIS_LITELLM_MODELS_JSON."; exit 1; }
           fi
 
           if [[ -n "${TF_VAR_cloudflare_zone_name}" ]]; then
@@ -303,7 +315,7 @@ jobs:
           fi
 
       - name: Require enabled AI integration secrets
-        if: inputs.action == 'apply' && env.TF_VAR_litellm_models_json != ''
+        if: inputs.action == 'apply' && env.TF_VAR_extractor_image != ''
         shell: bash
         run: |
           set -euo pipefail
