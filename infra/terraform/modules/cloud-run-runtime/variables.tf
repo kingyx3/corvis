@@ -63,6 +63,34 @@ variable "auth_jwks_url" {
   default     = ""
 }
 
+variable "extraction_endpoint" {
+  description = "Optional governed extraction-harness HTTPS endpoint. Empty keeps the extracted stage fail-closed. This is the Corvis /v1/extractions contract, not a raw model API or LiteLLM endpoint."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.extraction_endpoint) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.extraction_endpoint)))
+    error_message = "extraction_endpoint must be empty or an HTTPS URL"
+  }
+}
+
+variable "extraction_audience" {
+  description = "Optional Google OIDC audience for the governed extraction harness. Empty makes the application use extraction_endpoint as the audience."
+  type        = string
+  default     = ""
+}
+
+variable "extraction_timeout_ms" {
+  description = "Per-call extraction-provider timeout. The application additionally caps provider calls beneath the processing-stage hard budget."
+  type        = number
+  default     = 20000
+
+  validation {
+    condition     = var.extraction_timeout_ms >= 1000 && var.extraction_timeout_ms <= 25000
+    error_message = "extraction_timeout_ms must be between 1000 and 25000 milliseconds"
+  }
+}
+
 variable "upload_allowed_origins" {
   description = "Allowed customer/admin browser origins for direct GCS upload initiation."
   type        = list(string)
