@@ -7,6 +7,8 @@ test("machine timestamps are formatted and every other label is shown as given",
   assert.equal(formatReceivedTime("2026-07-01T14:02:11.000Z", upper), "fmt(2026-07-01T14:02:11.000Z)");
   assert.equal(formatReceivedTime("2026-07-01 14:02:11+00", upper), "fmt(2026-07-01 14:02:11+00)");
   for (const label of ["Just now", "18 Sep, 08:31", "24m ago", "—", ""]) assert.equal(formatReceivedTime(label, upper), label);
+  // Timestamp-shaped but not a real time: shown as given instead of being formatted into "Invalid Date".
+  assert.equal(formatReceivedTime("2026-13-45T99:99:00Z", upper), "2026-13-45T99:99:00Z");
 });
 
 test("received sorting compares real times, not their text, and keeps this session's uploads first", () => {

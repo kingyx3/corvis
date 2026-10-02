@@ -289,6 +289,22 @@ test("revoking while a reauthorization rotates the secret destroys the new crede
   assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old", "projects/x/secrets/corvis-src-rotated"], "no credential may stay live behind a revoked connection");
 });
 
+test("revoking gives up with a concurrent-change error when rotations keep landing", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+  let rotation = 0;
+  // Every terminal write finds the connection pointing at yet another secret.
+  db.beforeUpdate = () => { rotation += 1; db.mutate(TENANT, "c1", { secret_reference: `projects/x/secrets/corvis-src-rotated-${rotation}` }); };
+
+  await assert.rejects(
+    () => revokeSourceConnection(identity(), "c1", { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_transition_from_concurrent_change",
+  );
+  assert.equal(secrets.revoked.length, 3, "every credential that was current is destroyed, one per attempt");
+  assert.notEqual((await listSourceConnections(identity(), db))[0]?.status, "revoked", "the connection is not marked revoked while a credential may be live");
+});
+
 test("a failed secret destruction leaves the connection retryable instead of revoked with a live credential", async () => {
   const db = new FakeConnectionDb();
   const secrets = new FakeSecrets();

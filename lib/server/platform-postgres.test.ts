@@ -157,6 +157,8 @@ test("document and snapshot timestamps leave the server as ISO-8601 UTC, whateve
           { document_id: "00000000-0000-0000-0000-000000000102", display_name: "b.pdf", created_at: new Date("2026-07-01T09:00:00.000Z") },
           { document_id: "00000000-0000-0000-0000-000000000103", display_name: "c.pdf", created_at: "2026-07-01 09:00:00+08" },
           { document_id: "00000000-0000-0000-0000-000000000104", display_name: "d.pdf", created_at: null },
+          { document_id: "00000000-0000-0000-0000-000000000105", display_name: "e.pdf", created_at: new Date("not a date") },
+          { document_id: "00000000-0000-0000-0000-000000000106", display_name: "f.pdf", created_at: "2026-13-45 99:99:00" },
         ];
       }
       if (sql.includes("corvis_serving.fund_period_snapshots")) {
@@ -168,6 +170,7 @@ test("document and snapshot timestamps leave the server as ISO-8601 UTC, whateve
   const platform = new PostgresProductionPlatform(new TimestampDb());
   assert.deepEqual((await platform.listDocuments(identity)).map((document) => document.uploaded), [
     "2026-07-01T14:02:11.123Z", "2026-07-01T09:00:00.000Z", "2026-07-01T01:00:00.000Z", "—",
+    "—", "2026-13-45 99:99:00", // an invalid Date has no time to show; unparseable text is passed through untouched
   ]);
   const [snapshot] = await platform.listSnapshots(identity);
   assert.equal(snapshot?.changed, "2026-08-02T02:30:00.000Z", "the publish time wins over creation, normalized to UTC");
@@ -766,7 +769,7 @@ test("snapshot rows map status, fund name fallbacks and the changed timestamp", 
   const [published, draft, bare] = await new PostgresProductionPlatform(db).listSnapshots(identity);
   assert.deepEqual(published, {
     id: "s1", version: 2, fund: "Fund A", fundId: "fund-a", period: "2026 Q2", status: "Published", holdings: 4, facts: 9,
-    changed: "2026-08-01T00:00:00Z", blockingExceptions: 1, publishedAt: "2026-08-01T00:00:00Z",
+    changed: "2026-08-01T00:00:00.000Z", blockingExceptions: 1, publishedAt: "2026-08-01T00:00:00Z",
   });
   assert.deepEqual([draft?.fund, draft?.status, draft?.changed, draft?.publishedAt, draft?.version], ["fund-b", "Review", "2026-07-02", undefined, 1]);
   assert.deepEqual([bare?.fund, bare?.fundId, bare?.period, bare?.changed], ["Unknown fund", undefined, "", ""]);
