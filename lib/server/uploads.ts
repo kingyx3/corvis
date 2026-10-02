@@ -297,7 +297,7 @@ class DemoUploadSessions implements UploadSessionPort {
     const session: UploadSession = {
       uploadId: randomUUID(), documentId: randomUUID(), artifactVersionId: randomUUID(), ingestionId: randomUUID(),
       tenantId: identity.tenantId, workspaceId: identity.workspaceId, actorSubject: identity.subject, fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
-      chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated", checksumSha256: input.checksumSha256,
+      chunkSize: config.gcsChunkSizeBytes, state: "initiated", checksumSha256: input.checksumSha256,
       idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(), malwareScanStatus: "clean", contentValidated: true,
       resumableUploadUrl: `/api/v1/uploads/${randomUUID()}/demo`,
     };
@@ -685,7 +685,7 @@ export class ProductionUploadSessions implements UploadSessionPort {
     const session: UploadSession = {
       uploadId, documentId, artifactVersionId, ingestionId, tenantId: identity.tenantId, workspaceId: identity.workspaceId, actorSubject: identity.subject,
       fileName: input.fileName, contentType: input.contentType, sizeBytes: input.sizeBytes,
-      chunkSize: config.gcsChunkSizeBytes ?? 8 * 1024 * 1024, state: "initiated",
+      chunkSize: config.gcsChunkSizeBytes, state: "initiated",
       checksumSha256: input.checksumSha256, idempotencyKey: input.idempotencyKey, createdAt: new Date().toISOString(),
       objectKey, resumableUploadUrl, contentValidated: false, malwareScanStatus: "pending",
     };
@@ -768,28 +768,29 @@ export class ProductionUploadSessions implements UploadSessionPort {
   }
 
   async abort(identity: RequestIdentity, uploadId: string): Promise<void> {
-    for (let attempt = 0; ; attempt += 1) {
-      const session = await this.load(identity, uploadId);
-      this.assertUploader(identity, session);
-      if (session.state === "aborted") {
-        // Durably aborted but the bytes were never confirmed deleted (a previous delete failed): retry it.
-        if (!session.purgedAt) await this.finishAbort(session);
-        return;
-      }
-      // Released source evidence is already queued for processing; aborting must
-      // not relabel the registered document as aborted.
-      if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
-      // Claim the abort durably BEFORE destroying anything. A concurrent release claims "complete"
-      // the same way; the loser of the conditional write re-reads and re-decides, so bytes are never
-      // purged under a session that ends up complete.
-      session.state = "aborted";
-      try { await this.persist(session); } catch (error) {
-        if (isConflict(error) && attempt < 2) continue;
-        throw error;
-      }
-      await this.finishAbort(session);
+    await this.abortAttempt(identity, uploadId, 0);
+  }
+
+  private async abortAttempt(identity: RequestIdentity, uploadId: string, attempt: number): Promise<void> {
+    const session = await this.load(identity, uploadId);
+    this.assertUploader(identity, session);
+    if (session.state === "aborted") {
+      // Durably aborted but the bytes were never confirmed deleted (a previous delete failed): retry it.
+      if (!session.purgedAt) await this.finishAbort(session);
       return;
     }
+    // Released source evidence is already queued for processing; aborting must
+    // not relabel the registered document as aborted.
+    if (session.state === "complete") throw new UploadRequestError("upload_not_active", "Upload session has already completed");
+    // Claim the abort durably BEFORE destroying anything. A concurrent release claims "complete"
+    // the same way; the loser of the conditional write re-reads and re-decides, so bytes are never
+    // purged under a session that ends up complete.
+    session.state = "aborted";
+    try { await this.persist(session); } catch (error) {
+      if (isConflict(error) && attempt < 2) return this.abortAttempt(identity, uploadId, attempt + 1);
+      throw error;
+    }
+    await this.finishAbort(session);
   }
 
   /** Purges an aborted session's bytes and registry rows. Idempotent: also the retry for an abort whose delete failed. */

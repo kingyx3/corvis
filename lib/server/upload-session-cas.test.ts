@@ -4,7 +4,7 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { GcsControlClient, type ConditionalPutResult, type GcsObject, type JsonWithGeneration, type ObjectPage, type UploadObjectStore } from "./gcs.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { ProductionUploadSessions, UploadRequestError, type UploadSession } from "./uploads.ts";
+import { ProductionUploadSessions, UPLOAD_SESSION_TTL_MS, UploadRequestError, type UploadSession } from "./uploads.ts";
 
 const GENERATION = "1758240000000001";
 
@@ -313,4 +313,282 @@ test("a streamed download is not cut off by the header-phase request timeout", a
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+function isUploadError(code: string) {
+  return (error: unknown) => error instanceof UploadRequestError && error.code === code;
+}
+
+/** A store that hands concurrent readers the same parsed session object, as an in-process cache would. */
+class SharedObjectStore extends CasStore {
+  private readonly shared = new Map<string, { generation: string; value: unknown }>();
+  override async getJsonWithGeneration<T>(key: string): Promise<JsonWithGeneration<T> | null> {
+    const found = await super.getJsonWithGeneration<T>(key);
+    if (!found) return null;
+    const hit = this.shared.get(key);
+    if (hit?.generation === found.generation) return { value: hit.value as T, generation: found.generation };
+    this.shared.set(key, found);
+    return found;
+  }
+}
+
+test("an initiate whose session key is already taken fails with upload_conflict and registers nothing", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  store.beforeConditionalPut = async (key) => { await store.putJson(key, { squatter: true }); };
+  await assert.rejects(uploads.initiate(actor, input()), (error: unknown) =>
+    isUploadError("upload_conflict")(error) && /already exists/.test((error as Error).message));
+  assert.equal(store.cancelled.length, 1, "the resumable session authorized for the lost claim is cancelled");
+  assert.equal(db.documentInserts(), 0);
+});
+
+test("an unknown session id is reported as not found", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  await assert.rejects(uploads.get(actor, "00000000-0000-4000-8000-00000000dead"), isUploadError("upload_not_found"));
+  await assert.rejects(uploads.complete(actor, "00000000-0000-4000-8000-00000000dead", "key"), isUploadError("upload_not_found"));
+});
+
+test("a poll that finds the session already released by a concurrent poll does not release it again", async () => {
+  const store = new SharedObjectStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  store.scan(session.objectKey!, "clean");
+
+  // While the outer poll waits for the object's scan verdict, another poll reads the same session and releases it.
+  let inner: UploadSession | undefined;
+  const readMetadata = store.getObjectMetadata.bind(store);
+  let first = true;
+  store.getObjectMetadata = async (key) => {
+    if (first) { first = false; inner = await uploads.get(actor, session.uploadId); }
+    return readMetadata(key);
+  };
+  const outer = await uploads.get(actor, session.uploadId);
+  assert.equal(inner?.state, "complete");
+  assert.equal(outer.state, "complete");
+  assert.equal(db.releases, 1, "release_clean_artifact runs once even though two polls saw a clean scan");
+});
+
+test("a release whose registry row cannot be sealed leaves the session quarantined for a later poll", async () => {
+  const { store, db, uploads, session } = await quarantinedUpload();
+  const original = db.query.bind(db);
+  let rowMissing = true;
+  db.query = async (sql, parameters) => rowMissing && sql.includes("set sha256=lower(coalesce(sha256") ? [] : original(sql, parameters);
+
+  const polled = await uploads.get(actor, session.uploadId);
+  assert.equal(polled.state, "quarantined");
+  assert.equal(stored(store, session).state, "quarantined");
+  assert.equal(db.releases, 0, "an unsealed artifact is never released");
+
+  rowMissing = false;
+  assert.equal((await uploads.get(actor, session.uploadId)).state, "complete");
+  assert.equal(db.releases, 1);
+});
+
+test("a release that creates no processing state reopens the session, and a missing generation is released as null", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+  store.objects.get(session.objectKey!)!.object.generation = undefined;
+  await uploads.complete(actor, session.uploadId, session.idempotencyKey);
+  assert.equal(stored(store, session).storageVersionId, undefined);
+  store.scan(session.objectKey!, "clean");
+
+  const original = db.query.bind(db);
+  const releaseParameters: PostgresPrimitive[][] = [];
+  let createsNothing = true;
+  db.query = async (sql, parameters) => {
+    if (!sql.includes("release_clean_artifact")) return original(sql, parameters);
+    releaseParameters.push(parameters ?? []);
+    return createsNothing ? [] : original(sql, parameters);
+  };
+  await assert.rejects(uploads.get(actor, session.uploadId), /did not create processing state/);
+  assert.equal(releaseParameters[0]?.[3], null, "an absent generation is passed to the release as SQL null");
+  const reopened = stored(store, session);
+  assert.equal(reopened.state, "quarantined");
+  assert.equal(reopened.releasedAt, undefined);
+  assert.equal(db.releases, 0);
+
+  createsNothing = false;
+  assert.equal((await uploads.get(actor, session.uploadId)).state, "complete");
+  assert.equal(db.releases, 1);
+});
+
+test("when reopening after a failed release also fails, the release error is the one reported", async () => {
+  const { store, db, uploads, session } = await quarantinedUpload();
+  const original = db.query.bind(db);
+  db.query = async (sql, parameters) => {
+    if (sql.includes("release_clean_artifact")) throw new Error("db down");
+    return original(sql, parameters);
+  };
+  const put = store.putJsonIfGenerationMatch!.bind(store);
+  let reopenAttempts = 0;
+  store.putJsonIfGenerationMatch = async (key, value, generation) => {
+    if ((value as UploadSession).state === "quarantined") { reopenAttempts += 1; throw new Error("gcs down"); }
+    return put(key, value, generation);
+  };
+  await assert.rejects(uploads.get(actor, session.uploadId), /db down/);
+  assert.equal(reopenAttempts, 1);
+});
+
+test("a poll that loses its release claim to a vanished session reports a view instead of failing", async () => {
+  const { store, db, uploads, session } = await quarantinedUpload();
+  store.beforeConditionalPut = async (key) => { store.json.delete(key); };
+  const seen = await uploads.get(actor, session.uploadId);
+  assert.equal(seen.uploadId, session.uploadId);
+  assert.equal(db.releases, 0, "the claim never landed, so nothing was released");
+});
+
+test("a poll of a quarantined session whose object has vanished leaves it quarantined", async () => {
+  const { store, db, uploads, session } = await quarantinedUpload();
+  store.objects.delete(session.objectKey!);
+  const seen = await uploads.get(actor, session.uploadId);
+  assert.equal(seen.state, "quarantined");
+  assert.equal(stored(store, session).state, "quarantined");
+  assert.equal(db.releases, 0);
+});
+
+test("an idempotency record whose session has vanished starts a fresh session instead of failing", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const first = await uploads.initiate(actor, input());
+  store.json.delete(sessionKey(first));
+
+  const second = await uploads.initiate(actor, input());
+  assert.notEqual(second.uploadId, first.uploadId);
+  assert.ok(second.resumableUploadUrl);
+  assert.equal(store.resumable.size, 2);
+  assert.equal(db.documentInserts(), 2);
+  assert.equal((await uploads.initiate(actor, input())).uploadId, second.uploadId, "the key now replays the new session");
+});
+
+test("an initiate that loses the idempotency claim discards its attempt even when the cleanup fails, then retries", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const cancelAttempts: string[] = [];
+  store.cancelResumableUpload = async (url) => { cancelAttempts.push(url); throw new Error("GCS resumable upload cancellation failed (503)"); };
+  const put = store.putJsonIfGenerationMatch!.bind(store);
+  let rival = true;
+  store.putJsonIfGenerationMatch = async (key, value, generation) => {
+    // A rival initiate claims the idempotency key (for a session that is gone) just before ours does.
+    if (rival && key.includes("upload-idempotency")) { rival = false; await store.putJson(key, { uploadId: "00000000-0000-4000-8000-0000000000aa" }); }
+    // Recording the discarded attempt as aborted fails too: both cleanup steps are best effort.
+    if ((value as UploadSession).state === "aborted") throw new Error("gcs down");
+    return put(key, value, generation);
+  };
+
+  const session = await uploads.initiate(actor, input());
+  assert.equal(session.state, "initiated");
+  assert.equal(cancelAttempts.length, 1, "the lost attempt's resumable session was cancelled");
+  assert.notEqual(session.resumableUploadUrl, cancelAttempts[0]);
+  assert.equal(db.documentInserts(), 1, "only the winning attempt registers a document");
+  assert.equal((await uploads.initiate(actor, input())).uploadId, session.uploadId);
+});
+
+test("a failed registration is reported as itself even when cancelling and recording the dead session also fail", async () => {
+  const store = new CasStore();
+  const db = new (class extends Db {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (sql.includes("insert into corvis_source.document\n")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const cancelAttempts: string[] = [];
+  store.cancelResumableUpload = async (url) => { cancelAttempts.push(url); throw new Error("GCS resumable upload cancellation failed (503)"); };
+  const put = store.putJsonIfGenerationMatch!.bind(store);
+  store.putJsonIfGenerationMatch = async (key, value, generation) => {
+    if ((value as UploadSession).state === "aborted") throw new Error("gcs down");
+    return put(key, value, generation);
+  };
+
+  await assert.rejects(uploads.initiate(actor, input()), /postgres unavailable/);
+  assert.equal(cancelAttempts.length, 1);
+});
+
+async function expiredSession(store: CasStore, uploads: ProductionUploadSessions): Promise<UploadSession> {
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+  await store.putJson(sessionKey(session), { ...stored(store, session), createdAt: new Date(Date.now() - UPLOAD_SESSION_TTL_MS - 60_000).toISOString() });
+  return session;
+}
+
+test("expiring a session is best effort: a failed document update or a lost session write never masks upload_expired", async () => {
+  const store = new CasStore();
+  let documentUpdateFails = true;
+  const db = new (class extends Db {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (documentUpdateFails && sql.includes("set status='aborted'")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const session = await expiredSession(store, uploads);
+  store.beforeConditionalPut = async () => { await store.putJson(sessionKey(session), { ...stored(store, session) }); };
+
+  await assert.rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), isUploadError("upload_expired"));
+  assert.deepEqual(store.deleted, [session.objectKey], "the expired bytes are still purged");
+  assert.equal(stored(store, session).purgedAt, undefined, "the lost session write leaves the purge record to the sweep");
+  documentUpdateFails = false;
+  assert.equal((await uploads.sweep(actor.tenantId)).abandoned, 1);
+  assert.equal(stored(store, session).state, "aborted");
+  assert.ok(stored(store, session).purgedAt);
+});
+
+test("expiring a session surfaces an unexpected storage failure while recording the expiry", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const session = await expiredSession(store, uploads);
+  store.putJsonIfGenerationMatch = async () => { throw new Error("gcs down"); };
+  await assert.rejects(uploads.complete(actor, session.uploadId, session.idempotencyKey), /gcs down/);
+});
+
+test("an abort whose document update fails is still durable and purges the bytes", async () => {
+  const store = new CasStore();
+  const db = new (class extends Db {
+    override async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+      if (sql.includes("set status='aborted'")) throw new Error("postgres unavailable");
+      return super.execute(sql, parameters);
+    }
+  })();
+  const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+
+  await uploads.abort(actor, session.uploadId);
+  const aborted = stored(store, session);
+  assert.equal(aborted.state, "aborted");
+  assert.ok(aborted.purgedAt);
+  assert.deepEqual(store.deleted, [session.objectKey]);
+});
+
+test("an abort that loses the purge-record write keeps its durable abort and is finished by the sweep", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  store.land(session.resumableUploadUrl!, pdf(4096));
+  const put = store.putJsonIfGenerationMatch!.bind(store);
+  let writes = 0;
+  store.putJsonIfGenerationMatch = async (key, value, generation) => {
+    writes += 1;
+    if (writes === 2) await store.putJson(key, { ...stored(store, session) });
+    return put(key, value, generation);
+  };
+
+  await uploads.abort(actor, session.uploadId);
+  assert.equal(writes, 2);
+  assert.equal(stored(store, session).state, "aborted");
+  assert.equal(stored(store, session).purgedAt, undefined);
+
+  assert.equal((await uploads.sweep(actor.tenantId)).abandoned, 1);
+  assert.ok(stored(store, session).purgedAt);
+});
+
+test("an abort surfaces an unexpected storage failure while recording the purge", async () => {
+  const store = new CasStore(); const db = new Db(); const uploads = new ProductionUploadSessions(store, db);
+  const session = await uploads.initiate(actor, input());
+  const put = store.putJsonIfGenerationMatch!.bind(store);
+  let writes = 0;
+  store.putJsonIfGenerationMatch = async (key, value, generation) => {
+    writes += 1;
+    if (writes === 2) throw new Error("gcs down");
+    return put(key, value, generation);
+  };
+  await assert.rejects(uploads.abort(actor, session.uploadId), /gcs down/);
+  assert.equal(stored(store, session).state, "aborted", "the abort itself was already durable");
 });
