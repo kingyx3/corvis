@@ -13,6 +13,7 @@ import {
 } from "./delivery.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { policyCheckedLookup, policyPinnedWebhookFetch } from "./webhook-endpoint-policy.ts";
+import { signWebhook } from "./webhooks.ts";
 
 type RecordedStatement = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -25,12 +26,14 @@ class FakeDeliveryStore implements PostgresSqlApi {
   readonly statements: RecordedStatement[] = [];
   events: PostgresRow[] = [];
   reclaimedWebhookRows: PostgresRow[] = [];
+  /** Simulates another worker having already claimed the delivery row (the insert conflicts and returns nothing). */
+  claimLost = false;
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.statements.push({ sql, parameters });
     if (sql.startsWith("update corvis_control.webhook_delivery") && sql.includes("lease expired")) return this.reclaimedWebhookRows;
     if (sql.includes("from corvis_control.outbox_event e")) return this.events;
-    if (sql.startsWith("insert into corvis_control.webhook_delivery")) return [{ delivery_id: parameters[1] ?? null }];
+    if (sql.startsWith("insert into corvis_control.webhook_delivery")) return this.claimLost ? [] : [{ delivery_id: parameters[1] ?? null }];
     if (sql.startsWith("update corvis_control.webhook_delivery") && sql.includes("state='complete'")) return [{ completed_at: new Date().toISOString() }];
     return [];
   }
@@ -307,4 +310,132 @@ test("default random source (Math.random) stays within jittered bounds", () => {
     const delay = computeWebhookRetryDelayMs(3);
     assert.ok(delay >= min - 1 && delay <= max + 1);
   }
+});
+
+function completionUpdate(store: FakeDeliveryStore): RecordedStatement | undefined {
+  return store.statements.find((statement) => statement.sql.startsWith("update corvis_control.webhook_delivery") && statement.sql.includes("state='complete'"));
+}
+
+test("a delivered webhook is signed over its exact body, releases the response body, and is recorded complete under the tenant", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent({ created_at: "2026-09-29 10:11:12.123+00:00" })];
+  let cancelled = 0;
+  const { fetchImpl, calls } = recordingFetch(() => ({
+    status: 202, ok: true, type: "basic", body: { cancel: async () => { cancelled++; } },
+  }) as unknown as Response);
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  assert.deepEqual(result, { processed: 1, failed: 0 });
+  assert.equal(cancelled, 1, "the response body is cancelled so the connection is released");
+
+  const [call] = calls;
+  assert.equal(call?.url, "https://hooks.example.com/corvis");
+  assert.equal(call?.init.method, "POST");
+  const body = String(call?.init.body);
+  assert.deepEqual(JSON.parse(body), {
+    id: EVENT, type: "SnapshotPublicationChanged", createdAt: "2026-09-29T10:11:12.123Z", tenantId: TENANT, data: { snapshotId: "snap-1" },
+  }, "customers receive an RFC 3339 timestamp, not the pg text form");
+  const headers = call?.init.headers as Record<string, string>;
+  assert.equal(headers["x-corvis-webhook-id"], EVENT);
+  assert.equal(headers["content-type"], "application/json");
+  assert.equal(headers["x-corvis-webhook-signature"], signWebhook("s".repeat(64), headers["x-corvis-webhook-timestamp"]!, body), "the signature covers the timestamp and the exact body sent");
+
+  const insert = store.statements.find((statement) => statement.sql.startsWith("insert into corvis_control.webhook_delivery"))!;
+  assert.deepEqual([insert.parameters[0], insert.parameters[2], insert.parameters[3], insert.parameters[4]], [TENANT, WEBHOOK, EVENT, 1]);
+  const completion = completionUpdate(store)!;
+  assert.deepEqual(completion.parameters, [202, TENANT, insert.parameters[1]], "completion is tenant scoped and targets the claimed delivery row");
+  assert.match(completion.sql, /where tenant_id=\$2 and delivery_id=\$3::uuid and state='delivering'/);
+});
+
+test("a webhook whose created_at cannot be parsed is still delivered with the raw value rather than dropped", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent({ created_at: "not-a-timestamp" })];
+  const { fetchImpl, calls } = recordingFetch(() => new Response(null, { status: 200 }));
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  assert.deepEqual(result, { processed: 1, failed: 0 });
+  assert.equal((JSON.parse(String(calls[0]?.init.body)) as { createdAt: string }).createdAt, "not-a-timestamp");
+});
+
+test("a response body that cannot be cancelled does not fail an otherwise successful delivery", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent()];
+  const { fetchImpl } = recordingFetch(() => ({
+    status: 200, ok: true, type: "basic", body: { cancel: async () => { throw new TypeError("body already consumed"); } },
+  }) as unknown as Response);
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  assert.deepEqual(result, { processed: 1, failed: 0 });
+  assert.equal(completionUpdate(store)?.parameters[0], 200);
+  assert.equal(failureUpdate(store), undefined);
+});
+
+test("an opaque-redirect response is refused as a retryable failure even though its status is 0", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent()];
+  const { fetchImpl } = recordingFetch(() => ({ status: 0, ok: false, type: "opaqueredirect", body: null }) as unknown as Response);
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  assert.deepEqual(result, { processed: 0, failed: 1 });
+  const failure = failureUpdate(store);
+  assert.equal(failure?.parameters[0], "retryable");
+  assert.match(String(failure?.parameters[2]), /Webhook endpoint redirect refused$/);
+  assert.equal(completionUpdate(store), undefined, "a refused redirect is never recorded as delivered");
+});
+
+test("a retryable webhook failure is scheduled with jittered backoff for that attempt number", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent({ prior_attempts: 2 })];
+  const { fetchImpl } = recordingFetch(() => new Response(null, { status: 503 }));
+  const before = Date.now();
+  await processWebhookDeliveries(10, () => 1, { store, fetchImpl, lookup: publicLookup });
+  const failure = failureUpdate(store)!;
+  assert.equal(failure.parameters[0], "retryable");
+  assert.match(String(failure.parameters[2]), /Webhook endpoint returned 503/);
+  const delayMs = Date.parse(String(failure.parameters[1])) - before;
+  const expected = WEBHOOK_RETRY_BASE_DELAY_MS * 4 * (1 + WEBHOOK_RETRY_JITTER_RATIO);
+  assert.ok(Math.abs(delayMs - expected) < 5_000, `attempt 3 with the top of the jitter range retries in ~${expected}ms, got ${delayMs}`);
+  assert.equal(failure.parameters[3], TENANT);
+});
+
+test("a webhook delivery whose claim conflicts with another worker is skipped without posting or recording a failure", async () => {
+  const store = new FakeDeliveryStore();
+  store.claimLost = true;
+  store.events = [pendingEvent()];
+  const { fetchImpl, calls } = recordingFetch(() => new Response(null, { status: 200 }));
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  assert.deepEqual(result, { processed: 0, failed: 0 });
+  assert.equal(calls.length, 0, "an unclaimed delivery must never be posted (customers would see duplicates)");
+  assert.equal(failureUpdate(store), undefined);
+  assert.equal(completionUpdate(store), undefined);
+  assert.equal(store.statements.some((statement) => /webhook_fanout_completed_at=now/.test(statement.sql)), false);
+});
+
+test("a delivery row with no recorded prior attempts starts at attempt 1", async () => {
+  const store = new FakeDeliveryStore();
+  store.events = [pendingEvent({ prior_attempts: null })];
+  const { fetchImpl } = recordingFetch(() => new Response(null, { status: 204 }));
+  await processWebhookDeliveries(10, () => 0.5, { store, fetchImpl, lookup: publicLookup });
+  const insert = store.statements.find((statement) => statement.sql.startsWith("insert into corvis_control.webhook_delivery"))!;
+  assert.equal(insert.parameters[4], 1);
+});
+
+test("without injected dependencies delivery reads from the configured SQL gateway, bounded by the caller's limit", async (t) => {
+  const gateway = "https://sql-gateway.example.com/query";
+  const previous = process.env.CORVIS_POSTGRES_DSN;
+  process.env.CORVIS_POSTGRES_DSN = gateway;
+  t.after(() => { if (previous === undefined) delete process.env.CORVIS_POSTGRES_DSN; else process.env.CORVIS_POSTGRES_DSN = previous; });
+  const requests: Array<{ url: string; sql: string; parameters: PostgresPrimitive[] }> = [];
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const payload = JSON.parse(String(init?.body)) as { sql: string; parameters: PostgresPrimitive[] };
+    requests.push({ url: String(url), ...payload });
+    return Response.json({ rows: [] });
+  });
+
+  assert.deepEqual(await processWebhookDeliveries(7), { processed: 0, failed: 0 });
+  const select = requests.find((request) => request.sql.includes("from corvis_control.outbox_event e"))!;
+  assert.deepEqual(select.parameters, [7]);
+  assert.ok(requests.every((request) => request.url === gateway));
+
+  requests.length = 0;
+  assert.deepEqual(await processQueuedExports(3), { processed: 0, failed: 0 });
+  const exportSelect = requests.find((request) => request.sql.includes("select tenant_id,export_id"))!;
+  assert.deepEqual(exportSelect.parameters, [3]);
+  assert.ok(requests.length > 0 && requests.every((request) => request.url === gateway));
 });
