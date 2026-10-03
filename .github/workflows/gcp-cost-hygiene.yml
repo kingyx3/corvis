@@ -56,22 +56,32 @@ jobs:
           set -euo pipefail
           api_image=""
           control_loop_image=""
+          extractor_image=""
+          litellm_image=""
           known_good_api=""
           known_good_control_loop=""
+          known_good_extractor=""
+          known_good_litellm=""
 
-          if gcloud run services describe corvis-api-uat \
-            --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
-            api_image="$(gcloud run services describe corvis-api-uat \
-              --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
-              --format='value(spec.template.spec.containers[0].image)')"
-            if [[ ! "${api_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-              echo "corvis-api-uat exists but its image is not an immutable digest (got: '${api_image}'); refusing to continue without protecting it."
+          read_service_image() {
+            local service="$1" label="$2"
+            if ! gcloud run services describe "${service}" --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
+              return 0
+            fi
+            local image
+            image="$(gcloud run services describe "${service}" --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" --format='value(spec.template.spec.containers[0].image)')"
+            if [[ ! "${image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "${label} exists but its image is not an immutable digest (got: '${image}'); refusing to continue without protecting it."
               exit 1
             fi
-          fi
+            printf '%s' "${image}"
+          }
 
-          if gcloud run jobs describe corvis-control-loop-daily-uat \
-            --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
+          api_image="$(read_service_image corvis-api-uat corvis-api-uat)"
+          extractor_image="$(read_service_image corvis-extractor-uat corvis-extractor-uat)"
+          litellm_image="$(read_service_image corvis-litellm-uat corvis-litellm-uat)"
+
+          if gcloud run jobs describe corvis-control-loop-daily-uat --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" >/dev/null 2>&1; then
             control_loop_image="$(gcloud run jobs describe corvis-control-loop-daily-uat \
               --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" \
               --format='value(spec.template.spec.template.spec.containers[0].image)')"
@@ -85,20 +95,26 @@ jobs:
           if gcloud storage cat "${manifest}" > known-good.json 2>/dev/null; then
             known_good_api="$(jq -r '.image // empty' known-good.json)"
             known_good_control_loop="$(jq -r '.controlLoopImage // empty' known-good.json)"
-            # Manifests that predate the scheduled control-loop runtime legitimately
-            # have no controlLoopImage; any value that is present must be a digest.
-            if [[ ! "${known_good_api}" =~ @sha256:[0-9a-f]{64}$ ]] \
-               || [[ -n "${known_good_control_loop}" && ! "${known_good_control_loop}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-              echo "Known-good manifest exists but does not contain immutable image digests; refusing to continue."
-              exit 1
-            fi
+            known_good_extractor="$(jq -r '.extractorImage // empty' known-good.json)"
+            known_good_litellm="$(jq -r '.litellmImage // empty' known-good.json)"
+            for entry in "${known_good_api}" "${known_good_control_loop}" "${known_good_extractor}" "${known_good_litellm}"; do
+              [[ -z "${entry}" || "${entry}" =~ @sha256:[0-9a-f]{64}$ ]] || {
+                echo "Known-good manifest exists but contains a non-immutable image reference; refusing to continue."
+                exit 1
+              }
+            done
+            [[ -n "${known_good_api}" ]] || { echo "Known-good manifest is missing the API digest; refusing to continue."; exit 1; }
           fi
           rm -f known-good.json
 
           echo "ACTIVE_API_IMAGE=${api_image}" >> "${GITHUB_ENV}"
           echo "ACTIVE_CONTROL_LOOP_IMAGE=${control_loop_image}" >> "${GITHUB_ENV}"
+          echo "ACTIVE_EXTRACTOR_IMAGE=${extractor_image}" >> "${GITHUB_ENV}"
+          echo "ACTIVE_LITELLM_IMAGE=${litellm_image}" >> "${GITHUB_ENV}"
           echo "KNOWN_GOOD_API_IMAGE=${known_good_api}" >> "${GITHUB_ENV}"
           echo "KNOWN_GOOD_CONTROL_LOOP_IMAGE=${known_good_control_loop}" >> "${GITHUB_ENV}"
+          echo "KNOWN_GOOD_EXTRACTOR_IMAGE=${known_good_extractor}" >> "${GITHUB_ENV}"
+          echo "KNOWN_GOOD_LITELLM_IMAGE=${known_good_litellm}" >> "${GITHUB_ENV}"
 
       - name: Protect active and known-good artifacts
         shell: bash
@@ -106,6 +122,8 @@ jobs:
           set -euo pipefail
           api_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
           control_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
+          extractor_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/extractor"
+          litellm_repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/litellm"
           imp=(--impersonate-service-account="${COST_JANITOR_SERVICE_ACCOUNT}")
 
           protect() {
@@ -115,14 +133,17 @@ jobs:
               echo "Refusing to protect a non-digest artifact reference: ${source}"
               exit 1
             fi
-            gcloud "${imp[@]}" artifacts docker tags add "${source}" "${target}" \
-              --project="${GCP_PROJECT_ID}" --quiet
+            gcloud "${imp[@]}" artifacts docker tags add "${source}" "${target}" --project="${GCP_PROJECT_ID}" --quiet
           }
 
           protect "${ACTIVE_API_IMAGE}" "${api_repo}:active-uat"
           protect "${ACTIVE_CONTROL_LOOP_IMAGE}" "${control_repo}:active-uat"
+          protect "${ACTIVE_EXTRACTOR_IMAGE}" "${extractor_repo}:active-uat"
+          protect "${ACTIVE_LITELLM_IMAGE}" "${litellm_repo}:active-uat"
           protect "${KNOWN_GOOD_API_IMAGE}" "${api_repo}:known-good-uat"
           protect "${KNOWN_GOOD_CONTROL_LOOP_IMAGE}" "${control_repo}:known-good-uat"
+          protect "${KNOWN_GOOD_EXTRACTOR_IMAGE}" "${extractor_repo}:known-good-uat"
+          protect "${KNOWN_GOOD_LITELLM_IMAGE}" "${litellm_repo}:known-good-uat"
 
       - name: Prune excess UAT secret versions safely
         shell: bash
@@ -133,37 +154,27 @@ jobs:
 
           prune_secret() {
             local secret="$1"
-            if ! gcloud "${imp[@]}" secrets describe "${secret}" \
-              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            if ! gcloud "${imp[@]}" secrets describe "${secret}" --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
               echo "Secret ${secret}: not present"
               return 0
             fi
 
             mapfile -t versions < <(gcloud "${imp[@]}" secrets versions list "${secret}" \
-              --project="${GCP_PROJECT_ID}" \
-              --filter='state!=DESTROYED' \
-              --sort-by='~createTime' \
+              --project="${GCP_PROJECT_ID}" --filter='state!=DESTROYED' --sort-by='~createTime' \
               --format='csv[no-heading](name,state,createTime)')
 
             local index=0
             for row in "${versions[@]}"; do
               IFS=',' read -r version state created <<<"${row}"
               index=$((index + 1))
-              # Keep the two newest non-destroyed versions as the recovery window.
-              if (( index <= 2 )); then
-                continue
-              fi
-
+              if (( index <= 2 )); then continue; fi
               created_epoch="$(date -d "${created}" +%s)"
               age_days=$(( (now - created_epoch) / 86400 ))
-
               if [[ "${state}" == "ENABLED" ]]; then
-                gcloud "${imp[@]}" secrets versions disable "${version}" \
-                  --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
+                gcloud "${imp[@]}" secrets versions disable "${version}" --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
                 echo "Secret ${secret}: disabled excess version ${version}"
               elif [[ "${state}" == "DISABLED" && "${age_days}" -ge 14 ]]; then
-                gcloud "${imp[@]}" secrets versions destroy "${version}" \
-                  --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
+                gcloud "${imp[@]}" secrets versions destroy "${version}" --secret="${secret}" --project="${GCP_PROJECT_ID}" --quiet
                 echo "Secret ${secret}: destroyed stale disabled version ${version} (${age_days}d old)"
               fi
             done
@@ -171,6 +182,10 @@ jobs:
 
           prune_secret corvis-postgres-dsn-uat
           prune_secret corvis-control-loop-github-token-uat
+          prune_secret corvis-ai-provider-credentials-uat
+          prune_secret corvis-litellm-master-key-uat
+          prune_secret corvis-atlassian-skill-read-uat
+          prune_secret corvis-atlassian-skill-update-uat
 
       - name: Hygiene summary
         if: always()
@@ -178,9 +193,9 @@ jobs:
         run: |
           {
             echo "### UAT GCP cost hygiene"
-            echo "- Active and known-good release digests: protected with cleanup-exempt tags when present"
+            echo "- Active and known-good API/control-loop/extractor/LiteLLM digests: protected with cleanup-exempt tags when present"
             echo "- Artifact deletion: handled by Terraform-managed Artifact Registry cleanup policies"
-            echo "- Secret versions: newest two retained; older enabled versions disabled; stale disabled versions destroyed after 14 days"
+            echo "- Runtime/AI secret versions: newest two retained; older enabled versions disabled; stale disabled versions destroyed after 14 days"
             echo "- Source-connector secrets: not swept here; revoked connector secrets are deleted by the application"
             echo "- KMS key versions: intentionally not pruned because retained GCS objects may require historical key versions for decryption"
           } >> "${GITHUB_STEP_SUMMARY}"

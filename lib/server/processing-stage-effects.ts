@@ -20,11 +20,9 @@ export class ProcessingStageTimeoutError extends Error {
 /**
  * Provider-neutral production stage dispatcher.
  *
- * Every concrete extraction/canonical/publication integration is injected behind a
- * stage-local handler. Missing handlers fail closed, and each external stage gets
- * a cancellation signal with a hard upper bound so one provider cannot pin the
- * processing worker indefinitely. The deterministic idempotency key is created by
- * the worker and passed through unchanged to the stage implementation.
+ * Most stages retain the short default bound. Extraction is allowed up to nine
+ * minutes so bounded map/reduce inference can finish inside the worker's 600s
+ * Cloud Run/PubSub deadline; its handler still owns the narrower 510s budget.
  */
 export class BoundedProcessingStageEffectRouter implements ProcessingStageEffectPort {
   private readonly handlers: ProcessingStageHandlers;
@@ -40,13 +38,14 @@ export class BoundedProcessingStageEffectRouter implements ProcessingStageEffect
     const handler = this.handlers[input.stage];
     if (!handler) throw new Error(`processing stage ${input.stage} has no configured effect handler`);
 
+    const effectiveTimeoutMs = input.stage === "extracted" ? Math.max(this.timeoutMs, 540_000) : this.timeoutMs;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         controller.abort();
-        reject(new ProcessingStageTimeoutError(input.stage, this.timeoutMs));
-      }, this.timeoutMs);
+        reject(new ProcessingStageTimeoutError(input.stage, effectiveTimeoutMs));
+      }, effectiveTimeoutMs);
     });
 
     try {

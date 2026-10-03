@@ -81,13 +81,13 @@ variable "extraction_audience" {
 }
 
 variable "extraction_timeout_ms" {
-  description = "Per-call extraction-provider timeout. The application additionally caps provider calls beneath the processing-stage hard budget."
+  description = "Per-call extraction-provider timeout. Map/reduce inference is bounded below the 510s extracted-stage and 600s worker deadlines."
   type        = number
-  default     = 20000
+  default     = 300000
 
   validation {
-    condition     = var.extraction_timeout_ms >= 1000 && var.extraction_timeout_ms <= 25000
-    error_message = "extraction_timeout_ms must be between 1000 and 25000 milliseconds"
+    condition     = var.extraction_timeout_ms >= 1000 && var.extraction_timeout_ms <= 480000
+    error_message = "extraction_timeout_ms must be between 1000 and 480000 milliseconds"
   }
 }
 

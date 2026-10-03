@@ -45,11 +45,17 @@ on:
         default: false
     outputs:
       api_image:
-        description: Immutable API/worker image reference resolved for this deployment (empty when no release was selected)
+        description: Immutable API/worker image reference resolved for this deployment
         value: ${{ jobs.terraform.outputs.api_image }}
       control_loop_image:
-        description: Immutable control-loop image reference resolved for this deployment (empty for dev or when no release was selected)
+        description: Immutable control-loop image reference resolved for this deployment
         value: ${{ jobs.terraform.outputs.control_loop_image }}
+      extractor_image:
+        description: Immutable governed extraction-harness image reference resolved for this deployment
+        value: ${{ jobs.terraform.outputs.extractor_image }}
+      litellm_image:
+        description: Immutable LiteLLM gateway image reference resolved for this deployment
+        value: ${{ jobs.terraform.outputs.litellm_image }}
 
 permissions:
   contents: read
@@ -66,6 +72,8 @@ jobs:
     outputs:
       api_image: ${{ steps.release.outputs.api_image }}
       control_loop_image: ${{ steps.release.outputs.control_loop_image }}
+      extractor_image: ${{ steps.release.outputs.extractor_image }}
+      litellm_image: ${{ steps.release.outputs.litellm_image }}
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -79,7 +87,8 @@ jobs:
       TF_VAR_auth_jwks_url: ${{ vars.CORVIS_AUTH_JWKS_URL || '' }}
       TF_VAR_extraction_endpoint: ${{ vars.CORVIS_EXTRACTION_ENDPOINT || '' }}
       TF_VAR_extraction_audience: ${{ vars.CORVIS_EXTRACTION_AUDIENCE || '' }}
-      TF_VAR_extraction_timeout_ms: ${{ vars.CORVIS_EXTRACTION_TIMEOUT_MS || '20000' }}
+      TF_VAR_extraction_timeout_ms: ${{ vars.CORVIS_EXTRACTION_TIMEOUT_MS || '300000' }}
+      TF_VAR_litellm_models_json: ${{ vars.CORVIS_LITELLM_MODELS_JSON || '' }}
       TF_VAR_postgres_ca_cert: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
       TF_VAR_decommission_mode: "false"
       TF_VAR_billing_account_id: ${{ vars.GCP_BILLING_ACCOUNT_ID || '' }}
@@ -93,6 +102,8 @@ jobs:
       ARTIFACT_REPOSITORY: corvis
       API_IMAGE_NAME: api
       CONTROL_LOOP_IMAGE_NAME: control-loop
+      EXTRACTOR_IMAGE_NAME: extractor
+      LITELLM_IMAGE_NAME: litellm
       POSTGRES_DSN_SECRET: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
@@ -112,21 +123,20 @@ jobs:
             plan|apply) ;;
             *) echo "Unsupported Terraform action: ${{ inputs.action }}"; exit 1 ;;
           esac
-          if [[ -z "${TF_VAR_project_id}" ]]; then
-            echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"
-            exit 1
-          fi
-          if [[ -z "${GCP_WIF_PROVIDER}" ]]; then
-            echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"
-            exit 1
-          fi
+          [[ -n "${TF_VAR_project_id}" ]] || { echo "Missing required GitHub Environment variable: GCP_PROJECT_ID"; exit 1; }
+          [[ -n "${GCP_WIF_PROVIDER}" ]] || { echo "Missing required GitHub Environment variable: GCP_WIF_PROVIDER"; exit 1; }
           if [[ ! "${TF_VAR_monthly_budget_amount_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN { exit !(${TF_VAR_monthly_budget_amount_usd} > 0) }"; then
             echo "GCP_MONTHLY_BUDGET_USD must be a positive numeric amount."
             exit 1
           fi
-          if [[ ! "${TF_VAR_extraction_timeout_ms}" =~ ^[0-9]+$ ]] || (( TF_VAR_extraction_timeout_ms < 1000 || TF_VAR_extraction_timeout_ms > 25000 )); then
-            echo "CORVIS_EXTRACTION_TIMEOUT_MS must be an integer between 1000 and 25000."
+          if [[ ! "${TF_VAR_extraction_timeout_ms}" =~ ^[0-9]+$ ]] || (( TF_VAR_extraction_timeout_ms < 1000 || TF_VAR_extraction_timeout_ms > 480000 )); then
+            echo "CORVIS_EXTRACTION_TIMEOUT_MS must be an integer between 1000 and 480000."
             exit 1
+          fi
+          if [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+            jq -e 'type == "object" and length > 0 and (."corvis-extract-primary" | type == "string" and length > 0)' <<<"${TF_VAR_litellm_models_json}" >/dev/null || {
+              echo "CORVIS_LITELLM_MODELS_JSON must be a non-empty JSON object with string corvis-extract-primary."; exit 1;
+            }
           fi
           if [[ -n "${TF_VAR_extraction_endpoint}" && ! "${TF_VAR_extraction_endpoint}" =~ ^https:// ]]; then
             echo "CORVIS_EXTRACTION_ENDPOINT must use HTTPS when configured."
@@ -207,61 +217,78 @@ jobs:
           set -euo pipefail
           api_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${API_IMAGE_NAME}"
           control_loop_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${CONTROL_LOOP_IMAGE_NAME}"
-          api_image=""
-          control_loop_image=""
+          extractor_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${EXTRACTOR_IMAGE_NAME}"
+          litellm_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${LITELLM_IMAGE_NAME}"
+          api_image=""; control_loop_image=""; extractor_image=""; litellm_image=""
+          legacy_ai_rollback="false"
+
+          resolve_tag() {
+            local repo="$1" label="$2"
+            local digest
+            digest="$(gcloud artifacts docker images describe "${repo}:git-${RELEASE_SHA}" --project="${TF_VAR_project_id}" --format='value(image_summary.digest)')"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "${label} release tag did not resolve to an immutable digest."; exit 1; }
+            printf '%s@%s' "${repo}" "${digest}"
+          }
 
           if [[ "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
             manifest="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
-            if ! gcloud storage cat "${manifest}" > known-good.json; then
-              echo "No Security-acceptance-approved rollback manifest exists for ${{ inputs.environment }}."
-              exit 1
-            fi
+            gcloud storage cat "${manifest}" > known-good.json || { echo "No Security-acceptance-approved rollback manifest exists for ${{ inputs.environment }}."; exit 1; }
             api_image="$(jq -r '.image // empty' known-good.json)"
             control_loop_image="$(jq -r '.controlLoopImage // empty' known-good.json)"
+            extractor_image="$(jq -r '.extractorImage // empty' known-good.json)"
+            litellm_image="$(jq -r '.litellmImage // empty' known-good.json)"
             rm -f known-good.json
-            if [[ ! "${api_image}" =~ ^${api_repo}@sha256:[0-9a-f]{64}$ ]]; then
-              echo "Known-good manifest did not contain the expected immutable API image."
-              exit 1
+            [[ "${api_image}" =~ ^${api_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest did not contain the expected API image."; exit 1; }
+            if [[ "${{ inputs.environment }}" != "dev" ]]; then
+              [[ "${control_loop_image}" =~ ^${control_loop_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest is missing the production-like control-loop image."; exit 1; }
             fi
-            if [[ "${{ inputs.environment }}" != "dev" && ! "${control_loop_image}" =~ ^${control_loop_repo}@sha256:[0-9a-f]{64}$ ]]; then
-              echo "Known-good manifest predates the scheduled control-loop runtime or contains the wrong image. Promote a fresh accepted release before using rollback."
-              exit 1
+            if [[ -n "${extractor_image}" || -n "${litellm_image}" ]]; then
+              [[ "${extractor_image}" =~ ^${extractor_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid extractor image."; exit 1; }
+              [[ "${litellm_image}" =~ ^${litellm_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid LiteLLM image."; exit 1; }
+            elif [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+              # A known-good release accepted before managed AI existed must remain usable
+              # during the first AI rollout. Remove the AI pair and the worker endpoint in
+              # the same Terraform apply so rollback is fail-closed, never half-connected.
+              legacy_ai_rollback="true"
+              echo "TF_VAR_litellm_models_json=" >> "${GITHUB_ENV}"
+              echo "TF_VAR_extraction_endpoint=" >> "${GITHUB_ENV}"
+              echo "TF_VAR_extraction_audience=" >> "${GITHUB_ENV}"
             fi
           elif [[ -n "${RELEASE_SHA}" ]]; then
-            api_tagged_ref="${api_repo}:git-${RELEASE_SHA}"
-            api_digest="$(gcloud artifacts docker images describe "${api_tagged_ref}" --project="${TF_VAR_project_id}" --format='value(image_summary.digest)')"
-            [[ "${api_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "API release tag did not resolve to an immutable digest."; exit 1; }
-            api_image="${api_repo}@${api_digest}"
-
+            api_image="$(resolve_tag "${api_repo}" API)"
             if [[ "${{ inputs.environment }}" != "dev" ]]; then
-              control_loop_tagged_ref="${control_loop_repo}:git-${RELEASE_SHA}"
-              control_loop_digest="$(gcloud artifacts docker images describe "${control_loop_tagged_ref}" --project="${TF_VAR_project_id}" --format='value(image_summary.digest)')"
-              [[ "${control_loop_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Control-loop release tag did not resolve to an immutable digest."; exit 1; }
-              control_loop_image="${control_loop_repo}@${control_loop_digest}"
+              control_loop_image="$(resolve_tag "${control_loop_repo}" Control-loop)"
+            fi
+            if [[ -n "${TF_VAR_litellm_models_json}" ]]; then
+              extractor_image="$(resolve_tag "${extractor_repo}" Extractor)"
+              litellm_image="$(resolve_tag "${litellm_repo}" LiteLLM)"
             fi
           fi
 
-          if [[ -n "${api_image}" ]]; then
-            gcloud artifacts docker images describe "${api_image}" --project="${TF_VAR_project_id}" >/dev/null
-          fi
-          if [[ -n "${control_loop_image}" ]]; then
-            gcloud artifacts docker images describe "${control_loop_image}" --project="${TF_VAR_project_id}" >/dev/null
-          fi
+          for image in "${api_image}" "${control_loop_image}" "${extractor_image}" "${litellm_image}"; do
+            [[ -z "${image}" ]] || gcloud artifacts docker images describe "${image}" --project="${TF_VAR_project_id}" >/dev/null
+          done
 
           echo "TF_VAR_api_image=${api_image}" >> "${GITHUB_ENV}"
           echo "TF_VAR_control_loop_image=${control_loop_image}" >> "${GITHUB_ENV}"
+          echo "TF_VAR_extractor_image=${extractor_image}" >> "${GITHUB_ENV}"
+          echo "TF_VAR_litellm_image=${litellm_image}" >> "${GITHUB_ENV}"
           echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
           echo "control_loop_image=${control_loop_image}" >> "${GITHUB_OUTPUT}"
+          echo "extractor_image=${extractor_image}" >> "${GITHUB_OUTPUT}"
+          echo "litellm_image=${litellm_image}" >> "${GITHUB_OUTPUT}"
 
           {
             echo "### Terraform release selection"
-            if [[ -n "${api_image}" ]]; then
-              echo "- API/worker image: \`${api_image}\`"
+            [[ -z "${api_image}" ]] && echo "- API/worker runtime: disabled" || echo "- API/worker image: \`${api_image}\`"
+            [[ -z "${control_loop_image}" ]] || echo "- Control-loop image: \`${control_loop_image}\`"
+            if [[ -n "${extractor_image}" ]]; then
+              echo "- Extractor image: \`${extractor_image}\`"
+              echo "- LiteLLM image: \`${litellm_image}\`"
+            elif [[ "${legacy_ai_rollback}" == "true" ]]; then
+              echo "- AI runtime: disabled fail-closed because the accepted rollback release predates managed AI"
             else
-              echo "- API/worker runtime: disabled (no release selected)"
-            fi
-            if [[ "${{ inputs.environment }}" != "dev" ]]; then
-              echo "- Control-loop image: \`${control_loop_image}\`"
+              echo "- AI runtime: disabled until CORVIS_LITELLM_MODELS_JSON is configured"
             fi
             echo "- Rollback source: \`${ROLLBACK_KNOWN_GOOD}\`"
             echo "- Monthly budget: \`$${TF_VAR_monthly_budget_amount_usd}\`"
@@ -271,29 +298,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${TF_VAR_api_image}" && ! "${TF_VAR_api_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-            echo "Resolved API image must be an immutable digest reference."
-            exit 1
-          fi
+          [[ -z "${TF_VAR_api_image}" || "${TF_VAR_api_image}" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "Resolved API image must be immutable."; exit 1; }
           if [[ "${{ inputs.environment }}" != "dev" && -n "${TF_VAR_api_image}" && ! "${TF_VAR_control_loop_image}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-            echo "Production-like promotion requires an immutable control-loop image from the same release commit."
-            exit 1
+            echo "Production-like promotion requires an immutable control-loop image from the same release commit."; exit 1
+          fi
+          if [[ -n "${TF_VAR_extractor_image}" || -n "${TF_VAR_litellm_image}" ]]; then
+            [[ "${TF_VAR_extractor_image}" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "AI activation requires immutable extractor image."; exit 1; }
+            [[ "${TF_VAR_litellm_image}" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "AI activation requires immutable LiteLLM image."; exit 1; }
+            [[ -n "${TF_VAR_litellm_models_json}" ]] || { echo "AI activation requires CORVIS_LITELLM_MODELS_JSON."; exit 1; }
           fi
 
           if [[ -n "${TF_VAR_cloudflare_zone_name}" ]]; then
-            if [[ "${{ inputs.environment }}" == "dev" ]]; then
-              echo "Cloudflare public-edge deployment is intentionally limited to uat/prod."
-              exit 1
-            fi
-            if [[ -z "${TF_VAR_api_image}" ]]; then
-              echo "Cloudflare API edge activation requires release_sha or rollback_known_good."
-              exit 1
-            fi
-            if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
-              echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."
-              exit 1
-            fi
+            [[ "${{ inputs.environment }}" != "dev" ]] || { echo "Cloudflare public-edge deployment is intentionally limited to uat/prod."; exit 1; }
+            [[ -n "${TF_VAR_api_image}" ]] || { echo "Cloudflare API edge activation requires release_sha or rollback_known_good."; exit 1; }
+            [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || { echo "Cloudflare edge configuration requires the CLOUDFLARE_API_TOKEN GitHub Environment secret."; exit 1; }
           fi
+
+      - name: Require enabled AI integration secrets
+        if: inputs.action == 'apply' && env.TF_VAR_extractor_image != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          for secret in "corvis-ai-provider-credentials-${{ inputs.environment }}" "corvis-litellm-master-key-${{ inputs.environment }}" "corvis-atlassian-skill-read-${{ inputs.environment }}"; do
+            version="$(gcloud secrets versions list "${secret}" --project="${GCP_PROJECT_ID}" --filter='state=ENABLED' --sort-by='~createTime' --limit=1 --format='value(name)')"
+            [[ -n "${version}" ]] || { echo "${secret} has no enabled version. Run AI integration secret provisioning first."; exit 1; }
+          done
+          echo "Required AI integration secrets each have an enabled version; values were not logged."
 
       - name: Require prod alerting channels
         if: inputs.action == 'apply' && inputs.environment == 'prod' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
@@ -305,9 +335,7 @@ jobs:
       - name: Terraform init
         shell: bash
         run: |
-          terraform -chdir="${TF_ROOT}" init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="prefix=corvis/${{ inputs.environment }}"
+          terraform -chdir="${TF_ROOT}" init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=corvis/${{ inputs.environment }}"
 
       - name: Terraform format check
         run: terraform fmt -check -recursive infra/terraform
@@ -327,9 +355,7 @@ jobs:
             head -c 60000 "${RUNNER_TEMP}/tfplan.txt"
             echo
             echo '```'
-            if [[ "$(wc -c < "${RUNNER_TEMP}/tfplan.txt")" -gt 60000 ]]; then
-              echo "_Plan output truncated to 60000 bytes; see the step log for the full plan._"
-            fi
+            if [[ "$(wc -c < "${RUNNER_TEMP}/tfplan.txt")" -gt 60000 ]]; then echo "_Plan output truncated to 60000 bytes; see the step log for the full plan._"; fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Require enabled Postgres runtime secret
@@ -337,16 +363,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(gcloud secrets versions list "${POSTGRES_DSN_SECRET}" \
-            --project="${GCP_PROJECT_ID}" \
-            --filter='state=ENABLED' \
-            --sort-by='~createTime' \
-            --limit=1 \
-            --format='value(name)')"
-          if [[ -z "${version}" ]]; then
-            echo "${POSTGRES_DSN_SECRET} has no enabled version. Activate the environment Postgres provider before runtime promotion."
-            exit 1
-          fi
+          version="$(gcloud secrets versions list "${POSTGRES_DSN_SECRET}" --project="${GCP_PROJECT_ID}" --filter='state=ENABLED' --sort-by='~createTime' --limit=1 --format='value(name)')"
+          [[ -n "${version}" ]] || { echo "${POSTGRES_DSN_SECRET} has no enabled version. Activate the environment Postgres provider before runtime promotion."; exit 1; }
           echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -366,10 +384,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts \
-            --apply \
-            --applied-by="github-actions:${GITHUB_RUN_ID}" \
-            --evidence=migration-evidence.json
+          CORVIS_POSTGRES_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts --apply --applied-by="github-actions:${GITHUB_RUN_ID}" --evidence=migration-evidence.json
           unset dsn
 
       - name: Upload migration evidence
@@ -390,12 +405,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          api_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${API_IMAGE_NAME}"
-          gcloud artifacts docker tags add "${TF_VAR_api_image}" "${api_repo}:active-${{ inputs.environment }}" --project="${TF_VAR_project_id}" --quiet
-          if [[ -n "${TF_VAR_control_loop_image}" ]]; then
-            control_loop_repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${CONTROL_LOOP_IMAGE_NAME}"
-            gcloud artifacts docker tags add "${TF_VAR_control_loop_image}" "${control_loop_repo}:active-${{ inputs.environment }}" --project="${TF_VAR_project_id}" --quiet
-          fi
+          protect() {
+            local image="$1" repo_name="$2"
+            [[ -z "${image}" ]] && return 0
+            repo="${GCP_REGION}-docker.pkg.dev/${TF_VAR_project_id}/${ARTIFACT_REPOSITORY}/${repo_name}"
+            gcloud artifacts docker tags add "${image}" "${repo}:active-${{ inputs.environment }}" --project="${TF_VAR_project_id}" --quiet
+          }
+          protect "${TF_VAR_api_image}" "${API_IMAGE_NAME}"
+          protect "${TF_VAR_control_loop_image}" "${CONTROL_LOOP_IMAGE_NAME}"
+          protect "${TF_VAR_extractor_image}" "${EXTRACTOR_IMAGE_NAME}"
+          protect "${TF_VAR_litellm_image}" "${LITELLM_IMAGE_NAME}"
 
       - name: Verify public health after apply
         if: inputs.action == 'apply' && env.TF_VAR_cloudflare_zone_name != '' && env.TF_VAR_api_image != ''
@@ -407,7 +426,5 @@ jobs:
             uat) api_hostname="api-uat.${TF_VAR_cloudflare_zone_name}" ;;
             *) exit 0 ;;
           esac
-          curl --fail --silent --show-error \
-            --retry 5 --retry-delay 3 --retry-all-errors --max-time 20 \
-            "https://${api_hostname}/api/v1/health" >/dev/null
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-all-errors --max-time 20 "https://${api_hostname}/api/v1/health" >/dev/null
           echo "Public health passed through Cloudflare -> API Gateway -> Cloud Run."
