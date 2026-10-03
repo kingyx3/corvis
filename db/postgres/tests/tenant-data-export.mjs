@@ -184,8 +184,9 @@ try {
 
     // Listing, and the tenant's audit trail: every system step is audited, human steps are audited by the service layer.
     assert.equal((await backend.list(identity(admin1, true), tx)).length, 1);
-    const audit = await tx.query(`select action, actor_subject from corvis_control.audit_event where target_type='tenant_export_request' order by occurred_at, audit_event_id`);
-    assert.deepEqual(audit.map((row) => row.action), ['data_export.build_started', 'data_export.build_completed']);
+    const audit = await tx.query(`select action, actor_subject from corvis_control.audit_event where target_type='tenant_export_request' order by action`);
+    // Both rows share one transaction timestamp and the id is random, so order by action rather than by time.
+    assert.deepEqual(audit.map((row) => row.action), ['data_export.build_completed', 'data_export.build_started']);
     assert.ok(audit.every((row) => row.actor_subject === 'system:tenant-export'));
 
     // Nothing touched the per-user export queue or the outbox.
