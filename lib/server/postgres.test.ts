@@ -24,6 +24,32 @@ test("query sends parameterized SQL and returns rows", async () => {
   });
 });
 
+test("default fetch binding and empty provider payload normalize safely", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({}), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  })) as typeof fetch;
+  try {
+    const db = new PostgresHttpSqlApi({ dsn: "https://postgres.example.test/sql" });
+    assert.deepEqual(await db.query("select 1"), []);
+    await db.execute("select 1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("non-array provider rows normalize to an empty result", async () => {
+  const db = new PostgresHttpSqlApi({
+    dsn: "https://postgres.example.test/sql",
+    fetchImpl: (async () => new Response(JSON.stringify({ rows: null }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+  assert.deepEqual(await db.query("select 1"), []);
+});
+
 test("provider errors fail locally without retries", async () => {
   let calls = 0;
   const db = new PostgresHttpSqlApi({
@@ -81,9 +107,13 @@ test("compatibility HTTP runtime advertises only capabilities it can safely prov
 });
 
 test("native PostgreSQL runtime advertises transaction and PostgreSQL session capabilities", () => {
-  const runtime = postgresRuntime("postgresql://corvis:secret@localhost:5432/postgres?sslmode=disable");
+  const dsn = "postgresql://corvis:secret@localhost:5432/postgres?sslmode=disable";
+  const runtime = postgresRuntime(dsn);
+  const cachedRuntime = postgresRuntime(dsn, "gcp-cloud-sql");
   assert.equal(runtime.provider, "unknown");
   assert.equal(runtime.capabilities.nativeTransactions, true);
   assert.equal(runtime.capabilities.advisoryLocks, true);
   assert.equal(runtime.capabilities.logicalReplication, true);
+  assert.equal(cachedRuntime.provider, "gcp-cloud-sql");
+  assert.equal(cachedRuntime.api, runtime.api);
 });
