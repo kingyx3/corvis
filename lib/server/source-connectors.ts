@@ -130,8 +130,13 @@ export function statusAfterError(current: ConnectionStatus, errorClass: Connecto
 export type SecretPayload = Record<string, unknown>;
 
 /** Never logs or returns raw secret material; callers only ever see the reference. */
+export type SecretWriteOptions = {
+  /** The managed store deletes the secret by itself after this many seconds, for short-lived material (a pending OAuth attempt). */
+  ttlSeconds?: number;
+};
+
 export interface SecretStore {
-  write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string>;
+  write(tenantId: string, providerKey: string, secret: SecretPayload, options?: SecretWriteOptions): Promise<string>;
   read(secretReference: string): Promise<SecretPayload>;
   revoke(secretReference: string): Promise<void>;
 }

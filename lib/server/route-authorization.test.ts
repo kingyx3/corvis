@@ -221,6 +221,10 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["source-connections/[sourceConnectionId]/route.ts", { GET: ADMIN, PATCH: ADMIN }],
   ["source-connections/[sourceConnectionId]/test/route.ts", { POST: ADMIN }],
   ["source-connections/activity/route.ts", { GET: ADMIN }],
+  ["source-connections/connect/route.ts", { POST: ADMIN }],
+  ["source-connections/oauth/complete/route.ts", { POST: ADMIN }],
+  ["source-connections/oauth/start/route.ts", { POST: ADMIN }],
+  ["source-connections/providers/route.ts", { GET: ADMIN }],
   ["source-connections/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["source-references/[sourceReferenceId]/route.ts", { GET: "sources:read" }],
   ["uploads/[uploadId]/complete/route.ts", { POST: "documents:write" }],
@@ -237,6 +241,7 @@ const OWN_AUTHENTICATION = new Set([
   "health/route.ts", // public
   "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership
+  "source-connections/oauth/demo-consent/route.ts", // demo-mode stand-in for a provider's consent page: 404 outside demo mode, authenticates nobody, grants nothing
   "scim/v2/Users/route.ts", // tenant SCIM bearer token
   "scim/v2/Users/[id]/route.ts",
 ]);

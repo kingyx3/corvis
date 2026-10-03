@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { connectionTransition, type ConnectionAction } from "../../core/source-connection-health.ts";
 import {
   ConnectorGovernanceError,
+  statusAfterError,
   type ConnectionStatus,
   type ConnectorErrorClass,
   type SourceConnection,
 } from "../../lib/server/source-connectors.ts";
+import type { DemoTestOutcome } from "./source-providers.ts";
 import type { SourceActivityAcquisition, SourceActivityConnection, SourceActivityRun } from "../../lib/server/source-lifecycle.ts";
 
 /**
@@ -19,7 +22,17 @@ import type { SourceActivityAcquisition, SourceActivityConnection, SourceActivit
 
 const HOUR_MS = 60 * 60 * 1000;
 
-type Entry = { connection: SourceConnection; runs: SourceActivityRun[] };
+/** `testOutcome` is the non-secret result the next connectivity test reports; a seeded connection derives it from its last error. */
+type Entry = { connection: SourceConnection; runs: SourceActivityRun[]; testOutcome?: DemoTestOutcome };
+
+export type DemoCreateInput = {
+  providerKey: string;
+  connectionLabel: string;
+  credentialType: SourceConnection["credentialType"];
+  scope: SourceConnection["sourceScope"];
+  connectorVersion: string;
+  testOutcome: DemoTestOutcome;
+};
 
 type Seed = {
   slot: number;
@@ -180,8 +193,56 @@ export class DemoSourceConnectionStore {
     if ("refused" in outcome) throw new ConnectorGovernanceError(outcome.refused);
     const { lastErrorClass, ...rest } = entry.connection;
     void lastErrorClass;
+    // A replaced credential is assumed good until the next test says otherwise.
     entry.connection = { ...rest, status: outcome.status, consecutiveFailures: 0 };
+    entry.testOutcome = { ok: true };
     return { ...entry.connection };
+  }
+
+  /**
+   * Registers a connection from a connect-wizard request. It starts as
+   * `pending_authorization` exactly like production: only a passing test
+   * activates it. The caller derives `testOutcome` from the submitted
+   * credential and the credential itself is never passed in or kept. The new
+   * connection is listed first, like production's newest-first listing.
+   */
+  create(identity: RequestIdentity, input: DemoCreateInput): SourceConnection {
+    const existing = this.entries(identity);
+    const sourceConnectionId = randomUUID();
+    const connection: SourceConnection = {
+      sourceConnectionId,
+      tenantId: identity.tenantId,
+      workspaceId: identity.workspaceId,
+      providerKey: input.providerKey,
+      connectionLabel: input.connectionLabel,
+      credentialType: input.credentialType,
+      sourceScope: input.scope.map((item) => ({ ...item })),
+      scopeConfirmedBy: identity.subject,
+      scopeConfirmedAt: this.now().toISOString(),
+      secretReference: "redacted",
+      connectorVersion: input.connectorVersion,
+      status: "pending_authorization",
+      consecutiveFailures: 0,
+    };
+    this.workspaces.set(`${identity.tenantId}:${identity.workspaceId}`, new Map([[sourceConnectionId, { connection, runs: [], testOutcome: input.testOutcome }], ...existing]));
+    return { ...connection };
+  }
+
+  /**
+   * A connectivity test with production's effects: a passing test activates a pending connection, a failure moves it
+   * the way `statusAfterError` says (so a failed first test leaves it pending, never active), and a revoked one is refused.
+   */
+  test(identity: RequestIdentity, sourceConnectionId: string): { ok: boolean; errorClass?: ConnectorErrorClass } {
+    const entry = this.entry(identity, sourceConnectionId);
+    const current = entry.connection;
+    if (current.status === "revoked") throw new ConnectorGovernanceError("connection_revoked");
+    const outcome: DemoTestOutcome = entry.testOutcome ?? (current.lastErrorClass ? { ok: false, errorClass: current.lastErrorClass } : { ok: true });
+    if (outcome.ok) {
+      if (current.status === "pending_authorization") entry.connection = { ...current, status: "active" };
+      return { ok: true };
+    }
+    entry.connection = { ...current, status: statusAfterError(current.status, outcome.errorClass, current.consecutiveFailures), lastErrorClass: outcome.errorClass };
+    return { ok: false, errorClass: outcome.errorClass };
   }
 
   activity(identity: RequestIdentity): SourceActivityConnection[] {

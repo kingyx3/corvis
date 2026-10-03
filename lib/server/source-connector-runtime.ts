@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import { getServerConfig } from "./config.ts";
-import type { ConnectorDriver, SecretPayload, SecretStore } from "./source-connectors.ts";
+import type { ConnectorDriver, SecretPayload, SecretStore, SecretWriteOptions } from "./source-connectors.ts";
 
 /**
  * Placeholder project id used only by the in-memory/local store, which never
@@ -131,14 +131,14 @@ export class GcpSecretManagerSecretStore implements SecretStore {
     return this.fetchImpl(url, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(this.timeoutMs) });
   }
 
-  async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
+  async write(tenantId: string, providerKey: string, secret: SecretPayload, options: SecretWriteOptions = {}): Promise<string> {
     const reference = sourceConnectorSecretReference(tenantId, providerKey, uniqueSequence(), this.projectId);
     const secretId = secretIdFromReference(reference);
     const createUrl = `https://secretmanager.googleapis.com/v1/projects/${encodeURIComponent(this.projectId)}/secrets?secretId=${encodeURIComponent(secretId)}`;
     const createResponse = await this.authorizedFetch(createUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ replication: { automatic: {} } }),
+      body: JSON.stringify({ replication: { automatic: {} }, ...(options.ttlSeconds ? { ttl: `${Math.ceil(options.ttlSeconds)}s` } : {}) }),
     });
     if (!createResponse.ok) {
       throw new Error(`GCP Secret Manager secret creation failed (${createResponse.status}) for ${reference}`);

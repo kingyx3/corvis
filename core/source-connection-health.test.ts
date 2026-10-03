@@ -174,7 +174,7 @@ test("a last attempt counts as failed only when an error is recorded and it is n
 
 test("each status maps to its own label, icon, headline, next-sync text and single action", () => {
   const cases: Array<[Partial<SourceConnectionRecord>, string, string, string, string]> = [
-    [{ status: "pending_authorization" }, "Pending", "pending", "contact_support", "Not scheduled — sync starts after setup is finished"],
+    [{ status: "pending_authorization" }, "Pending", "pending", "test", "Not scheduled — sync starts after setup is finished"],
     [{ status: "paused" }, "Paused", "paused", "resume", "Not scheduled — resume the connection to restart the schedule"],
     [{ status: "reauthorization_required", lastErrorClass: "auth" }, "Needs reauthorization", "reauthorization", "reauthorize", "Sync is stopped until the connection is reauthorized"],
     [{ status: "suspended", lastErrorClass: "permission" }, "Suspended", "suspended", "reauthorize", "Sync is stopped until the issue is resolved and the connection is reauthorized"],
@@ -233,7 +233,7 @@ test("unrecognised status or error class from a newer server degrades safely ins
   assert.deepEqual(unknownStatus.pills, ["Needs attention"]);
   assert.equal(unknownStatus.action.kind, "contact_support");
   assert.equal(unknownStatus.nextSync, "Not scheduled");
-  assert.deepEqual(unknownStatus.controls, { pause: false, resume: false, reauthorize: false, revoke: false });
+  assert.deepEqual(unknownStatus.controls, { pause: false, resume: false, reauthorize: false, revoke: false, test: false });
   assert.doesNotMatch(JSON.stringify(unknownStatus), /quantum/);
 
   const unknownError = describeConnection(record({ lastErrorClass: "alien" }), NOW);
@@ -246,15 +246,15 @@ test("unrecognised status or error class from a newer server degrades safely ins
 
 test("controls follow the server transitions and OAuth connections cannot be reauthorized from here", () => {
   const active = describeConnection(record(), NOW).controls;
-  assert.deepEqual(active, { pause: true, resume: false, reauthorize: true, revoke: true });
+  assert.deepEqual(active, { pause: true, resume: false, reauthorize: true, revoke: true, test: true });
   const paused = describeConnection(record({ status: "paused" }), NOW).controls;
-  assert.deepEqual(paused, { pause: false, resume: true, reauthorize: true, revoke: true });
+  assert.deepEqual(paused, { pause: false, resume: true, reauthorize: true, revoke: true, test: true });
   const reauthRequired = describeConnection(record({ status: "reauthorization_required" }), NOW).controls;
-  assert.deepEqual(reauthRequired, { pause: true, resume: false, reauthorize: true, revoke: true });
+  assert.deepEqual(reauthRequired, { pause: true, resume: false, reauthorize: true, revoke: true, test: true });
   const suspended = describeConnection(record({ status: "suspended" }), NOW).controls;
-  assert.deepEqual(suspended, { pause: false, resume: false, reauthorize: true, revoke: true });
+  assert.deepEqual(suspended, { pause: false, resume: false, reauthorize: true, revoke: true, test: true });
   const revoked = describeConnection(record({ status: "revoked" }), NOW).controls;
-  assert.deepEqual(revoked, { pause: false, resume: false, reauthorize: false, revoke: false });
+  assert.deepEqual(revoked, { pause: false, resume: false, reauthorize: false, revoke: false, test: false });
 
   const oauth = describeConnection(record({ credentialType: "oauth_authorization_code", status: "suspended" }), NOW).controls;
   assert.equal(oauth.reauthorize, false);

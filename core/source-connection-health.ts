@@ -71,7 +71,7 @@ export function connectionTransition(action: ConnectionAction, current: SourceCo
 // ---------------------------------------------------------------------------
 
 /** What the customer has to do. Exactly one per connection. */
-export type RequiredActionKind = "reauthorize" | "resume" | "wait" | "contact_support" | "none";
+export type RequiredActionKind = "reauthorize" | "resume" | "wait" | "test" | "contact_support" | "none";
 export type RequiredAction = { kind: RequiredActionKind; label: string; detail: string };
 
 export type ErrorCopy = { summary: string; transient: boolean; action: RequiredAction };
@@ -132,7 +132,7 @@ const SUSPENDED_GENERIC: RequiredAction = { kind: "reauthorize", label: "Check t
 const RESUME: RequiredAction = { kind: "resume", label: "Resume", detail: "Resume the connection to restart collection. Documents already collected and the run history are kept." };
 const NO_ACTION: RequiredAction = { kind: "none", label: "No action needed", detail: "This connection is collecting normally." };
 const REVOKED_ACTION: RequiredAction = { kind: "none", label: "No action — create a new connection to collect again", detail: "A revoked connection cannot be restored. Documents already collected and the run history are kept." };
-const PENDING_ACTION: RequiredAction = { kind: "contact_support", label: "Contact support to finish setup", detail: "Collection starts after the first successful connection test. Corvis support can complete this step with you." };
+const PENDING_ACTION: RequiredAction = { kind: "test", label: "Run a connection test to finish setup", detail: "Collection starts after the first successful connection test. Until a test passes, nothing is collected." };
 const STALE_ACTION: RequiredAction = { kind: "contact_support", label: "Contact support", detail: "No error was reported, but nothing has been collected recently. Corvis support can check why the schedule is not delivering." };
 const UNKNOWN_ACTION: RequiredAction = { kind: "contact_support", label: "Contact support", detail: "Corvis does not recognise this connection's state. Contact support rather than changing it." };
 
@@ -183,6 +183,8 @@ export type ConnectionControls = {
   resume: boolean;
   reauthorize: boolean;
   revoke: boolean;
+  /** A connectivity test can be run on demand for every live connection. */
+  test: boolean;
   /** Set when reauthorize is unavailable for a reason other than the connection's state. */
   reauthorizeUnavailableReason?: string;
 };
@@ -255,7 +257,7 @@ function knownErrorClass(errorClass: string | undefined): SourceConnectorErrorCl
 
 function controlsFor(record: SourceConnectionRecord, status: SourceConnectionStatus | undefined): ConnectionControls {
   // A state this page does not recognise offers no controls: it must not guess at the server's rules.
-  if (status === undefined) return { pause: false, resume: false, reauthorize: false, revoke: false };
+  if (status === undefined) return { pause: false, resume: false, reauthorize: false, revoke: false, test: false };
   const oauth = isOAuthCredential(record.credentialType);
   const stateAllowsReauthorize = "status" in connectionTransition("reauthorize", status);
   return {
@@ -263,6 +265,7 @@ function controlsFor(record: SourceConnectionRecord, status: SourceConnectionSta
     resume: "status" in connectionTransition("resume", status),
     reauthorize: stateAllowsReauthorize && !oauth,
     revoke: status !== "revoked",
+    test: status !== "revoked",
     ...(stateAllowsReauthorize && oauth ? { reauthorizeUnavailableReason: OAUTH_REAUTHORIZE_UNAVAILABLE } : {}),
   };
 }
@@ -402,10 +405,15 @@ export type SecretBuildResult = { ok: true; secret: Record<string, unknown> } | 
  * never repeats what was typed.
  */
 export function buildReauthorizeSecret(credentialType: string, raw: string): SecretBuildResult {
+  return buildCredentialSecret(credentialType, raw, "Enter the new credential.");
+}
+
+/** The secret body for a credential typed into a form: the shared rule behind both reauthorization and the connect wizard. */
+export function buildCredentialSecret(credentialType: string, raw: string, emptyMessage: string): SecretBuildResult {
   const input = credentialInput(credentialType);
   if (input.kind === "unsupported") return { ok: false, error: input.reason };
   const value = raw.trim();
-  if (!value) return { ok: false, error: "Enter the new credential." };
+  if (!value) return { ok: false, error: emptyMessage };
   if (input.kind === "token") return { ok: true, secret: { token: value } };
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { return { ok: false, error: "That is not valid JSON. Paste the complete key file." }; }
