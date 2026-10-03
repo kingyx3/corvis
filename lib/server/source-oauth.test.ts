@@ -11,6 +11,9 @@ import {
   clearedAttemptCookie,
   consumeOAuthAttempt,
   discardOAuthAttempt,
+  freshOAuthCredential,
+  OAUTH_EXPIRY_SKEW_SECONDS,
+  OAuthCredentialExpiredError,
   pkceChallenge,
   readAttemptCookie,
   startOAuthAttempt,
@@ -122,7 +125,7 @@ test("a missing, foreign-tenant, unreadable or malformed attempt is refused befo
   }
 });
 
-test("a declined attempt is destroyed without being read, and only inside the caller's tenant", async () => {
+test("a declined attempt is destroyed whatever the store does, and only inside the caller's tenant", async () => {
   const secrets = new FakeSecrets();
   const { started } = await start(secrets);
   await discardOAuthAttempt(identity({ tenantId: "tenant-b" }), started.attemptReference, { secrets });
@@ -154,4 +157,80 @@ test("the pointer is read back from the request cookie, tolerating other cookies
   assert.equal(readAttemptCookie(withCookie("a=1; novalue; b=2")), undefined);
   assert.equal(readAttemptCookie(withCookie(`${OAUTH_ATTEMPT_COOKIE}=`)), undefined);
   assert.equal(readAttemptCookie(withCookie(`${OAUTH_ATTEMPT_COOKIE}=%E0%A4%A`)), undefined);
+});
+
+test("a declined attempt reports only which provider (and connection) it was for, and nothing at all for one that is not this administrator's", async () => {
+  const secrets = new FakeSecrets();
+  const plain = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/" }, { secrets });
+  assert.deepEqual(await discardOAuthAttempt(identity(), plain.attemptReference, { secrets }), { providerKey: "acme" });
+  assert.equal(secrets.entries.size, 0);
+
+  const renewal = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/", reauthorizeConnectionId: "conn-1" }, { secrets });
+  assert.deepEqual(await discardOAuthAttempt(identity(), renewal.attemptReference, { secrets }), { providerKey: "acme", reauthorizeConnectionId: "conn-1" });
+
+  const foreign = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/" }, { secrets });
+  assert.equal(await discardOAuthAttempt(identity({ subject: "admin-2" }), foreign.attemptReference, { secrets }), undefined, "another administrator's attempt is destroyed but not reported");
+  assert.equal(secrets.entries.size, 0);
+  assert.equal(await discardOAuthAttempt(identity(), foreign.attemptReference, { secrets }), undefined, "an attempt that is already gone");
+
+  const junk = await secrets.write("tenant-a", "oauth-attempt", { kind: "something_else" });
+  assert.equal(await discardOAuthAttempt(identity(), junk, { secrets }), undefined);
+  assert.equal(secrets.entries.size, 0);
+});
+
+test("an attempt that renews a connection carries its id to the completion, and only as a string", async () => {
+  const secrets = new FakeSecrets();
+  const started = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/", reauthorizeConnectionId: "conn-1" }, { secrets });
+  const consumed = await consumeOAuthAttempt(identity(), { attemptReference: started.attemptReference, state: lastAuthorization!.state }, { secrets });
+  assert.equal(consumed.reauthorizeConnectionId, "conn-1");
+
+  const plain = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/" }, { secrets });
+  assert.equal("reauthorizeConnectionId" in await consumeOAuthAttempt(identity(), { attemptReference: plain.attemptReference, state: lastAuthorization!.state }, { secrets }), false);
+
+  const forged = await startOAuthAttempt(identity(), { providerKey: "acme", connectionLabel: "Room", client, redirectUri: "https://app.test/" }, { secrets });
+  const stored = secrets.entries.get(forged.attemptReference)!;
+  stored.reauthorizeConnectionId = 5;
+  await assert.rejects(consumeOAuthAttempt(identity(), { attemptReference: forged.attemptReference, state: lastAuthorization!.state }, { secrets }), invalid);
+});
+
+const T0 = 1_000_000_000_000;
+const refreshing = (impl: SourceOAuthClient["refresh"]): SourceOAuthClient => ({ ...client, ...(impl ? { refresh: impl } : {}) });
+
+test("a credential with no expiry, or with time left beyond the skew, is used as it is and never refreshed", async () => {
+  const never = refreshing(async () => { throw new Error("must not refresh"); });
+  for (const credential of [{ accessToken: "a" }, { accessToken: "a", expiresAt: "soon" }, { accessToken: "a", refreshToken: "r", expiresAt: T0 + (OAUTH_EXPIRY_SKEW_SECONDS + 1) * 1000 }]) {
+    const fresh = await freshOAuthCredential(credential, never, () => T0);
+    assert.deepEqual(fresh, { credential, refreshed: false });
+  }
+});
+
+test("an expired or expiring credential is refreshed through the provider and keeps its refresh token unless the provider rotates it", async () => {
+  const expiring = { accessToken: "old", refreshToken: "r1", expiresAt: T0 + 5_000 };
+  const kept = await freshOAuthCredential(expiring, refreshing(async ({ refreshToken }) => { assert.equal(refreshToken, "r1"); return { accessToken: "new", expiresAt: T0 + 3_600_000 }; }), () => T0);
+  assert.deepEqual(kept, { credential: { accessToken: "new", expiresAt: T0 + 3_600_000, refreshToken: "r1" }, refreshed: true });
+
+  const rotated = await freshOAuthCredential({ ...expiring, expiresAt: T0 - 1 }, refreshing(async () => ({ accessToken: "new", refreshToken: "r2" })), () => T0);
+  assert.equal(rotated.credential.refreshToken, "r2");
+  const blank = await freshOAuthCredential(expiring, refreshing(async () => ({ accessToken: "new", refreshToken: "" })), () => T0);
+  assert.equal(blank.credential.refreshToken, "r1", "an empty rotated token is not a rotation");
+});
+
+test("a refresh the provider refuses is harmless while the credential still has time left, and fatal once it has expired", async () => {
+  const refused = refreshing(async () => { throw new Error("invalid_grant"); });
+  const expiring = { accessToken: "old", refreshToken: "r1", expiresAt: T0 + 5_000 };
+  assert.deepEqual(await freshOAuthCredential(expiring, refused, () => T0), { credential: expiring, refreshed: false });
+
+  const expired = { ...expiring, expiresAt: T0 - 1 };
+  await assert.rejects(freshOAuthCredential(expired, refused, () => T0), (error: unknown) => error instanceof OAuthCredentialExpiredError && error.connectorErrorClass === "reauthorization" && error.name === "OAuthCredentialExpiredError");
+  // Nothing to refresh with: no client, a client without refresh, no refresh token, or an empty one.
+  await assert.rejects(freshOAuthCredential(expired, undefined, () => T0), OAuthCredentialExpiredError);
+  await assert.rejects(freshOAuthCredential(expired, refreshing(undefined), () => T0), OAuthCredentialExpiredError);
+  await assert.rejects(freshOAuthCredential({ accessToken: "a", expiresAt: T0 - 1 }, refused, () => T0), OAuthCredentialExpiredError);
+  await assert.rejects(freshOAuthCredential({ accessToken: "a", refreshToken: "", expiresAt: T0 - 1 }, refused, () => T0), OAuthCredentialExpiredError);
+  assert.deepEqual(await freshOAuthCredential({ accessToken: "a", expiresAt: T0 + 5_000 }, undefined, () => T0), { credential: { accessToken: "a", expiresAt: T0 + 5_000 }, refreshed: false });
+});
+
+test("freshOAuthCredential reads the real clock when none is supplied", async () => {
+  assert.equal((await freshOAuthCredential({ accessToken: "a", expiresAt: Date.now() + 3_600_000 }, undefined)).refreshed, false);
+  await assert.rejects(freshOAuthCredential({ accessToken: "a", expiresAt: Date.now() - 3_600_000 }, undefined), OAuthCredentialExpiredError);
 });

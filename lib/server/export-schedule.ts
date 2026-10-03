@@ -23,6 +23,7 @@ import { decodeCursor, encodeCursor, InvalidCursorError } from "./pagination.ts"
 import { createPhysicalExport } from "./physical-exports.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { notifyScheduledRunFailed } from "./export-schedule-notifications.ts";
 import { countMetric, logEvent } from "./telemetry.ts";
 
 /**
@@ -53,6 +54,8 @@ export interface ExportScheduleBackend {
   get(identity: RequestIdentity, scheduleId: string, db?: PostgresSqlApi): Promise<ExportSchedule>;
   /** The owner pauses or resumes a schedule. */
   setStatus(identity: RequestIdentity, scheduleId: string, action: ExportScheduleAction, db?: PostgresSqlApi): Promise<ExportSchedule>;
+  /** The owner switches the emails about a schedule on or off (F4b). Changes nothing else about it. */
+  setNotification(identity: RequestIdentity, scheduleId: string, notifyOnCompletion: boolean, db?: PostgresSqlApi): Promise<ExportSchedule>;
   /** The owner deletes a schedule: it never runs again; its runs stay in history. Returns what was deleted, for the audit event. */
   remove(identity: RequestIdentity, scheduleId: string, db?: PostgresSqlApi): Promise<DeletedExportSchedule>;
   listRuns(identity: RequestIdentity, query: ExportScheduleRunListQuery, db?: PostgresSqlApi): Promise<ExportScheduleRunPage>;
@@ -88,16 +91,22 @@ export function scheduleFingerprint(command: CreateExportScheduleCommand): strin
     ? ["snapshot", command.scope.snapshotId]
     : ["position", command.scope.positionFinancials.fundId, command.scope.positionFinancials.holdingId, command.scope.positionFinancials.companyId,
       command.scope.positionFinancials.periodicity, command.scope.positionFinancials.portfolioId ?? null];
-  return createHash("sha256").update(JSON.stringify([command.label, scope, command.format, command.trigger])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([command.label, scope, command.format, command.trigger, command.notifyOnCompletion])).digest("hex");
 }
 
 /** The audit event for a schedule command. Identifiers, the label and the trigger only: never data. */
-export function exportScheduleAuditEvent(identity: RequestIdentity, correlationId: string, action: string, item: DeletedExportSchedule & { status: string }): AuditEvent {
+export function exportScheduleAuditEvent(
+  identity: RequestIdentity,
+  correlationId: string,
+  action: string,
+  item: DeletedExportSchedule & { status: string },
+  extra: Record<string, boolean> = {},
+): AuditEvent {
   return {
     id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
     actorSubject: identity.subject, sessionId: identity.sessionId, action, targetType: "export_schedule", targetId: item.scheduleId,
     outcome: "success", correlationId,
-    metadata: { label: item.label, trigger: item.trigger, format: item.format, status: item.status },
+    metadata: { label: item.label, trigger: item.trigger, format: item.format, status: item.status, ...extra },
   };
 }
 
@@ -145,6 +154,7 @@ export function toExportSchedule(row: PostgresRow, identity: RequestIdentity, la
     trigger: oneOf(EXPORT_SCHEDULE_TRIGGERS, str(row, "trigger_kind")),
     status: oneOf(EXPORT_SCHEDULE_STATUSES, str(row, "status")),
     stopReason: stopReason === undefined ? null : oneOf(EXPORT_SCHEDULE_STOP_REASONS, stopReason),
+    notifyOnCompletion: row.notify_on_completion === true || row.notify_on_completion === "true",
     ownedByMe: str(row, "owner_auth_method") === identity.authMethod && str(row, "owner_subject") === identity.subject,
     owner: str(row, "owner_subject"),
     createdAt: iso(row, "created_at"),
@@ -245,9 +255,10 @@ export class PostgresExportScheduleBackend implements ExportScheduleBackend {
     await this.formatGate(identity, command.format, db);
     await assertScopeEntitled(identity, command.scope, db);
     const scheduleId = randomUUID();
-    const row = (await db.query(`select * from corvis_control.create_export_schedule($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)`, [
+    const row = (await db.query(`select * from corvis_control.create_export_schedule($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::boolean)`, [
       identity.tenantId, scheduleId, identity.workspaceId, identity.authMethod, identity.subject, command.idempotencyKey,
       scheduleFingerprint(command), command.label, JSON.stringify(command.scope), exportScopeSummary(command.scope), command.format, command.trigger,
+      command.notifyOnCompletion,
     ]))[0];
     if (!row) throw new Error("export schedule was not created");
     return { item: await this.withLastRun(identity, row, db), created: str(row, "schedule_id") === scheduleId };
@@ -299,6 +310,15 @@ export class PostgresExportScheduleBackend implements ExportScheduleBackend {
 
   async setStatus(identity: RequestIdentity, scheduleId: string, action: ExportScheduleAction, db: PostgresSqlApi = this.defaultDb()): Promise<ExportSchedule> {
     return this.withLastRun(identity, await this.change(identity, scheduleId, action, db), db);
+  }
+
+  async setNotification(identity: RequestIdentity, scheduleId: string, notifyOnCompletion: boolean, db: PostgresSqlApi = this.defaultDb()): Promise<ExportSchedule> {
+    if (!isUuid(scheduleId)) throw new ExportScheduleRequestError("export_schedule_not_found", 404);
+    const row = (await db.query(`select * from corvis_control.set_export_schedule_notification($1::uuid,$2::uuid,$3,$4,$5::boolean)`,
+      [identity.tenantId, scheduleId, identity.authMethod, identity.subject, notifyOnCompletion]))[0];
+    // As for every change: only the owner finds the schedule here.
+    if (!row) throw new ExportScheduleRequestError("export_schedule_not_found", 404);
+    return this.withLastRun(identity, row, db);
   }
 
   async remove(identity: RequestIdentity, scheduleId: string, db: PostgresSqlApi = this.defaultDb()): Promise<DeletedExportSchedule> {
@@ -459,9 +479,12 @@ async function runDueSchedule(
       }
     }
 
+    const runId = randomUUID();
     await tx.execute(`insert into corvis_control.export_schedule_run (tenant_id,run_id,schedule_id,trigger_key,outcome,export_id,failure_reason)
       values ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7)`,
-    [tenantId, randomUUID(), scheduleId, triggerKey, failure ? "failed" : "requested", exportId ?? null, failure ?? null]);
+    [tenantId, runId, scheduleId, triggerKey, failure ? "failed" : "requested", exportId ?? null, failure ?? null]);
+    // A refusal is announced in the same transaction as its run (webhook event, and the owner's email unless switched off).
+    if (failure) await notifyScheduledRunFailed(tx, { tenantId, runId, reason: failure }, { inTransaction: true });
     await auditSystem(tx, failure
       ? runAuditEvent(schedule, triggerKey, "failure", { reason: failure })
       : runAuditEvent(schedule, triggerKey, "success", { exportId: exportId! }));

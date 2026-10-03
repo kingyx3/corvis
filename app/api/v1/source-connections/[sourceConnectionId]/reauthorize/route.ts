@@ -2,6 +2,7 @@ import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectionService } from "@/lib/server/source-connection-service";
+import { ConflictError } from "@/lib/server/platform";
 import { assertSourceConnectionId, type SourceConnection } from "@/lib/server/source-connectors";
 
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
@@ -14,7 +15,10 @@ function toResponse(connection: SourceConnection): Omit<SourceConnection, "secre
  * Replaces the credential behind an existing connection (for example after a
  * customer rotates a token, or after the customer resolves a
  * `reauthorization_required` state) without losing its run/acquisition
- * history. The new secret material never appears in this response.
+ * history. The new secret material never appears in this response. A connection
+ * that signs in with OAuth (`oauth_authorization_code`) is renewed only through
+ * the sign-in leg (`POST /oauth/start` with its id, then `/oauth/complete`), never
+ * by posting a token here: `409 oauth_reauthorization_required`.
  */
 export async function POST(request: Request, context: { params: Promise<{ sourceConnectionId: string }> }) {
   const id = correlationId(request);
@@ -28,7 +32,9 @@ export async function POST(request: Request, context: { params: Promise<{ source
     }
     assertSourceConnectionId(sourceConnectionId);
 
-    const data = await sourceConnectionService().reauthorize(identity, sourceConnectionId, body.secret as Record<string, unknown>, id);
+    const service = sourceConnectionService();
+    if ((await service.get(identity, sourceConnectionId)).credentialType === "oauth_authorization_code") throw new ConflictError("oauth_reauthorization_required");
+    const data = await service.reauthorize(identity, sourceConnectionId, body.secret as Record<string, unknown>, id);
     return json({ data: toResponse(data), correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

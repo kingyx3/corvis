@@ -19,9 +19,9 @@ const appUrl = "https://app.corvis.test";
 
 test("categories are visible only to the audience that can receive them", () => {
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
-  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "role_changed"]);
-  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "support_access", "security_policy", "role_changed"]);
+  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "role_changed"]);
+  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "support_access", "security_policy", "tenant_export_approval", "tenant_export_outcome", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -58,6 +58,48 @@ test("preference changes reject mandatory, hidden, duplicate and malformed categ
   assert.equal(code({ categories: [{ id: "review_discussion", enabled: false, delivery: "daily_digest" }] }), "ok", "review assignments and mentions are optional");
 });
 
+test("the export approval notice is mandatory and the requester's outcome notice is an organization-admin preference (F10d)", () => {
+  const approval = NOTIFICATION_CATEGORIES.find((item) => item.id === "tenant_export_approval")!;
+  const outcome = NOTIFICATION_CATEGORIES.find((item) => item.id === "tenant_export_outcome")!;
+  assert.equal(approval.mandatory, true, "the four-eyes control needs the other admins to be told");
+  assert.equal(approval.audience, "organization_admins");
+  assert.equal(outcome.mandatory, false);
+  assert.equal(outcome.audience, "organization_admins");
+  assert.deepEqual(effectivePreference(outcome), { enabled: true, delivery: "immediate" });
+  assert.deepEqual(effectivePreference(outcome, { category: outcome.id, enabled: false, delivery: "daily_digest" }), { enabled: false, delivery: "daily_digest" });
+  const code = (id: string, viewer: typeof analyst) => {
+    try { normalizePreferenceChanges({ categories: [{ id, enabled: false, delivery: "immediate" }] }, viewer); return "ok"; } catch (error) { return (error as NotificationPreferenceError).code; }
+  };
+  assert.equal(code("tenant_export_approval", orgAdmin), "category_not_configurable");
+  assert.equal(code("tenant_export_outcome", orgAdmin), "ok");
+  assert.equal(code("tenant_export_outcome", workspaceAdmin), "unknown_category", "only an Organization Admin can request an export, so only they see the category");
+  assert.equal(code("tenant_export_approval", analyst), "unknown_category");
+});
+
+test("export notices say what happened in words only, never the reason, a note, a person or any data (F10d)", () => {
+  const approval = renderEmail("tenant_export_approval", { event: "approval_needed", reason: "SECRET REASON", requestedBy: "morgan@x.test" }, { appUrl, workspaceName: "Growth Workspace" });
+  assert.match(approval.subject, /needs your approval/);
+  assert.match(approval.text, /A different Organization Admin must approve it before anything is built/);
+  assert.match(approval.text, /in Growth Workspace/);
+  assert.match(approval.text, /https:\/\/app\.corvis\.test\/access-self-service/);
+  assert.match(approval.text, /cannot be turned off/);
+  assert.doesNotMatch(approval.text + approval.html, /SECRET REASON|morgan/);
+  assert.doesNotMatch(renderEmail("tenant_export_approval", {}, { appUrl }).text, / in \./, "no workspace name, no dangling phrase");
+
+  const subjects = new Map<string, RegExp>([
+    ["approved", /was approved/], ["rejected", /was rejected/], ["ready", /is ready/], ["failed", /could not be built/],
+  ]);
+  for (const [event, pattern] of subjects) {
+    const email = renderEmail("tenant_export_outcome", { event, note: "PRIVATE NOTE", decidedBy: "morgan@x.test" }, { appUrl, workspaceName: "W" });
+    assert.match(email.subject, pattern, event);
+    assert.match(email.text, /https:\/\/app\.corvis\.test\/access-self-service/);
+    assert.ok(email.text.includes(settingsUrl(appUrl)), `${event}: optional, so it links to notification settings`);
+    assert.doesNotMatch(email.text + email.html, /PRIVATE NOTE|morgan/, `${event}: no note or person`);
+  }
+  // An unknown event is described as the failure case rather than rendering raw input.
+  assert.match(renderEmail("tenant_export_outcome", { event: "<b>x</b>" }, { appUrl }).subject, /could not be built/);
+});
+
 test("every email links back to the app, and optional ones link to notification settings", () => {
   const cases: Array<[OutboxCategory, Record<string, unknown>, boolean]> = [
     ["export_ready", { format: "csv" }, true],
@@ -68,6 +110,8 @@ test("every email links back to the app, and optional ones link to notification 
     ["support_access", { status: "pending_ack" }, false],
     ["security_policy", { event: "policy_changed" }, false],
     ["security_policy", { event: "user_signed_out" }, false],
+    ["tenant_export_approval", {}, false],
+    ["tenant_export_outcome", { event: "ready" }, true],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],
     ["invitation", { roleName: "analyst", invitationUrl: `${appUrl}/invite?tenantId=t#token`, expiresOn: "2026-10-07" }, false],
@@ -155,6 +199,36 @@ test("a data issue update email names the new status in words and carries no fig
     }
   }
   assert.doesNotMatch(renderEmail("data_issue_update", { status: "corrected" }, { appUrl }).text, / in /, "no workspace name, no clause");
+});
+
+test("a scheduled export failure email says why in words from a closed set and carries no schedule name, scope, figure or person", () => {
+  const expectations: Array<[unknown, RegExp]> = [
+    ["owner_inactive", /did not run because your access to it had ended\. The schedule was stopped\./],
+    ["export_permission_revoked", /did not run because you no longer have permission to create exports\./],
+    ["redistribution_not_permitted", /data rights no longer permit redistribution\./],
+    ["scope_not_entitled", /you are no longer entitled to the data in its scope\./],
+    ["scope_unavailable", /scope no longer resolves to published data\./],
+    ["format_unavailable", /its format is not enabled for your organization\./],
+    ["export_failed", /was requested but could not be delivered\./],
+    ["something_else", /A scheduled export in Growth Workspace did not run\./],
+    [undefined, /A scheduled export in Growth Workspace did not run\./],
+  ];
+  for (const [reason, line] of expectations) {
+    const email = renderEmail("export_schedule_failed", {
+      reason, label: "Q3 Hg Genesis 9 revenue", scope: "Position financials · company-77", fundName: "Secret Fund", amount: "EUR 12,500,000", owner: "priya@example.test",
+    }, { appUrl, workspaceName: "Growth Workspace" });
+    assert.equal(email.subject, "A scheduled Corvis export did not run");
+    assert.match(email.text, line);
+    assert.match(email.text, /Nothing was exported\./);
+    assert.match(email.text, /Open Data delivery: https:\/\/app\.corvis\.test\/\n/, "links back into the app, where normal authorization applies");
+    assert.ok(email.text.includes(settingsUrl(appUrl)) && email.html.includes("Change notification settings"), "optional, so it links to settings");
+    for (const secret of ["Q3 Hg Genesis 9 revenue", "company-77", "Secret Fund", "12,500,000", "priya"]) {
+      assert.ok(!email.text.includes(secret) && !email.html.includes(secret) && !email.subject.includes(secret), `${secret} must never be emailed`);
+    }
+  }
+  const category = NOTIFICATION_CATEGORIES.find((item) => item.id === "export_schedule_failed")!;
+  assert.deepEqual([category.mandatory, category.audience, category.defaultEnabled, category.defaultDelivery], [false, "everyone", true, "immediate"]);
+  assert.doesNotMatch(renderEmail("export_schedule_failed", { reason: "export_failed" }, { appUrl }).text, / in /, "no workspace name, no clause");
 });
 
 test("a review assignment or mention email says which happened in words and carries no item, name or comment text", () => {

@@ -177,7 +177,8 @@ export function SourceConnectionsSection({ runHistoryAvailable, onOpenRunHistory
     </ul>}
     {dialog && dialog.action !== "reauthorize" && <ConfirmDialog action={dialog.action} connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
     {wizard && <ConnectSourceWizard resume={wizard.resume} onClose={closeWizard} onConnected={(sourceConnectionId) => { connectedId.current = sourceConnectionId; void reload(); }}/>}
-    {dialog?.action === "reauthorize" && <ReauthorizeDialog connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
+    {dialog?.action === "reauthorize" && credentialInput(dialog.connection.credentialType).kind === "oauth" && <OAuthReauthorizeDialog connection={dialog.connection} onClose={() => setDialog(null)}/>}
+    {dialog?.action === "reauthorize" && credentialInput(dialog.connection.credentialType).kind !== "oauth" && <ReauthorizeDialog connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
   </section>;
 }
 
@@ -192,7 +193,6 @@ function ConnectionCard({ connection, health, hasRunHistory, testing, onTest, on
 }) {
   const id = connection.sourceConnectionId;
   const headingId = `source-connection-heading-${id}`;
-  const reasonId = `source-connection-reauthorize-reason-${id}`;
   const { controls, action } = health;
   const label = connection.connectionLabel;
   const reauthorizeIsNext = action.kind === "reauthorize";
@@ -217,7 +217,6 @@ function ConnectionCard({ connection, health, hasRunHistory, testing, onTest, on
     <div className="source-connection-controls">
       {controls.test && <button className={action.kind === "test" ? "primary-button" : "secondary-button"} aria-label={`Test connection ${label}`} disabled={testing} aria-busy={testing || undefined} onClick={onTest}>{testing ? "Testing…" : "Test connection"}</button>}
       {controls.reauthorize && <button className={reauthorizeIsNext ? "primary-button" : "secondary-button"} aria-label={`Reauthorize ${label}`} onClick={() => onAction("reauthorize")}>Reauthorize</button>}
-      {controls.reauthorizeUnavailableReason && <><button className="secondary-button" aria-disabled="true" aria-label={`Reauthorize ${label}`} aria-describedby={reasonId}>Reauthorize</button><p id={reasonId} className="source-connection-unavailable">{controls.reauthorizeUnavailableReason}</p></>}
       {controls.resume && <button className="primary-button" aria-label={`Resume ${label}`} onClick={() => onAction("resume")}>Resume</button>}
       {controls.pause && <button className="secondary-button" aria-label={`Pause ${label}`} onClick={() => onAction("pause")}>Pause</button>}
       {controls.revoke && <button className="danger-button" aria-label={`Revoke ${label}`} onClick={() => onAction("revoke")}>Revoke</button>}
@@ -258,6 +257,47 @@ function ConfirmDialog({ action, connection, onClose, onDone }: {
   </Modal>;
 }
 
+/**
+ * Reauthorizing a connection that signs in with OAuth: the same sign-in leg as connecting, started for this connection
+ * (only its id is sent). The administrator approves at the provider, is brought back, and Corvis stores the new
+ * credential, retires the old one and tests the connection (see the wizard's return handling).
+ */
+function OAuthReauthorizeDialog({ connection, onClose }: { connection: SourceConnectionRecord; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await sendCommand<{ authorizationUrl: string }>("/api/v1/source-connections/oauth/start", "POST", { sourceConnectionId: connection.sourceConnectionId }, true);
+    if (!result.ok || !result.data) {
+      setError(result.ok ? commandFailureMessage("reauthorize", undefined) : failureText("reauthorize", result));
+      setBusy(false);
+      return;
+    }
+    // Leaves the app for the provider's consent page; the provider redirects back with a one-time code.
+    window.location.assign(result.data.authorizationUrl);
+  };
+
+  return <Modal label={`Reauthorize ${connection.connectionLabel}`} onClose={() => { if (!busy) onClose(); }}>
+    <div className="dialog-header"><div><p className="eyebrow">Sign in again</p><h2>Reauthorize {connection.connectionLabel}</h2></div></div>
+    <div className="dialog-body">
+      <ul className="source-connection-consequences">
+        <li>You will leave Corvis and sign in on the provider&apos;s own page, where you approve the same access this connection already has. Its scope does not change.</li>
+        <li>Corvis never sees your provider password. When you approve, you are brought back here, Corvis saves the new credential and tests the connection.</li>
+        <li>The previous credential is destroyed only after the new one is saved and the change is recorded in the audit log. Collected documents and the run history are kept.</li>
+        <li>{connection.status === "paused" ? "This connection is paused and stays paused until you resume it." : "Collection restarts once the test passes."}</li>
+        <li>If you decline or close the provider&apos;s page, nothing changes.</li>
+      </ul>
+      {error && <p role="alert" className="source-connection-dialog-error">{error}</p>}
+    </div>
+    <div className="dialog-actions">
+      <button type="button" className="secondary-button" data-autofocus disabled={busy} onClick={onClose}>Cancel</button>
+      <button type="button" className="primary-button" disabled={busy} onClick={() => void start()}>{busy ? "Opening the provider…" : "Go to the provider"}</button>
+    </div>
+  </Modal>;
+}
+
 function ReauthorizeDialog({ connection, onClose, onDone }: {
   connection: SourceConnectionRecord;
   onClose: () => void;
@@ -277,7 +317,8 @@ function ReauthorizeDialog({ connection, onClose, onDone }: {
     return () => { if (field) field.value = ""; };
   }, []);
 
-  if (input.kind === "unsupported") return null;
+  // An OAuth connection is renewed by OAuthReauthorizeDialog, never by typing a credential.
+  if (input.kind === "oauth") return null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

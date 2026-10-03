@@ -1,5 +1,5 @@
 import type { RetentionView } from "@/core/data-retention";
-import type { TenantExportDownload, TenantExportRequest } from "@/core/tenant-export";
+import type { TenantExportDownload, TenantExportPage, TenantExportRequest } from "@/core/tenant-export";
 import { apiUrl } from "@/lib/api-url";
 import { apiResponseError, friendlyErrorMessage } from "@/lib/api-errors";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
@@ -42,8 +42,13 @@ export async function getRetention(signal?: AbortSignal): Promise<RetentionView>
   return (await (await send(RETENTION, { signal })).json() as { data: RetentionView }).data;
 }
 
-export async function listDataExports(signal?: AbortSignal): Promise<TenantExportRequest[]> {
-  return (await (await send(EXPORTS, { signal })).json() as { data: TenantExportRequest[] }).data;
+/** One page of requests, newest first. Pass the previous page's `nextCursor` to read the next (older) page. */
+export async function listDataExports(options: { limit?: number; cursor?: string | null; signal?: AbortSignal } = {}): Promise<TenantExportPage> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  if (options.cursor) query.set("cursor", options.cursor);
+  const body = await (await send(query.size > 0 ? `${EXPORTS}?${query}` : EXPORTS, { signal: options.signal })).json() as { data: TenantExportRequest[]; nextCursor?: string | null };
+  return { items: body.data, nextCursor: body.nextCursor ?? null };
 }
 
 export async function getDataExport(requestId: string): Promise<TenantExportRequest> {

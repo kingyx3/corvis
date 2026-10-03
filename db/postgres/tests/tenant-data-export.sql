@@ -14,7 +14,13 @@
 --   * history is append-only and tenants are isolated;
 --   * tenant_export_rights fails closed: expired, partial, unspecified and non-redistributable resources are
 --     excluded, and without a workspace-level redistribution right nothing is returned;
---   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
+--   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing;
+--   * migration 089 (F10d): the history trigger queues the mandatory approval notice to every other active human
+--     Organization Admin and the optional outcome notice (approved, rejected, ready, failed, including a build failed by
+--     the lease reclaim) to the requester only, in words-only parameters, once per step, never blocking the step if the
+--     outbox refuses it; the approval notice cannot be a stored preference;
+--   * migration 089 (F10f): expired artifacts are listed, marked deleted once (history, audit, grants removed) and a live
+--     one is never touched; expired download grants are swept past their retention, bounded and audited.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
 
@@ -413,7 +419,207 @@ begin
   if listed is distinct from 'fund:fund-b' then raise exception 'the other tenant sees only its own rights, got %', listed; end if;
 end $$;
 
--- 11. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.
+-- 11. Migration 089 (F10d, F10f). A fresh tenant with three Organization Admins, an analyst, a revoked admin and a service account.
+insert into corvis_control.tenant (tenant_id,slug,display_name) values ('c0890000-0000-4000-8000-00000000000c','export-c','Export C');
+insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name) values ('c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-00000000000c','primary','C primary');
+insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject,status)
+values ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e1','oidc','idp|c-one','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e2','oidc','idp|c-two','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e3','oidc','idp|c-three','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e5','oidc','idp|c-analyst','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e6','oidc','idp|c-revoked','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000e7','service_account','svc|c-robot','active');
+insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name,status)
+values ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e1','tenant_admin','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e2','tenant_admin','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e3','tenant_admin','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e5','analyst','active'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e6','tenant_admin','revoked'),
+       ('c0890000-0000-4000-8000-00000000000c','c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-0000000000e7','tenant_admin','active');
+
+-- 11a. Notices are queued by the history trigger: the approval notice to every OTHER active human Organization Admin,
+-- the outcome notice to the requester only, in words-only parameters, once per step.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0890000-0000-4000-8000-0000000000c1';
+  one uuid := 'c0890000-0000-4000-8000-0000000000e1';
+  two uuid := 'c0890000-0000-4000-8000-0000000000e2';
+  three uuid := 'c0890000-0000-4000-8000-0000000000e3';
+  req corvis_control.tenant_export_request%rowtype;
+  claimed corvis_control.tenant_export_request%rowtype;
+  who text;
+begin
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d1',workspace,'oidc','idp|c-one','Notice flow',168);
+  select string_agg(recipient_user_id::text, ',' order by recipient_user_id) into who
+  from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_approval';
+  if who is distinct from two::text || ',' || three::text then
+    raise exception 'the approval notice goes to the other active human Organization Admins only, got %', who;
+  end if;
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_approval'
+             and (template_params <> '{"event":"approval_needed"}'::jsonb or required_roles <> array['tenant_admin']::text[] or workspace_id is not null or fund_id is not null or status <> 'queued')) then
+    raise exception 'the approval notice carries only the event, the role to re-check and no scope';
+  end if;
+  if (select count(*) from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_outcome') <> 0 then raise exception 'a request is not an outcome'; end if;
+
+  -- Approving tells the requester, and only the requester.
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-two',null,null);
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  perform corvis_control.complete_tenant_export_build(tenant,req.request_id,claimed.build_attempts,'gs://bucket/exports/c/x.zip',now()+interval '1 day',repeat('d',64),10,'{}'::jsonb);
+  select string_agg(template_params ->> 'event', ',' order by template_params ->> 'event') into who
+  from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_outcome' and recipient_user_id = one;
+  if who is distinct from 'approved,ready' then raise exception 'the requester is told of approval and readiness, got %', who; end if;
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_outcome' and recipient_user_id <> one) then raise exception 'nobody but the requester gets an outcome'; end if;
+
+  -- A rejection says so without the note; a cancellation by the requester is their own action and tells no one.
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d2',workspace,'oidc','idp|c-two','Second flow',168);
+  if (select count(*) from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_approval') <> 4 then raise exception 'each request tells the other admins once (2 + 2)'; end if;
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'reject','oidc','idp|c-one','SECRET NOTE',null);
+  if not exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_outcome' and recipient_user_id = two and template_params = '{"event":"rejected"}'::jsonb) then
+    raise exception 'the requester is told of a rejection';
+  end if;
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and (template_params::text like '%SECRET%' or template_params::text like '%Second flow%' or template_params::text like '%idp|%')) then
+    raise exception 'no note, reason or name ever enters an outbox row';
+  end if;
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d3',workspace,'oidc','idp|c-three','Withdrawn flow',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'cancel','oidc','idp|c-three',null,null);
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and category = 'tenant_export_outcome' and recipient_user_id = three) then raise exception 'withdrawing your own request is not an outcome'; end if;
+
+  -- A permanent failure, and a build abandoned past its attempts (failed inside the claim function), both tell the requester.
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d4',workspace,'oidc','idp|c-three','Failing flow',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-one',null,null);
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  perform corvis_control.fail_tenant_export_build(tenant,req.request_id,claimed.build_attempts,'boom',false,now()+interval '1 minute',5);
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and recipient_user_id = three and category = 'tenant_export_outcome' and template_params ->> 'event' = 'failed') then
+    raise exception 'a build that will be retried is not a failure yet';
+  end if;
+  update corvis_control.tenant_export_request set build_next_attempt_at = now() where request_id = req.request_id;
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  perform corvis_control.fail_tenant_export_build(tenant,req.request_id,claimed.build_attempts,'boom again',true,null,5);
+  if (select count(*) from corvis_control.email_outbox where tenant_id = tenant and recipient_user_id = three and category = 'tenant_export_outcome' and template_params ->> 'event' = 'failed') <> 1 then
+    raise exception 'the requester is told when the build gives up';
+  end if;
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d5',workspace,'oidc','idp|c-two','Abandoned flow',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-one',null,null);
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,1);
+  update corvis_control.tenant_export_request set build_lease_expires_at = now() - interval '1 minute' where request_id = req.request_id;
+  perform corvis_control.claim_next_tenant_export_build(10,1);
+  if (select state from corvis_control.tenant_export_request where request_id = req.request_id) <> 'failed' then raise exception 'the exhausted abandoned build failed'; end if;
+  if not exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and recipient_user_id = two and category = 'tenant_export_outcome' and template_params ->> 'event' = 'failed') then
+    raise exception 'a build failed by the lease reclaim also tells the requester';
+  end if;
+  if exists (select 1 from corvis_control.email_outbox where tenant_id = tenant and category in ('tenant_export_approval','tenant_export_outcome')
+             group by dedupe_key having count(*) > 1) then raise exception 'dedupe keys are unique per notice'; end if;
+end $$;
+
+-- 11b. The category rules: the approval notice is mandatory (it cannot be a stored preference), the outcome notice is one.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  one uuid := 'c0890000-0000-4000-8000-0000000000e1';
+begin
+  perform pg_temp.expect_error(format($f$insert into corvis_control.notification_preference (tenant_id,user_id,category,enabled,delivery) values (%L,%L,'tenant_export_approval',false,'immediate')$f$, tenant, one),
+    'notification_preference_category_check');
+  insert into corvis_control.notification_preference (tenant_id,user_id,category,enabled,delivery) values (tenant,one,'tenant_export_outcome',false,'immediate');
+  perform pg_temp.expect_error(format($f$insert into corvis_control.email_outbox (tenant_id,category,recipient_user_id,dedupe_key) values (%L,'tenant_export_bogus',%L,'x')$f$, tenant, one),
+    'email_outbox_category_check');
+end $$;
+
+-- 11c. A notification fault never blocks the step that caused it: the outbox refuses the notice, the approval still happens.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0890000-0000-4000-8000-0000000000c1';
+  req corvis_control.tenant_export_request%rowtype;
+  before_rows integer := (select count(*) from corvis_control.email_outbox where tenant_id = 'c0890000-0000-4000-8000-00000000000c');
+begin
+  alter table corvis_control.email_outbox add constraint f10_block_notices check (category not in ('tenant_export_approval','tenant_export_outcome')) not valid;
+  select * into req from corvis_control.request_tenant_export(tenant,'c0890000-0000-4000-8000-0000000000d6',workspace,'oidc','idp|c-one','Faulty outbox',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-two',null,null);
+  if (select state from corvis_control.tenant_export_request where request_id = req.request_id) <> 'approved' then raise exception 'the approval stands without its notice'; end if;
+  if (select count(*) from corvis_control.email_outbox where tenant_id = tenant) <> before_rows then raise exception 'the refused notices were not queued'; end if;
+  alter table corvis_control.email_outbox drop constraint f10_block_notices;
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'cancel','oidc','idp|c-one',null,null);
+end $$;
+
+-- 11d. Expired artifacts: only complete exports past their lifetime are listed; marking one stamps it, removes its grants,
+-- appends history and writes the audit event once; a repeat or a still-valid artifact changes nothing.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0890000-0000-4000-8000-0000000000c1';
+  req corvis_control.tenant_export_request%rowtype;
+  claimed corvis_control.tenant_export_request%rowtype;
+  expired_id uuid := 'c0890000-0000-4000-8000-0000000000d7';
+  fresh_id uuid := 'c0890000-0000-4000-8000-0000000000d8';
+  listed text;
+begin
+  select * into req from corvis_control.request_tenant_export(tenant,expired_id,workspace,'oidc','idp|c-one','Will expire',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-two',null,null);
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  perform corvis_control.complete_tenant_export_build(tenant,req.request_id,claimed.build_attempts,'gs://bucket/exports/c/expiring.zip',now()+interval '1 hour',repeat('e',64),10,'{}'::jsonb);
+  insert into corvis_control.tenant_export_download_grant (tenant_id,request_id,subject,token_sha256,expires_at)
+  values (tenant,expired_id,'idp|c-one',repeat('1',64),now()+interval '5 minutes'), (tenant,expired_id,'idp|c-one',repeat('2',64),now()-interval '1 hour');
+  if exists (select 1 from corvis_control.expired_tenant_export_artifacts(10) where request_id = expired_id) then raise exception 'a live artifact is not expired'; end if;
+  if corvis_control.mark_tenant_export_artifact_deleted(tenant, expired_id) then raise exception 'a live artifact cannot be marked deleted'; end if;
+
+  select * into req from corvis_control.request_tenant_export(tenant,fresh_id,workspace,'oidc','idp|c-one','Stays valid',168);
+  perform corvis_control.decide_tenant_export(tenant,req.request_id,'approve','oidc','idp|c-two',null,null);
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  perform corvis_control.complete_tenant_export_build(tenant,fresh_id,claimed.build_attempts,'gs://bucket/exports/c/fresh.zip',now()+interval '1 day',repeat('f',64),10,'{}'::jsonb);
+
+  -- The first export's lifetime passes (the guard lets only the build columns change; artifact_expires_at is not guarded).
+  update corvis_control.tenant_export_request set artifact_expires_at = now() - interval '1 minute' where request_id = expired_id;
+  select string_agg(request_id::text || '=' || object_uri, ',') into listed from corvis_control.expired_tenant_export_artifacts(10);
+  if listed is distinct from expired_id::text || '=gs://bucket/exports/c/expiring.zip' then raise exception 'only the expired artifact is listed, got %', listed; end if;
+  if (select count(*) from corvis_control.expired_tenant_export_artifacts(0)) <> 1 then raise exception 'the limit is at least one'; end if;
+
+  if not corvis_control.mark_tenant_export_artifact_deleted(tenant, expired_id) then raise exception 'an expired artifact is marked deleted'; end if;
+  if corvis_control.mark_tenant_export_artifact_deleted(tenant, expired_id) then raise exception 'marking twice changes nothing'; end if;
+  if corvis_control.mark_tenant_export_artifact_deleted(tenant, fresh_id) then raise exception 'a live artifact stays'; end if;
+  if exists (select 1 from corvis_control.expired_tenant_export_artifacts(10)) then raise exception 'a swept artifact is no longer listed'; end if;
+  if (select artifact_deleted_at is null or state <> 'complete' or object_uri is null from corvis_control.tenant_export_request where request_id = expired_id) then
+    raise exception 'the request stays complete and keeps its object uri; only the deletion is recorded';
+  end if;
+  if exists (select 1 from corvis_control.tenant_export_download_grant where request_id = expired_id) then raise exception 'its grants are removed with the artifact'; end if;
+  if (select count(*) from corvis_control.tenant_export_request_event where request_id = expired_id and event_type = 'artifact_deleted' and from_state = 'complete' and to_state = 'complete' and actor_subject = 'system:tenant-export') <> 1 then
+    raise exception 'the deletion is in the history once';
+  end if;
+  if (select count(*) from corvis_control.audit_event where target_id = expired_id::text and action = 'data_export.artifact_deleted' and outcome = 'success'
+        and workspace_id = workspace and actor_subject = 'system:tenant-export' and (metadata ->> 'grantsDeleted') = '2') <> 1 then
+    raise exception 'the deletion is audited once with the number of grants removed';
+  end if;
+  perform pg_temp.expect_error(format($f$update corvis_control.tenant_export_request set artifact_deleted_at = now() where request_id = %L$f$, 'c0890000-0000-4000-8000-0000000000d5'),
+    'violates check constraint');
+end $$;
+
+-- 11e. Download grants: only those expired past the retention are deleted, bounded per call, audited once per request.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  fresh_id uuid := 'c0890000-0000-4000-8000-0000000000d8';
+  swept integer;
+begin
+  insert into corvis_control.tenant_export_download_grant (tenant_id,request_id,subject,token_sha256,expires_at,consumed_at)
+  values (tenant,fresh_id,'idp|c-one',repeat('3',64),now()-interval '3 days',now()-interval '3 days'),
+         (tenant,fresh_id,'idp|c-one',repeat('4',64),now()-interval '2 days',null),
+         (tenant,fresh_id,'idp|c-one',repeat('5',64),now()-interval '1 hour',null),
+         (tenant,fresh_id,'idp|c-one',repeat('6',64),now()+interval '5 minutes',null);
+  swept := corvis_control.sweep_tenant_export_grants(24, 1);
+  if swept <> 1 then raise exception 'the limit bounds one call, deleted %', swept; end if;
+  swept := corvis_control.sweep_tenant_export_grants(24, 100);
+  if swept <> 1 then raise exception 'the rest of the expired ones go next, deleted %', swept; end if;
+  if (select string_agg(left(token_sha256, 1), ',' order by token_sha256) from corvis_control.tenant_export_download_grant where request_id = fresh_id) is distinct from '5,6' then
+    raise exception 'a grant expired less than the retention ago, and a live one, are kept';
+  end if;
+  if corvis_control.sweep_tenant_export_grants(24, 100) <> 0 then raise exception 'nothing left to sweep'; end if;
+  if (select count(*) from corvis_control.audit_event where target_id = fresh_id::text and action = 'data_export.grants_swept' and (metadata ->> 'deleted') = '1') <> 2 then
+    raise exception 'each sweep that deleted something is audited with its count; one that deleted nothing is not';
+  end if;
+  if corvis_control.sweep_tenant_export_grants(0, null) <> 0 then raise exception 'a nonsense retention is floored to an hour, a missing limit has a default'; end if;
+end $$;
+
+-- 12. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.
 do $$
 declare
   offenders text;

@@ -171,6 +171,64 @@ test("the requester can withdraw a pending request, and a withdrawn request free
   await expect(page.getByRole("button", { name: "Request full export" })).toBeEnabled();
 });
 
+test("a request waiting for this admin is flagged at the top of the page, links to it, and clears once it is decided (F10d)", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const notice = page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("only built if a different Organization Admin approves it");
+  // No new navigation item: the indicator is on the page itself, above the sections, and links to the request.
+  await expect(page.getByRole("link", { name: "Review the request" })).toHaveAttribute("href", "#export-heading");
+  const violations = await blockingViolations(page, "[data-testid='export-approval-notice']");
+  expect(violations, describe(violations)).toEqual([]);
+
+  await card(page, COLLEAGUE_REASON).getByRole("button", { name: "Reject" }).click();
+  await card(page, COLLEAGUE_REASON).getByRole("textbox", { name: "Why are you rejecting it?" }).fill("Not needed.");
+  await card(page, COLLEAGUE_REASON).getByRole("button", { name: "Confirm rejection" }).click();
+  await expect(card(page, COLLEAGUE_REASON)).toContainText("Rejected");
+  await expect(notice).toHaveCount(0);
+
+  // The admin's own pending request is not waiting for them: nothing to approve, so no notice.
+  await page.getByRole("textbox", { name: "Why do you need this export?" }).fill("Records review at contract end");
+  await page.getByRole("button", { name: "Request full export" }).click();
+  await expect(card(page, "Records review at contract end")).toContainText("Pending");
+  await expect(notice).toHaveCount(0);
+});
+
+test("the request list is paged with a cursor: older requests load on demand and each appears once (F10f)", async ({ page }) => {
+  const { headers } = await isolate(page);
+  // Page size one, so the seeded three requests span three pages.
+  await page.route(/\/api\/v1\/access\/data-exports(\?|$)/, (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === "GET") url.searchParams.set("limit", "1");
+    return route.fallback({ url: url.toString() });
+  });
+  await page.goto("/access-self-service");
+  const list = page.getByRole("list", { name: "Data export requests" });
+  await expect(list.getByRole("listitem")).toHaveCount(1);
+  await expect(card(page, COLLEAGUE_REASON)).toBeVisible();
+  const older = page.getByRole("button", { name: "Show older requests" });
+  await older.click();
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+  await expect(list.getByRole("listitem").nth(1)).toContainText("Ready");
+  await older.click();
+  await expect(list.getByRole("listitem")).toHaveCount(3);
+  await expect(list.getByRole("listitem").nth(2)).toContainText("Rejected");
+  await expect(older).toHaveCount(0);
+  const violations = await blockingViolations(page, "section[aria-labelledby='export-heading']");
+  expect(violations, describe(violations)).toEqual([]);
+
+  // The same contract over the API: a stable cursor, each request once, and a malformed cursor is refused.
+  const first = (await (await page.request.get("/api/v1/access/data-exports?limit=2", { headers })).json()) as { data: Array<{ requestId: string }>; nextCursor: string | null };
+  expect(first.data).toHaveLength(2);
+  expect(first.nextCursor).toBeTruthy();
+  const rest = (await (await page.request.get(`/api/v1/access/data-exports?limit=2&cursor=${encodeURIComponent(first.nextCursor!)}`, { headers })).json()) as { data: Array<{ requestId: string }>; nextCursor: string | null };
+  expect(rest.data).toHaveLength(1);
+  expect(rest.nextCursor).toBeNull();
+  expect(new Set([...first.data, ...rest.data].map((item) => item.requestId)).size).toBe(3);
+  expect((await page.request.get("/api/v1/access/data-exports?cursor=garbage", { headers })).status()).toBe(400);
+});
+
 test("only Organization Admins get these routes: another role is refused, and nothing is rendered for a failed load", async ({ page }) => {
   const { tenant } = await isolate(page);
   const denied = await page.request.get("/api/v1/access/retention", { headers: { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": "analyst" } });

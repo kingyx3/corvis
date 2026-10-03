@@ -2,6 +2,7 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import {
   TENANT_EXPORT_ARCHIVE_NAME,
   type TenantExportDownload,
+  type TenantExportPage,
   type TenantExportRequest,
 } from "../../core/tenant-export.ts";
 import { demoTenantExportStore } from "../../adapters/demo/tenant-export-store.ts";
@@ -14,6 +15,7 @@ import {
   PostgresTenantExportBackend,
   tenantExportAuditEvent,
   type DecisionCommand,
+  type TenantExportListQuery,
   type TenantExportBackend,
   type TenantExportStream,
 } from "./tenant-export.ts";
@@ -29,7 +31,7 @@ export type TenantExportDownloadStream = TenantExportStream & { checksumSha256: 
 
 export interface TenantExportService {
   request(identity: RequestIdentity, command: { reason: string }, correlationId: string): Promise<TenantExportRequest>;
-  list(identity: RequestIdentity): Promise<TenantExportRequest[]>;
+  list(identity: RequestIdentity, query: TenantExportListQuery): Promise<TenantExportPage>;
   get(identity: RequestIdentity, requestId: string): Promise<TenantExportRequest>;
   decide(identity: RequestIdentity, requestId: string, command: DecisionCommand, correlationId: string): Promise<TenantExportRequest>;
   /** A fresh single-use, short-lived link for a complete export. */
@@ -54,9 +56,9 @@ export function createTenantExportService(backend: TenantExportBackend): TenantE
         audit: (item) => tenantExportAuditEvent(identity, correlationId, "data_export.requested", item, { reason: command.reason }),
       });
     },
-    async list(identity) {
+    async list(identity, query) {
       assertOrganizationAdmin(identity);
-      return backend.list(identity);
+      return backend.list(identity, query);
     },
     async get(identity, requestId) {
       assertOrganizationAdmin(identity);

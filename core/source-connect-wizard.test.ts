@@ -90,6 +90,8 @@ test("a refused connect is explained by status without echoing server codes", ()
   assert.match(connectFailureMessage(403), /permission/);
   assert.match(connectFailureMessage(404), /no longer available/);
   assert.match(connectFailureMessage(422), /no longer available/);
+  assert.match(connectFailureMessage(409), /already connected to this source/);
+  assert.match(connectFailureMessage(429), /Too many connection attempts/);
   assert.match(connectFailureMessage(400), /not accepted/);
   assert.match(connectFailureMessage(500), /Nothing was saved/);
   assert.match(connectFailureMessage(undefined), /Nothing was saved/);

@@ -249,3 +249,55 @@ test("the schedules panel on Data delivery is usable at phone width without hori
   expect(overflow).toBeLessThanOrEqual(1);
   await expect(card(page, "Monthly · Project Sparrow financials").getByRole("button", { name: /^Pause / })).toBeVisible();
 });
+
+test("F4b: the dialog offers emails about the schedule, on by default, and an opt-out is saved with it and shown under Data delivery", async ({ page }) => {
+  await isolate(page);
+  await openPublishedSnapshot(page);
+  await page.getByRole("button", { name: "Schedule export" }).click();
+  const dialog = page.getByRole("dialog", { name: "Schedule this export" });
+  const notify = dialog.getByRole("checkbox", { name: "Email me about this schedule" });
+  await expect(notify).toBeChecked();
+  await expect(dialog.getByText(/The emails never contain data/)).toBeVisible();
+  const violations = await blockingViolations(page, '[role="dialog"]');
+  expect(violations, describe(violations)).toEqual([]);
+  await notify.uncheck();
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Quiet schedule");
+  const posted = page.waitForRequest((request) => request.url().endsWith("/api/v1/export-schedules") && request.method() === "POST");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  expect((await posted).postDataJSON()).toMatchObject({ label: "Quiet schedule", notifyOnCompletion: false });
+  await page.getByRole("dialog", { name: "Schedule saved" }).getByRole("button", { name: "Close" }).click();
+
+  await openSurface(page, delivery);
+  const created = card(page, "Quiet schedule");
+  await expect(created).toContainText("Emails about this schedule are off.");
+  await expect(created.getByRole("button", { name: "Email me about Quiet schedule" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("F4b: the owner switches the emails about a schedule on and off under Data delivery, and an Organization Admin cannot", async ({ page }) => {
+  const { tenant } = await isolate(page, "admin");
+  await page.request.get("/api/v1/export-schedules", { headers: { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": "analyst", "x-corvis-demo-subject": "colleague" } });
+  await page.goto("/");
+  await openSurface(page, delivery);
+  await page.waitForLoadState("networkidle");
+  const monthly = card(page, "Monthly · Project Sparrow financials").first();
+  await expect(monthly).toContainText("The owner is emailed when a run is ready, and when a run is refused or fails.");
+  const toggle = monthly.getByRole("button", { name: /^Email me about Monthly/ });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  const patched = page.waitForRequest((request) => request.method() === "PATCH" && /\/api\/v1\/export-schedules\//.test(request.url()));
+  await toggle.click();
+  expect((await patched).postDataJSON()).toEqual({ notifyOnCompletion: false });
+  await expect(page.getByRole("status").filter({ hasText: "Emails about “Monthly · Project Sparrow financials” are off." })).toBeVisible();
+  await expect(monthly).toContainText("Emails about this schedule are off. Runs still appear below.");
+  await expect(monthly.getByRole("button", { name: /^Email me about Monthly/ })).toHaveAttribute("aria-pressed", "false");
+  await monthly.getByRole("button", { name: /^Email me about Monthly/ }).click();
+  await expect(monthly).toContainText("The owner is emailed when a run is ready");
+  await expect(page.getByRole("status").filter({ hasText: "are on." })).toBeVisible();
+
+  await page.getByRole("button", { name: "Everyone in my organization" }).click();
+  const theirs = schedules(page).filter({ hasText: "owned by colleague" });
+  await expect(theirs).toHaveCount(2);
+  await expect(theirs.first()).toContainText("The owner is emailed");
+  await expect(theirs.getByRole("button", { name: /^Email me about/ })).toHaveCount(0);
+  const violations = await blockingViolations(page, ".export-schedules");
+  expect(violations, describe(violations)).toEqual([]);
+});

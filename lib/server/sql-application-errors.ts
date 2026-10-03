@@ -133,6 +133,10 @@ export const SQL_APPLICATION_ERRORS = [
   "service account already has a credential",
   "service account has no active credential",
   "service account justification required",
+  // corvis_control.extend_service_account / transfer_service_account_owner (092)
+  "service account needs an owner",
+  "service account owner must be an active organization admin",
+  "service account owner unchanged",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -262,6 +266,10 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account already has a credential": { code: "service_account_credential_exists", status: 409 },
   "service account has no active credential": { code: "service_account_no_active_credential", status: 409 },
   "service account justification required": { code: "invalid_reason", status: 400 },
+  // Service account renewal and ownership (F6b): an ownerless account is not renewed, and only an active admin can own one.
+  "service account needs an owner": { code: "service_account_needs_owner", status: 409 },
+  "service account owner must be an active organization admin": { code: "service_account_owner_invalid", status: 422 },
+  "service account owner unchanged": { code: "service_account_owner_unchanged", status: 409 },
 };
 
 /**

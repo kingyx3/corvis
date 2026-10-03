@@ -55,23 +55,32 @@ function uniqueSequence(): number {
  * `GcpSecretManagerSecretStore` for that path.
  */
 class InMemorySourceConnectorSecretStore implements SecretStore {
-  private readonly secrets = new Map<string, SecretPayload>();
+  private readonly secrets = new Map<string, { secret: SecretPayload; expiresAt?: number }>();
   private counter = 0;
 
-  async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
+  async write(tenantId: string, providerKey: string, secret: SecretPayload, options: SecretWriteOptions = {}): Promise<string> {
     const reference = sourceConnectorSecretReference(tenantId, providerKey, ++this.counter);
-    this.secrets.set(reference, secret);
+    // A secret written with a lifetime stops existing when it is up, as it does in Secret Manager; the sweep below reclaims it.
+    this.secrets.set(reference, { secret, ...(options.ttlSeconds ? { expiresAt: Date.now() + options.ttlSeconds * 1000 } : {}) });
     return reference;
   }
 
   async read(secretReference: string): Promise<SecretPayload> {
-    const secret = this.secrets.get(secretReference);
-    if (!secret) throw new Error("secret_reference_not_found");
-    return secret;
+    const stored = this.secrets.get(secretReference);
+    if (!stored || (stored.expiresAt !== undefined && stored.expiresAt <= Date.now())) throw new Error("secret_reference_not_found");
+    return stored.secret;
   }
 
   async revoke(secretReference: string): Promise<void> {
     this.secrets.delete(secretReference);
+  }
+
+  async sweepExpired(now: number = Date.now()): Promise<number> {
+    let removed = 0;
+    for (const [reference, stored] of this.secrets) {
+      if (stored.expiresAt !== undefined && stored.expiresAt <= now) { this.secrets.delete(reference); removed += 1; }
+    }
+    return removed;
   }
 }
 
@@ -219,7 +228,19 @@ export function sourceConnectorSecretStore(): SecretStore {
   return sharedStores.secretStore;
 }
 
-let driversSingleton: Map<string, ConnectorDriver> | undefined;
+/**
+ * The operator sweep for pending OAuth attempts (and any other short-lived secret) on a store that has no expiry of its
+ * own. It only ever touches a store this process already holds, so it never selects (or, in production without a
+ * configured project, fails to select) one just to sweep it; Secret Manager deletes its own expired secrets and has
+ * nothing to sweep.
+ */
+export async function sweepExpiredSourceSecrets(now?: number): Promise<{ removed: number }> {
+  const store = sharedStores.secretStore;
+  return { removed: store?.sweepExpired ? await store.sweepExpired(now) : 0 };
+}
+
+/** The driver registry is kept on `globalThis` for the same reason as the store above: `next dev` re-evaluates this module and would drop a registered provider's driver. */
+const sharedDrivers = globalThis as typeof globalThis & { sourceConnectorDrivers?: Map<string, ConnectorDriver> };
 
 /**
  * Registered connector drivers, keyed by `provider_key`. Empty until a real
@@ -230,6 +251,6 @@ let driversSingleton: Map<string, ConnectorDriver> | undefined;
  * empty rather than a bug to work around here.
  */
 export function sourceConnectorDrivers(): Map<string, ConnectorDriver> {
-  if (!driversSingleton) driversSingleton = new Map();
-  return driversSingleton;
+  if (!sharedDrivers.sourceConnectorDrivers) sharedDrivers.sourceConnectorDrivers = new Map();
+  return sharedDrivers.sourceConnectorDrivers;
 }

@@ -14,6 +14,12 @@
 --     and is final;
 --   * the guard triggers: a credential's hash and lifetime are immutable, a revoked credential stays revoked, an end
 --     date can only be brought forward, and an account's identity never changes;
+--   * renewal and ownership (F6b, migration 092): the creating admin is the first owner; extending moves the expiry at least
+--     a day later (never earlier, never past the maximum from now) together with the membership and the 009 lifecycle grant
+--     (valid_until, next_review_at, a fresh review), leaves credentials alone, and is refused for anyone but an active
+--     Organization Admin; the owner changes only by transfer to another active Organization Admin; an owner who is
+--     deactivated or demoted leaves the account working but ownerless, so it is not extended until it has a new owner;
+--     a deactivated account can be neither extended nor handed over; an expired account can be renewed;
 --   * tenants are isolated, and RLS is enabled and forced with no client policy on both tables.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
@@ -314,8 +320,11 @@ begin
   perform pg_temp.expect_error($f$update corvis_control.service_account set role_name = 'viewer' where service_account_id = 'a0880000-0000-4000-8000-0000000000c1'$f$, 'service account identity is immutable');
   perform pg_temp.expect_error($f$update corvis_control.service_account set expires_at = expires_at + interval '1 day' where service_account_id = 'a0880000-0000-4000-8000-0000000000c1'$f$, 'service account identity is immutable');
   -- And the table itself refuses an administrator role, whatever function wrote the row.
+  perform pg_temp.expect_error($f$insert into corvis_control.service_account (tenant_id, service_account_id, user_id, subject, display_name, purpose, workspace_id, role_name, created_by_subject, created_by_user_id, expires_at, owner_subject, owner_user_id)
+    values ('a0880000-0000-4000-8000-00000000000a', gen_random_uuid(), gen_random_uuid(), 'service-account:x', 'Direct insert', 'Direct insert', 'a0880000-0000-4000-8000-0000000000a1', 'tenant_admin', 'x', gen_random_uuid(), now() + interval '1 day', 'x', gen_random_uuid())$f$, 'violates check constraint');
+  -- Every account has an owner, whatever function wrote the row.
   perform pg_temp.expect_error($f$insert into corvis_control.service_account (tenant_id, service_account_id, user_id, subject, display_name, purpose, workspace_id, role_name, created_by_subject, created_by_user_id, expires_at)
-    values ('a0880000-0000-4000-8000-00000000000a', gen_random_uuid(), gen_random_uuid(), 'service-account:x', 'Direct insert', 'Direct insert', 'a0880000-0000-4000-8000-0000000000a1', 'tenant_admin', 'x', gen_random_uuid(), now() + interval '1 day')$f$, 'violates check constraint');
+    values ('a0880000-0000-4000-8000-00000000000a', gen_random_uuid(), gen_random_uuid(), 'service-account:x', 'Direct insert', 'Direct insert', 'a0880000-0000-4000-8000-0000000000a1', 'viewer', 'x', gen_random_uuid(), now() + interval '1 day')$f$, 'violates not-null constraint');
 end $$;
 
 -- 9. Disabling deactivates the account everywhere, in one step, and is final.
@@ -384,7 +393,148 @@ begin
     'service account is not active');
 end $$;
 
--- 11. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.
+-- 11. Renewal and ownership (F6b, migration 092).
+do $$
+declare
+  tenant uuid := 'a0880000-0000-4000-8000-00000000000a';
+  workspace uuid := 'a0880000-0000-4000-8000-0000000000a1';
+  account uuid := 'a0880000-0000-4000-8000-0000000000c5';
+  created corvis_control.service_account%rowtype;
+  extended corvis_control.service_account%rowtype;
+  handed corvis_control.service_account%rowtype;
+  previous timestamptz;
+  previous_owner text;
+  credential_expiry timestamptz;
+begin
+  insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject,status)
+  values (tenant,'a0880000-0000-4000-8000-0000000000e6','oidc','idp|admin-two','active'),
+         (tenant,'a0880000-0000-4000-8000-0000000000e7','oidc','idp|admin-three','active');
+  insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name,status)
+  values (tenant,workspace,'a0880000-0000-4000-8000-0000000000e6','tenant_admin','active'),
+         (tenant,workspace,'a0880000-0000-4000-8000-0000000000e7','tenant_admin','active');
+
+  -- Who counts as an active owner: an active human identity holding an active Organization Admin membership.
+  if not corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e1') then raise exception 'an active admin can own an account'; end if;
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e3') then raise exception 'an analyst cannot own an account'; end if;
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e4') then raise exception 'a revoked admin membership does not count'; end if;
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e5') then raise exception 'a service account never owns an account'; end if;
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000ff') then raise exception 'an unknown user cannot own an account'; end if;
+  if corvis_control.service_account_owner_active(tenant,'b0880000-0000-4000-8000-0000000000f1') then raise exception 'an admin of another tenant is not an owner here'; end if;
+
+  -- The creating admin is the first owner.
+  perform corvis_control.create_service_account(tenant, account, 'a0880000-0000-4000-8000-0000000000dc', 'oidc', 'idp|admin-one',
+    'Owned feed', 'Renewed and handed over in this test', workspace, 'viewer', now()+interval '60 days', now()+interval '30 days', pg_temp.digest_of('secret-12'), 100);
+  select * into created from corvis_control.service_account where service_account_id = account;
+  if created.owner_subject <> 'idp|admin-one' or created.owner_user_id <> 'a0880000-0000-4000-8000-0000000000e1' or created.owner_assigned_at is null then
+    raise exception 'the creating admin is the first owner';
+  end if;
+  select expires_at into credential_expiry from corvis_control.service_account_credential where service_account_id = account;
+
+  -- Extending: the expiry moves later, and the membership and the 009 lifecycle grant move with it; the previous expiry is returned.
+  previous := corvis_control.extend_service_account(tenant, account, 'oidc', 'idp|admin-one', now()+interval '200 days');
+  if previous <> created.expires_at then raise exception 'the previous expiry is returned for the audit event'; end if;
+  select * into extended from corvis_control.service_account where service_account_id = account;
+  if abs(extract(epoch from extended.expires_at - (now()+interval '200 days'))) > 5 then raise exception 'the account now expires 200 days from now'; end if;
+  if not exists (select 1 from corvis_control.membership m where m.tenant_id = tenant and m.user_id = created.user_id and m.status = 'active' and m.valid_until = extended.expires_at) then
+    raise exception 'the membership expires with the account';
+  end if;
+  if not exists (select 1 from corvis_control.service_identity_grant g where g.tenant_id = tenant and g.subject = created.subject and g.status = 'active'
+       and g.valid_until = extended.expires_at and g.next_review_at = extended.expires_at and g.reviewed_by_subject = 'idp|admin-one' and g.reviewed_at > now() - interval '1 minute') then
+    raise exception 'the lifecycle grant is renewed and re-reviewed with the extension (next_review_at advances)';
+  end if;
+  if extended.created_at <> created.created_at or extended.subject <> created.subject or extended.owner_subject <> created.owner_subject then raise exception 'an extension changes nothing else'; end if;
+  if (select expires_at from corvis_control.service_account_credential where service_account_id = account) <> credential_expiry then
+    raise exception 'a credential keeps its own expiry: an extended account issues a new one';
+  end if;
+  -- The very same call again, a shorter date, less than a day later, nothing, and past the maximum are all refused.
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',%L)$f$, tenant, account, extended.expires_at), 'service account expiry invalid');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',%L)$f$, tenant, account, extended.expires_at + interval '12 hours'), 'service account expiry invalid');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '100 days')$f$, tenant, account), 'service account expiry invalid');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',null)$f$, tenant, account), 'service account expiry invalid');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '400 days')$f$, tenant, account), 'service account expiry invalid');
+  -- Only an active Organization Admin acts, and only inside the tenant.
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|analyst',now()+interval '300 days')$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|revoked-admin',now()+interval '300 days')$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'service_account','svc|robot',now()+interval '300 days')$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account('b0880000-0000-4000-8000-00000000000b',%L,'oidc','idp|admin-b',now()+interval '300 days')$f$, account), 'service account not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,gen_random_uuid(),'oidc','idp|admin-one',now()+interval '300 days')$f$, tenant), 'service account not found');
+  -- The maximum from now is allowed (365 days), and then there is nothing further to move to.
+  perform corvis_control.extend_service_account(tenant, account, 'oidc', 'idp|admin-one', now()+interval '365 days');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '365 days' + interval '1 hour')$f$, tenant, account), 'service account expiry invalid');
+
+  -- The guard: nothing but the function renews or shortens, and nothing but the transfer changes the owner.
+  perform pg_temp.expect_error(format($f$update corvis_control.service_account set expires_at = expires_at + interval '1 day' where service_account_id = %L$f$, account), 'service account identity is immutable');
+  perform pg_temp.expect_error(format($f$update corvis_control.service_account set owner_subject = 'idp|admin-two' where service_account_id = %L$f$, account), 'service account owner is changed by transfer only');
+  set local corvis.service_account_renewal = 'on';
+  perform pg_temp.expect_error(format($f$update corvis_control.service_account set expires_at = expires_at - interval '1 day' where service_account_id = %L$f$, account), 'service account expiry cannot be shortened');
+  set local corvis.service_account_renewal = 'off';
+
+  -- Transfer: another active Organization Admin; the previous owner is returned; the creator stays what it was.
+  previous_owner := corvis_control.transfer_service_account_owner(tenant, account, 'oidc', 'idp|admin-one', 'idp|admin-two');
+  if previous_owner <> 'idp|admin-one' then raise exception 'the previous owner is returned for the audit event'; end if;
+  select * into handed from corvis_control.service_account where service_account_id = account;
+  if handed.owner_subject <> 'idp|admin-two' or handed.owner_user_id <> 'a0880000-0000-4000-8000-0000000000e6' or handed.owner_assigned_at < extended.owner_assigned_at then raise exception 'the owner is admin two'; end if;
+  if handed.created_by_subject <> 'idp|admin-one' or handed.created_by_user_id <> 'a0880000-0000-4000-8000-0000000000e1' then raise exception 'who created the account is history and does not change'; end if;
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|admin-two')$f$, tenant, account), 'service account owner unchanged');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|analyst')$f$, tenant, account), 'service account owner must be an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|revoked-admin')$f$, tenant, account), 'service account owner must be an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','svc|robot')$f$, tenant, account), 'service account owner must be an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|nobody')$f$, tenant, account), 'service account owner must be an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|admin-b')$f$, tenant, account), 'service account owner must be an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|analyst','idp|admin-three')$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner('b0880000-0000-4000-8000-00000000000b',%L,'oidc','idp|admin-b','idp|admin-b')$f$, account), 'service account not found');
+
+  -- An owner who is deactivated is not silently orphaned: the account keeps working, is reported as ownerless, is not
+  -- renewed, and is handed to an active admin by anyone who is one.
+  update corvis_control.identity_subject set status = 'disabled', disabled_at = now() where tenant_id = tenant and subject = 'idp|admin-two';
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e6') then raise exception 'a deactivated owner is no longer active'; end if;
+  if (select status from corvis_control.service_account where service_account_id = account) <> 'active'
+     or not exists (select 1 from corvis_control.service_account_credential c where c.service_account_id = account and c.status = 'active') then
+    raise exception 'the account and its credentials keep working';
+  end if;
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '366 days')$f$, tenant, account), 'service account needs an owner');
+  perform corvis_control.transfer_service_account_owner(tenant, account, 'oidc', 'idp|admin-one', 'idp|admin-three');
+  -- Losing the Organization Admin role has the same effect as being deactivated.
+  update corvis_control.membership set status = 'revoked', valid_until = now(), valid_from = now() - interval '1 microsecond'
+  where tenant_id = tenant and user_id = 'a0880000-0000-4000-8000-0000000000e7';
+  if corvis_control.service_account_owner_active(tenant,'a0880000-0000-4000-8000-0000000000e7') then raise exception 'a demoted owner is no longer active'; end if;
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '366 days')$f$, tenant, account), 'service account needs an owner');
+  perform corvis_control.transfer_service_account_owner(tenant, account, 'oidc', 'idp|admin-one', 'idp|admin-one');
+  if (select owner_subject from corvis_control.service_account where service_account_id = account) <> 'idp|admin-one' then raise exception 'the acting admin can take an account over'; end if;
+
+  -- A deactivated account is final: it can be neither renewed nor handed over.
+  perform corvis_control.disable_service_account(tenant, account, 'oidc', 'idp|admin-one', 'Integration retired');
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()+interval '300 days')$f$, tenant, account), 'service account is not active');
+  perform pg_temp.expect_error(format($f$select corvis_control.transfer_service_account_owner(%L,%L,'oidc','idp|admin-one','idp|admin-two')$f$, tenant, account), 'service account is not active');
+end $$;
+
+-- An account that already expired can be renewed by an admin who owns it, and resolves again afterwards.
+do $$
+declare
+  tenant uuid := 'a0880000-0000-4000-8000-00000000000a';
+  account uuid := 'a0880000-0000-4000-8000-0000000000c6';
+  created corvis_control.service_account%rowtype;
+begin
+  perform corvis_control.create_service_account(tenant, account, 'a0880000-0000-4000-8000-0000000000dd', 'oidc', 'idp|admin-one',
+    'Lapsed feed', 'Expires in the past in this test', 'a0880000-0000-4000-8000-0000000000a1', 'viewer', now()+interval '1 hour', now()+interval '30 minutes', pg_temp.digest_of('secret-13'), 100);
+  select * into created from corvis_control.service_account where service_account_id = account;
+  set local session_replication_role = replica;
+  update corvis_control.service_account set created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' where service_account_id = account;
+  update corvis_control.membership set valid_from = now() - interval '3 days', valid_until = now() - interval '1 minute' where tenant_id = tenant and user_id = created.user_id;
+  update corvis_control.service_identity_grant set valid_from = now() - interval '3 days', reviewed_at = now() - interval '3 days', next_review_at = now() - interval '1 minute', valid_until = now() - interval '1 minute'
+  where tenant_id = tenant and subject = created.subject;
+  set local session_replication_role = origin;
+  -- Not later than now: refused. Later than now: the account is renewed.
+  perform pg_temp.expect_error(format($f$select corvis_control.extend_service_account(%L,%L,'oidc','idp|admin-one',now()-interval '1 second')$f$, tenant, account), 'service account expiry invalid');
+  perform corvis_control.extend_service_account(tenant, account, 'oidc', 'idp|admin-one', now()+interval '30 days');
+  if not exists (select 1 from corvis_control.membership m where m.user_id = created.user_id and m.status = 'active' and m.valid_until > now())
+     or not exists (select 1 from corvis_control.service_identity_grant g where g.subject = created.subject and g.valid_until > now() and g.next_review_at > now()) then
+    raise exception 'a renewed account is current again';
+  end if;
+  perform corvis_control.issue_service_account_credential(tenant, account, gen_random_uuid(), 'rotate', 'oidc', 'idp|admin-one', pg_temp.digest_of('e2'), now()+interval '10 days', 0);
+end $$;
+
+-- 12. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.
 do $$
 declare
   offenders text;

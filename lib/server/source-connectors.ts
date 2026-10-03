@@ -139,6 +139,12 @@ export interface SecretStore {
   write(tenantId: string, providerKey: string, secret: SecretPayload, options?: SecretWriteOptions): Promise<string>;
   read(secretReference: string): Promise<SecretPayload>;
   revoke(secretReference: string): Promise<void>;
+  /**
+   * Optional operator sweep for a store with no native expiry (the in-process placeholder): deletes every secret
+   * written with `ttlSeconds` whose time is up and returns how many it removed. A store that expires them itself
+   * (Secret Manager's `ttl`) leaves it out.
+   */
+  sweepExpired?(now?: number): Promise<number>;
 }
 
 export type RemoteDocumentRef = {

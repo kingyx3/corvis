@@ -22,7 +22,7 @@ export type Surface = {
 export type ConnectSurfaceId =
   | "connect-empty" | "connect-providers" | "connect-review" | "connect-unconfirmed" | "connect-credential"
   | "connect-credential-error" | "connect-save-error" | "connect-authorize" | "connect-testing" | "connect-success"
-  | "connect-failed" | "connect-oauth-denied" | "connect-oauth-invalid";
+  | "connect-failed" | "connect-oauth-denied" | "connect-oauth-invalid" | "connect-reauthorize" | "connect-reauthorized";
 
 export const DEMO_TOKEN_PROVIDER = /^demo gp portal \(api token\)/i;
 export const DEMO_OAUTH_PROVIDER = /^demo data room \(sign-in with oauth\)/i;
@@ -67,6 +67,23 @@ export async function submitToken(page: Page, token: string): Promise<void> {
 export async function goToConsent(page: Page): Promise<void> {
   await chooseProvider(page, DEMO_OAUTH_PROVIDER);
   await confirmReview(page);
+  await page.getByRole("button", { name: /^go to the provider$/i }).click();
+  await page.getByRole("link", { name: /^approve access$/i }).waitFor();
+}
+
+export const REAUTHORIZE_SUMMIT = "Summit virtual data room"; // the seeded OAuth connection that needs attention
+
+/** Opens the "Reauthorize" dialog on the seeded OAuth connection's card. */
+async function openOAuthReauthorize(page: Page): Promise<void> {
+  await isolateSourceConnections(page);
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  await page.getByRole("button", { name: `Reauthorize ${REAUTHORIZE_SUMMIT}` }).click();
+  await page.getByRole("dialog", { name: `Reauthorize ${REAUTHORIZE_SUMMIT}` }).waitFor();
+}
+
+/** Starts the reauthorization of the seeded OAuth connection and lands on the demo provider's consent page. */
+export async function goToReauthorizeConsent(page: Page): Promise<void> {
+  await openOAuthReauthorize(page);
   await page.getByRole("button", { name: /^go to the provider$/i }).click();
   await page.getByRole("link", { name: /^approve access$/i }).waitFor();
 }
@@ -160,6 +177,12 @@ export const surfaces: Surface[] = [
     // A redirect that carries a code and state the server never issued (forged, expired or replayed).
     await page.goto("/?source_oauth=return&code=forged-code&state=forged-state");
     await page.getByText(/can no longer be used/i).waitFor();
+  } },
+  { id: "connect-reauthorize", label: "Reauthorize an OAuth connection", role: "admin", nav: null, heading: /^reauthorize summit virtual data room$/i, open: openOAuthReauthorize },
+  { id: "connect-reauthorized", label: "Connect source: connection reauthorized", role: "admin", nav: null, heading: /^connection reauthorized$/i, open: async (page) => {
+    await goToReauthorizeConsent(page);
+    await page.getByRole("link", { name: /^approve access$/i }).click();
+    await page.getByRole("button", { name: /^done$/i }).waitFor();
   } },
   { id: "research", label: "Ask Corvis", nav: /^ask corvis$/i, heading: /^ask corvis$/i },
   // The Help menu (F9): a dialog opened from the top bar, reachable on every viewport.

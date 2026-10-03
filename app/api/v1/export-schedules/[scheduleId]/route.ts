@@ -1,5 +1,5 @@
 import { assertPermission } from "@/core/enterprise";
-import { parseScheduleAction } from "@/core/export-schedule";
+import { parseSchedulePatch } from "@/core/export-schedule";
 import { readJsonObject } from "@/lib/server/admin-request";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { exportScheduleErrorResponse } from "@/lib/server/export-schedule-http";
@@ -17,15 +17,22 @@ export async function GET(request: Request, context: { params: Promise<{ schedul
   } catch (error) { return exportScheduleErrorResponse(error, id); }
 }
 
-/** The owner pauses or resumes the schedule (`{ "action": "pause" | "resume" }`). Nobody else can, an Organization Admin included. */
+/**
+ * The owner pauses or resumes the schedule (`{ "action": "pause" | "resume" }`) or switches the emails about it on or off
+ * (`{ "notifyOnCompletion": boolean }`). Nobody else can, an Organization Admin included.
+ */
 export async function PATCH(request: Request, context: { params: Promise<{ scheduleId: string }> }) {
   const id = correlationId(request);
   try {
     const identity = await resolveAuthorizedRequestIdentity(request);
     assertPermission(identity, "exports:create");
-    const action = parseScheduleAction(await readJsonObject(request));
+    const patch = parseSchedulePatch(await readJsonObject(request));
     const { scheduleId } = await context.params;
-    return json({ data: await exportScheduleService().setStatus(identity, scheduleId, action, id), correlationId: id });
+    const service = exportScheduleService();
+    const data = patch.kind === "action"
+      ? await service.setStatus(identity, scheduleId, patch.action, id)
+      : await service.setNotification(identity, scheduleId, patch.notifyOnCompletion, id);
+    return json({ data, correlationId: id });
   } catch (error) { return exportScheduleErrorResponse(error, id); }
 }
 

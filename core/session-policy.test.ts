@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseSessionPolicyUpdate,
+  SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES,
+  SESSION_ACTIVITY_RETENTION_MINUTES,
+  sessionActivityRetentionMinutes,
   parseSignOutEverywhere,
   SESSION_IDLE_TIMEOUT_BOUNDS,
   SESSION_MAX_LENGTH_BOUNDS,
@@ -70,4 +73,16 @@ test("limits read in plain language", () => {
   assert.equal(sessionLimitLabel(90), "90 minutes");
   assert.equal(sessionLimitLabel(1440), "1 day");
   assert.equal(sessionLimitLabel(10080), "7 days");
+});
+
+test("session records are kept longer than any session a limit can measure, whatever retention is asked for", () => {
+  assert.equal(SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES, SESSION_MAX_LENGTH_BOUNDS.max + 1440, "the longest maximum session plus a day");
+  assert.equal(sessionActivityRetentionMinutes(), SESSION_ACTIVITY_RETENTION_MINUTES);
+  assert.equal(sessionActivityRetentionMinutes(Number.NaN), SESSION_ACTIVITY_RETENTION_MINUTES);
+  assert.equal(sessionActivityRetentionMinutes(Number.POSITIVE_INFINITY), SESSION_ACTIVITY_RETENTION_MINUTES);
+  assert.equal(sessionActivityRetentionMinutes(200_000.7), 200_000);
+  assert.equal(sessionActivityRetentionMinutes(SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES), SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES);
+  for (const tooShort of [0, -5, SESSION_MAX_LENGTH_BOUNDS.max, SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES - 1]) {
+    assert.equal(sessionActivityRetentionMinutes(tooShort), SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES, `${tooShort} is raised to the floor`);
+  }
 });

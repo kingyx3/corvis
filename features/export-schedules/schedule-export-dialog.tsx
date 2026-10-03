@@ -32,12 +32,15 @@ export function ScheduleExportDialog({ scope, onClose }: { scope: ScheduledExpor
   const [trigger, setTrigger] = useState<ExportScheduleTrigger>("monthly");
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [label, setLabel] = useState<string | null>(null);
+  const [notifyOnCompletion, setNotifyOnCompletion] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ label: string; nextRunAt: string | null } | null>(null);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
   const nameId = useId();
   const hintId = useId();
+  const notifyId = useId();
+  const notifyHintId = useId();
   // Until the person types their own name, it follows the cadence they pick.
   const effectiveLabel = label ?? defaultScheduleLabel(scope, trigger);
   const trimmed = effectiveLabel.trim();
@@ -48,7 +51,7 @@ export function ScheduleExportDialog({ scope, onClose }: { scope: ScheduledExpor
     setBusy(true);
     setError(null);
     try {
-      const { item } = await createExportSchedule({ idempotencyKey: idempotencyKey.current, label: trimmed, scope, format, trigger });
+      const { item } = await createExportSchedule({ idempotencyKey: idempotencyKey.current, label: trimmed, scope, format, trigger, notifyOnCompletion });
       setSaved({ label: item.label, nextRunAt: item.nextRunAt });
     } catch (reason) {
       setError(exportScheduleErrorMessage(reason, "The schedule could not be saved. Nothing was exported; try again."));
@@ -91,7 +94,9 @@ export function ScheduleExportDialog({ scope, onClose }: { scope: ScheduledExpor
         <input id={nameId} className="input-control" required maxLength={MAX_SCHEDULE_LABEL_LENGTH} value={effectiveLabel} disabled={busy} aria-describedby={hintId} onChange={(event) => setLabel(event.target.value)}/>
         <small id={hintId} className="field-hint">Shown with every run in Data delivery. Parquet is offered only where your organization has it enabled.</small>
       </label>
-      <p className="field-hint">Each run is made as you: your access and your organization&apos;s data rights are checked again every time. A run that cannot be authorized exports nothing and is shown as failed. You are emailed when a run is ready, according to your &ldquo;Export ready&rdquo; notification setting.</p>
+      <p className="field-hint">Each run is made as you: your access and your organization&apos;s data rights are checked again every time. A run that cannot be authorized exports nothing and is shown as failed.</p>
+      <label className="check-field" htmlFor={notifyId}><input id={notifyId} type="checkbox" checked={notifyOnCompletion} disabled={busy} aria-describedby={notifyHintId} onChange={(event) => setNotifyOnCompletion(event.target.checked)}/><span>Email me about this schedule</span></label>
+      <small id={notifyHintId} className="field-hint">When a run&apos;s export is ready, and when a run is refused or fails. The emails never contain data, and follow your &ldquo;Export ready&rdquo; and &ldquo;Scheduled export did not run&rdquo; notification settings. You can change this later under Data delivery.</small>
       {error && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Schedule not saved</strong><span>{error}</span></div></div>}
       <div className="dialog-actions">
         <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>Cancel</button>

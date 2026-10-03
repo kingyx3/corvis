@@ -208,3 +208,6 @@ export function tenantExportStatusSummary(item: Pick<TenantExportRequest, "statu
       return "No second Organization Admin approved in time, so the request lapsed. Make a new request if you still need the export.";
   }
 }
+
+/** One page of requests, newest first. `nextCursor` is opaque and `null` on the last page. */
+export type TenantExportPage = { items: TenantExportRequest[]; nextCursor: string | null };

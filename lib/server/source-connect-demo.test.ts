@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import test from "node:test";
+import test, { mock } from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { DemoSourceConnectionStore } from "../../adapters/demo/source-connection-store.ts";
-import { DEMO_OAUTH_PROVIDER_KEY, DEMO_SOURCE_PROVIDERS, DEMO_TOKEN_PROVIDER_KEY, DEMO_TOKENS, demoTestOutcome } from "../../adapters/demo/source-providers.ts";
+import { DemoSourceConnectionStore, demoSourceConnectionStore } from "../../adapters/demo/source-connection-store.ts";
+import { DEMO_OAUTH_PROVIDER_KEY, DEMO_OAUTH_REFRESH_TOKEN, DEMO_SOURCE_PROVIDERS, DEMO_TOKEN_PROVIDER_KEY, DEMO_TOKENS, demoTestOutcome } from "../../adapters/demo/source-providers.ts";
+import { RateLimiter } from "./rate-limit.ts";
 
 // See lib/server/source-connections-routes.test.ts for why this loader is needed (the "@/..." route alias).
 register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -28,10 +29,18 @@ const { POST: oauthCompletePost } = await import("@/app/api/v1/source-connection
 const { GET: consentGet } = await import("@/app/api/v1/source-connections/oauth/demo-consent/route");
 const { GET: listGet } = await import("@/app/api/v1/source-connections/route");
 const { POST: testPost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/test/route");
+const { POST: reauthorizePost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/reauthorize/route");
+const { overrideSourceConnectLimiter } = await import("./source-connect-limits.ts");
+const { platform } = await import("./platform.ts");
+
+// Most cases make many attempts as one administrator; the budget itself is exercised by its own test below.
+const GENEROUS = new RateLimiter(1_000_000);
+overrideSourceConnectLimiter(GENEROUS);
 
 const ID = (slot: number) => `00000000-0000-4000-8000-${String(slot).padStart(12, "d")}`;
 const HEALTHY = ID(1);
 const REAUTH = ID(4);
+const SUMMIT = ID(5);
 const TRANSIENT = ID(6);
 const REVOKED = ID(7);
 
@@ -284,9 +293,20 @@ test("the demo OAuth client only exchanges a code minted for the matching PKCE v
   const { createHash } = await import("node:crypto");
   const verifier = "v".repeat(60);
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  assert.deepEqual(await oauth.exchangeCode({ code: `demo-code.${challenge}`, codeVerifier: verifier, redirectUri: "x" }), { accessToken: "demo-oauth-access-token", tokenType: "bearer" });
+  const issued = await oauth.exchangeCode({ code: `demo-code.${challenge}`, codeVerifier: verifier, redirectUri: "x" });
+  assert.equal(issued.accessToken, "demo-oauth-access-token");
+  assert.equal(issued.refreshToken, DEMO_OAUTH_REFRESH_TOKEN);
+  assert.ok(typeof issued.expiresAt === "number" && issued.expiresAt > Date.now(), "the demo access token has a lifetime, so expiry and refresh are exercised");
   await assert.rejects(oauth.exchangeCode({ code: `demo-code.${challenge}`, codeVerifier: "w".repeat(60), redirectUri: "x" }), /invalid_grant/);
   await assert.rejects(oauth.exchangeCode({ code: "garbage", codeVerifier: verifier, redirectUri: "x" }), /invalid_grant/);
+});
+
+test("the demo OAuth client refreshes only with its own refresh token", async () => {
+  const oauth = DEMO_SOURCE_PROVIDERS.find((provider) => provider.providerKey === DEMO_OAUTH_PROVIDER_KEY)!.oauth!;
+  const refreshed = await oauth.refresh!({ refreshToken: DEMO_OAUTH_REFRESH_TOKEN });
+  assert.equal(refreshed.accessToken, "demo-oauth-access-token");
+  assert.ok(typeof refreshed.expiresAt === "number" && refreshed.expiresAt > Date.now());
+  await assert.rejects(oauth.refresh!({ refreshToken: "revoked-by-the-customer" }), /invalid_grant/);
 });
 
 test("the demo store applies production's test rules: a pass activates pending, a failure never does, revoked is refused, reauthorize heals", () => {
@@ -317,4 +337,106 @@ test("the demo store applies production's test rules: a pass activates pending, 
   assert.throws(() => store.test(identity(), ID(80)), /connection_not_found/);
   const other = { ...identity(), workspaceId: "workspace-other" };
   assert.equal(store.list(other).length, 7, "another workspace has its own seeded set");
+});
+
+// ---- B1b / B1d in demo mode: reauthorization through the same sign-in leg, duplicate guard, attempt budget, audit ----
+
+type Started = { authorizationUrl: string };
+const reauthorizeStart = (tenant: string, sourceConnectionId: string) => oauthStartPost(request("POST", "/api/v1/source-connections/oauth/start", { tenant, body: { sourceConnectionId } }));
+const complete = (tenant: string, cookie: string, body: unknown) => oauthCompletePost(request("POST", "/api/v1/source-connections/oauth/complete", { tenant, cookie, body }));
+
+test("an OAuth connection that needs attention is reauthorized from its card through the provider's consent page and is active again after the test", async () => {
+  const tenant = "tenant-reauth-demo";
+  const before = (await listFor(tenant)).find((connection) => connection.sourceConnectionId === SUMMIT)!;
+  assert.equal(before.status, "suspended");
+  assert.equal(before.credentialType, "oauth_authorization_code");
+
+  const started = await reauthorizeStart(tenant, SUMMIT);
+  assert.equal(started.status, 200);
+  const { approve } = await consentLinks((await started.json() as { data: Started }).data.authorizationUrl);
+  const done = await complete(tenant, cookieOf(started), { code: approve.searchParams.get("code"), state: approve.searchParams.get("state") });
+  assert.equal(done.status, 200);
+  const text = await done.text();
+  assert.ok(!text.includes("demo-oauth-access-token") && !text.includes(DEMO_OAUTH_REFRESH_TOKEN), "no token in the response");
+  const { data } = JSON.parse(text) as { data: { outcome: string; connection: Connection; test: { ok: boolean } } };
+  assert.equal(data.outcome, "reauthorized");
+  assert.equal(data.connection.sourceConnectionId, SUMMIT);
+  assert.equal(data.connection.status, "active");
+  assert.equal(data.connection.lastErrorClass, undefined);
+  assert.deepEqual(data.test, { ok: true });
+  const after = await listFor(tenant);
+  assert.equal(after.length, 7, "renewed, not duplicated");
+  assert.equal(after.find((connection) => connection.sourceConnectionId === SUMMIT)!.status, "active");
+
+  assert.equal((await complete(tenant, cookieOf(started), { code: approve.searchParams.get("code"), state: approve.searchParams.get("state") })).status, 400, "single use");
+});
+
+test("declining a reauthorization changes nothing; refusals name the reason", async () => {
+  const tenant = "tenant-reauth-demo-refused";
+  const started = await reauthorizeStart(tenant, SUMMIT);
+  assert.equal((await complete(tenant, cookieOf(started), { denied: true })).status, 200);
+  assert.equal((await listFor(tenant)).find((connection) => connection.sourceConnectionId === SUMMIT)!.status, "suspended");
+
+  assert.equal((await reauthorizeStart(tenant, HEALTHY)).status, 400, "an API-token connection is replaced with a token, not a sign-in");
+  assert.equal((await reauthorizeStart(tenant, REVOKED)).status, 409, "a revoked connection is never reauthorized");
+  assert.equal((await reauthorizeStart(tenant, ID(90))).status, 404);
+  assert.equal((await oauthStartPost(request("POST", "/api/v1/source-connections/oauth/start", { tenant, roles: "analyst", body: { sourceConnectionId: SUMMIT } }))).status, 403);
+
+  const direct = await reauthorizePost(request("POST", `/api/v1/source-connections/${SUMMIT}/reauthorize`, { tenant, body: { secret: { token: "pasted" } } }), params(SUMMIT));
+  assert.equal(direct.status, 409);
+  assert.equal((await direct.json() as { error: string }).error, "oauth_reauthorization_required");
+  assert.equal((await reauthorizePost(request("POST", `/api/v1/source-connections/${REAUTH}/reauthorize`, { tenant, body: { secret: { token: "rotated" } } }), params(REAUTH))).status, 200, "token connections still take a pasted credential");
+});
+
+test("a workspace that is already connected to a provider cannot connect it again until the connection is revoked", async () => {
+  const tenant = "tenant-dup-demo";
+  assert.equal((await connect(tenant, DEMO_TOKENS.valid)).status, 201);
+  const refused = await connect(tenant, DEMO_TOKENS.valid);
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json() as { error: string }).error, "source_connection_already_exists");
+  assert.equal((await listFor(tenant)).length, 8, "nothing was created");
+
+  const started = await startOAuth(tenant);
+  assert.equal(started.status, 200);
+  const { approve } = await consentLinks((await started.json() as { data: Started }).data.authorizationUrl);
+  assert.equal((await complete(tenant, cookieOf(started), { code: approve.searchParams.get("code"), state: approve.searchParams.get("state") })).status, 201);
+  assert.equal((await startOAuth(tenant)).status, 409, "also for a sign-in");
+
+  const id = (await listFor(tenant)).find((connection) => connection.providerKey === DEMO_TOKEN_PROVIDER_KEY)!.sourceConnectionId;
+  demoSourceConnectionStore().transition({ ...identity(), tenantId: tenant, workspaceId: "workspace-1" }, id, "revoke");
+  assert.equal((await connect(tenant, DEMO_TOKENS.valid)).status, 201, "a revoked connection does not block a new one");
+});
+
+test("each administrator has a small budget of connect attempts, in demo mode too", async () => {
+  overrideSourceConnectLimiter(new RateLimiter(2, 60_000));
+  try {
+    const tenant = "tenant-limit-demo";
+    assert.equal((await connect(tenant, DEMO_TOKENS.valid)).status, 201);
+    assert.equal((await startOAuth(tenant)).status, 200);
+    const limited = await connect(tenant, DEMO_TOKENS.valid);
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers.get("retry-after")) >= 1);
+    assert.equal((await reauthorizeStart(tenant, SUMMIT)).status, 429);
+    assert.equal((await connect("tenant-limit-demo-other", DEMO_TOKENS.valid)).status, 201);
+  } finally { overrideSourceConnectLimiter(GENEROUS); }
+});
+
+test("the start and the decline of a sign-in are recorded in the audit trail without any credential", async () => {
+  const events: Array<{ action: string; targetType: string; targetId?: string; metadata?: Record<string, unknown>; tenantId: string }> = [];
+  const audit = mock.method(platform(), "audit", async (event: (typeof events)[number]) => { events.push(event); });
+  try {
+    const tenant = "tenant-audit-demo";
+    const started = await startOAuth(tenant);
+    assert.equal((await complete(tenant, cookieOf(started), { denied: true })).status, 200);
+    const renewal = await reauthorizeStart(tenant, SUMMIT);
+    assert.equal((await complete(tenant, cookieOf(renewal), { denied: true })).status, 200);
+    assert.deepEqual(events.map((event) => [event.action, event.targetType, event.targetId]), [
+      ["source_connection.oauth_start", "source_connection", DEMO_OAUTH_PROVIDER_KEY],
+      ["source_connection.oauth_declined", "source_connection", DEMO_OAUTH_PROVIDER_KEY],
+      ["source_connection.oauth_start", "source_connection", SUMMIT],
+      ["source_connection.oauth_declined", "source_connection", SUMMIT],
+    ]);
+    assert.ok(events.every((event) => event.tenantId === tenant && event.metadata?.providerKey !== undefined));
+    assert.doesNotMatch(JSON.stringify(events), /state|verifier|code/i);
+  } finally { audit.mock.restore(); }
 });

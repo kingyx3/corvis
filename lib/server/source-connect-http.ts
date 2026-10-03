@@ -1,7 +1,7 @@
 import { MAX_CONNECTION_NAME_LENGTH, OAUTH_RETURN_MARKER } from "../../core/source-connect-wizard.ts";
 import { getServerConfig } from "./config.ts";
 import { approvedSourceProvider, type ApprovedSourceProvider } from "./source-providers.ts";
-import { ConnectorGovernanceError, type SecretPayload, type SourceConnection } from "./source-connectors.ts";
+import { ConnectorGovernanceError, assertSourceConnectionId, type SecretPayload, type SourceConnection } from "./source-connectors.ts";
 
 /** Customer-facing connection shape: never the secret reference, an internal resource pointer. */
 export function redactedConnection(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
@@ -43,6 +43,20 @@ export function parseConnectRequest(body: unknown, method: "oauth" | "credential
   // An unknown provider and one that connects the other way are both "not approved for this flow".
   if (!provider || provider.connect.method !== method) throw new ConnectorGovernanceError("unregistered_provider");
   return { parsed: { provider, connectionLabel: object.connectionLabel.trim() }, object };
+}
+
+export type ParsedOAuthStart =
+  /** Renews an existing connection's authorization: nothing but its id is sent, because scope and provider are already confirmed and recorded. */
+  | { kind: "reauthorize"; sourceConnectionId: string }
+  | { kind: "connect"; parsed: ParsedConnectRequest };
+
+/** The OAuth-start body: `{ sourceConnectionId }` to renew a connection, otherwise the same body as a connect request. */
+export function parseOAuthStartRequest(body: unknown): ParsedOAuthStart {
+  const object = asObject(body);
+  if (object.sourceConnectionId === undefined) return { kind: "connect", parsed: parseConnectRequest(object, "oauth").parsed };
+  if (typeof object.sourceConnectionId !== "string") throw new ConnectorGovernanceError("invalid_request");
+  assertSourceConnectionId(object.sourceConnectionId);
+  return { kind: "reauthorize", sourceConnectionId: object.sourceConnectionId };
 }
 
 export function parseSecret(value: unknown): SecretPayload {

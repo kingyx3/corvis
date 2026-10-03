@@ -33,6 +33,7 @@ const { createRetentionService, demoRetentionService, overrideRetentionService, 
 const { platform } = await import("./platform.ts");
 
 const HOUR = 60 * 60 * 1000;
+const EVERYTHING = { limit: 200 };
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof DataGovernanceError && error.code === code && error.status === status;
 
 let clock = new Date("2026-10-02T12:00:00.000Z");
@@ -45,7 +46,7 @@ function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
 }
 const second = (overrides: Partial<RequestIdentity> = {}) => identity({ subject: "second-admin", ...overrides });
 async function pendingSeed(demo: DemoTenantExportStore, who = identity()): Promise<TenantExportRequest> {
-  return (await demo.list(who)).find((item) => item.status === "pending_approval")!;
+  return (await demo.list(who, EVERYTHING)).items.find((item) => item.status === "pending_approval")!;
 }
 async function opened(demo: DemoTenantExportStore, who = identity()): Promise<TenantExportRequest> {
   // The seeded request is the open one; resolve it so this admin can make their own.
@@ -56,7 +57,7 @@ async function opened(demo: DemoTenantExportStore, who = identity()): Promise<Te
 // ------------------------------------------------------------------ store
 test("each demo tenant is seeded once with a rejected request, a built export and a colleague's request awaiting this admin", async () => {
   const demo = store();
-  const items = await demo.list(identity());
+  const items = (await demo.list(identity(), EVERYTHING)).items;
   assert.deepEqual(items.map((item) => item.status), ["pending_approval", "complete", "rejected"], "newest first");
   const [pending, built, rejected] = items as [TenantExportRequest, TenantExportRequest, TenantExportRequest];
   assert.equal(pending.requestedByMe, false);
@@ -64,8 +65,8 @@ test("each demo tenant is seeded once with a rejected request, a built export an
   assert.equal(built.actions.canDownload, true);
   assert.equal(built.artifact!.manifest.approvedBy, "morgan.lee@meridian.example");
   assert.equal(rejected.decisionNote, "Please scope this to the audit team's own request first.");
-  assert.equal((await demo.list(identity())).length, 3, "listing again does not seed again");
-  assert.equal((await demo.list(identity({ tenantId: "tenant-other" }))).length, 3, "another tenant gets its own seeds");
+  assert.equal((await demo.list(identity(), EVERYTHING)).items.length, 3, "listing again does not seed again");
+  assert.equal((await demo.list(identity({ tenantId: "tenant-other" }), EVERYTHING)).items.length, 3, "another tenant gets its own seeds");
   const detail = await demo.get(identity(), built.requestId);
   assert.deepEqual(detail.history!.map((event) => [event.eventType, event.actor]), [
     ["requested", "alex.chen@meridian.example"], ["approved", "morgan.lee@meridian.example"], ["build_started", "system:tenant-export"], ["build_completed", "system:tenant-export"],
@@ -146,7 +147,7 @@ test("an approval window that passes lapses the request: it cannot be approved, 
   const mine = await opened(demo);
   clock = new Date(clock.getTime() + 169 * HOUR);
   try {
-    assert.equal((await demo.list(identity())).find((item) => item.requestId === mine.requestId)!.status, "expired");
+    assert.equal((await demo.list(identity(), EVERYTHING)).items.find((item) => item.requestId === mine.requestId)!.status, "expired");
     await assert.rejects(() => demo.decide(second(), mine.requestId, { action: "approve" }), refusal("data_export_approval_expired", 409));
     const fresh = await demo.request(identity(), { reason: "A fresh request" });
     assert.equal(fresh.status, "pending_approval");
@@ -161,7 +162,7 @@ test("an approval window that passes lapses the request: it cannot be approved, 
 
 test("a download link is single-use, bound to its admin and request, short-lived, and gone when the export expires", async () => {
   const demo = store();
-  const built = (await demo.list(identity())).find((item) => item.status === "complete")!;
+  const built = (await demo.list(identity(), EVERYTHING)).items.find((item) => item.status === "complete")!;
   const waiting = await pendingSeed(demo);
   await assert.rejects(() => demo.issueDownload(identity(), waiting.requestId), refusal("data_export_not_available", 409));
   await assert.rejects(() => demo.issueDownload(identity(), "00000000-0000-4000-8000-000000000000"), refusal("data_export_not_found", 404));
@@ -183,7 +184,7 @@ test("a download link is single-use, bound to its admin and request, short-lived
   try {
     assert.equal(await demo.redeemDownload(identity(), built.requestId, new URL(stale, "https://corvis.test").searchParams.get("grant")!), null, "an expired link redeems nothing");
     clock = new Date(clock.getTime() + 25 * HOUR);
-    assert.equal((await demo.list(identity())).find((item) => item.requestId === built.requestId)!.status, "download_expired");
+    assert.equal((await demo.list(identity(), EVERYTHING)).items.find((item) => item.requestId === built.requestId)!.status, "download_expired");
     await assert.rejects(() => demo.issueDownload(identity(), built.requestId), refusal("data_export_not_available", 409));
   } finally {
     clock = new Date("2026-10-02T12:00:00.000Z");
@@ -194,7 +195,7 @@ test("a download link is single-use, bound to its admin and request, short-lived
 
 test("a link for an export that expired in between redeems nothing", async () => {
   const demo = store();
-  const built = (await demo.list(identity())).find((item) => item.status === "complete")!;
+  const built = (await demo.list(identity(), EVERYTHING)).items.find((item) => item.status === "complete")!;
   const { download } = await demo.issueDownload(identity(), built.requestId);
   clock = new Date(clock.getTime() + 20 * HOUR);
   try {
@@ -228,7 +229,7 @@ test("the service lets only Organization Admins act and audits exactly what chan
     const colleague = identity({ subject: "member", roles: ["analyst"], isTenantAdmin: false });
     const accountAdmin = identity({ subject: "workspace-admin", isTenantAdmin: false });
     for (const who of [colleague, accountAdmin, identity({ isTenantAdmin: undefined })]) {
-      await assert.rejects(() => service.list(who), refusal("tenant_admin_required", 403));
+      await assert.rejects(() => service.list(who, EVERYTHING), refusal("tenant_admin_required", 403));
       await assert.rejects(() => service.get(who, "x"), refusal("tenant_admin_required", 403));
       await assert.rejects(() => service.request(who, { reason: "Records review" }, "c"), refusal("tenant_admin_required", 403));
       await assert.rejects(() => service.decide(who, "x", { action: "approve" }, "c"), refusal("tenant_admin_required", 403));
@@ -237,7 +238,7 @@ test("the service lets only Organization Admins act and audits exactly what chan
     }
     assert.equal(events.length, 0, "a refused command is not audited");
 
-    const seeded = (await service.list(identity())).find((item) => item.status === "pending_approval")!;
+    const seeded = (await service.list(identity(), EVERYTHING)).items.find((item) => item.status === "pending_approval")!;
     await assert.rejects(() => service.request(identity(), { reason: "Records review" }, "corr-0"), refusal("data_export_already_active", 409));
     await service.decide(second(), seeded.requestId, { action: "reject", note: "Not now" }, "corr-1");
     const mine = await service.request(identity(), { reason: "Records review at contract end" }, "corr-2");
@@ -277,14 +278,14 @@ test("a redeemed link whose archive cannot be read answers nothing instead of an
   const service = createTenantExportService({
     demo: true,
     request: (who, command) => backend.request(who, command),
-    list: (who) => backend.list(who),
+    list: (who, query) => backend.list(who, query),
     get: (who, id) => backend.get(who, id),
     decide: (who, id, command) => backend.decide(who, id, command),
     issueDownload: (who, id) => backend.issueDownload(who, id),
     redeemDownload: (who, id, token) => backend.redeemDownload(who, id, token),
     openArtifact: async () => null,
   });
-  const built = (await service.list(identity())).find((item) => item.status === "complete")!;
+  const built = (await service.list(identity(), EVERYTHING)).items.find((item) => item.status === "complete")!;
   const link = await service.prepareDownload(identity(), built.requestId, "c");
   assert.equal(await service.download(identity(), built.requestId, new URL(link.downloadUrl, "https://corvis.test").searchParams.get("grant")!, "c"), null);
 });
@@ -388,6 +389,47 @@ test("the whole export flow runs through the routes: request, approve by a secon
   const head = await downloadHead(request(`/access/data-exports/${mine.requestId}/download`, { method: "HEAD", tenant }));
   assert.equal(head.status, 405);
   assert.equal(head.headers.get("allow"), "GET");
+});
+
+test("the list is paged newest first with a stable cursor: every request once, none skipped when a newer one arrives between pages (F10f)", async () => {
+  const demo = store();
+  const everything = (await demo.list(identity(), EVERYTHING)).items.map((item) => item.requestId);
+  assert.equal(everything.length, 3);
+  const first = await demo.list(identity(), { limit: 1 });
+  assert.deepEqual(first.items.map((item) => item.requestId), [everything[0]]);
+  assert.ok(first.nextCursor);
+  // A new request made between the two reads is newer than the cursor, so it neither shifts nor repeats the older pages.
+  await demo.decide(identity(), everything[0]!, { action: "reject", note: "Superseded." });
+  const added = await demo.request(identity(), { reason: "Records review at contract end" });
+  const second = await demo.list(identity(), { limit: 1, cursor: first.nextCursor });
+  assert.deepEqual(second.items.map((item) => item.requestId), [everything[1]]);
+  const third = await demo.list(identity(), { limit: 5, cursor: second.nextCursor });
+  assert.deepEqual(third.items.map((item) => item.requestId), [everything[2]]);
+  assert.equal(third.nextCursor, null, "the last page has no cursor");
+  assert.equal((await demo.list(identity(), { limit: 4 })).nextCursor, null, "a page that holds everything has no cursor");
+  assert.deepEqual((await demo.list(identity(), { limit: 1 })).items.map((item) => item.requestId), [added.requestId]);
+  await assert.rejects(() => demo.list(identity(), { limit: 1, cursor: "!!!" }), /invalid_cursor/);
+});
+
+test("routes page the list with ?limit and ?cursor and refuse a malformed one (F10f)", async () => {
+  const tenant = "tenant-paging";
+  const first = await listGet(request("/access/data-exports?limit=2", { tenant }));
+  const firstBody = (await first.json()) as { data: TenantExportRequest[]; nextCursor: string | null };
+  assert.equal(firstBody.data.length, 2);
+  assert.ok(firstBody.nextCursor);
+  const second = (await (await listGet(request(`/access/data-exports?limit=2&cursor=${encodeURIComponent(firstBody.nextCursor!)}`, { tenant }))).json()) as { data: TenantExportRequest[]; nextCursor: string | null };
+  assert.equal(second.data.length, 1);
+  assert.equal(second.nextCursor, null);
+  assert.deepEqual(new Set([...firstBody.data, ...second.data].map((item) => item.requestId)).size, 3);
+  const badCursor = await listGet(request("/access/data-exports?cursor=not-a-cursor", { tenant }));
+  assert.equal(badCursor.status, 400);
+  assert.equal((await body(badCursor)).error, "invalid_cursor");
+  const badLimit = await listGet(request("/access/data-exports?limit=0", { tenant }));
+  assert.equal(badLimit.status, 400);
+  assert.equal((await body(badLimit)).error, "invalid_limit");
+  const defaulted = (await (await listGet(request("/access/data-exports", { tenant }))).json()) as { data: unknown[]; nextCursor: string | null };
+  assert.equal(defaulted.data.length, 3);
+  assert.equal(defaulted.nextCursor, null);
 });
 
 test("routes validate input and answer plain, stable errors", async () => {

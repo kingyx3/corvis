@@ -1,5 +1,5 @@
 import type { SourceProviderDescriptor } from "../../core/source-connect-wizard.ts";
-import { DEMO_SOURCE_PROVIDERS } from "../../adapters/demo/source-providers.ts";
+import { DEMO_OAUTH_RENEWAL_ALIASES, DEMO_SOURCE_PROVIDERS } from "../../adapters/demo/source-providers.ts";
 import { getServerConfig } from "./config.ts";
 import { sourceConnectorDrivers } from "./source-connector-runtime.ts";
 import type { ConnectorDriver, CredentialType } from "./source-connectors.ts";
@@ -21,7 +21,9 @@ export type ApprovedSourceProvider = SourceProviderDescriptor & {
 };
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
-const registered = new Map<string, ApprovedSourceProvider>();
+// On `globalThis`, like the driver registry, so `next dev` re-evaluating this module does not drop an approval.
+const sharedRegistry = globalThis as typeof globalThis & { approvedSourceProviders?: Map<string, ApprovedSourceProvider> };
+const registered = (sharedRegistry.approvedSourceProviders ??= new Map<string, ApprovedSourceProvider>());
 
 /**
  * Approves a certified provider and registers its driver in one step, so a
@@ -48,6 +50,17 @@ export function approvedSourceProviders(): ApprovedSourceProvider[] {
 
 export function approvedSourceProvider(providerKey: string): ApprovedSourceProvider | undefined {
   return approvedSourceProviders().find((provider) => provider.providerKey === providerKey);
+}
+
+/**
+ * The approved OAuth provider that renews an existing connection's authorization, or undefined when there is none (the
+ * provider was withdrawn, or it does not connect through OAuth). In demo mode the seeded demo connections that predate
+ * the demo OAuth provider are renewed through it, so reauthorization can be exercised on them.
+ */
+export function oauthProviderForConnection(providerKey: string): ApprovedSourceProvider | undefined {
+  const demoAlias = getServerConfig().demoMode ? DEMO_OAUTH_RENEWAL_ALIASES[providerKey] : undefined;
+  const provider = approvedSourceProvider(demoAlias ?? providerKey);
+  return provider?.oauth ? provider : undefined;
 }
 
 /** The browser-safe description: an explicit field copy, so server-only members (the OAuth client, the connector version) can never leak. */

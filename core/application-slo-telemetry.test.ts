@@ -93,3 +93,24 @@ test("export and webhook delivery health uses durable completion/failure ledgers
   assert.match(terraform, /jsonpayload\.metric="delivery\.export"[\s\S]*jsonpayload\.outcome="failed"/);
   assert.match(terraform, /jsonpayload\.metric="delivery\.webhook"[\s\S]*jsonpayload\.outcome="failed"/);
 });
+
+test("session policy enforcement latency and denials are emitted by the authorization lookup and alerted on", async () => {
+  const authorization = await read("lib/server/authorization.ts");
+  const sweep = await read("lib/server/session-activity-sweep.ts");
+  const route = await read("app/api/internal/delivery/route.ts");
+  const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
+  const slos = await read("ops/slos.yaml");
+
+  assert.match(authorization, /durationmetric\("auth\.session_policy", startedat, context, \{ outcome \}\)/);
+  assert.match(authorization, /countmetric\("auth\.session_policy_denied", 1, context, \{ reason: outcome \}\)/);
+  assert.match(sweep, /countmetric\("session_activity\.purged"/);
+  assert.match(route, /sessionactivitysweep:\(\)=>sweeptenantsessionactivity\(\)/);
+
+  assert.match(terraform, /jsonpayload\.event="metric\.duration"\s+jsonpayload\.metric="auth\.session_policy"/);
+  assert.match(terraform, /jsonpayload\.event="metric\.count"\s+jsonpayload\.metric="auth\.session_policy_denied"/);
+  assert.match(terraform, /label_extractors[\s\S]*extract\(jsonpayload\.reason\)/);
+  assert.match(terraform, /google_monitoring_alert_policy" "session_policy_enforcement_latency"[\s\S]*threshold_value\s*=\s*100[\s\S]*align_percentile_95/);
+  assert.match(terraform, /google_monitoring_alert_policy" "session_policy_denials"[\s\S]*threshold_value\s*=\s*200[\s\S]*align_sum/);
+  assert.match(slos, /session_policy_enforcement_p95_ms > 100 for 15m/);
+  assert.match(slos, /session_policy_denials > 200 per 5m for 10m/);
+});

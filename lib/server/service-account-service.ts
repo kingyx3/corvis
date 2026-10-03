@@ -77,6 +77,23 @@ export function createServiceAccountService(backend: ServiceAccountBackend): Ser
               reason: command.reason, revokedCredentials,
             }),
           }).then(({ serviceAccount }) => ({ serviceAccount }));
+        case "extend":
+          return runAuditedMutation({
+            demoMode: backend.demo,
+            mutate: (db) => backend.extend(identity, serviceAccountId, command, db),
+            // The account's lifecycle review date is advanced with its expiry (migration 092), so one audit event records both.
+            audit: ({ serviceAccount, previousExpiresAt }) => serviceAccountAuditEvent(identity, correlationId, "service_account.extended", serviceAccount, {
+              previousExpiresAt, expiresAt: serviceAccount.expiresAt, nextReviewAt: serviceAccount.expiresAt,
+            }),
+          }).then(({ serviceAccount }) => ({ serviceAccount }));
+        case "transfer":
+          return runAuditedMutation({
+            demoMode: backend.demo,
+            mutate: (db) => backend.transferOwner(identity, serviceAccountId, command.ownerSubject, db),
+            audit: ({ serviceAccount, previousOwner }) => serviceAccountAuditEvent(identity, correlationId, "service_account.owner_transferred", serviceAccount, {
+              previousOwner, ownerSubject: serviceAccount.ownerSubject,
+            }),
+          }).then(({ serviceAccount }) => ({ serviceAccount }));
         case "disable":
           return runAuditedMutation({
             demoMode: backend.demo,

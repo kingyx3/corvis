@@ -2,11 +2,13 @@ import { parseTenantExportRequest } from "@/core/tenant-export";
 import { readJsonObject } from "@/lib/server/admin-request";
 import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/lib/server/data-governance";
 import { correlationId, json } from "@/lib/server/http";
+import { parseLimit } from "@/lib/server/pagination";
 import { tenantExportService } from "@/lib/server/tenant-export-service";
 
 /**
  * Full tenant data export (F10, #266). An Organization Admin lists the organization's export requests and asks for a
  * new one; a different Organization Admin must approve it (`POST /data-exports/{exportId}`) before anything is built.
+ * `?limit=` (1 to 200, default 50) and `?cursor=` page the list newest first in a stable keyset order; `nextCursor` is `null` on the last page.
  * What an export contains is fixed (published data, the access audit and the source-document inventory, limited to
  * what the organization may redistribute), so a request names only why it is needed.
  */
@@ -14,7 +16,9 @@ export async function GET(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveOrganizationAdmin(request);
-    return json({ data: await tenantExportService().list(identity), correlationId: id });
+    const params = new URL(request.url).searchParams;
+    const page = await tenantExportService().list(identity, { limit: parseLimit(params.get("limit")), cursor: params.get("cursor") });
+    return json({ data: page.items, nextCursor: page.nextCursor, correlationId: id });
   } catch (error) { return dataGovernanceErrorResponse(error, id); }
 }
 

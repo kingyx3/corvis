@@ -159,7 +159,7 @@ function accountRow(overrides: Record<string, unknown> = {}): PostgresRow {
   return {
     service_account_id: ACCOUNT, user_id: OTHER, display_name: "Reporting sync", purpose: "Nightly", workspace_id: WORKSPACE, workspace_name: "Primary Workspace",
     role_name: "analyst", status: "active", created_by_subject: "idp|alex", created_at: "2026-09-01 08:00:00+00", expires_at: "2027-09-01 08:00:00+00",
-    disabled_at: null, disabled_by_subject: null, disable_reason: null, ...overrides,
+    disabled_at: null, disabled_by_subject: null, disable_reason: null, owner_subject: "idp|alex", owner_assigned_at: "2026-09-01 08:00:00+00", owner_active: true, ...overrides,
   };
 }
 function credentialRow(overrides: Record<string, unknown> = {}): PostgresRow {
@@ -193,10 +193,17 @@ test("an account row carries role, workspace, creator, last use, expiry and the 
   assert.equal(account.lastUsedAt, "2026-10-03T09:30:00.123Z");
   assert.equal(account.credentialExpiresAt, "2026-10-10T08:00:00.000Z");
   assert.equal(account.expiringSoon, true);
-  assert.deepEqual(account.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+  assert.deepEqual(account.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true });
+  assert.deepEqual([account.ownerSubject, account.ownerAssignedAt, account.ownerActive, account.needsOwner], ["idp|alex", "2026-09-01T08:00:00.000Z", true, false]);
   assert.deepEqual([account.disabledAt, account.disabledBy, account.disableReason], [null, null, null]);
   assert.equal(Object.keys(account).some((key) => /secret|hash|sha/i.test(key)), false);
   assert.equal(account.credentials.some((credential) => Object.keys(credential).some((key) => /secret|hash|sha/i.test(key))), false);
+
+  // An owner who was deactivated (or demoted) is reported, not hidden; any value but a real boolean true is "not active".
+  for (const owner_active of [false, null, "t"]) {
+    const orphaned = toServiceAccount(accountRow({ owner_active }), [credentialRow()], NOW);
+    assert.deepEqual([orphaned.ownerActive, orphaned.needsOwner, orphaned.actions.canExtend, orphaned.status], [false, true, false, "active"], String(owner_active));
+  }
 
   const disabled = toServiceAccount(accountRow({ status: "disabled", disabled_at: "2026-10-02 10:00:00+00", disabled_by_subject: "idp|sam", disable_reason: "Integration retired" }), [], NOW);
   assert.deepEqual([disabled.status, disabled.disabledAt, disabled.disabledBy, disabled.disableReason], ["disabled", "2026-10-02T10:00:00.000Z", "idp|sam", "Integration retired"]);
@@ -223,11 +230,17 @@ test("listing is bound to the caller's tenant, shows the workspaces an account c
   const db = new ScriptedDb();
   const backend = backendWith(db, (call) => {
     if (/from corvis_control\.workspace/.test(call.sql)) return [{ workspace_id: WORKSPACE, display_name: "Primary Workspace" }];
+    if (/from corvis_control\.identity_subject/.test(call.sql)) return [{ subject: "idp|alex" }, { subject: "idp|sam" }];
     return undefined;
   });
   const listed = await backend.list(identity(), db);
   assert.equal(listed.serviceAccounts.length, 1);
   assert.deepEqual(listed.workspaces, [{ workspaceId: WORKSPACE, name: "Primary Workspace" }]);
+  assert.deepEqual(listed.owners, [{ subject: "idp|alex" }, { subject: "idp|sam" }], "who an account can be handed to");
+  const owners = db.calls.find((call) => /from corvis_control\.identity_subject/.test(call.sql))!;
+  assert.deepEqual(owners.parameters, [TENANT], "the candidates are the caller's organization's, never a client selector");
+  assert.match(owners.sql, /service_account_owner_active\(s\.tenant_id, s\.user_id\)/, "by the same test the SQL applies to whoever acts");
+  assert.match(owners.sql, /auth_method in \('oidc','saml'\)/, "people only");
   const reads = db.calls.filter((call) => READ_ACCOUNTS.test(call.sql) || READ_CREDENTIALS.test(call.sql) || /from corvis_control\.workspace/.test(call.sql));
   assert.equal(reads.length, 3);
   for (const read of reads) assert.equal(read.parameters[0], TENANT, "every read carries the caller's tenant, never a client selector");
@@ -237,7 +250,7 @@ test("listing is bound to the caller's tenant, shows the workspaces an account c
   const none = new ScriptedDb();
   none.handler = () => [];
   const empty = await new PostgresServiceAccountBackend(() => none).list(identity(), none);
-  assert.deepEqual(empty, { serviceAccounts: [], workspaces: [] });
+  assert.deepEqual(empty, { serviceAccounts: [], workspaces: [], owners: [] });
   assert.equal(none.calls.some((call) => READ_CREDENTIALS.test(call.sql)), false);
 });
 
@@ -312,9 +325,33 @@ test("service-account actions are part of what an Organization Admin sees in the
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /action like 'service_account\.%'/);
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /'service_account'[,)]/);
   // Every action the service writes is under that prefix and target type.
-  for (const action of ["created", "credential_issued", "credential_rotated", "credential_revoked", "disabled"]) {
+  for (const action of ["created", "credential_issued", "credential_rotated", "credential_revoked", "disabled", "extended", "owner_transferred"]) {
     const event = serviceAccountAuditEvent(identity(), "c", `service_account.${action}`, { serviceAccountId: ACCOUNT, workspaceId: WORKSPACE });
     assert.ok(event.action.startsWith("service_account."));
     assert.equal(event.targetType, "service_account");
   }
+});
+
+test("extending passes the new expiry to the SQL function, which decides every rule, and reports the previous expiry for the audit", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => /extend_service_account/.test(call.sql) ? [{ previous_expires_at: "2026-12-01 08:00:00+00" }] : undefined);
+  const before = Date.now();
+  const extended = await backend.extend(identity(), ACCOUNT, { action: "extend", expiresInDays: 120 }, db);
+  const call = db.calls.find((entry) => /extend_service_account/.test(entry.sql))!;
+  assert.deepEqual([call.parameters[0], call.parameters[1], call.parameters[2], call.parameters[3]], [TENANT, ACCOUNT, "oidc", "idp|alex"]);
+  const requested = Date.parse(String(call.parameters[4]));
+  assert.ok(Math.abs(requested - (before + 120 * 86_400_000)) < 60_000, "120 days from now");
+  assert.equal(extended.previousExpiresAt, "2026-12-01T08:00:00.000Z");
+  assert.equal(extended.serviceAccount.serviceAccountId, ACCOUNT);
+  await assert.rejects(backend.extend(identity(), "nope", { action: "extend", expiresInDays: 30 }, db), refusal("service_account_not_found", 404));
+});
+
+test("transferring names the new owner to the SQL function, which checks they are an active Organization Admin, and reports the previous owner", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => /transfer_service_account_owner/.test(call.sql) ? [{ previous_owner: "idp|alex" }] : undefined);
+  const transferred = await backend.transferOwner(identity(), ACCOUNT, "idp|sam", db);
+  assert.deepEqual(db.calls.find((entry) => /transfer_service_account_owner/.test(entry.sql))!.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "idp|sam"]);
+  assert.equal(transferred.previousOwner, "idp|alex");
+  assert.equal(transferred.serviceAccount.serviceAccountId, ACCOUNT);
+  await assert.rejects(backend.transferOwner(identity(), "nope", "idp|sam", db), refusal("service_account_not_found", 404));
 });

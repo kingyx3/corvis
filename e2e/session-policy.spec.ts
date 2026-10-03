@@ -163,3 +163,16 @@ test("the API holds the Corvis bounds whatever the page sends", async ({ request
   expect(stale.status()).toBe(409);
   expect(((await stale.json()) as { error: string }).error).toBe("session_policy_version_conflict");
 });
+
+test("F7d: the page says how long session records are kept, and the explanation stays accessible @matrix", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const form = section(page);
+  const note = form.getByText(/Corvis keeps a record of each session/);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("for 90 days after its last use");
+  await expect(note).toContainText("Older records are deleted automatically");
+  await expect(note).toContainText("never data from your work");
+  const violations = await blockingViolations(page, "section[aria-labelledby='session-policy-heading']");
+  expect(violations, describe(violations)).toEqual([]);
+});

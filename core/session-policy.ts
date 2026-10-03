@@ -14,6 +14,24 @@ export const SESSION_IDLE_TIMEOUT_BOUNDS = { min: 15, max: 480 } as const;
 /** Maximum session length: 1 hour to 7 days. */
 export const SESSION_MAX_LENGTH_BOUNDS = { min: 60, max: 10080 } as const;
 
+/**
+ * How long a session record (`tenant_session_activity`) is kept after the session was last seen (F7d, #337). It must
+ * outlast every session a limit can still be measuring: the longest allowed maximum session plus a day of margin, which
+ * is also the floor migration 091's purge function enforces. Anything shorter could drop a record the policy is still
+ * judging, so a requested retention is never allowed below it.
+ */
+export const SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES = SESSION_MAX_LENGTH_BOUNDS.max + 24 * 60;
+/** The retention the delivery tick uses: 90 days, so a session that went quiet is still recognised long after it could have been valid. */
+export const SESSION_ACTIVITY_RETENTION_MINUTES = 90 * 24 * 60;
+/** Most records one purge call removes, so one tick never holds a long scan or lock; the rest wait for the next tick. */
+export const SESSION_ACTIVITY_PURGE_LIMIT = 5000;
+
+/** A requested retention, raised to the floor and made a whole number; the default when none is requested. */
+export function sessionActivityRetentionMinutes(requested?: number): number {
+  if (requested === undefined || !Number.isFinite(requested)) return SESSION_ACTIVITY_RETENTION_MINUTES;
+  return Math.max(SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES, Math.floor(requested));
+}
+
 export const SESSION_POLICY_MIN_REASON_LENGTH = 3;
 export const SESSION_POLICY_MAX_REASON_LENGTH = 1000;
 

@@ -170,6 +170,9 @@ test("service-account refusals classify to stable codes: 400 for what a request 
     "service account already has a credential": ["service_account_credential_exists", 409],
     "service account has no active credential": ["service_account_no_active_credential", 409],
     "service account justification required": ["invalid_reason", 400],
+    "service account needs an owner": ["service_account_needs_owner", 409],
+    "service account owner must be an active organization admin": ["service_account_owner_invalid", 422],
+    "service account owner unchanged": ["service_account_owner_unchanged", 409],
   };
   for (const [message, [code, status]] of Object.entries(expected)) {
     assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);

@@ -47,7 +47,7 @@ const POSITION = { positionFinancials: { fundId: "fund-1", holdingId: "holding-1
 function scheduleRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tenant_id: TENANT, schedule_id: SCHEDULE, workspace_id: WORKSPACE, owner_auth_method: "oidc", owner_subject: "idp|owner", label: "Monthly sparrow",
-    scope: POSITION, scope_label: "Position financials · company-1 · quarterly", format: "csv", trigger_kind: "monthly", status: "active", stop_reason: null,
+    scope: POSITION, scope_label: "Position financials · company-1 · quarterly", format: "csv", trigger_kind: "monthly", status: "active", stop_reason: null, notify_on_completion: true,
     next_run_at: "2026-11-01 00:00:00+00", created_at: "2026-10-01 10:00:00+00", updated_at: "2026-10-01 10:00:00+00", cursor_created_at: "2026-10-01T10:00:00.000000Z", ...overrides,
   };
 }
@@ -84,13 +84,14 @@ function request(path: string, caller: Caller = {}): Request {
   });
 }
 const params = (scheduleId: string) => ({ params: Promise.resolve({ scheduleId }) });
-type ScheduleJson = { scheduleId: string; label: string; status: string; ownedByMe: boolean; owner: string; format: string; trigger: string; nextRunAt: string | null; lastRun: { runId: string; exportState?: string } | null };
+type ScheduleJson = { notifyOnCompletion: boolean; scheduleId: string; label: string; status: string; ownedByMe: boolean; owner: string; format: string; trigger: string; nextRunAt: string | null; lastRun: { runId: string; exportState?: string } | null };
 type Body = { error?: string; replayed?: boolean; correlationId?: string; nextCursor?: string | null; data: ScheduleJson & Array<ScheduleJson & { outcome?: string; failureReason?: string }> };
 const body = async (response: Response) => (await response.json()) as Body;
 const seed = (handler: (query: Query) => unknown[] = () => []) => { queries.length = 0; respond = handler; };
 const create = (overrides: Record<string, unknown> = {}) => ({ idempotencyKey: "k-1", label: "Monthly sparrow", scope: POSITION, format: "csv", trigger: "monthly", ...overrides });
 const isCreateFunction = (query: Query) => /create_export_schedule\(/.test(query.sql);
 const isStatusFunction = (query: Query) => /set_export_schedule_status\(/.test(query.sql);
+const isNotificationFunction = (query: Query) => /set_export_schedule_notification\(/.test(query.sql);
 const isAudit = (query: Query) => /insert into corvis_control\.audit_event/.test(query.sql);
 const isLastRuns = (query: Query) => /distinct on \(r\.schedule_id\)/.test(query.sql);
 
@@ -122,6 +123,21 @@ test("creating a schedule writes only the schedule and its audit event: nothing 
   const { sessionId, ...metadata } = JSON.parse(String(audit.parameters[10])) as Record<string, unknown>;
   assert.equal(typeof sessionId, "string");
   assert.deepEqual(metadata, { label: "Monthly sparrow", trigger: "monthly", format: "csv", status: "active" });
+  assert.equal(call.parameters[12], true, "emails about the schedule are on unless the owner says otherwise");
+  assert.equal(payload.data.notifyOnCompletion, true);
+});
+
+test("the owner can opt a schedule out of emails when creating it", async () => {
+  seed((query) => isCreateFunction(query) ? [scheduleRow({ schedule_id: query.parameters[1], notify_on_completion: query.parameters[12] })] : []);
+  const response = await createPost(request("/export-schedules", { method: "POST", body: create({ notifyOnCompletion: false }) }));
+  assert.equal(response.status, 201);
+  assert.equal((await body(response)).data.notifyOnCompletion, false);
+  assert.equal(queries.find(isCreateFunction)!.parameters[12], false);
+
+  seed();
+  const bad = await createPost(request("/export-schedules", { method: "POST", body: create({ notifyOnCompletion: "no" }) }));
+  assert.deepEqual([bad.status, (await body(bad)).error], [400, "invalid_notify_on_completion"]);
+  assert.equal(queries.length, 0);
 });
 
 test("a replayed create is a 200 with the original schedule and writes no second audit event", async () => {
@@ -275,6 +291,40 @@ test("the owner pauses and resumes: one SQL transition keyed on their identity a
   const resumed = await itemPatch(request(`/export-schedules/${SCHEDULE}`, { method: "PATCH", body: { action: "resume" } }), params(SCHEDULE));
   assert.equal((await body(resumed)).data.status, "active");
   assert.ok(queries.find(isAudit)!.parameters.includes("export_schedule.resume"));
+});
+
+test("the owner switches the emails about a schedule on and off: one SQL change keyed on their identity and one audit event with the new value", async () => {
+  seed((query) => isNotificationFunction(query) ? [scheduleRow({ notify_on_completion: query.parameters[4] })] : []);
+  const off = await itemPatch(request(`/export-schedules/${SCHEDULE}`, { method: "PATCH", body: { notifyOnCompletion: false } }), params(SCHEDULE));
+  assert.equal(off.status, 200);
+  assert.equal((await body(off)).data.notifyOnCompletion, false);
+  assert.deepEqual(queries.find(isNotificationFunction)!.parameters, [TENANT, SCHEDULE, "oidc", "idp|owner", false]);
+  assert.equal(queries.some(isStatusFunction), false, "the schedule's status is not touched");
+  const audit = queries.find(isAudit)!;
+  assert.ok(audit.parameters.includes("export_schedule.notify"));
+  const { sessionId: _session, ...metadata } = JSON.parse(String(audit.parameters[10])) as Record<string, unknown>;
+  void _session;
+  assert.deepEqual(metadata, { label: "Monthly sparrow", trigger: "monthly", format: "csv", status: "active", notifyOnCompletion: false });
+
+  seed((query) => isNotificationFunction(query) ? [scheduleRow({ notify_on_completion: query.parameters[4] })] : []);
+  const on = await itemPatch(request(`/export-schedules/${SCHEDULE}`, { method: "PATCH", body: { notifyOnCompletion: true } }), params(SCHEDULE));
+  assert.equal((await body(on)).data.notifyOnCompletion, true);
+  assert.deepEqual(JSON.parse(String(queries.find(isAudit)!.parameters[10])).notifyOnCompletion, true);
+});
+
+test("anyone but the owner finds nothing to change the emails of, an Organization Admin included, and nothing is audited", async () => {
+  seed();
+  const response = await itemPatch(request(`/export-schedules/${SCHEDULE}`, { method: "PATCH", roles: "admin", subject: "idp|boss", body: { notifyOnCompletion: false } }), params(SCHEDULE));
+  assert.deepEqual([response.status, (await body(response)).error], [404, "export_schedule_not_found"]);
+  assert.equal(queries.filter(isAudit).length, 0);
+  assert.equal(queries.find(isNotificationFunction)!.parameters[3], "idp|boss", "keyed on the caller, so a schedule they do not own is not found");
+
+  for (const payload of [{ notifyOnCompletion: "no" }, { notifyOnCompletion: null }, { action: "pause", notifyOnCompletion: false }]) {
+    seed();
+    const refused = await itemPatch(request(`/export-schedules/${SCHEDULE}`, { method: "PATCH", body: payload }), params(SCHEDULE));
+    assert.equal(refused.status, 400);
+    assert.equal(queries.length, 0, "refused before the schedule is touched");
+  }
 });
 
 test("anyone but the owner finds nothing to pause, resume or delete, an Organization Admin included, and nothing is audited", async () => {
