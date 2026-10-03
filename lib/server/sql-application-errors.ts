@@ -104,7 +104,7 @@ export const SQL_APPLICATION_ERRORS = [
   "export schedule scope is invalid",
   "export schedule limit reached",
   "export schedule transition not allowed",
-  // corvis_control.set_review_item_assignee / add_review_item_comment (084)
+  // corvis_control.set_review_item_assignee / add_review_item_comment (086)
   "review item not found",
   "review item actor not found",
   "review assignee not eligible",
