@@ -19,7 +19,7 @@ import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 /**
  * Full tenant data export (F10, #266), Postgres side. A request, its decisions and its build live in
- * `corvis_control.tenant_export_request` and its history (migration 086). Independence of the approver is enforced in
+ * `corvis_control.tenant_export_request` and its history (migration 084). Independence of the approver is enforced in
  * the SQL function `decide_tenant_export` and again by CHECK constraints on the table, so nothing here can approve a
  * request on behalf of its requester. The build itself is `tenant-export-worker.ts`.
  */

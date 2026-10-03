@@ -18,7 +18,7 @@ import { countMetric } from "./telemetry.ts";
  * row cap fails permanently, because retrying cannot help.
  *
  * Contractual data rights decide what goes in (criterion 4): only funds and documents returned by
- * `corvis_control.tenant_export_rights` (migration 086) are exported, and what was left out is reported as counts in the
+ * `corvis_control.tenant_export_rights` (migration 084) are exported, and what was left out is reported as counts in the
  * manifest, never listed or silently dropped. Source document files are not part of this release of the export (the
  * archive carries an inventory with their checksums); that is stated in the manifest's `notIncluded`.
  */

@@ -1,4 +1,4 @@
--- Acceptance for migration 086 (F10, #266): full tenant data export with dual approval, plus the contractual
+-- Acceptance for migration 084 (F10, #266): full tenant data export with dual approval, plus the contractual
 -- data-rights selection it relies on.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:

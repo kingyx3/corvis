@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for the full tenant export (F10, #266), through the application code: the Postgres backend in
-// lib/server/tenant-export.ts and the build worker in lib/server/tenant-export-worker.ts drive the SQL of migration 086
+// lib/server/tenant-export.ts and the build worker in lib/server/tenant-export-worker.ts drive the SQL of migration 084
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
