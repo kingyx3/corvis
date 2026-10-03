@@ -137,3 +137,21 @@ test("scheduled-export refusals classify to stable codes, 400 for a scope that c
     assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
   }
 });
+
+test("review-discussion refusals classify to stable codes: 404 for what is not visible, 422 for an ineligible person, 409 for a stale or replayed command", () => {
+  const expected: Record<string, [string, number]> = {
+    "review item not found": ["review_item_not_found", 404],
+    "review item actor not found": ["human_identity_required", 403],
+    "review assignee not eligible": ["assignee_not_eligible", 422],
+    "review mention not eligible": ["mention_not_eligible", 422],
+    "review item assignment changed": ["assignment_changed", 409],
+    "review comment limit reached": ["review_comment_limit_reached", 409],
+    "idempotency key reused with different review comment": ["idempotency_key_reused", 409],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});

@@ -13,6 +13,7 @@ export type NotificationCategoryId =
   | "pinned_fund_published"
   | "source_attention"
   | "data_issue_update"
+  | "review_discussion"
   | "support_access"
   | "role_changed";
 
@@ -39,6 +40,7 @@ export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] 
   { id: "export_ready", label: "Export ready", description: "An export you requested has finished and is ready to download.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "pinned_fund_published", label: "New data for pinned funds", description: "A new reporting period was published for a fund you pinned on your Overview.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "daily_digest" },
   { id: "data_issue_update", label: "Data issue updates", description: "A data issue you reported on a published figure moved to a new status.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
+  { id: "review_discussion", label: "Review assignments and mentions", description: "A review item was assigned to you, or you were mentioned in a discussion on one.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "source_attention", label: "Source connection needs attention", description: "A source connection in a workspace you administer needs to be reauthorized or was suspended.", mandatory: false, audience: "workspace_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "support_access", label: "Corvis support access", description: "Corvis support was granted access to your organization, or a grant is waiting for your acknowledgement.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "role_changed", label: "Your access changed", description: "Your role in a workspace was changed or removed.", mandatory: true, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
@@ -173,6 +175,13 @@ function dataIssueUpdateLine(status: unknown, where: string): string {
   return `A data issue you reported${where} was updated.`;
 }
 
+/** Says which of two things happened, in words only: never the item, the fund, the person who acted or any comment text. */
+function reviewDiscussionBody(event: unknown, where: string): { subject: string; line: string } {
+  if (event === "assigned") return { subject: "A review item was assigned to you", line: `A review item${where} was assigned to you.` };
+  if (event === "mentioned") return { subject: "You were mentioned in a review discussion", line: `You were mentioned in a discussion on a review item${where}.` };
+  return { subject: "Activity on a review item", line: `There is new activity on a review item${where} that involves you.` };
+}
+
 type Body = { subject: string; lines: string[]; action: { label: string; url: string }; optional: boolean };
 
 function body(category: OutboxCategory, params: Record<string, unknown>, context: TemplateContext): Body {
@@ -205,6 +214,15 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
         action: { label: "Open Data issues", url: new URL("/#/issues", context.appUrl).toString() },
         optional: true,
       };
+    case "review_discussion": {
+      const content = reviewDiscussionBody(params.event, where);
+      return {
+        subject: content.subject,
+        lines: [content.line, "Open Data review to see the item and the discussion."],
+        action: { label: "Open Data review", url: new URL("/#/review", context.appUrl).toString() },
+        optional: true,
+      };
+    }
     case "source_attention": {
       const reauth = params.status === "reauthorization_required";
       return {

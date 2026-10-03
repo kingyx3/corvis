@@ -104,6 +104,14 @@ export const SQL_APPLICATION_ERRORS = [
   "export schedule scope is invalid",
   "export schedule limit reached",
   "export schedule transition not allowed",
+  // corvis_control.set_review_item_assignee / add_review_item_comment (084)
+  "review item not found",
+  "review item actor not found",
+  "review assignee not eligible",
+  "review mention not eligible",
+  "review item assignment changed",
+  "review comment limit reached",
+  "idempotency key reused with different review comment",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -204,6 +212,14 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "export schedule scope is invalid": { code: "invalid_scope", status: 400 },
   "export schedule limit reached": { code: "export_schedule_limit_reached", status: 409 },
   "export schedule transition not allowed": { code: "export_schedule_transition_not_allowed", status: 409 },
+  // Review item discussion (F3): a missing or invisible item, an ineligible person, a stale assignment or a replayed key.
+  "review item not found": { code: "review_item_not_found", status: 404 },
+  "review item actor not found": { code: "human_identity_required", status: 403 },
+  "review assignee not eligible": { code: "assignee_not_eligible", status: 422 },
+  "review mention not eligible": { code: "mention_not_eligible", status: 422 },
+  "review item assignment changed": { code: "assignment_changed", status: 409 },
+  "review comment limit reached": { code: "review_comment_limit_reached", status: 409 },
+  "idempotency key reused with different review comment": { code: "idempotency_key_reused", status: 409 },
 };
 
 /**

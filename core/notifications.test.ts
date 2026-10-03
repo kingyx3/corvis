@@ -19,9 +19,9 @@ const appUrl = "https://app.corvis.test";
 
 test("categories are visible only to the audience that can receive them", () => {
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
-  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "role_changed"]);
-  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "source_attention", "support_access", "role_changed"]);
+  assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "role_changed"]);
+  assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "support_access", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -54,6 +54,7 @@ test("preference changes reject mandatory, hidden, duplicate and malformed categ
   assert.equal(code({ categories: [{ id: 7, enabled: true, delivery: "immediate" }] }), "unknown_category");
   assert.equal(code({ categories: [{ enabled: true, delivery: "immediate" }] }), "unknown_category");
   assert.equal(code({ categories: [{ id: "data_issue_update", enabled: false, delivery: "daily_digest" }] }), "ok", "data issue updates are optional for everyone");
+  assert.equal(code({ categories: [{ id: "review_discussion", enabled: false, delivery: "daily_digest" }] }), "ok", "review assignments and mentions are optional");
 });
 
 test("every email links back to the app, and optional ones link to notification settings", () => {
@@ -62,6 +63,7 @@ test("every email links back to the app, and optional ones link to notification 
     ["pinned_fund_published", {}, true],
     ["source_attention", { status: "suspended" }, true],
     ["data_issue_update", { status: "corrected" }, true],
+    ["review_discussion", { event: "assigned" }, true],
     ["support_access", { status: "pending_ack" }, false],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],
@@ -143,4 +145,27 @@ test("a data issue update email names the new status in words and carries no fig
     }
   }
   assert.doesNotMatch(renderEmail("data_issue_update", { status: "corrected" }, { appUrl }).text, / in /, "no workspace name, no clause");
+});
+
+test("a review assignment or mention email says which happened in words and carries no item, name or comment text", () => {
+  const expectations: Array<[unknown, string, RegExp]> = [
+    ["assigned", "A review item was assigned to you", /A review item in Growth Workspace was assigned to you\./],
+    ["mentioned", "You were mentioned in a review discussion", /You were mentioned in a discussion on a review item in Growth Workspace\./],
+    ["something_else", "Activity on a review item", /new activity on a review item in Growth Workspace that involves you\./],
+    [undefined, "Activity on a review item", /new activity on a review item/],
+  ];
+  for (const [event, subject, line] of expectations) {
+    const email = renderEmail("review_discussion", {
+      event, subjectId: "obs-4", company: "Northstar Health", fundName: "Secret Fund", comment: "The revenue number is wrong", actor: "priya@example.test", mentionedBy: "priya",
+    }, { appUrl, workspaceName: "Growth Workspace" });
+    assert.equal(email.subject, subject);
+    assert.match(email.text, line);
+    assert.match(email.text, /Open Data review: https:\/\/app\.corvis\.test\/#\/review/, "links to Data review, where normal authorization applies");
+    assert.ok(email.text.includes(settingsUrl(appUrl)) && email.html.includes("Change notification settings"), "optional, so it links to settings");
+    for (const secret of ["obs-4", "Northstar Health", "Secret Fund", "The revenue number is wrong", "priya"]) {
+      assert.ok(!email.text.includes(secret) && !email.html.includes(secret) && !email.subject.includes(secret), `${secret} must never be emailed`);
+    }
+  }
+  assert.doesNotMatch(renderEmail("review_discussion", { event: "assigned" }, { appUrl }).text, / in /, "no workspace name, no clause");
+  assert.match(renderEmail("digest", { items: [{ category: "review_discussion", count: 2 }] }, { appUrl }).text, /• Review assignments and mentions \(2\)/);
 });
