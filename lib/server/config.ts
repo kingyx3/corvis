@@ -159,9 +159,12 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
+    // The required-configuration guard above establishes this invariant before
+    // the production transport check; keep the runtime branch aligned with it.
+    const productionDatabaseDsn = config.databaseDsn as string;
     // Production mutations require a native PostgreSQL connection. The HTTPS
     // compatibility transport cannot guarantee transaction atomicity.
-    if (!/^postgres(?:ql)?:\/\//i.test(config.databaseDsn ?? "")) {
+    if (!/^postgres(?:ql)?:\/\//i.test(productionDatabaseDsn)) {
       throw new Error("CORVIS_DATABASE_DSN must be a native postgres:// or postgresql:// URL in production");
     }
   }
