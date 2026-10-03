@@ -310,7 +310,7 @@ test("revoking reports how many credentials were cut off; disabling passes the r
 test("service-account actions are part of what an Organization Admin sees in the tenant access audit, and of the access-audit file of a full export", async () => {
   const { TENANT_ACCESS_AUDIT_FILTER } = await import("./tenant-admin-self-service.ts");
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /action like 'service_account\.%'/);
-  assert.match(TENANT_ACCESS_AUDIT_FILTER, /'service_account'\)/);
+  assert.match(TENANT_ACCESS_AUDIT_FILTER, /'service_account'[,)]/);
   // Every action the service writes is under that prefix and target type.
   for (const action of ["created", "credential_issued", "credential_rotated", "credential_revoked", "disabled"]) {
     const event = serviceAccountAuditEvent(identity(), "c", `service_account.${action}`, { serviceAccountId: ACCOUNT, workspaceId: WORKSPACE });
