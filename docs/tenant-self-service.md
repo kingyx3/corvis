@@ -28,3 +28,34 @@ The same page (`/access-self-service`) now shows, for Organization Admins only:
 - **Full data export**: an Organization Admin states why the export is needed; a *different* Organization Admin approves (or rejects with a reason) before anything is built, and the requester can withdraw it until the build starts. When built, the export is a checksummed archive (published data, the access audit trail and a source-document inventory) behind a single-use, ten-minute download link. Only data the organization may redistribute under its contracts is included, and the manifest says how many funds and documents were left out. Source document files are not part of the export yet. Every step is audited and appears in the access audit trail.
 
 Demo mode serves both from in-memory stores (a colleague's pending request is seeded so the approval flow can be exercised; the archive is built at the moment of approval from the demo catalog). Contract: `API_CONVENTIONS.md`, "Data retention and full data export (F10)".
+
+## Sign-in and session policy (F7)
+
+The same page now has a **Sign-in and session policy** section for Organization Admins (story F7, #263), shipped in slices. What is in place:
+
+- **Read-only identity view**: the configured identity provider (issuer), SCIM status (enabled, default workspace and role, active users) and how many users sign in by each method. Initial identity-provider and SCIM setup stays Corvis-assisted (#78), so nothing here can change it.
+- **Session limits**: an idle timeout (15 minutes to 8 hours) and a maximum session length (1 hour to 7 days), each optional, within bounds Corvis defines and enforces in SQL. A session past a limit ends and the person signs in again at the identity provider.
+- **Sign out everywhere** for a named person: ends every session Corvis has seen for them, effective on their next request. They keep their access and can sign in again; removing access remains the separate deactivate action.
+- Every change is audited in the tenant access audit and every Organization Admin is sent a mandatory security notice by email. Demo mode serves the same section from an in-memory store (the people and their sessions are a fixed illustration, and nothing is enforced on demo requests because demo mode has no real sessions).
+
+Contract and enforcement: `API_CONVENTIONS.md`, "Sign-in and session policy (F7)"; storage and SQL rules: `DATA_PLATFORM.md`, "Organization session policy (migration 087)".
+
+### Assumptions this slice makes (decisions for Corvis)
+
+These are the most conservative readings of an ambiguous story, not settled product decisions:
+
+1. **A session is the identity provider's `sid` (or `jti`).** Idle time and length are measured by Corvis, from when it *first sees* the session and when it last saw a request, not from when the person signed in at the identity provider. A session Corvis has never seen cannot be listed or signed out. If the identity provider sends neither `sid` nor `jti` the verifier synthesises a per-token id that cannot be measured, so **while any limit is set those sessions are refused** (fail closed). Turn a limit on only for tenants whose identity provider issues a stable session id.
+2. **An expired session is dead for good.** A session past a limit is never refreshed, so it stays refused until the policy is relaxed; the person must sign in again and the identity provider must issue a *new* `sid`. If the identity provider silently re-authenticates and reuses the same `sid`, the person stays locked out until their identity-provider session ends.
+3. **"Sign out everywhere" ends sessions Corvis has seen, in Corvis only.** It does not call the identity provider, so the person's identity-provider session stays signed in (and they can sign straight back in). A session that has not yet made any request to Corvis cannot be revoked.
+4. **No tenant lock-out.** A policy change never revokes anything by itself and its minimum values (15 minutes idle, 1 hour total) cannot lock an administrator out for longer than one sign-in; sign-out-everywhere refuses the caller themself; and a limit cannot be saved from a session that cannot be measured (`409 session_not_measurable`), which is the case that would otherwise refuse every session of the organization, the admin's own included. Clearing the limits is always allowed. Administrators are not exempt from the limits.
+5. **Single, global identity provider.** Corvis verifies tokens from one configured issuer for every tenant; there is no per-tenant identity provider record, so the view shows that issuer and the sign-in methods actually in use.
+6. **Queued work is exempt from the idle and length limits.** An export or schedule a person started is re-authorized in the background without applying (or extending) their session limits, but it is still cancelled by sign-out-everywhere.
+
+### Not yet built (follow-ups)
+
+- **Require SSO** (acceptance criterion 2): there is no non-SSO sign-in path inside Corvis to block (sign-in happens at the identity provider, and Corvis receives no claim saying how the person authenticated), so a setting would have nothing to enforce. It needs a decision on the signal (an `amr`/`idp` claim, a per-tenant provider binding, or provider-side enforcement).
+- **IdP-enforced MFA display** (criterion 2): Corvis has no MFA signal from the identity provider today.
+- **Verified email domains** (criterion 1): there is no domain record or verification flow yet.
+- **Provider-side session revocation** and a session-expiry experience for the person whose session ended (#237).
+- **Housekeeping** of old `tenant_session_activity` rows.
+

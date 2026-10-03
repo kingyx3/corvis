@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository } from "./authorization.ts";
+import { membershipAuthorizationRepository, PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository, sessionRevocationRepository } from "./authorization.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
@@ -322,4 +322,12 @@ test("service identities and background re-authorization are not subject to the 
   assert.ok(await new PostgresMembershipAuthorizationRepository(background).resolve(principal, { applySessionPolicy: false }));
   assert.equal(background.enforceCalls.length, 0, "a queued export neither ends nor extends the person's session");
   assert.equal(await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve(principal, { applySessionPolicy: true }), null);
+});
+
+test("a demo identity never resolves an authoritative context, and the shared repositories are created once per process", async () => {
+  const db = new FakeDb(memberRows);
+  assert.equal(await new PostgresMembershipAuthorizationRepository(db).resolve({ ...principal, authMethod: "demo" }), null);
+  assert.equal(db.enforceCalls.length, 0, "nothing is recorded for a demo session");
+  assert.equal(membershipAuthorizationRepository("https://fake-postgres.test/sql"), membershipAuthorizationRepository());
+  assert.equal(sessionRevocationRepository("https://fake-postgres.test/sql"), sessionRevocationRepository());
 });

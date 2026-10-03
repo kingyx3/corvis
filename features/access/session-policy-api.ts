@@ -27,6 +27,7 @@ export function sessionPolicyErrorMessage(reason: unknown, fallback: string): st
     session_policy_out_of_bounds: "That value is outside the limits Corvis allows.",
     invalid_reason: "Say why you are making this change, in 3 to 1,000 characters.",
     session_policy_version_conflict: "Another Organization Admin changed this policy while you were editing. The latest values are shown; review them and try again.",
+    session_not_measurable: "Your identity provider does not send a stable session id, so session limits cannot be applied: every session would be refused. Ask Corvis support to enable session ids for your sign-in.",
     cannot_sign_out_current_user: "You cannot sign yourself out here. Sign out from your own session instead.",
     member_not_found: "This person is no longer an active member of your organization.",
   };

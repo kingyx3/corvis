@@ -19,10 +19,8 @@ test("a policy change states both limits, the version it is based on and why", (
   assert.equal(parseSessionPolicyUpdate({ ...valid, reason: "  padded reason  " }).reason, "padded reason");
   assert.equal(code(() => parseSessionPolicyUpdate(null)), "invalid_request");
   assert.equal(code(() => parseSessionPolicyUpdate([])), "invalid_request");
-  const { idleTimeoutMinutes: _idle, ...withoutIdle } = valid;
-  assert.equal(code(() => parseSessionPolicyUpdate(withoutIdle)), "invalid_request", "a missing limit is not guessed to mean keep or clear");
-  const { maxSessionMinutes: _max, ...withoutMax } = valid;
-  assert.equal(code(() => parseSessionPolicyUpdate(withoutMax)), "invalid_request");
+  assert.equal(code(() => parseSessionPolicyUpdate({ maxSessionMinutes: 480, expectedVersion: 0, reason: valid.reason })), "invalid_request", "a missing limit is not guessed to mean keep or clear");
+  assert.equal(code(() => parseSessionPolicyUpdate({ idleTimeoutMinutes: 30, expectedVersion: 0, reason: valid.reason })), "invalid_request");
 });
 
 test("a limit can be cleared with null but never set outside the Corvis bounds", () => {

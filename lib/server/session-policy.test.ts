@@ -219,6 +219,23 @@ test("a policy change and a sign-out are each audited once, with who, why and th
   });
 });
 
+test("a limit cannot be saved from a session that cannot be measured, because it would lock the whole organization out", async () => {
+  await withAuditCapture(async (events) => {
+    const service = createSessionPolicyService(new DemoSessionPolicyStore());
+    const unmeasurable = identity({ tenantId: "tenant-lockout", authMethod: "demo", sessionId: "token-0123abcd" });
+    await assert.rejects(() => service.update(unmeasurable, update, "c"), refusal("session_not_measurable", 409));
+    await assert.rejects(() => service.update(unmeasurable, { ...update, maxSessionMinutes: null }, "c"), refusal("session_not_measurable", 409));
+    await assert.rejects(() => service.update(unmeasurable, { ...update, idleTimeoutMinutes: null }, "c"), refusal("session_not_measurable", 409));
+    assert.equal((await service.view(unmeasurable)).policy.version, 0, "nothing was saved");
+    assert.equal(events.length, 0);
+    // Clearing every limit is always allowed, and a measurable session may set limits.
+    const cleared = await service.update(unmeasurable, { ...update, idleTimeoutMinutes: null, maxSessionMinutes: null }, "c");
+    assert.equal(cleared.version, 0, "nothing to clear: no change");
+    assert.equal((await service.update(identity({ tenantId: "tenant-lockout" }), update, "c")).version, 1);
+    assert.equal((await service.update(unmeasurable, { ...update, idleTimeoutMinutes: null, maxSessionMinutes: null, expectedVersion: 1 }, "c")).version, 2, "an admin on an unmeasurable session can still remove limits");
+  });
+});
+
 // ------------------------------------------------------------------ the demo store follows the Postgres rules
 test("the demo store refuses a stale version, the same values change nothing and tenants are isolated", async () => {
   const store = new DemoSessionPolicyStore();

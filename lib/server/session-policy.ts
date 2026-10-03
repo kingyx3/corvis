@@ -47,6 +47,9 @@ export interface SessionPolicyService {
   signOut(identity: RequestIdentity, command: SignOutEverywhereCommand, correlationId: string): Promise<SignOutEverywhereResult>;
 }
 
+/** The session id the OIDC verifier synthesises from the token when the identity provider sends neither `sid` nor `jti`. */
+const UNSTABLE_SESSION_PREFIX = "token-";
+
 export const SESSION_POLICY_BOUNDS = {
   idleTimeoutMinutes: SESSION_IDLE_TIMEOUT_BOUNDS,
   maxSessionMinutes: SESSION_MAX_LENGTH_BOUNDS,
@@ -71,6 +74,13 @@ export function createSessionPolicyService(backend: SessionPolicyBackend): Sessi
     },
     async update(identity, command, correlationId) {
       assertOrganizationAdmin(identity);
+      // Lock-out safeguard. A limit cannot be measured on a session whose id is not stable (the verifier's `token-<hash>`
+      // fallback), and such sessions are refused while a limit is set. If the caller's own session is one, every
+      // session of the organization probably is: saving would lock the whole organization out, including the admin who
+      // would need to undo it. Clearing both limits is always allowed.
+      if ((command.idleTimeoutMinutes !== null || command.maxSessionMinutes !== null) && identity.sessionId.startsWith(UNSTABLE_SESSION_PREFIX)) {
+        throw new DataGovernanceError("session_not_measurable", 409);
+      }
       const change = await runAuditedMutation({
         demoMode: backend.demo,
         mutate: (db) => backend.update(identity, command, db),
