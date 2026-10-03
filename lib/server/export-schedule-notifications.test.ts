@@ -12,12 +12,12 @@ type Statement = { sql: string; parameters: PostgresPrimitive[] };
 class Store implements PostgresSqlApi {
   readonly queries: Statement[] = [];
   readonly executed: Statement[] = [];
-  run: PostgresRow[] = [{ run_id: RUN }];
+  run: PostgresRow[] = [{ run_id: RUN, notify_on_completion: true }];
   failOn: string | undefined;
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.queries.push({ sql, parameters });
     if (this.failOn && sql.includes(this.failOn)) throw new Error("postgres_unavailable");
-    return sql.includes("export_schedule_run where") ? this.run : [];
+    return sql.includes("select r.run_id,s.notify_on_completion") ? this.run : [];
   }
   async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
     this.executed.push({ sql, parameters });
@@ -99,8 +99,33 @@ test("a completed scheduled export emits the completion event and no failure ema
 test("a fault while looking the run up is contained", async (t) => {
   const lines = muteErrors(t);
   const store = new Store();
-  store.failOn = "export_schedule_run where";
+  store.failOn = "export_schedule_run r";
   await notifyScheduledExportOutcome(store, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" });
   assert.equal(lines.length, 1);
   assert.match(lines[0]!, new RegExp(`export_schedule_export:${EXPORT}:complete`));
+});
+
+test("the answer says whether the owner's ready email is still wanted: yes unless an opted-out schedule requested the export, and a fault leaves it on", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "error", (line: unknown) => { lines.push(String(line)); });
+  const none = new Store();
+  none.run = [];
+  assert.deepEqual(await notifyScheduledExportOutcome(none, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" }), { ownerEmails: true }, "no schedule, no switch");
+  const on = new Store();
+  assert.deepEqual(await notifyScheduledExportOutcome(on, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" }), { ownerEmails: true });
+  const off = new Store();
+  off.run = [{ run_id: RUN, notify_on_completion: false }];
+  assert.deepEqual(await notifyScheduledExportOutcome(off, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" }), { ownerEmails: false });
+  assert.equal(off.queries.some((statement) => statement.sql.includes("emit_export_schedule_run_event")), true, "the event does not depend on the switch");
+  const textual = new Store();
+  textual.run = [{ run_id: RUN, notify_on_completion: "true" }];
+  assert.deepEqual(await notifyScheduledExportOutcome(textual, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" }), { ownerEmails: true }, "a driver that returns booleans as text is understood");
+  const broken = new Store();
+  broken.failOn = "select r.run_id,s.notify_on_completion";
+  assert.deepEqual(await notifyScheduledExportOutcome(broken, { tenantId: TENANT, exportId: EXPORT, outcome: "complete" }), { ownerEmails: true });
+  assert.equal(lines.length, 1);
+  const failedOff = new Store();
+  failedOff.run = [{ run_id: RUN, notify_on_completion: false }];
+  await notifyScheduledExportOutcome(failedOff, { tenantId: TENANT, exportId: EXPORT, outcome: "failed" });
+  assert.deepEqual(failedOff.executed.map((statement) => statement.parameters), [[TENANT, RUN, "export_failed"]], "the failure email is itself gated in SQL by the switch, so it is queued here and skipped there");
 });

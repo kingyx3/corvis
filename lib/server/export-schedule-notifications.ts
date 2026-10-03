@@ -44,16 +44,26 @@ export async function notifyScheduledRunFailed(
 
 /**
  * The governed export behind a scheduled run reached a final state. Does nothing for an export no schedule requested, so
- * the export worker can call it for every export. `complete` emits the completion event (the owner's `export_ready` email
- * is the existing one, see `enqueueExportReady`); `failed` is a failure like a refusal, with the reason `export_failed`.
- * Best effort end to end, the lookup included: it never throws into the export worker.
+ * the export worker can call it for every export. `complete` emits the completion event; `failed` is a failure like a
+ * refusal, with the reason `export_failed`. Best effort end to end, the lookup included: it never throws into the export
+ * worker. Answers whether the requester's ordinary `export_ready` email should still be queued: always, except for an
+ * export that an opted-out schedule requested (the owner's switch, see `notify_on_completion`); a fault in the lookup
+ * leaves the email on, as it was before schedules had a switch.
  */
-export async function notifyScheduledExportOutcome(db: PostgresSqlApi, input: { tenantId: string; exportId: string; outcome: "complete" | "failed" }): Promise<void> {
+export async function notifyScheduledExportOutcome(
+  db: PostgresSqlApi,
+  input: { tenantId: string; exportId: string; outcome: "complete" | "failed" },
+): Promise<{ ownerEmails: boolean }> {
+  let ownerEmails = true;
   await bestEffortNotification(db, `export_schedule_export:${input.exportId}:${input.outcome}`, async () => {
-    const run = (await db.query(`select run_id from corvis_control.export_schedule_run where tenant_id=$1::uuid and export_id=$2::uuid`, [input.tenantId, input.exportId]))[0];
+    const run = (await db.query(`select r.run_id,s.notify_on_completion from corvis_control.export_schedule_run r
+      join corvis_control.export_schedule s on s.tenant_id=r.tenant_id and s.schedule_id=r.schedule_id
+      where r.tenant_id=$1::uuid and r.export_id=$2::uuid`, [input.tenantId, input.exportId]))[0];
     if (!run) return;
+    ownerEmails = run.notify_on_completion === true || run.notify_on_completion === "true";
     const runId = String(run.run_id);
     if (input.outcome === "failed") await notifyScheduledRunFailed(db, { tenantId: input.tenantId, runId, reason: "export_failed" });
     else await db.query(`select corvis_control.emit_export_schedule_run_event($1::uuid,$2::uuid,'completed')`, [input.tenantId, runId]);
   });
+  return { ownerEmails };
 }

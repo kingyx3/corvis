@@ -24,13 +24,15 @@ class ExportCompletionStore implements PostgresSqlApi {
   completedResult: PostgresRow[] = [{ completed_at: "2026-09-01T00:00:05.000Z" }];
   /** The scheduled run (F4b) that requested the export, when a schedule did. */
   scheduledRun: string | undefined;
+  /** The scheduled run's owner switch (F4b): whether the requester is still emailed when the export is ready. */
+  scheduleEmails = true;
   /** What the stale-lease reclaim returns. */
   reclaimed: PostgresRow[] = [];
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.statements.push({ sql, parameters });
     if (sql.includes("returning tenant_id,export_id,state")) return this.reclaimed;
-    if (sql.includes("from corvis_control.export_schedule_run where")) return this.scheduledRun ? [{ run_id: this.scheduledRun }] : [];
+    if (sql.includes("select r.run_id,s.notify_on_completion")) return this.scheduledRun ? [{ run_id: this.scheduledRun, notify_on_completion: this.scheduleEmails }] : [];
     if (sql.includes("select tenant_id,export_id")) return this.dueRows;
     if (sql.includes("returning delivery_attempts")) return this.claimResult ?? [{ delivery_attempts: Number(parameters[2]) + 1 }];
     if (sql.includes("from corvis_control.identity_subject s")) {
@@ -265,7 +267,7 @@ test("an export no schedule requested is looked up once and announces nothing be
   const store = new ExportCompletionStore();
   store.dueRows = [dueExport()];
   await processQueuedExports(5, store, () => 0.5, objectStore());
-  assert.equal(store.statements.filter((statement) => statement.sql.includes("from corvis_control.export_schedule_run where")).length, 1);
+  assert.equal(store.statements.filter((statement) => statement.sql.includes("select r.run_id,s.notify_on_completion")).length, 1);
   assert.deepEqual(store.scheduleEvents(), []);
 });
 
@@ -275,7 +277,7 @@ test("a completed export that a schedule requested ends its run with one complet
   store.dueRows = [dueExport()];
   store.scheduledRun = RUN;
   assert.deepEqual(await processQueuedExports(5, store, () => 0.5, objectStore()), { processed: 1, failed: 0 });
-  const lookup = store.find("from corvis_control.export_schedule_run where")!;
+  const lookup = store.find("select r.run_id,s.notify_on_completion")!;
   assert.deepEqual(lookup.parameters, [TENANT, EXPORT], "found by the export, within the tenant");
   const events = store.scheduleEvents();
   assert.equal(events.length, 1);
@@ -313,7 +315,7 @@ test("an export that a schedule requested and that ran out of attempts ends its 
   await processQueuedExports(5, retry, () => 0.5, objectStore());
   assert.equal(retry.find("set state=$1")!.parameters[0], "retryable");
   assert.deepEqual(retry.scheduleEvents(), []);
-  assert.equal(retry.statements.some((statement) => statement.sql.includes("from corvis_control.export_schedule_run where")), false);
+  assert.equal(retry.statements.some((statement) => statement.sql.includes("select r.run_id,s.notify_on_completion")), false);
 });
 
 test("a stale export lease that runs out of attempts is final and announced, while one that will be retried is not", async () => {
@@ -321,7 +323,30 @@ test("a stale export lease that runs out of attempts is final and announced, whi
   store.scheduledRun = RUN;
   store.reclaimed = [{ tenant_id: TENANT, export_id: EXPORT, state: "failed" }, { tenant_id: TENANT, export_id: "00000000-0000-4000-8000-0000000000b2", state: "retryable" }];
   assert.equal(await reclaimStaleExportDeliveries(store), 2);
-  const lookups = store.statements.filter((statement) => statement.sql.includes("from corvis_control.export_schedule_run where"));
+  const lookups = store.statements.filter((statement) => statement.sql.includes("select r.run_id,s.notify_on_completion"));
   assert.deepEqual(lookups.map((statement) => statement.parameters), [[TENANT, EXPORT]]);
   assert.deepEqual(store.scheduleEvents().map((statement) => statement.parameters), [[TENANT, RUN, "export_failed"]]);
+});
+
+test("a scheduled export whose owner switched emails off still announces its completion but sends no ready email, and any other export always does", async (t) => {
+  captureMetrics(t);
+  const quiet = new ExportCompletionStore();
+  quiet.dueRows = [dueExport()];
+  quiet.scheduledRun = RUN;
+  quiet.scheduleEmails = false;
+  assert.deepEqual(await processQueuedExports(5, quiet, () => 0.5, objectStore()), { processed: 1, failed: 0 });
+  assert.deepEqual(quiet.notificationInserts(), [], "switched off for this schedule: the owner is not emailed");
+  assert.equal(quiet.scheduleEvents().length, 1, "webhook subscribers are told whatever the owner's email switch");
+
+  const loud = new ExportCompletionStore();
+  loud.dueRows = [dueExport()];
+  loud.scheduledRun = RUN;
+  await processQueuedExports(5, loud, () => 0.5, objectStore());
+  assert.equal(loud.notificationInserts().length, 1, "switched on: the owner is emailed as for any export");
+
+  const interactive = new ExportCompletionStore();
+  interactive.dueRows = [dueExport()];
+  interactive.scheduleEmails = false;
+  await processQueuedExports(5, interactive, () => 0.5, objectStore());
+  assert.equal(interactive.notificationInserts().length, 1, "an export no schedule requested has no switch");
 });

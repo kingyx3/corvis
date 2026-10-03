@@ -145,14 +145,15 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         durationValueMetric("delivery.export",completedAt-startedAt,context,{format:String(row.format)});
       }
       countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
-      if(completed[0]) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
+      // A scheduled run behind this export ends in a completion event for webhook subscribers, and its owner's ready email
+      // follows that schedule's switch (F4b); any other export is a no-op here and always emails its requester.
+      const scheduled=completed[0]?await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"complete"}):{ownerEmails:false};
+      if(completed[0]&&scheduled.ownerEmails) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
         // deliverExportArtifact only resolves after required() has rejected a null or blank workspace_id,
         // auth_method and requested_by, so none of them can be absent here.
         tenantId,exportId,workspaceId:String(row.workspace_id),
         authMethod:String(row.auth_method),subject:String(row.requested_by),format:String(row.format),
       }));
-      // A scheduled run behind this export ends in a completion event (F4b); anything else is a no-op.
-      if(completed[0]) await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"complete"});
       // Objects written by earlier (failed or abandoned) attempts are no longer referenced.
       if(attempt>1&&completed[0]) await deleteExportAttemptArtifacts(row,Array.from({length:attempt-1},(_,i)=>i+1),objectStore).catch(()=>undefined);
       processed++;
