@@ -39,15 +39,17 @@ test("default fetch binding and empty provider payload normalize safely", async 
   }
 });
 
-test("non-array provider rows normalize to an empty result", async () => {
-  const db = new PostgresHttpSqlApi({
-    dsn: "https://postgres.example.test/sql",
-    fetchImpl: (async () => new Response(JSON.stringify({ rows: null }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    })) as typeof fetch,
-  });
-  assert.deepEqual(await db.query("select 1"), []);
+test("non-array or null provider rows normalize to an empty result", async () => {
+  for (const payload of [null, { rows: null }]) {
+    const db = new PostgresHttpSqlApi({
+      dsn: "https://postgres.example.test/sql",
+      fetchImpl: (async () => new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+    });
+    assert.deepEqual(await db.query("select 1"), []);
+  }
 });
 
 test("provider errors fail locally without retries", async () => {
