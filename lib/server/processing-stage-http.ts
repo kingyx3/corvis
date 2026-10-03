@@ -8,10 +8,16 @@
 
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 
+/** Hard limit enforced by `BoundedProcessingStageEffectRouter` (its default). */
 export const STAGE_ROUTER_TIMEOUT_MS = 30_000;
+/** Stage-wide budget: every provider/metadata/GCS call in one stage shares it. */
 export const STAGE_EXECUTION_BUDGET_MS = 27_000;
+/** Extraction-only stage budget; the router allows 540s and the worker's Cloud Run deadline is 600s. */
 export const EXTRACTION_STAGE_EXECUTION_BUDGET_MS = 510_000;
-export const MAX_PROVIDER_TIMEOUT_MS = 480_000;
+/** Ceiling for a configured provider timeout: identity token (5s) + provider must fit the stage budget. */
+export const MAX_PROVIDER_TIMEOUT_MS = 20_000;
+/** Ceiling for the extraction provider timeout only; must fit EXTRACTION_STAGE_EXECUTION_BUDGET_MS. */
+export const MAX_EXTRACTION_PROVIDER_TIMEOUT_MS = 480_000;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000;
 export const METADATA_TIMEOUT_MS = 5_000;
 

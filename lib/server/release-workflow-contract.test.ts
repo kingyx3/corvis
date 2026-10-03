@@ -129,9 +129,9 @@ test("deployment docs keep the release set derived and known-good state acceptan
   const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
   const deployment = await read("docs/DEPLOYMENT.md");
 
-  assert.match(environments, /`api_image` is not a human-managed github environment variable/);
+  assert.match(environments, /`api_image`, `extractor_image`, and `litellm_image` are not human-managed github environment variables/);
   assert.match(environments, /remove or avoid creating/);
-  assert.match(environments, /runtime api\/worker image/);
+  assert.match(environments, /derives runtime images from a reviewed `main` release/);
   assert.match(deployment, /a built image set is not known-good until live acceptance passes/);
   assert.match(deployment, /only a fully successful acceptance run writes/);
   assert.match(deployment, /known-good\.json/);

@@ -34,7 +34,7 @@ test("cross-project copy reconciles reader-only trust and verifies physical dige
   assert.match(workflow, /roles\/artifactregistry\.reader/);
   assert.doesNotMatch(workflow, /roles\/artifactregistry\.(?:writer|repoadmin)/i);
   assert.match(workflow, /gcrane_version:\s*v0\.22\.1/);
-  assert.match(workflow, /checksums\.txt/);
+  assert.match(workflow, /gosumdb=sum\.golang\.org/);
   assert.match(workflow, /gcrane cp/);
   assert.match(workflow, /source_digest=.*gcrane digest/);
   assert.match(workflow, /target_digest=.*gcrane digest/);
