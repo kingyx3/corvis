@@ -81,10 +81,10 @@ type TokenResponse = { access_token?: string; expires_in?: number };
 export const SECRET_MANAGER_REQUEST_TIMEOUT_MS = 20_000;
 const METADATA_TOKEN_TIMEOUT_MS = 5_000;
 
+/** The secret id inside a reference built by `sourceConnectorSecretReference`, which always carries the `/secrets/` segment. */
 function secretIdFromReference(reference: string): string {
   const marker = "/secrets/";
-  const index = reference.indexOf(marker);
-  return index === -1 ? reference : reference.slice(index + marker.length);
+  return reference.slice(reference.indexOf(marker) + marker.length);
 }
 
 /**
@@ -203,17 +203,14 @@ let secretStoreSingleton: SecretStore | undefined;
  * project id fails closed instead of silently keeping customer credentials
  * in memory only -- see `InMemorySourceConnectorSecretStore`'s doc comment.
  */
+export function selectSourceConnectorSecretStore(projectId: string | undefined, environment: string): SecretStore {
+  if (projectId) return new GcpSecretManagerSecretStore(projectId);
+  if (environment === "production") throw new Error("CORVIS_GCP_PROJECT_ID is required to select a source-connector SecretStore in production");
+  return new InMemorySourceConnectorSecretStore();
+}
+
 export function sourceConnectorSecretStore(): SecretStore {
-  if (!secretStoreSingleton) {
-    const projectId = process.env.CORVIS_GCP_PROJECT_ID?.trim();
-    if (projectId) {
-      secretStoreSingleton = new GcpSecretManagerSecretStore(projectId);
-    } else if (getServerConfig().environment === "production") {
-      throw new Error("CORVIS_GCP_PROJECT_ID is required to select a source-connector SecretStore in production");
-    } else {
-      secretStoreSingleton = new InMemorySourceConnectorSecretStore();
-    }
-  }
+  if (!secretStoreSingleton) secretStoreSingleton = selectSourceConnectorSecretStore(process.env.CORVIS_GCP_PROJECT_ID?.trim(), getServerConfig().environment);
   return secretStoreSingleton;
 }
 

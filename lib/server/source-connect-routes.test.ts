@@ -223,6 +223,11 @@ test("a driver that throws is reported as a failed test, not a failed connect, a
   const { data } = JSON.parse(text) as Connected;
   assert.deepEqual(data.test, { ok: false, errorClass: "network" });
   assert.equal(data.connection.status, "pending_authorization");
+
+  // Something that is not an Error at all (a rejected string) is handled the same way.
+  nextTest = () => Promise.reject(SECRET_TOKEN);
+  const odd = await (await connect({ connectionLabel: "Odd rejection" })).json() as Connected;
+  assert.deepEqual(odd.data.test, { ok: false, errorClass: "network" });
 });
 
 test("a test run on demand returns only pass/fail and a class, and activates a pending connection once it passes", async () => {

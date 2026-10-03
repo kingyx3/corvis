@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   GcpSecretManagerSecretStore,
   SECRET_MANAGER_REQUEST_TIMEOUT_MS,
+  selectSourceConnectorSecretStore,
   sourceConnectorSecretReference,
 } from "./source-connector-runtime.ts";
 
@@ -90,6 +91,55 @@ test("a short-lived secret (a pending OAuth attempt) is created with a TTL so Se
   assert.deepEqual(JSON.parse(createCall!.body!), { replication: { automatic: {} }, ttl: "600s" });
 });
 
+test("construction needs a project id, and the workload-identity token must be obtainable", async () => {
+  assert.throws(() => new GcpSecretManagerSecretStore("  "), /requires a project id/);
+  const reference = sourceConnectorSecretReference(TENANT, "google_drive", 1, PROJECT_ID);
+  const failing = (response: Response) => new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl: (async () => response.clone()) as typeof fetch });
+  await assert.rejects(failing(new Response(null, { status: 503 })).read(reference), /token request failed \(503\)/);
+  await assert.rejects(failing(jsonResponse({})).read(reference), /did not return an access token/);
+});
+
+test("a token without an expiry is cached for five minutes by default", async () => {
+  let metadataCalls = 0;
+  const fetchImpl = (async (input: string | URL | Request) => {
+    if (isMetadataServer(String(input))) { metadataCalls += 1; return jsonResponse({ access_token: "workload-token" }); }
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  const store = new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl });
+  const reference = sourceConnectorSecretReference(TENANT, "google_drive", 1, PROJECT_ID);
+  await assert.rejects(store.read(reference), /secret_reference_not_found/);
+  await assert.rejects(store.read(reference), /secret_reference_not_found/);
+  assert.equal(metadataCalls, 1);
+});
+
+test("read reports a missing, refused, empty or corrupt secret without carrying its bytes", async () => {
+  const reference = sourceConnectorSecretReference(TENANT, "google_drive", 1, PROJECT_ID);
+  const readWith = (response: () => Response | undefined) => new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl: fakeSecretManager({ onAccess: response }).fetchImpl }).read(reference);
+  await assert.rejects(readWith(() => new Response(null, { status: 404 })), /^Error: secret_reference_not_found$/);
+  await assert.rejects(readWith(() => new Response(null, { status: 500 })), /secret access failed \(500\)/);
+  await assert.rejects(readWith(() => jsonResponse({ payload: {} })), /returned no payload/);
+  await assert.rejects(readWith(() => jsonResponse({})), /returned no payload/);
+  const corrupt = Buffer.from("not json at all: SECRET-BYTES").toString("base64");
+  await assert.rejects(readWith(() => jsonResponse({ payload: { data: corrupt } })), (error: unknown) => error instanceof Error && /was not valid JSON/.test(error.message) && !error.message.includes("SECRET-BYTES"));
+});
+
+test("revoke surfaces a refused deletion instead of pretending the credential is gone", async () => {
+  const reference = sourceConnectorSecretReference(TENANT, "google_drive", 1, PROJECT_ID);
+  const store = new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl: fakeSecretManager({ onDelete: () => new Response(null, { status: 403 }) }).fetchImpl });
+  await assert.rejects(store.revoke(reference), /secret deletion failed \(403\)/);
+});
+
+test("the wired store is Secret Manager when a project is configured, the placeholder otherwise, and fails closed in production", async () => {
+  assert.ok(selectSourceConnectorSecretStore("corvis-uat-98213", "production") instanceof GcpSecretManagerSecretStore);
+  assert.ok(selectSourceConnectorSecretStore("corvis-uat-98213", "development") instanceof GcpSecretManagerSecretStore);
+  const placeholder = selectSourceConnectorSecretStore(undefined, "development");
+  assert.ok(!(placeholder instanceof GcpSecretManagerSecretStore));
+  const reference = await placeholder.write(TENANT, "oauth-attempt", { state: "s" }, { ttlSeconds: 600 });
+  assert.deepEqual(await placeholder.read(reference), { state: "s" });
+  assert.throws(() => selectSourceConnectorSecretStore(undefined, "production"), /CORVIS_GCP_PROJECT_ID is required/);
+  assert.throws(() => selectSourceConnectorSecretStore("", "production"), /CORVIS_GCP_PROJECT_ID is required/);
+});
+
 test("write cleans up the just-created secret when adding the version fails", async () => {
   const { fetchImpl, calls } = fakeSecretManager({
     onAddVersion: () => new Response(null, { status: 500 }),
@@ -104,6 +154,14 @@ test("write cleans up the just-created secret when adding the version fails", as
   assert.ok(createCall);
   // The delete targets the exact secret resource just created, not some other reference.
   assert.ok(deleteCall!.url.includes(createCall!.url.match(/secretId=([^&]+)/)![1]!));
+});
+
+test("a failed clean-up never hides the original write failure", async () => {
+  const { fetchImpl } = fakeSecretManager({
+    onAddVersion: () => new Response(null, { status: 500 }),
+    onDelete: () => new Response(null, { status: 503 }),
+  });
+  await assert.rejects(new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl }).write(TENANT, "google_drive", { token: "t" }), /secret version add failed \(500\)/);
 });
 
 test("revoke deletes the secret and tolerates it already being gone", async () => {
