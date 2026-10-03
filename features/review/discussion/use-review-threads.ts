@@ -21,13 +21,12 @@ export type ReviewThreads = {
  */
 export function useReviewThreads(enabled: boolean): ReviewThreads {
   const [threads, setThreads] = useState<ReadonlyMap<string, ReviewThreadSummary>>(() => new Map());
-  const [state, setState] = useState<{ status: ReviewThreads["status"]; error?: string }>({ status: "idle" });
+  const [state, setState] = useState<{ status: ReviewThreads["status"]; error?: string }>({ status: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    setState({ status: "loading" });
     void listReviewThreads(controller.signal).then((items) => {
       if (controller.signal.aborted) return;
       setThreads(new Map(items.map((item) => [reviewItemKey(item), item])));
@@ -41,6 +40,6 @@ export function useReviewThreads(enabled: boolean): ReviewThreads {
 
   const threadOf = useCallback((ref: ReviewSubjectRef) => threads.get(reviewItemKey(ref)), [threads]);
   const update = useCallback((summary: ReviewThreadSummary) => setThreads((current) => new Map(current).set(reviewItemKey(summary), summary)), []);
-  const reload = useCallback(() => setReloadKey((key) => key + 1), []);
+  const reload = useCallback(() => { setState({ status: "loading" }); setReloadKey((key) => key + 1); }, []);
   return { status: enabled ? state.status : "idle", error: state.error, threadOf, update, reload };
 }

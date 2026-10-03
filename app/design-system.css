@@ -500,6 +500,28 @@
 .schedule-scope dd { overflow-wrap: anywhere; }
 .schedule-form select, .schedule-form input { width: 100%; }
 
+/* Assign and discuss review items (F3). The assignee is always words ("Assigned to you", "Unassigned"), never colour alone; a mention is bold and tinted. */
+.review-discussion { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.review-assignee { font-size: 12px; color: var(--text-muted); }
+.review-assignee[data-assigned="me"] { color: var(--text-strong); font-weight: 650; }
+.review-discussion-dialog { display: grid; gap: 14px; }
+.review-discussion-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.review-discussion-heading h2 { margin: 0; }
+.review-discussion-item { margin: 4px 0 0; color: var(--text-body); overflow-wrap: anywhere; }
+.review-discussion-subheading { margin: 0 0 8px; font-size: 15px; color: var(--text-strong); }
+.review-assign-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.review-assign-form .form-field { flex: 1 1 280px; min-width: 0; }
+.review-comments { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 280px; overflow-y: auto; }
+.review-comment { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-sunken); min-width: 0; }
+.review-comment-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 13px; }
+.review-comment-head time { color: var(--text-muted); }
+.review-comment-body { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-body); }
+.review-mention { padding: 0 3px; border-radius: 4px; background: var(--info-bg); color: var(--info); }
+.review-comment-form { display: grid; gap: 8px; }
+.review-comment-form textarea { width: 100%; resize: vertical; }
+.review-mention-picker select { max-width: 100%; }
+.attention-filter { flex: none; }
+
 /* An absolutely positioned visually-hidden header cell inside a scrolling table card used to escape its clipping and widen the whole page on phones. */
 .table-card { position: relative; }
 
