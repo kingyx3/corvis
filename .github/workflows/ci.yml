@@ -433,6 +433,10 @@ jobs:
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
           # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
+          # Service accounts (F6): only an Organization Admin acts, never an administrator role for a machine, hashed credentials with a rotation overlap and immediate revocation, deactivation everywhere, tenant/RLS. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/service-accounts.sql
+          # The same through the application backend: the account resolves through the existing authorization lookup, the secret is shown once and stored nowhere, credential checks, access review and the tenant access audit. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/service-accounts.mjs
           # Scheduled exports (F4): idempotent per owner, calendar and publication triggers claimed once, owner-only changes, automatic stop for deactivated owners, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/export-schedules.sql
           # Scheduled exports through the application worker: owner re-authorization against real membership/entitlements/data rights, the governed export job, fail-closed refusals, audit, history label. Rolled back.

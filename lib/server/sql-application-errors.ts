@@ -132,7 +132,7 @@ export const SQL_APPLICATION_ERRORS = [
   "service account is not active",
   "service account already has a credential",
   "service account has no active credential",
-  "service account reason required",
+  "service account justification required",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -261,7 +261,7 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account is not active": { code: "service_account_not_active", status: 409 },
   "service account already has a credential": { code: "service_account_credential_exists", status: 409 },
   "service account has no active credential": { code: "service_account_no_active_credential", status: 409 },
-  "service account reason required": { code: "invalid_reason", status: 400 },
+  "service account justification required": { code: "invalid_reason", status: 400 },
 };
 
 /**

@@ -169,7 +169,7 @@ test("service-account refusals classify to stable codes: 400 for what a request 
     "service account is not active": ["service_account_not_active", 409],
     "service account already has a credential": ["service_account_credential_exists", 409],
     "service account has no active credential": ["service_account_no_active_credential", 409],
-    "service account reason required": ["invalid_reason", 400],
+    "service account justification required": ["invalid_reason", 400],
   };
   for (const [message, [code, status]] of Object.entries(expected)) {
     assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);

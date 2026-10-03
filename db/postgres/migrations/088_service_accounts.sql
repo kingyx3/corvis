@@ -422,7 +422,7 @@ begin
     raise exception 'service account requires an active organization admin';
   end if;
   if length(btrim(coalesce(p_reason, ''))) not between 3 and 1000 then
-    raise exception 'service account reason required';
+    raise exception 'service account justification required';
   end if;
   select * into v_account from corvis_control.service_account a
   where a.tenant_id = p_tenant_id and a.service_account_id = p_service_account_id
