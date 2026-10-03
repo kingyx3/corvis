@@ -63,6 +63,27 @@ export const EXPORT_SCHEDULE_FAILURE_REASONS = [
 ] as const;
 export type ExportScheduleFailureReason = (typeof EXPORT_SCHEDULE_FAILURE_REASONS)[number];
 
+/** The webhook events (F4b, #328) a scheduled run ends in, once per run. Customer-facing: see `WEBHOOK_EVENT_TYPES`. */
+export const EXPORT_SCHEDULE_RUN_EVENTS = { completed: "ExportScheduleRunCompleted", failed: "ExportScheduleRunFailed" } as const;
+
+/**
+ * Why a run *failed*: a refusal at the run (any reason above) or `export_failed`, when the run was accepted but its export
+ * could not be delivered. A closed set: it is carried by the webhook event and the owner's email and never holds data.
+ */
+export type ExportScheduleNotifiedReason = ExportScheduleFailureReason | "export_failed";
+
+/**
+ * The payload of both run events: the schedule (its id and the label its owner gave it), the run, the export when one was
+ * requested and, for a failure, the reason code. Deliberately nothing else: no figure, fund, company or person.
+ */
+export type ExportScheduleRunEventPayload = {
+  scheduleId: string;
+  scheduleLabel: string;
+  runId: string;
+  exportId?: string;
+  failureReason?: ExportScheduleNotifiedReason;
+};
+
 export const EXPORT_SCHEDULE_FAILURE_REASON_LABEL: Record<ExportScheduleFailureReason, string> = {
   owner_inactive: "The owner's access had ended.",
   export_permission_revoked: "The owner no longer has permission to create exports.",
@@ -116,6 +137,11 @@ export type ExportSchedule = {
   trigger: ExportScheduleTrigger;
   status: ExportScheduleStatus;
   stopReason: ExportScheduleStopReason | null;
+  /**
+   * F4b: whether the owner is emailed about this schedule's runs (the export ready email when a run completes, and a notice
+   * when a run is refused or its export fails). On unless the owner switched it off. Webhook events do not depend on it.
+   */
+  notifyOnCompletion: boolean;
   /** Only the owner can pause, resume or delete. Organization Admins see every schedule but change none. */
   ownedByMe: boolean;
   owner: string;
@@ -135,7 +161,14 @@ export type CreateExportScheduleCommand = {
   scope: ScheduledExportScope;
   format: ExportFormat;
   trigger: ExportScheduleTrigger;
+  /** Defaults to on when the request does not say. */
+  notifyOnCompletion: boolean;
 };
+
+/** One owner change to a schedule: pause or resume it, or switch its emails on or off. */
+export type ExportSchedulePatch =
+  | { kind: "action"; action: ExportScheduleAction }
+  | { kind: "notification"; notifyOnCompletion: boolean };
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -205,6 +238,7 @@ export function parseCreateScheduleCommand(body: unknown, headerKey?: string | n
   const trigger = EXPORT_SCHEDULE_TRIGGERS.find((candidate) => candidate === body.trigger);
   if (trigger === undefined) throw new ExportScheduleValidationError("invalid_trigger");
   return {
+    notifyOnCompletion: parseNotifyOnCompletion(body.notifyOnCompletion, true),
     idempotencyKey,
     label: requiredLine(body.label, MAX_SCHEDULE_LABEL_LENGTH, "invalid_label"),
     scope: parseExportScheduleScope(body.scope),
@@ -218,6 +252,24 @@ export function parseScheduleAction(body: unknown): ExportScheduleAction {
   const action = EXPORT_SCHEDULE_ACTIONS.find((candidate) => candidate === body.action);
   if (action === undefined) throw new ExportScheduleValidationError("invalid_action");
   return action;
+}
+
+/** The notification switch: a boolean, or `fallback` when it is absent (null is not a boolean). */
+function parseNotifyOnCompletion(value: unknown, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new ExportScheduleValidationError("invalid_notify_on_completion");
+  return value;
+}
+
+/**
+ * The body of `PATCH /export-schedules/{id}`: `{ "action": "pause" | "resume" }` or `{ "notifyOnCompletion": boolean }`,
+ * never both (one change per request, so each is one audit event).
+ */
+export function parseSchedulePatch(body: unknown): ExportSchedulePatch {
+  if (!isRecord(body)) throw new ExportScheduleValidationError("invalid_request");
+  if (body.notifyOnCompletion === undefined) return { kind: "action", action: parseScheduleAction(body) };
+  if (body.action !== undefined) throw new ExportScheduleValidationError("invalid_request");
+  return { kind: "notification", notifyOnCompletion: parseNotifyOnCompletion(body.notifyOnCompletion, true) };
 }
 
 // ---------------------------------------------------------------------------

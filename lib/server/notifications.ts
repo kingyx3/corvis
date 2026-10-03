@@ -200,6 +200,10 @@ export async function enqueueExportReady(db: PostgresSqlApi, input: {
     select s.tenant_id,'export_ready',s.user_id,$4::uuid,null,null,jsonb_build_object('format',$5::text),'export_ready:' || $6::text
     from corvis_control.identity_subject s
     where s.tenant_id=$1::uuid and s.auth_method=$2::text and s.subject=$3::text and s.auth_method in ('oidc','saml')
+      -- A scheduled run's owner may have switched emails off for that schedule (F4b); an interactive export has no run.
+      and not exists (select 1 from corvis_control.export_schedule_run r
+        join corvis_control.export_schedule es on es.tenant_id=r.tenant_id and es.schedule_id=r.schedule_id
+        where r.tenant_id=s.tenant_id and r.export_id=(case when $6::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then $6::text::uuid end) and not es.notify_on_completion)
     limit 1
     on conflict (tenant_id,dedupe_key) do nothing`,
   [input.tenantId, input.authMethod, input.subject, input.workspaceId, input.format, input.exportId]);

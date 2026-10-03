@@ -14,6 +14,7 @@ export type NotificationCategoryId =
   | "source_attention"
   | "data_issue_update"
   | "review_discussion"
+  | "export_schedule_failed"
   | "support_access"
   | "security_policy"
   | "tenant_export_approval"
@@ -44,6 +45,7 @@ export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] 
   { id: "pinned_fund_published", label: "New data for pinned funds", description: "A new reporting period was published for a fund you pinned on your Overview.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "daily_digest" },
   { id: "data_issue_update", label: "Data issue updates", description: "A data issue you reported on a published figure moved to a new status.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "review_discussion", label: "Review assignments and mentions", description: "A review item was assigned to you, or you were mentioned in a discussion on one.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
+  { id: "export_schedule_failed", label: "Scheduled export did not run", description: "A scheduled export you own was refused or could not be delivered. You can also turn this off for one schedule when you create it or under Data delivery.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "source_attention", label: "Source connection needs attention", description: "A source connection in a workspace you administer needs to be reauthorized or was suspended.", mandatory: false, audience: "workspace_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "support_access", label: "Corvis support access", description: "Corvis support was granted access to your organization, or a grant is waiting for your acknowledgement.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "security_policy", label: "Sign-in and session policy changes", description: "An Organization Admin changed your organization's session policy or signed a user out of every session.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
@@ -196,6 +198,23 @@ function tenantExportOutcomeBody(event: unknown, where: string): { subject: stri
   return { subject: "Your Corvis organization export could not be built", line: `The full export of your organization's data${where} that you requested could not be built and nothing was delivered.`, hint: "Make a new request from Access administration, or contact Corvis support if it happens again." };
 }
 
+/**
+ * Says why a scheduled export did not run, from the closed set of reason codes, in words only: never the schedule's name,
+ * the fund, the scope or any figure (those stay in Data delivery, behind normal authorization).
+ */
+function exportScheduleFailedLine(reason: unknown, where: string): string {
+  switch (reason) {
+    case "owner_inactive": return `A scheduled export${where} did not run because your access to it had ended. The schedule was stopped.`;
+    case "export_permission_revoked": return `A scheduled export${where} did not run because you no longer have permission to create exports.`;
+    case "redistribution_not_permitted": return `A scheduled export${where} did not run because your organization's data rights no longer permit redistribution.`;
+    case "scope_not_entitled": return `A scheduled export${where} did not run because you are no longer entitled to the data in its scope.`;
+    case "scope_unavailable": return `A scheduled export${where} did not run because its scope no longer resolves to published data.`;
+    case "format_unavailable": return `A scheduled export${where} did not run because its format is not enabled for your organization.`;
+    case "export_failed": return `A scheduled export${where} was requested but could not be delivered.`;
+    default: return `A scheduled export${where} did not run.`;
+  }
+}
+
 type Body = { subject: string; lines: string[]; action: { label: string; url: string }; optional: boolean };
 
 function body(category: OutboxCategory, params: Record<string, unknown>, context: TemplateContext): Body {
@@ -237,6 +256,13 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
         optional: true,
       };
     }
+    case "export_schedule_failed":
+      return {
+        subject: "A scheduled Corvis export did not run",
+        lines: [exportScheduleFailedLine(params.reason, where), "Open Data delivery to see which schedule it was and why. Nothing was exported."],
+        action: { label: "Open Data delivery", url: home },
+        optional: true,
+      };
     case "source_attention": {
       const reauth = params.status === "reauthorization_required";
       return {

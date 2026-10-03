@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { deleteExportAttemptArtifacts, deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import type { GcsControlClient } from "./gcs.ts";
+import { notifyScheduledExportOutcome } from "./export-schedule-notifications.ts";
 import { bestEffortNotification, enqueueExportReady } from "./notifications.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { errorClassOf, safeErrorText } from "./processing-error-text.ts";
@@ -104,7 +105,11 @@ export async function reclaimStaleExportDeliveries(store: PostgresSqlApi): Promi
         last_error='export delivery lease expired before completion'
     where state='delivering'
       and coalesce(delivery_started_at,'-infinity'::timestamptz) < now()-make_interval(mins => $2)
-    returning export_id`, [EXPORT_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+    returning tenant_id,export_id,state`, [EXPORT_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+  // An export that just ran out of attempts is final: a scheduled run behind it ends in a failure notice (F4b).
+  for (const row of rows) {
+    if (String(row.state) === "failed") await notifyScheduledExportOutcome(store, { tenantId: String(row.tenant_id), exportId: String(row.export_id), outcome: "failed" });
+  }
   return rows.length;
 }
 
@@ -146,6 +151,8 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         tenantId,exportId,workspaceId:String(row.workspace_id),
         authMethod:String(row.auth_method),subject:String(row.requested_by),format:String(row.format),
       }));
+      // A scheduled run behind this export ends in a completion event (F4b); anything else is a no-op.
+      if(completed[0]) await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"complete"});
       // Objects written by earlier (failed or abandoned) attempts are no longer referenced.
       if(attempt>1&&completed[0]) await deleteExportAttemptArtifacts(row,Array.from({length:attempt-1},(_,i)=>i+1),objectStore).catch(()=>undefined);
       processed++;
@@ -161,6 +168,8 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
       [state,safeErrorText(error),tenantId,exportId,attempt,nextAttemptAt]);
       countMetric("delivery.export",1,context,{outcome:state,format:String(row.format)});
+      // Final failure of an export a schedule requested ends the run in a failure notice (F4b).
+      if(state==="failed") await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"failed"});
     }
   }
   return {processed,failed};

@@ -150,7 +150,8 @@ reclaimed the same way via `export_job.delivery_started_at`.
 The launch customer-facing event allowlist is intentionally narrower than the
 internal processing event stream. `WEBHOOK_EVENT_TYPES` currently exposes:
 `SnapshotPublicationChanged`, `DataCorrectionOpened`, `DataCorrectionResolved`,
-`CorrectionReplacementDeliveryRequested` and `ExportRequested`. Internal
+`CorrectionReplacementDeliveryRequested`, `ExportRequested`,
+`ExportScheduleRunCompleted` and `ExportScheduleRunFailed` (F4b, below). Internal
 processing/job signals — including `DocumentRegistered`, stage-ready/retry
 transport events, and stage blocked/dead-letter operator state — are not
 subscribable and are excluded from delivery even for pre-policy subscription
@@ -334,10 +335,10 @@ Implementation tracker: GitHub issue #260. A schedule saves one "Export this vie
 
 | Route | Who | Purpose |
 | --- | --- | --- |
-| `POST /api/v1/export-schedules` | `exports:create`, redistribution rights, entitled to the scope's fund | Save a schedule. Body `{ idempotencyKey, label, scope, format, trigger }`; `201` with the schedule, or `200` with `replayed: true` on an idempotent retry. |
+| `POST /api/v1/export-schedules` | `exports:create`, redistribution rights, entitled to the scope's fund | Save a schedule. Body `{ idempotencyKey, label, scope, format, trigger, notifyOnCompletion? }` (`notifyOnCompletion` is a boolean, default `true`); `201` with the schedule, or `200` with `replayed: true` on an idempotent retry. |
 | `GET /api/v1/export-schedules` | `exports:create` | The caller's own schedules, newest first, each with its latest run; `?scope=all` lists every schedule in the tenant (Organization Admins only, else `403 tenant_admin_required`); `?limit=` / `?cursor=` page. |
 | `GET /api/v1/export-schedules/{scheduleId}` | the owner, or an Organization Admin | One schedule. Anyone else, and a missing, deleted or malformed id, get the same `404 export_schedule_not_found`. |
-| `PATCH /api/v1/export-schedules/{scheduleId}` | the owner only | `{ "action": "pause" or "resume" }`. An Organization Admin who is not the owner gets `404`. |
+| `PATCH /api/v1/export-schedules/{scheduleId}` | the owner only | One change per request: `{ "action": "pause" or "resume" }`, or `{ "notifyOnCompletion": true or false }` (F4b; audited as `export_schedule.notify` with the new value). Both in one body is `400 invalid_request`. An Organization Admin who is not the owner gets `404`. |
 | `DELETE /api/v1/export-schedules/{scheduleId}` | the owner only | The schedule never runs again; its runs and the exports they produced stay in history. |
 | `GET /api/v1/export-schedules/runs` | `exports:create` | The scheduled part of delivery history: every run, including refused ones, with the schedule label, scope, trigger and (for a requested run) the export's delivery state. `?scope=all` (Organization Admins), `?scheduleId=`, paging as above. |
 
@@ -353,11 +354,20 @@ Implementation tracker: GitHub issue #260. A schedule saves one "Export this vie
 
 **Visibility.** A schedule is read by its owner and by Organization Admins, and changed by its owner only. The tables are server-managed with RLS enabled and forced and no client policy (the 071/083 pattern).
 
-**Notifications.** A completed run notifies exactly as any completed export does: the existing `export_ready` email to the owner (their F2 preference applies; see `NOTIFICATIONS.md`), and webhook subscribers to `ExportRequested` receive the same event an interactive request emits. There is no per-schedule notification switch and no completion webhook event yet.
+**Notifications (F4b, #328, migration 090).** Every schedule has `notifyOnCompletion` (default `true`, which is what every schedule did before it existed), chosen when the schedule is saved and changed afterwards by its owner only. It governs the **owner's emails** about that schedule: with it on, the owner gets the existing `export_ready` email when a run's export completes and the new `export_schedule_failed` email when a run is refused or its export could not be delivered; with it off, neither is sent for that schedule (runs, their outcomes and refusal reasons stay in Data delivery). Both emails also follow the owner's own F2 preferences, and carry no data (`NOTIFICATIONS.md`). `ExportRequested` webhook subscribers still receive the same event an interactive request emits.
 
-**Errors:** `invalid_request`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_label`, `invalid_scope`, `invalid_export_format`, `invalid_trigger`, `invalid_action`, `invalid_scope` on the list parameter, `tenant_admin_required` (403), `export_scope_not_entitled` (403), `feature_disabled` (403), `forbidden` (403, no redistribution rights), `export_schedule_not_found` (404), and 409s `idempotency_key_reused`, `export_schedule_limit_reached`, `export_schedule_transition_not_allowed`. The SQL refusals behind them are allow-listed in `lib/server/sql-application-errors.ts`.
+Two **webhook events** end every scheduled run, once per run, whatever the owner's email switch (a subscriber chose them for the whole organization; subscribe through `POST /admin/webhooks/subscriptions` like any event type):
 
-**Audit.** `export_schedule.create`, `.pause`, `.resume` and `.delete` (actor: the owner, in the same transaction as the change), `export_schedule.run` (actor: the owner, outcome `success` or `failure` with the reason) and `export_schedule.stop` (actor `system:export-scheduler`); target `export_schedule`. Events carry identifiers, the label, the trigger, the format and the status, never data, and appear in the tenant access audit listing.
+| Event | When | `data` |
+| --- | --- | --- |
+| `ExportScheduleRunCompleted` | The governed export a run requested reached `complete` | `{ scheduleId, scheduleLabel, runId, exportId }` |
+| `ExportScheduleRunFailed` | The run was refused (fail-closed), or its export ran out of delivery attempts | `{ scheduleId, scheduleLabel, runId, failureReason, exportId? }` |
+
+`failureReason` is one of the run reasons above (`owner_inactive`, `export_permission_revoked`, `redistribution_not_permitted`, `scope_not_entitled`, `scope_unavailable`, `format_unavailable`) or `export_failed` (accepted, then not deliverable; `exportId` is then present). The payload carries the schedule id and the label its owner chose, and nothing else: no figure, fund, company, scope or person. They ride the ordinary outbox (`corvis_control.outbox_event`, aggregate `export_schedule_run`, written by `emit_export_schedule_run_event`), so signing, retries and fan-out are the existing ones; the refusal is announced in the same transaction as its run record, the completion and delivery failure by the export worker (`lib/server/export-schedule-notifications.ts`, best effort: a notification fault is logged and never undoes a run or an export).
+
+**Errors:** `invalid_request`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_label`, `invalid_scope`, `invalid_export_format`, `invalid_trigger`, `invalid_action`, `invalid_notify_on_completion`, `invalid_scope` on the list parameter, `tenant_admin_required` (403), `export_scope_not_entitled` (403), `feature_disabled` (403), `forbidden` (403, no redistribution rights), `export_schedule_not_found` (404), and 409s `idempotency_key_reused`, `export_schedule_limit_reached`, `export_schedule_transition_not_allowed`. The SQL refusals behind them are allow-listed in `lib/server/sql-application-errors.ts`.
+
+**Audit.** `export_schedule.create`, `.pause`, `.resume`, `.notify` (metadata includes the new `notifyOnCompletion`) and `.delete` (actor: the owner, in the same transaction as the change), `export_schedule.run` (actor: the owner, outcome `success` or `failure` with the reason) and `export_schedule.stop` (actor `system:export-scheduler`); target `export_schedule`. Events carry identifiers, the label, the trigger, the format and the status, never data, and appear in the tenant access audit listing.
 
 **Demo mode** serves the same routes from an in-memory per-tenant store (`adapters/demo/export-schedule-store.ts`, selected in `lib/server/export-schedule-service.ts`), seeded per owning subject with an active monthly schedule that delivered and a paused on-publish schedule whose last run was refused. Demo mode has no worker, so a schedule created there never runs and its next run only shows; the seeded runs are illustrative.
 

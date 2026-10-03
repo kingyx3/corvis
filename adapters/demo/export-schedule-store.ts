@@ -78,7 +78,7 @@ export class DemoExportScheduleStore implements ExportScheduleBackend {
       {
         item: {
           scheduleId: monthlyId, label: monthlyLabel, scope: monthlyScope, scopeLabel: exportScopeSummary(monthlyScope), format: "csv", trigger: "monthly",
-          status: "active", stopReason: null, owner: identity.subject, createdAt: at(24 * 45), updatedAt: at(24 * 45),
+          status: "active", stopReason: null, notifyOnCompletion: true, owner: identity.subject, createdAt: at(24 * 45), updatedAt: at(24 * 45),
           nextRunAt: nextScheduledRunAt("monthly", this.now()).toISOString(),
         },
         owner, deleted: false,
@@ -87,7 +87,7 @@ export class DemoExportScheduleStore implements ExportScheduleBackend {
       {
         item: {
           scheduleId: publishId, label: publishLabel, scope: publishScope, scopeLabel: exportScopeSummary(publishScope), format: "xlsx", trigger: "on_publish",
-          status: "paused", stopReason: null, owner: identity.subject, createdAt: at(24 * 30), updatedAt: at(24 * 3), nextRunAt: null,
+          status: "paused", stopReason: null, notifyOnCompletion: true, owner: identity.subject, createdAt: at(24 * 30), updatedAt: at(24 * 3), nextRunAt: null,
         },
         owner, deleted: false,
         runs: [
@@ -139,7 +139,7 @@ export class DemoExportScheduleStore implements ExportScheduleBackend {
     const entry: Entry = {
       item: {
         scheduleId: randomUUID(), label: command.label, scope: structuredClone(command.scope), scopeLabel: exportScopeSummary(command.scope), format: command.format,
-        trigger: command.trigger, status: "active", stopReason: null, owner: identity.subject, createdAt: at.toISOString(), updatedAt: at.toISOString(),
+        trigger: command.trigger, status: "active", stopReason: null, notifyOnCompletion: command.notifyOnCompletion, owner: identity.subject, createdAt: at.toISOString(), updatedAt: at.toISOString(),
         nextRunAt: command.trigger === "on_publish" ? null : nextScheduledRunAt(command.trigger, at).toISOString(),
       },
       owner: { authMethod: identity.authMethod, subject: identity.subject }, deleted: false, runs: [],
@@ -180,6 +180,15 @@ export class DemoExportScheduleStore implements ExportScheduleBackend {
       throw new ExportScheduleRequestError("export_schedule_transition_not_allowed", 409);
     }
     entry.item.updatedAt = at.toISOString();
+    return this.view(entry, identity);
+  }
+
+  async setNotification(identity: RequestIdentity, scheduleId: string, notifyOnCompletion: boolean): Promise<ExportSchedule> {
+    const entry = this.owned(identity, scheduleId);
+    if (entry.item.notifyOnCompletion !== notifyOnCompletion) {
+      entry.item.notifyOnCompletion = notifyOnCompletion;
+      entry.item.updatedAt = this.now().toISOString();
+    }
     return this.view(entry, identity);
   }
 

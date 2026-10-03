@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { processQueuedExports } from "./delivery.ts";
+import { processQueuedExports, reclaimStaleExportDeliveries } from "./delivery.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 const TENANT = "00000000-0000-4000-8000-0000000000a1";
 const EXPORT = "00000000-0000-4000-8000-0000000000b1";
 const WORKSPACE = "00000000-0000-4000-8000-0000000000d1";
+const RUN = "00000000-0000-4000-8000-0000000000e1";
 
 type Statement = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -21,10 +22,15 @@ class ExportCompletionStore implements PostgresSqlApi {
   /** `undefined` answers like the database (prior attempt + 1); `[]` simulates losing the claim race. */
   claimResult: PostgresRow[] | undefined;
   completedResult: PostgresRow[] = [{ completed_at: "2026-09-01T00:00:05.000Z" }];
+  /** The scheduled run (F4b) that requested the export, when a schedule did. */
+  scheduledRun: string | undefined;
+  /** What the stale-lease reclaim returns. */
+  reclaimed: PostgresRow[] = [];
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.statements.push({ sql, parameters });
-    if (sql.includes("returning export_id")) return [];
+    if (sql.includes("returning tenant_id,export_id,state")) return this.reclaimed;
+    if (sql.includes("from corvis_control.export_schedule_run where")) return this.scheduledRun ? [{ run_id: this.scheduledRun }] : [];
     if (sql.includes("select tenant_id,export_id")) return this.dueRows;
     if (sql.includes("returning delivery_attempts")) return this.claimResult ?? [{ delivery_attempts: Number(parameters[2]) + 1 }];
     if (sql.includes("from corvis_control.identity_subject s")) {
@@ -41,6 +47,7 @@ class ExportCompletionStore implements PostgresSqlApi {
   async health(): Promise<boolean> { return true; }
 
   find(fragment: string): Statement | undefined { return this.statements.find((statement) => statement.sql.includes(fragment)); }
+  scheduleEvents(): Statement[] { return this.statements.filter((statement) => statement.sql.includes("emit_export_schedule_run_event")); }
   notificationInserts(): Statement[] { return this.statements.filter((statement) => statement.sql.includes("corvis_control.email_outbox")); }
 }
 
@@ -251,4 +258,70 @@ test("a failed export attempt still becomes retryable when removing its partial 
   assert.equal(failure.parameters[4], 2);
   const retryAt = Date.parse(String(failure.parameters[5])) - Date.now();
   assert.ok(Math.abs(retryAt - 2 * 60_000) < 5_000, `attempt 2 backs off ~2m, got ${retryAt}`);
+});
+
+test("an export no schedule requested is looked up once and announces nothing beyond the ready email", async (t) => {
+  captureMetrics(t);
+  const store = new ExportCompletionStore();
+  store.dueRows = [dueExport()];
+  await processQueuedExports(5, store, () => 0.5, objectStore());
+  assert.equal(store.statements.filter((statement) => statement.sql.includes("from corvis_control.export_schedule_run where")).length, 1);
+  assert.deepEqual(store.scheduleEvents(), []);
+});
+
+test("a completed export that a schedule requested ends its run with one completion event carrying ids only", async (t) => {
+  captureMetrics(t);
+  const store = new ExportCompletionStore();
+  store.dueRows = [dueExport()];
+  store.scheduledRun = RUN;
+  assert.deepEqual(await processQueuedExports(5, store, () => 0.5, objectStore()), { processed: 1, failed: 0 });
+  const lookup = store.find("from corvis_control.export_schedule_run where")!;
+  assert.deepEqual(lookup.parameters, [TENANT, EXPORT], "found by the export, within the tenant");
+  const events = store.scheduleEvents();
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0]!.parameters, [TENANT, RUN]);
+  assert.match(events[0]!.sql, /'completed'/);
+  assert.equal(store.notificationInserts().length, 1, "the owner's export ready email is the existing one");
+
+  // Losing the lease means this worker did not complete the export, so it announces nothing.
+  const lost = new ExportCompletionStore();
+  lost.dueRows = [dueExport()];
+  lost.scheduledRun = RUN;
+  lost.completedResult = [];
+  await processQueuedExports(5, lost, () => 0.5, objectStore());
+  assert.deepEqual(lost.scheduleEvents(), []);
+});
+
+test("an export that a schedule requested and that ran out of attempts ends its run in a failure notice, and a retryable one does not", async (t) => {
+  captureMetrics(t);
+  // A deterministic failure on the last attempt is final.
+  const final = new ExportCompletionStore();
+  final.dueRows = [dueExport({ auth_method: "password", delivery_attempts: 4 })];
+  final.scheduledRun = RUN;
+  assert.deepEqual(await processQueuedExports(5, final, () => 0.5, objectStore()), { processed: 0, failed: 1 });
+  assert.equal(final.find("set state=$1")!.parameters[0], "failed");
+  const events = final.scheduleEvents();
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0]!.parameters, [TENANT, RUN, "export_failed"]);
+  assert.equal(final.notificationInserts().length, 1, "and the owner is emailed, in words only");
+  assert.deepEqual(final.notificationInserts()[0]!.parameters, [TENANT, RUN, "export_failed"]);
+
+  // The first attempt can still be retried: nothing is announced until the outcome is final.
+  const retry = new ExportCompletionStore();
+  retry.dueRows = [dueExport({ auth_method: "password", delivery_attempts: 0 })];
+  retry.scheduledRun = RUN;
+  await processQueuedExports(5, retry, () => 0.5, objectStore());
+  assert.equal(retry.find("set state=$1")!.parameters[0], "retryable");
+  assert.deepEqual(retry.scheduleEvents(), []);
+  assert.equal(retry.statements.some((statement) => statement.sql.includes("from corvis_control.export_schedule_run where")), false);
+});
+
+test("a stale export lease that runs out of attempts is final and announced, while one that will be retried is not", async () => {
+  const store = new ExportCompletionStore();
+  store.scheduledRun = RUN;
+  store.reclaimed = [{ tenant_id: TENANT, export_id: EXPORT, state: "failed" }, { tenant_id: TENANT, export_id: "00000000-0000-4000-8000-0000000000b2", state: "retryable" }];
+  assert.equal(await reclaimStaleExportDeliveries(store), 2);
+  const lookups = store.statements.filter((statement) => statement.sql.includes("from corvis_control.export_schedule_run where"));
+  assert.deepEqual(lookups.map((statement) => statement.parameters), [[TENANT, EXPORT]]);
+  assert.deepEqual(store.scheduleEvents().map((statement) => statement.parameters), [[TENANT, RUN, "export_failed"]]);
 });

@@ -67,7 +67,7 @@ try {
     const sender = new RecordingEmailSender();
     const defaults = await getNotificationSettings(identity(analyst), { db: tx, sender });
     assert.equal(defaults.address, 'analyst@example.com');
-    assert.deepEqual(defaults.categories.map((category) => category.id), ['export_ready', 'pinned_fund_published', 'data_issue_update', 'review_discussion', 'role_changed'], 'admin-only categories are hidden from analysts');
+    assert.deepEqual(defaults.categories.map((category) => category.id), ['export_ready', 'pinned_fund_published', 'data_issue_update', 'review_discussion', 'export_schedule_failed', 'role_changed'], 'admin-only categories are hidden from analysts');
     await assert.rejects(updateNotificationPreferences(identity(analyst), { categories: [{ id: 'role_changed', enabled: false, delivery: 'immediate' }] }, { db: tx, sender }), /category_not_configurable/);
     await assert.rejects(updateNotificationPreferences(identity(analyst), { categories: [{ id: 'source_attention', enabled: false, delivery: 'immediate' }] }, { db: tx, sender }), /unknown_category/);
     const updated = await updateNotificationPreferences(identity(analyst), { categories: [{ id: 'export_ready', enabled: false, delivery: 'immediate' }] }, { db: tx, sender });

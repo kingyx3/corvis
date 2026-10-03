@@ -29,7 +29,7 @@ test("internal processing signals are not subscribable and delivery only selects
   const delivery = await readFile("lib/server/delivery.ts", "utf8");
   assert.match(delivery, /e\.event_type in \(\$\{webhookEventTypesSqlList\(\)\}\)/);
   const openapi = await readFile("openapi/corvis-v1.yaml", "utf8");
-  assert.match(openapi, /enum: \[SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested\]/);
+  assert.match(openapi, /enum: \[SnapshotPublicationChanged, DataCorrectionOpened, DataCorrectionResolved, CorrectionReplacementDeliveryRequested, ExportRequested, ExportScheduleRunCompleted, ExportScheduleRunFailed\]/);
 });
 
 test("blocked address ranges cover loopback, private, link-local, CGNAT, metadata and IPv6 local forms", () => {

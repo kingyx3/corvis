@@ -30,6 +30,8 @@ export const WEBHOOK_EVENT_TYPES = [
   "DataCorrectionResolved",
   "CorrectionReplacementDeliveryRequested",
   "ExportRequested",
+  "ExportScheduleRunCompleted",
+  "ExportScheduleRunFailed",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];

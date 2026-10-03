@@ -368,6 +368,7 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "export-schedules/route.ts", method: "GET", role: "analyst", expect: 200 },
     { file: "export-schedules/runs/route.ts", method: "GET", role: "analyst", expect: 200 },
     { file: "export-schedules/[scheduleId]/route.ts", method: "PATCH", role: "analyst", body: {}, expect: 400, error: "invalid_action" },
+    { file: "export-schedules/[scheduleId]/route.ts", method: "PATCH", role: "analyst", body: { notifyOnCompletion: "no" }, expect: 400, error: "invalid_notify_on_completion" },
     { file: "export-schedules/[scheduleId]/route.ts", method: "DELETE", role: "analyst", expect: 404, error: "export_schedule_not_found" },
     { file: "research/pins/route.ts", method: "POST", role: "analyst", body: {}, expect: 400, error: "invalid_request" },
     // Assigning and discussing is review work: a Review Analyst passes authorization (and then fails validation of the empty command); an Analyst never gets that far.
