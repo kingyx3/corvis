@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PostgresHttpSqlApi } from "./postgres.ts";
+import { PostgresHttpSqlApi, postgres, postgresRuntime } from "./postgres.ts";
 
 test("query sends parameterized SQL and returns rows", async () => {
   let request: RequestInit | undefined;
@@ -59,4 +59,31 @@ test("requests are cancelled after the configured timeout", async () => {
   await assert.rejects(() => db.query("select pg_sleep(10)"), (error: unknown) =>
     error instanceof DOMException && error.name === "AbortError",
   );
+});
+
+test("database factory fails closed for missing and unsupported bindings", () => {
+  assert.throws(
+    () => postgres(),
+    (error: unknown) => error instanceof Error
+      && error.message.includes("CORVIS_DATABASE_DSN")
+      && error.message.includes("CORVIS_POSTGRES_DSN"),
+  );
+  assert.throws(() => postgres("http://postgres.example.test/sql"), /Unsupported PostgreSQL transport/);
+});
+
+test("compatibility HTTP runtime advertises only capabilities it can safely provide", () => {
+  const runtime = postgresRuntime("https://postgres.example.test/sql", "supabase");
+  assert.equal(runtime.provider, "supabase");
+  assert.ok(runtime.api instanceof PostgresHttpSqlApi);
+  assert.equal(runtime.capabilities.nativeTransactions, false);
+  assert.equal(runtime.capabilities.advisoryLocks, false);
+  assert.equal(runtime.capabilities.logicalReplication, false);
+});
+
+test("native PostgreSQL runtime advertises transaction and PostgreSQL session capabilities", () => {
+  const runtime = postgresRuntime("postgresql://corvis:secret@localhost:5432/postgres?sslmode=disable");
+  assert.equal(runtime.provider, "unknown");
+  assert.equal(runtime.capabilities.nativeTransactions, true);
+  assert.equal(runtime.capabilities.advisoryLocks, true);
+  assert.equal(runtime.capabilities.logicalReplication, true);
 });
