@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for assigning and discussing review items (F3, #259), through the application code: the
-// repository in lib/server/review-discussion.ts drives the SQL functions of migration 084 inside one transaction that is
+// repository in lib/server/review-discussion.ts drives the SQL functions of migration 086 inside one transaction that is
 // always rolled back. Covers what the pure-SQL test (review-item-discussion.sql) cannot: the repository's predicates and
 // labels, keyset paging, the open-assignments read behind the Overview attention list, the audit event round trip, the
 // notice and its send-time eligibility and preferences from the F2 outbox, and that discussion leaves dual control alone.

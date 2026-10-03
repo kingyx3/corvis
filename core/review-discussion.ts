@@ -20,7 +20,7 @@ export function isReviewSubjectKind(value: unknown): value is ReviewSubjectKind 
   return REVIEW_SUBJECT_KINDS.some((kind) => kind === value);
 }
 
-/** The database roles that can review, and so can be assigned or mentioned (migration 084 `review_member_eligible`). */
+/** The database roles that can review, and so can be assigned or mentioned (migration 086 `review_member_eligible`). */
 export const REVIEW_ROLES = ["tenant_admin", "accountadmin", "reviewer"] as const;
 
 const ROLE_LABEL: Record<(typeof REVIEW_ROLES)[number], string> = {
@@ -37,7 +37,7 @@ export function reviewRoleLabel(roleNames: readonly string[]): string {
 
 export const MAX_REVIEW_COMMENT_LENGTH = 2000;
 export const MAX_REVIEW_MENTIONS = 10;
-/** A thread holds at most this many comments (migration 084), so a thread is always returned whole. */
+/** A thread holds at most this many comments (migration 086), so a thread is always returned whole. */
 export const MAX_REVIEW_COMMENTS_PER_THREAD = 200;
 
 export type ReviewSubjectRef = { subjectKind: ReviewSubjectKind; subjectId: string };
