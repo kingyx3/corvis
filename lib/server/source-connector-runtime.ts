@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import { getServerConfig } from "./config.ts";
-import type { ConnectorDriver, SecretPayload, SecretStore } from "./source-connectors.ts";
+import type { ConnectorDriver, SecretPayload, SecretStore, SecretWriteOptions } from "./source-connectors.ts";
 
 /**
  * Placeholder project id used only by the in-memory/local store, which never
@@ -81,10 +81,10 @@ type TokenResponse = { access_token?: string; expires_in?: number };
 export const SECRET_MANAGER_REQUEST_TIMEOUT_MS = 20_000;
 const METADATA_TOKEN_TIMEOUT_MS = 5_000;
 
+/** The secret id inside a reference built by `sourceConnectorSecretReference`, which always carries the `/secrets/` segment. */
 function secretIdFromReference(reference: string): string {
   const marker = "/secrets/";
-  const index = reference.indexOf(marker);
-  return index === -1 ? reference : reference.slice(index + marker.length);
+  return reference.slice(reference.indexOf(marker) + marker.length);
 }
 
 /**
@@ -131,14 +131,14 @@ export class GcpSecretManagerSecretStore implements SecretStore {
     return this.fetchImpl(url, { ...init, headers, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(this.timeoutMs) });
   }
 
-  async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
+  async write(tenantId: string, providerKey: string, secret: SecretPayload, options: SecretWriteOptions = {}): Promise<string> {
     const reference = sourceConnectorSecretReference(tenantId, providerKey, uniqueSequence(), this.projectId);
     const secretId = secretIdFromReference(reference);
     const createUrl = `https://secretmanager.googleapis.com/v1/projects/${encodeURIComponent(this.projectId)}/secrets?secretId=${encodeURIComponent(secretId)}`;
     const createResponse = await this.authorizedFetch(createUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ replication: { automatic: {} } }),
+      body: JSON.stringify({ replication: { automatic: {} }, ...(options.ttlSeconds ? { ttl: `${Math.ceil(options.ttlSeconds)}s` } : {}) }),
     });
     if (!createResponse.ok) {
       throw new Error(`GCP Secret Manager secret creation failed (${createResponse.status}) for ${reference}`);
@@ -191,7 +191,12 @@ export class GcpSecretManagerSecretStore implements SecretStore {
   }
 }
 
-let secretStoreSingleton: SecretStore | undefined;
+/**
+ * The process-wide store is kept on `globalThis`, not in a module variable: `next dev` re-evaluates server modules
+ * whenever another route is compiled, which would otherwise drop the placeholder store's contents (a pending OAuth
+ * attempt) between the request that started a flow and the one that finishes it. Production keeps one instance anyway.
+ */
+const sharedStores = globalThis as typeof globalThis & { secretStore?: SecretStore };
 
 /**
  * The `SecretStore` wired for the `/api/v1/source-connections` routes.
@@ -203,18 +208,15 @@ let secretStoreSingleton: SecretStore | undefined;
  * project id fails closed instead of silently keeping customer credentials
  * in memory only -- see `InMemorySourceConnectorSecretStore`'s doc comment.
  */
+export function selectSourceConnectorSecretStore(projectId: string | undefined, environment: string): SecretStore {
+  if (projectId) return new GcpSecretManagerSecretStore(projectId);
+  if (environment === "production") throw new Error("CORVIS_GCP_PROJECT_ID is required to select a source-connector SecretStore in production");
+  return new InMemorySourceConnectorSecretStore();
+}
+
 export function sourceConnectorSecretStore(): SecretStore {
-  if (!secretStoreSingleton) {
-    const projectId = process.env.CORVIS_GCP_PROJECT_ID?.trim();
-    if (projectId) {
-      secretStoreSingleton = new GcpSecretManagerSecretStore(projectId);
-    } else if (getServerConfig().environment === "production") {
-      throw new Error("CORVIS_GCP_PROJECT_ID is required to select a source-connector SecretStore in production");
-    } else {
-      secretStoreSingleton = new InMemorySourceConnectorSecretStore();
-    }
-  }
-  return secretStoreSingleton;
+  if (!sharedStores.secretStore) sharedStores.secretStore = selectSourceConnectorSecretStore(process.env.CORVIS_GCP_PROJECT_ID?.trim(), getServerConfig().environment);
+  return sharedStores.secretStore;
 }
 
 let driversSingleton: Map<string, ConnectorDriver> | undefined;

@@ -1,0 +1,69 @@
+import type { SourceProviderDescriptor } from "../../core/source-connect-wizard.ts";
+import { DEMO_SOURCE_PROVIDERS } from "../../adapters/demo/source-providers.ts";
+import { getServerConfig } from "./config.ts";
+import { sourceConnectorDrivers } from "./source-connector-runtime.ts";
+import type { ConnectorDriver, CredentialType } from "./source-connectors.ts";
+import type { SourceOAuthClient } from "./source-oauth.ts";
+
+/**
+ * The registry of approved source providers: the only providers the "Connect
+ * source" wizard offers and the only ones the connect routes accept. A
+ * provider is approved when a real integration has been certified for it
+ * (docs/SOURCE_CONNECTORS.md) and registered here together with its
+ * `ConnectorDriver`; until then the registry is empty and the wizard says so
+ * honestly. In demo mode (never production) the clearly labelled demo
+ * providers are added so the whole flow can be exercised.
+ */
+export type ApprovedSourceProvider = SourceProviderDescriptor & {
+  connectorVersion: string;
+  /** Present exactly when `connect.method` is "oauth". */
+  oauth?: SourceOAuthClient;
+};
+
+const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+const registered = new Map<string, ApprovedSourceProvider>();
+
+/**
+ * Approves a certified provider and registers its driver in one step, so a
+ * provider can never be offered without the means to test it.
+ */
+export function registerApprovedSourceProvider(provider: ApprovedSourceProvider, driver: ConnectorDriver): void {
+  if (!PROVIDER_KEY_PATTERN.test(provider.providerKey)) throw new Error("approved source provider key is invalid");
+  if (driver.providerKey !== provider.providerKey) throw new Error("approved source provider and its driver must share a provider key");
+  if ((provider.connect.method === "oauth") !== (provider.oauth !== undefined)) throw new Error("an OAuth provider needs an OAuth client, and only an OAuth provider may have one");
+  if (provider.scope.length === 0) throw new Error("an approved source provider must declare the scope it will read");
+  registered.set(provider.providerKey, provider);
+  sourceConnectorDrivers().set(provider.providerKey, driver);
+}
+
+/** Removes an approval (and its driver). Used by tests; a certified provider is withdrawn by a release, not at runtime. */
+export function unregisterApprovedSourceProvider(providerKey: string): void {
+  registered.delete(providerKey);
+  sourceConnectorDrivers().delete(providerKey);
+}
+
+export function approvedSourceProviders(): ApprovedSourceProvider[] {
+  return [...registered.values(), ...(getServerConfig().demoMode ? DEMO_SOURCE_PROVIDERS : [])];
+}
+
+export function approvedSourceProvider(providerKey: string): ApprovedSourceProvider | undefined {
+  return approvedSourceProviders().find((provider) => provider.providerKey === providerKey);
+}
+
+/** The browser-safe description: an explicit field copy, so server-only members (the OAuth client, the connector version) can never leak. */
+export function providerDescriptor(provider: ApprovedSourceProvider): SourceProviderDescriptor {
+  return {
+    providerKey: provider.providerKey,
+    displayName: provider.displayName,
+    summary: provider.summary,
+    demo: provider.demo,
+    connect: provider.connect.method === "oauth" ? { method: "oauth" } : { method: "credential", credentialType: provider.connect.credentialType },
+    scope: provider.scope.map((item) => item.path ? { label: item.label, path: item.path } : { label: item.label }),
+    disclosure: { reads: [...provider.disclosure.reads], behaviour: [...provider.disclosure.behaviour], limits: [...provider.disclosure.limits] },
+    ...(provider.credentialHint ? { credentialHint: provider.credentialHint } : {}),
+  };
+}
+
+export function credentialTypeOf(provider: ApprovedSourceProvider): CredentialType {
+  return provider.connect.method === "oauth" ? "oauth_authorization_code" : provider.connect.credentialType;
+}

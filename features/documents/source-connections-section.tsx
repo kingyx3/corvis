@@ -4,6 +4,8 @@ import { Icon } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
 import { ContactSupportLink } from "@/components/help/contact-support-link";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ConnectSourceWizard } from "@/features/documents/connect-source-wizard";
+import { describeOnDemandTest, parseOAuthReturn, withoutOAuthReturn, type OAuthReturn } from "@/core/source-connect-wizard";
 import {
   CONNECTION_ACTION_COPY,
   buildReauthorizeSecret,
@@ -29,8 +31,8 @@ type LoadState =
 
 type Fetched = Exclude<LoadState, { kind: "loading" }>;
 type Dialog = { action: ConnectionAction; connection: SourceConnectionRecord };
-type Outcome = { tone: "success" | "error"; text: string };
-type CommandResult = { ok: true } | { ok: false; status?: number; message?: string };
+type Outcome = { tone: "success" | "error"; text: string; title?: string };
+type CommandResult<T = undefined> = { ok: true; data?: T } | { ok: false; status?: number; message?: string };
 
 function time(value: string | undefined): string { return value ? displayDate(value, { timeStyle: "short" }) : "—"; }
 
@@ -48,7 +50,7 @@ async function fetchConnections(signal?: AbortSignal): Promise<Fetched> {
 }
 
 /** One request to a connection command. Never logs or returns the request body; the response carries no credential. */
-async function sendCommand(path: string, method: "PATCH" | "POST", body: unknown): Promise<CommandResult> {
+async function sendCommand<T = undefined>(path: string, method: "PATCH" | "POST", body: unknown, readResult = false): Promise<CommandResult<T>> {
   try {
     const response = await fetch(apiUrl(path), {
       method,
@@ -57,7 +59,9 @@ async function sendCommand(path: string, method: "PATCH" | "POST", body: unknown
       body: JSON.stringify(body),
     });
     throwIfUnauthenticated(response);
-    return response.ok ? { ok: true } : { ok: false, status: response.status };
+    if (!response.ok) return { ok: false, status: response.status };
+    // Only the on-demand test reads a body back (a pass/fail result); no other command's response carries anything the page uses.
+    return readResult ? { ok: true, data: (await response.json() as { data: T }).data } : { ok: true };
   } catch (reason) {
     return { ok: false, message: friendlyErrorMessage(reason, "The change could not be completed. Nothing was changed; try again.") };
   }
@@ -86,6 +90,21 @@ export function SourceConnectionsSection({ runHistoryAvailable, onOpenRunHistory
   // The row to focus once the refreshed list has rendered (set before the reload, consumed by the effect below).
   const focusId = useRef<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  // The Connect source wizard; `resume` is set when the administrator was just redirected back from a provider's consent page.
+  const [wizard, setWizard] = useState<{ resume: OAuthReturn | null } | null>(() => {
+    if (typeof window === "undefined") return null;
+    const returned = parseOAuthReturn(window.location.search);
+    return returned.kind === "none" ? null : { resume: returned };
+  });
+  const connectedId = useRef<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  // A provider redirects back to `/?source_oauth=return&code=…&state=…`: take the one-time values out of the URL
+  // straight away (so a reload or a shared link cannot replay them) and resume the wizard with them.
+  useEffect(() => {
+    if (parseOAuthReturn(window.location.search).kind === "none") return;
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${withoutOAuthReturn(window.location.search)}${window.location.hash}`);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -116,24 +135,58 @@ export function SourceConnectionsSection({ runHistoryAvailable, onOpenRunHistory
     onChanged();
   };
 
+  // The list behind the wizard refreshes as soon as a connection exists; focus moves to it only once the dialog has closed.
+  const closeWizard = () => {
+    setWizard(null);
+    if (!connectedId.current) return;
+    focusId.current = connectedId.current;
+    connectedId.current = null;
+    setReloadKey((key) => key + 1);
+  };
+
+  const reload = async () => {
+    const result = await fetchConnections();
+    setNow(new Date());
+    setState(result);
+    onChanged();
+  };
+
+  const runTest = async (connection: SourceConnectionRecord) => {
+    setOutcome(null);
+    setTestingId(connection.sourceConnectionId);
+    const result = await sendCommand<{ ok: boolean; errorClass?: string }>(`/api/v1/source-connections/${encodeURIComponent(connection.sourceConnectionId)}/test`, "POST", {}, true);
+    setTestingId(null);
+    focusId.current = connection.sourceConnectionId;
+    if (!result.ok) {
+      setOutcome({ tone: "error", title: "Connection test did not run", text: `${connection.connectionLabel}: ${result.message ?? "The test could not be run. Nothing was changed; try again."}` });
+    } else {
+      const described = describeOnDemandTest(connection.connectionLabel, result.data ?? { ok: false });
+      setOutcome(described.tone === "success" ? described : { ...described, title: "Connection test did not pass" });
+    }
+    await reload();
+  };
+
   return <section aria-labelledby="source-connections-heading" className="source-connections">
-    <section className="page-heading"><div><p className="eyebrow">Source acquisition</p><h2 id="source-connections-heading">Source connections</h2><p className="lede">Each connection&apos;s health, what it collects, when it last synced, and the one thing to do next. Changes here are limited to administrators of this workspace and are recorded in the access audit.</p></div></section>
+    <section className="page-heading"><div><p className="eyebrow">Source acquisition</p><h2 id="source-connections-heading">Source connections</h2><p className="lede">Each connection&apos;s health, what it collects, when it last synced, and the one thing to do next. Changes here are limited to administrators of this workspace and are recorded in the access audit.</p></div><button type="button" className="primary-button" onClick={() => { setOutcome(null); setWizard({ resume: null }); }}>Connect source</button></section>
     <div className="source-connections-status" role="status" aria-live="polite">{outcome?.tone === "success" ? outcome.text : ""}</div>
-    {outcome?.tone === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Change not applied</strong><span>{outcome.text}</span></div></div>}
+    {outcome?.tone === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>{outcome.title ?? "Change not applied"}</strong><span>{outcome.text}</span></div></div>}
     {state.kind === "error" && <div className="table-card" role="alert"><div className="empty-cell"><strong>Source connections are unavailable.</strong> The documents above are unaffected. <button className="text-button" onClick={() => { setState({ kind: "loading" }); setReloadKey((key) => key + 1); }}>Retry</button></div></div>}
-    {state.kind === "ready" && state.connections.length === 0 && <div className="table-card"><div className="empty-cell">No source connections yet. Connections to provider portals are set up with Corvis support.</div></div>}
+    {state.kind === "ready" && state.connections.length === 0 && <div className="table-card"><div className="empty-cell">No source connections yet. Use Connect source to add one.</div></div>}
     {state.kind === "ready" && state.connections.length > 0 && <ul className="source-connections-list" aria-label="Source connections">
-      {state.connections.map((connection) => <ConnectionCard key={connection.sourceConnectionId} connection={connection} health={describeConnection(connection, now)} hasRunHistory={runHistoryAvailable.has(connection.sourceConnectionId)} onOpenRunHistory={onOpenRunHistory} onAction={(action) => { setOutcome(null); setDialog({ action, connection }); }}/>)}
+      {state.connections.map((connection) => <ConnectionCard key={connection.sourceConnectionId} connection={connection} health={describeConnection(connection, now)} hasRunHistory={runHistoryAvailable.has(connection.sourceConnectionId)} onOpenRunHistory={onOpenRunHistory} testing={testingId === connection.sourceConnectionId} onTest={() => void runTest(connection)} onAction={(action) => { setOutcome(null); setDialog({ action, connection }); }}/>)}
     </ul>}
     {dialog && dialog.action !== "reauthorize" && <ConfirmDialog action={dialog.action} connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
+    {wizard && <ConnectSourceWizard resume={wizard.resume} onClose={closeWizard} onConnected={(sourceConnectionId) => { connectedId.current = sourceConnectionId; void reload(); }}/>}
     {dialog?.action === "reauthorize" && <ReauthorizeDialog connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
   </section>;
 }
 
-function ConnectionCard({ connection, health, hasRunHistory, onOpenRunHistory, onAction }: {
+function ConnectionCard({ connection, health, hasRunHistory, testing, onTest, onOpenRunHistory, onAction }: {
   connection: SourceConnectionRecord;
   health: ConnectionHealth;
   hasRunHistory: boolean;
+  testing: boolean;
+  onTest: () => void;
   onOpenRunHistory: (sourceConnectionId: string) => void;
   onAction: (action: ConnectionAction) => void;
 }) {
@@ -162,6 +215,7 @@ function ConnectionCard({ connection, health, hasRunHistory, onOpenRunHistory, o
       <div className="source-connection-required"><dt>Required action</dt><dd><strong>{action.label}</strong><span className="table-secondary">{action.detail}</span>{action.kind === "contact_support" && <ContactSupportLink className="text-button" view="documents"/>}</dd></div>
     </dl>
     <div className="source-connection-controls">
+      {controls.test && <button className={action.kind === "test" ? "primary-button" : "secondary-button"} aria-label={`Test connection ${label}`} disabled={testing} aria-busy={testing || undefined} onClick={onTest}>{testing ? "Testing…" : "Test connection"}</button>}
       {controls.reauthorize && <button className={reauthorizeIsNext ? "primary-button" : "secondary-button"} aria-label={`Reauthorize ${label}`} onClick={() => onAction("reauthorize")}>Reauthorize</button>}
       {controls.reauthorizeUnavailableReason && <><button className="secondary-button" aria-disabled="true" aria-label={`Reauthorize ${label}`} aria-describedby={reasonId}>Reauthorize</button><p id={reasonId} className="source-connection-unavailable">{controls.reauthorizeUnavailableReason}</p></>}
       {controls.resume && <button className="primary-button" aria-label={`Resume ${label}`} onClick={() => onAction("resume")}>Resume</button>}
