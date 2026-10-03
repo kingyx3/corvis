@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { ExportFormat, ExportScope } from "../../core/delivery.ts";
+import type { ExportFormat } from "../../core/delivery.ts";
 import { AuthorizationError, assertPermission, assertRedistributionAllowed, type AuditEvent, type RequestIdentity } from "../../core/enterprise.ts";
 import {
   EXPORT_SCHEDULE_FORMATS,
@@ -14,6 +14,7 @@ import {
   type ExportScheduleAction,
   type ExportScheduleFailureReason,
   type ExportScheduleRun,
+  type ScheduledExportScope,
 } from "../../core/export-schedule.ts";
 import { PostgresMembershipAuthorizationRepository, type AuthorizationPrincipal, type MembershipAuthorization } from "./authorization.ts";
 import { getServerConfig } from "./config.ts";
@@ -138,7 +139,7 @@ export function toExportSchedule(row: PostgresRow, identity: RequestIdentity, la
   return {
     scheduleId: str(row, "schedule_id"),
     label: str(row, "label"),
-    scope: row.scope as ExportScope,
+    scope: row.scope as ScheduledExportScope,
     scopeLabel: str(row, "scope_label"),
     format: oneOf<ExportFormat>(EXPORT_SCHEDULE_FORMATS, str(row, "format")),
     trigger: oneOf(EXPORT_SCHEDULE_TRIGGERS, str(row, "trigger_kind")),
@@ -197,7 +198,7 @@ export const defaultFormatGate: FormatGate = async (identity, format, db) => {
  * resolved to the fund of that published snapshot. A snapshot that does not exist (or is not published) is refused the
  * same way, so the answer never reveals whether another organization's snapshot exists.
  */
-export async function assertScopeEntitled(identity: RequestIdentity, scope: ExportScope, db: PostgresSqlApi): Promise<void> {
+export async function assertScopeEntitled(identity: RequestIdentity, scope: ScheduledExportScope, db: PostgresSqlApi): Promise<void> {
   const entitled = identity.entitlements.fundIds ?? [];
   if ("positionFinancials" in scope) {
     if (!entitled.includes(scope.positionFinancials.fundId)) throw new ExportScheduleRequestError("export_scope_not_entitled", 403);
@@ -447,7 +448,7 @@ async function runDueSchedule(
       try {
         assertPermission(identity, "exports:create");
         await dependencies.formatGate(identity, format, tx);
-        const scope = schedule.scope as ExportScope;
+        const scope = schedule.scope as ScheduledExportScope;
         await assertScopeEntitled(identity, scope, tx);
         exportId = (await dependencies.requestExport(identity, format, { scope, source: "delivery" }, tx)).exportId;
       } catch (error) {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useId, useRef, useState, type FormEvent } from "react";
-import type { ExportFormat, ExportScope } from "@/core/delivery";
+import type { ExportFormat } from "@/core/delivery";
+import type { ScheduledExportScope } from "@/core/export-schedule";
 import {
   EXPORT_SCHEDULE_FORMATS,
   EXPORT_SCHEDULE_FORMAT_LABEL,
@@ -17,7 +18,7 @@ import { Modal } from "@/components/ui/modal";
 import { createExportSchedule, exportScheduleErrorMessage } from "@/features/export-schedules/api";
 
 /** What an on-publish trigger means for this scope, in words: a snapshot scope follows that snapshot, a position scope follows its fund. */
-function publishTriggerLabel(scope: ExportScope): string {
+function publishTriggerLabel(scope: ScheduledExportScope): string {
   return "snapshotId" in scope ? "When a new version of this snapshot is published" : "When a snapshot of this fund is published";
 }
 
@@ -27,7 +28,7 @@ function publishTriggerLabel(scope: ExportScope): string {
  * rights checked again at that moment; a run that cannot be authorized exports nothing and is recorded as failed. The
  * idempotency key is made once per opened dialog, so a retry after a network failure can never save two schedules.
  */
-export function ScheduleExportDialog({ scope, onClose }: { scope: ExportScope; onClose: () => void }) {
+export function ScheduleExportDialog({ scope, onClose }: { scope: ScheduledExportScope; onClose: () => void }) {
   const [trigger, setTrigger] = useState<ExportScheduleTrigger>("monthly");
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [label, setLabel] = useState<string | null>(null);
@@ -101,7 +102,7 @@ export function ScheduleExportDialog({ scope, onClose }: { scope: ExportScope; o
 }
 
 /** The entry point placed beside an "Export this view" button. Nothing renders when there is no scope to schedule. */
-export function ScheduleExportButton({ scope, label = "Schedule export", className = "secondary-button" }: { scope: ExportScope | null; label?: string; className?: string }) {
+export function ScheduleExportButton({ scope, label = "Schedule export", className = "secondary-button" }: { scope: ScheduledExportScope | null; label?: string; className?: string }) {
   const [open, setOpen] = useState(false);
   if (!scope) return null;
   return <>
