@@ -22,19 +22,20 @@ async function blockingViolations(page: Page, include: string) {
   return results.violations.filter((violation) => (accessibilityBudget.blockedImpacts as readonly string[]).includes(violation.impact ?? ""));
 }
 
-test("the entry point exists only for administrators", async ({ page }) => {
+test("the entry point is not offered to a person who is not an administrator", async ({ page }) => {
   await isolateSourceConnections(page);
   await asAdmin(page, "read_only");
   await page.getByRole("button", { name: /^documents$/i }).first().click();
   await expect(page.getByRole("heading", { name: /^documents$/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /^connect source$/i })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: /^source connections$/i })).toHaveCount(0);
+});
 
-  const admin = await page.context().newPage();
-  await isolateSourceConnections(admin);
-  await asAdmin(admin, "admin");
-  await admin.getByRole("button", { name: /^documents$/i }).first().click();
-  await expect(admin.getByRole("button", { name: /^connect source$/i })).toBeVisible();
+test("the entry point is offered to an administrator", async ({ page }) => {
+  await isolateSourceConnections(page);
+  await asAdmin(page, "admin");
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  await expect(page.getByRole("button", { name: /^connect source$/i })).toBeVisible();
 });
 
 test("only approved providers are listed, each with a one-line access description and a Demo label", async ({ page }) => {
