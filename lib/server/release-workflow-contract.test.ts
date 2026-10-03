@@ -70,7 +70,7 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
   assert.match(workflow, /terraform fmt -check -recursive infra\/terraform/);
   assert.match(workflow, /npm run build/);
   assert.match(workflow, /npm run test:e2e/);
-  assert.match(workflow, /npm audit --audit-level=high/);
+  assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
 });
 
 test("dev deploys never run production-like runtime secret or migration steps", async () => {
