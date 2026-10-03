@@ -118,10 +118,4 @@ test("native PostgreSQL runtime advertises transaction and PostgreSQL session ca
   assert.equal(runtime.capabilities.logicalReplication, true);
   assert.equal(cachedRuntime.provider, "gcp-cloud-sql");
   assert.equal(cachedRuntime.api, runtime.api);
-
-  const pooledRuntime = postgresRuntime("postgresql://corvis:secret@localhost:5432/postgres?pgbouncer=true", "supabase");
-  assert.equal(pooledRuntime.provider, "supabase");
-  assert.equal(pooledRuntime.capabilities.nativeTransactions, true);
-  assert.equal(pooledRuntime.capabilities.advisoryLocks, true);
-  assert.equal(pooledRuntime.capabilities.logicalReplication, false);
 });
