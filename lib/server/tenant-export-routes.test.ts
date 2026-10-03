@@ -38,6 +38,7 @@ const { GET: retentionGet } = await import("@/app/api/v1/access/retention/route"
 const { GET: listGet, POST: requestPost } = await import("@/app/api/v1/access/data-exports/route");
 const { GET: itemGet, POST: itemPost } = await import("@/app/api/v1/access/data-exports/[exportId]/route");
 const { GET: downloadGet } = await import("@/app/api/v1/access/data-exports/[exportId]/download/route");
+const { GET: buildsGet } = await import("@/app/api/v1/admin/tenant-export-builds/route");
 const { dataGovernanceErrorResponse, assertOrganizationAdmin, DataGovernanceError } = await import("./data-governance.ts");
 const { tenantExportService, overrideTenantExportService, createTenantExportService, postgresTenantExportService } = await import("./tenant-export-service.ts");
 const { retentionService, postgresRetentionService } = await import("./data-retention.ts");
@@ -245,6 +246,41 @@ test("the list route pages through the Postgres backend: nextCursor when more re
   assert.equal(((await bad.json()) as { error: string }).error, "invalid_cursor");
   assert.equal(queries.length, 0, "a bad cursor never reaches SQL");
   assert.equal((await listGet(request("/access/data-exports?limit=abc"))).status, 400);
+});
+
+test("the operator build view is for the operations tenant's admins only, and lists failed builds without any customer detail (F10f)", async () => {
+  const failed = { tenant_id: TENANT, tenant_name: "Meridian", request_id: REQUEST, state: "failed", build_attempts: 5, last_error: "export build lease expired before completion",
+    requested_at: "2026-10-01 10:00:00+00", state_changed_at: "2026-10-02 10:00:00+00", build_next_attempt_at: null, cursor_at: "2026-10-02T10:00:00.000000Z" };
+  const original = process.env.CORVIS_OPERATIONS_TENANT_ID;
+  try {
+    // No operations tenant configured: nobody, not even an Organization Admin, may read it.
+    delete process.env.CORVIS_OPERATIONS_TENANT_ID;
+    seed(() => [failed]);
+    const unconfigured = await buildsGet(request("/admin/tenant-export-builds"));
+    assert.equal(unconfigured.status, 403);
+    assert.equal((await body(unconfigured)).error, "operations_admin_required");
+    // A customer's own Organization Admin is refused.
+    process.env.CORVIS_OPERATIONS_TENANT_ID = "00000000-0000-4000-8000-000000000001";
+    const customer = await buildsGet(request("/admin/tenant-export-builds"));
+    assert.equal(customer.status, 403);
+    assert.equal((await body(customer)).error, "operations_admin_required");
+    assert.equal((await buildsGet(request("/admin/tenant-export-builds", { roles: "analyst" }))).status, 403);
+    assert.equal((await buildsGet(request("/admin/tenant-export-builds", { unauthenticated: true }))).status, 401);
+    assert.equal(queries.length, 0, "refused before any query");
+
+    process.env.CORVIS_OPERATIONS_TENANT_ID = TENANT;
+    const ok = await buildsGet(request("/admin/tenant-export-builds?status=failed&limit=5"));
+    assert.equal(ok.status, 200);
+    const page = (await ok.json()) as { data: Array<Record<string, unknown>>; nextCursor: string | null };
+    assert.deepEqual(page.data.map((item) => [item.tenantName, item.requestId, item.status, item.attempts, item.lastError]), [["Meridian", REQUEST, "failed", 5, "export build lease expired before completion"]]);
+    assert.equal(page.nextCursor, null);
+    assert.deepEqual(Object.keys(page.data[0]!).sort(), ["attempts", "changedAt", "lastError", "nextAttemptAt", "requestId", "requestedAt", "status", "tenantId", "tenantName"], "no requester, reason or approver");
+    assert.match(queries[0]!.sql, /where r\.state = 'failed'/);
+    assert.equal((await buildsGet(request("/admin/tenant-export-builds?status=weird"))).status, 400);
+    assert.equal((await buildsGet(request("/admin/tenant-export-builds?cursor=garbage"))).status, 400);
+  } finally {
+    if (original === undefined) delete process.env.CORVIS_OPERATIONS_TENANT_ID; else process.env.CORVIS_OPERATIONS_TENANT_ID = original;
+  }
 });
 
 test("the error mapper handles typed, validation, authorization and unknown failures", async () => {

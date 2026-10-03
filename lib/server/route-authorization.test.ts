@@ -162,6 +162,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/readiness/route.ts", { GET: ADMIN }],
   ["admin/session-revocations/route.ts", { POST: ADMIN }],
   ["admin/support-access/route.ts", { POST: ADMIN }],
+  ["admin/tenant-export-builds/route.ts", { GET: ADMIN }],
   ["admin/tenant-health/route.ts", { GET: ADMIN }],
   ["admin/tenants/invitations/route.ts", { POST: ADMIN }],
   ["admin/tenants/route.ts", { POST: ADMIN }],
