@@ -24,6 +24,18 @@ test("configuration retains safe local defaults", () => {
   assert.deepEqual(config.uploadAllowedOrigins, []);
 });
 
+test("boolean and positive-integer settings cover accepted and fail-closed edge values", () => {
+  const config = getServerConfig({
+    NODE_ENV: "test",
+    CORVIS_DEMO_MODE: "1",
+    CORVIS_RESEARCH_TIMEOUT_MS: "-1",
+    CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "0",
+  });
+  assert.equal(config.demoMode, true);
+  assert.equal(config.researchTimeoutMs, 30_000);
+  assert.equal(config.rateLimitRequestsPerMinute, 600);
+});
+
 test("database binding is provider-neutral while the legacy Postgres env remains compatible", () => {
   const current = getServerConfig({
     NODE_ENV: "test",
