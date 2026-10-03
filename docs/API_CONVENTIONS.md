@@ -342,3 +342,23 @@ that is intentionally part of v1 must be added to the spec and compatibility
 baseline before it is treated as a stable external contract. Internal/operator
 routes should be explicitly classified rather than silently omitted or
 accidentally presented as customer APIs.
+
+## Review-item assignment and discussion (F3)
+
+Implementation tracker: GitHub issue #259. A Review Analyst assigns an observation or a reconciliation exception to a teammate and discusses it in a comment thread. The routes are product surfaces, classified `workspace_control` in `openapi/v1-route-classification.json`. Discussion records ownership and conversation only: it never changes data, never records a review decision and never counts toward dual control. Decisions still go through `POST /review`, `POST /extraction-review` and `POST /reconciliation-exceptions/resolve`. Every route requires `observations:review` (checked before anything else) and a signed-in person (`403 human_identity_required` for a service identity).
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/v1/review-items` | Items in the caller's workspace that have an assignee or comments (`subjectKind`, `subjectId`, `assignee`, `assignedAt`, `version`, `commentCount`, `lastCommentAt`), keyset paged by `?limit` / `?cursor`. Only items the caller can read in Data review are listed. |
+| `GET /api/v1/review-items/assigned` | The caller's own open assignments (observations still needing review, exceptions still open), blocking exceptions first, for the Overview "Assigned to me" view. |
+| `GET /api/v1/review-items/{subjectKind}/{subjectId}` | One thread: assignee, comments oldest first (at most 200) and `members`, everyone who may be assigned or mentioned on this item. `subjectKind` is `observation` or `reconciliation_exception`. An item the caller cannot read, a missing one and a malformed id are the same `404 review_item_not_found`. |
+| `PUT /api/v1/review-items/{subjectKind}/{subjectId}/assignee` | `{ assigneeUserId: "<member>" or null, expectedVersion }`: assign, reassign or unassign. `expectedVersion` is the thread version the caller saw (0 when none); a stale one is `409 assignment_changed`. Assigning the current assignee changes nothing (no audit event, no notice). |
+| `POST /api/v1/review-items/{subjectKind}/{subjectId}/comments` | `{ idempotencyKey, body, mentionUserIds }` (the key may be the `Idempotency-Key` header): append a comment. `201`, or `200` with `replayed: true` for a replay of the same key and content. There is no edit or delete. |
+
+**Eligibility.** Only workspace members with review access can be assigned or mentioned: an active membership of the workspace in `tenant_admin`, `accountadmin` or `reviewer`, an active human identity, and read entitlement to the item's fund. Anyone else is `422 assignee_not_eligible` / `422 mention_not_eligible`. People are identified by user id and shown by their verified address (then invitation address, then subject); the member list is only ever returned to a caller who can already review the item.
+
+**Comments.** 1 to 2,000 characters of free text, at most 10 distinct mentions. Mentioned people are notified through F2 (`review_discussion`, see `NOTIFICATIONS.md`) without any comment text. Comment text is rendered as text only and is never copied into an email, a notification or an audit event.
+
+**Errors**: `invalid_request`, `invalid_subject_kind`, `invalid_subject_id`, `invalid_assignee`, `invalid_expected_version`, `invalid_comment`, `invalid_mentions`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_limit`, `invalid_cursor`, `human_identity_required` (403), `review_item_not_found` (404), `assignee_not_eligible` and `mention_not_eligible` (422), and 409s `assignment_changed`, `idempotency_key_reused`, `review_comment_conflict` (two concurrent first comments with one key; retry) and `review_comment_limit_reached`. The SQL refusals behind them are allow-listed in `lib/server/sql-application-errors.ts`.
+
+**Audit.** Every change of assignee and every comment writes an `audit_event` (`review_item.assign`, `review_item.reassign`, `review_item.unassign`, `review_item.comment`; target type `review_item`, target id `<kind>:<id>`) in the same transaction as the change. Events carry identifiers and counts only (fund, assignee and previous assignee ids, comment id, mentioned ids, comment length). They are queryable through `GET /admin/audit?targetType=review_item`; they are deliberately not part of the access-administration audit listing, which would otherwise drown in day-to-day discussion.

@@ -15,6 +15,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { SectorClassificationDialog } from "@/features/overview/sector-classification-dialog";
 import { overviewReportContext } from "@/features/data-issues/report-contexts";
 import { ReportIssueButton } from "@/features/data-issues/report-issue-dialog";
+import { useAssignedReviewItems } from "@/features/overview/use-assigned-review-items";
 
 const ATTENTION_ICON: Record<AttentionItem["kind"], IconName> = {
   blocking_exception: "alert",
@@ -88,6 +89,9 @@ export function OverviewView({
 }) {
   usePreferences();
   const [classifying, setClassifying] = useState(false);
+  // "Assigned to me" (F3): the attention list can narrow to the review items assigned to the signed-in reviewer.
+  const [attentionFilter, setAttentionFilter] = useState<"all" | "mine">("all");
+  const assigned = useAssignedReviewItems(canReview, summary?.generatedAt);
   // The list may hold every version of a snapshot; counts describe each fund period's current version only.
   const snapshots = currentSnapshots(snapshotHistory);
   const { published, review, facts: factCount, holdings: holdingCount, blockingExceptions, completion } = snapshotCounts(snapshots);
@@ -136,8 +140,18 @@ export function OverviewView({
     <div className="empty-row"><strong>We couldn’t load what needs your attention ({summaryError}).</strong><span>Blocking exceptions, reviews, stuck documents and unhealthy sources may exist that are not shown here.</span>{onRetrySummary && <button type="button" className="secondary-button" onClick={onRetrySummary}>Retry</button>}</div>
   </section>;
   const attentionSection = attentionUnavailableSection || (attention && <section className="panel attention-panel" id="needs-attention" tabIndex={-1} aria-labelledby="needs-attention-heading">
-    <div className="panel-heading"><div><p className="eyebrow">Needs your attention</p><h2 id="needs-attention-heading">{attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item" : "items"}, most urgent first` : "All caught up"}</h2></div></div>
-    {attention.items.length ? <ol className="attention-list">{attention.items.map((item) => { const body = <><span className={`attention-icon severity-${item.severity}`} aria-hidden="true"><Icon name={ATTENTION_ICON[item.kind]} size={16} /></span><span className="snapshot-main"><strong>{item.title}</strong><span>{item.detail}</span></span><StatusPill status={SEVERITY_LABEL[item.severity]} /><span className="attention-action">{targetLabel(item.target)}{item.target.view !== "admin" && <Icon name="chevron" size={14} />}</span></>;
+    <div className="panel-heading"><div><p className="eyebrow">Needs your attention</p><h2 id="needs-attention-heading">{attentionFilter === "mine" ? (assigned.status === "ready" ? `${assigned.items.length} ${assigned.items.length === 1 ? "item" : "items"} assigned to you` : "Assigned to you") : attentionTotal ? `${attentionTotal} ${attentionTotal === 1 ? "item" : "items"}, most urgent first` : "All caught up"}</h2></div>
+      {canReview && <fieldset className="table-density-toggle attention-filter"><legend className="visually-hidden">Attention filter</legend>
+        <button type="button" aria-pressed={attentionFilter === "all"} onClick={() => setAttentionFilter("all")}>All items</button>
+        <button type="button" aria-pressed={attentionFilter === "mine"} onClick={() => setAttentionFilter("mine")}>Assigned to me{assigned.status === "ready" ? ` (${assigned.items.length})` : ""}</button>
+      </fieldset>}</div>
+    {attentionFilter === "mine" ? (assigned.status === "error"
+      ? <div className="empty-row" role="alert"><strong>We couldn’t load your assigned items ({assigned.error}).</strong><span>The rest of the attention list is unaffected.</span><button type="button" className="secondary-button" onClick={assigned.reload}>Retry</button></div>
+      : assigned.status !== "ready" ? <div className="empty-row" role="status"><strong>Loading your assigned items…</strong></div>
+      : assigned.items.length ? <ol className="attention-list" aria-label="Review items assigned to you">{assigned.items.map((item) => { const target: AttentionTarget = { view: "review", snapshotId: item.snapshotId, observationId: item.subjectKind === "observation" ? item.subjectId : undefined };
+          return <li key={`${item.subjectKind}:${item.subjectId}`}><button type="button" className="attention-row" onClick={() => onOpenAttention(target)} aria-label={`${item.title}: ${item.detail} ${targetLabel(target)}`}><span className={`attention-icon severity-${item.severity}`} aria-hidden="true"><Icon name={item.severity === "blocking" ? "alert" : "table"} size={16} /></span><span className="snapshot-main"><strong>{item.title}</strong><span>{item.detail}</span></span><StatusPill status={SEVERITY_LABEL[item.severity]} /><span className="attention-action">{targetLabel(target)}<Icon name="chevron" size={14} /></span></button></li>; })}</ol>
+      : <div className="empty-row"><strong>Nothing is assigned to you</strong><span>Observations and reconciliation exceptions assigned to you in Data review that still need a decision appear here.</span></div>)
+    : attention.items.length ? <ol className="attention-list">{attention.items.map((item) => { const body = <><span className={`attention-icon severity-${item.severity}`} aria-hidden="true"><Icon name={ATTENTION_ICON[item.kind]} size={16} /></span><span className="snapshot-main"><strong>{item.title}</strong><span>{item.detail}</span></span><StatusPill status={SEVERITY_LABEL[item.severity]} /><span className="attention-action">{targetLabel(item.target)}{item.target.view !== "admin" && <Icon name="chevron" size={14} />}</span></>;
       return <li key={item.id}>{item.target.view === "admin" ? <div className="attention-row static">{body}</div> : <button type="button" className="attention-row" onClick={() => onOpenAttention(item.target)} aria-label={`${item.title}: ${item.detail} ${targetLabel(item.target)}`}>{body}</button>}</li>; })}</ol>
       : <div className="empty-row"><strong>All caught up</strong><span>No blocking exceptions, observations awaiting review, stuck documents{canAdmin ? " or unhealthy sources" : ""}.</span></div>}
   </section>);

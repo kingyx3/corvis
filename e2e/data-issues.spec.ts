@@ -94,6 +94,8 @@ test("reporting changes nothing a customer sees: published values and fund-perio
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   const figures = page.locator("#customer-overview");
   await expect(figures).toContainText("Advent International GPE VIII");
+  // The attention filter's "Assigned to me" count (F3) loads after the figures; wait for it so the baseline is the settled page.
+  await expect(figures).toContainText(/Assigned to me \(\d+\)/);
   const before = await figures.innerText();
   await page.getByRole("button", { name: "Report an issue" }).click();
   const dialog = page.getByRole("dialog", { name: "Report an issue" });
@@ -101,11 +103,12 @@ test("reporting changes nothing a customer sees: published values and fund-perio
   await dialog.getByRole("button", { name: "Send report" }).click();
   await page.getByRole("dialog", { name: "Report received" }).getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(await figures.innerText()).toBe(before);
+  // The "Assigned to me" count is momentarily blank while the workspace refreshes; the settled page must equal the baseline.
+  await expect.poll(() => figures.innerText()).toBe(before);
   await page.reload();
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();
   await expect(page.locator("#customer-overview")).toContainText("Advent International GPE VIII");
-  expect(await page.locator("#customer-overview").innerText()).toBe(before);
+  await expect.poll(() => page.locator("#customer-overview").innerText()).toBe(before);
 });
 
 test("a retry of the same report is idempotent: one case, not two", async ({ page }) => {

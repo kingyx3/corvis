@@ -439,6 +439,10 @@ jobs:
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedules.mjs
           # Two workers ticking at once run each due trigger exactly once (committed scratch tenant, removed afterwards).
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedule-concurrency.mjs
+          # Review-item assignment and discussion (F3): eligibility (review access to the fund in the workspace), compare-and-set assignment, append-only comments, inert (no decision, no dual-control effect), tenant/RLS. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/review-item-discussion.sql
+          # Review-item discussion through the application repository: visibility, paging, open assignments, the assignee's and mentioned person's notice and send-time eligibility, audit round trip, dual control untouched. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/review-item-discussion.mjs
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
           # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.
