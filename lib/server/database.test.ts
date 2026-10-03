@@ -30,9 +30,9 @@ test("PostgreSQL portability baseline declares the capabilities Corvis relies on
   });
 });
 
-test("strict transactional mutations fail closed on a transport without transactions", async () => {
-  await assert.rejects(
-    requireTransaction(fakeDb(false), async () => "never"),
+test("strict transactional mutations fail closed on a transport without transactions", () => {
+  assert.throws(
+    () => requireTransaction(fakeDb(false), async () => "never"),
     /does not provide native transactions/,
   );
 });
