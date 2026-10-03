@@ -225,7 +225,7 @@ test("a schedule cannot be saved without the owner's current rights, a usable wo
   await assert.rejects(backend.create(identity({ workspaceId: "workspace_demo" }), command, db), refusal("invalid_workspace", 400));
   await assert.rejects(backend.create(identity({ entitlements: { workspaceIds: [WORKSPACE], fundIds: ["fund-1"], sourceDocumentAccessAllowed: false, redistributionAllowed: false } }), command, db), AuthorizationError);
   await assert.rejects(backend.create(identity({ entitlements: { workspaceIds: [WORKSPACE], fundIds: ["fund-1"], sourceDocumentAccessAllowed: false } }), command, db), AuthorizationError, "redistribution must be explicitly allowed");
-  const closed = new PostgresExportScheduleBackend(() => db, async () => { throw new FeatureFlagDeniedError({ key: "exports.parquet_delivery", channel: "export", enabled: false, reason: "not_configured" }); });
+  const closed = new PostgresExportScheduleBackend(() => db, async () => { throw new FeatureFlagDeniedError({ key: "exports.parquet_delivery", channel: "export", enabled: false, reason: "not_configured", config: {} }); });
   await assert.rejects(closed.create(identity(), { ...command, format: "parquet" }, db), FeatureFlagDeniedError);
   await assert.rejects(backend.create(identity(), { ...command, scope: { positionFinancials: { ...positionScope.positionFinancials, fundId: "fund-9" } } }, db), refusal("export_scope_not_entitled", 403));
   assert.equal(db.calls.some((call) => call.sql.includes("create_export_schedule")), false, "nothing is written once a check fails");
@@ -395,7 +395,7 @@ function runner(options: { due?: PostgresRow[]; claim?: PostgresRow | null; sche
 const exportedManifest = { exportId: EXPORT } as Awaited<ReturnType<NonNullable<Parameters<typeof processDueExportSchedules>[1]>["requestExport"] & (() => never)>>;
 
 test("a due schedule is re-authorized as its owner, exported through the governed pipeline and recorded in one transaction", async () => {
-  const seen: Array<{ principal: unknown; identity?: RequestIdentity; format?: string; options?: unknown; store?: unknown }> = [];
+  const seen: Array<{ principal?: unknown; identity?: RequestIdentity; format?: string; options?: unknown; store?: unknown }> = [];
   const { db, audits, runs } = runner();
   const summary = await processDueExportSchedules(7, {
     authorize: async (store, principal) => { seen.push({ principal, store }); return authorization; },
@@ -486,7 +486,7 @@ test("each way re-authorization can refuse is recorded as one stable failed run,
     { name: "the scope no longer resolves", reason: "scope_unavailable", requestExport: async () => { throw new AuthorizationError("exports:scope"); } },
     { name: "another denial", reason: "scope_not_entitled", requestExport: async () => { throw new AuthorizationError("documents:read"); } },
     { name: "the owner lost the fund", reason: "scope_not_entitled", requestExport: async () => { throw new ExportScheduleRequestError("export_scope_not_entitled", 403); } },
-    { name: "the format flag was turned off", reason: "format_unavailable", formatGate: async () => { throw new FeatureFlagDeniedError({ key: "exports.parquet_delivery", channel: "export", enabled: false, reason: "kill_switch" }); } },
+    { name: "the format flag was turned off", reason: "format_unavailable", formatGate: async () => { throw new FeatureFlagDeniedError({ key: "exports.parquet_delivery", channel: "export", enabled: false, reason: "kill_switch", config: {} }); } },
   ];
   for (const testCase of cases) {
     const { db, audits, runs } = runner();

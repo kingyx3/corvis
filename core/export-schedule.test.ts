@@ -68,7 +68,7 @@ test("a new schedule is validated: scope, format, trigger, a bounded single-line
   assert.equal(parseCreateScheduleCommand({ ...body, label: `  ${"x".repeat(MAX_SCHEDULE_LABEL_LENGTH)}  ` }).label, "x".repeat(MAX_SCHEDULE_LABEL_LENGTH));
 
   // The idempotency key comes from the body, or from the header when the body has none; naming both requires they agree.
-  const { idempotencyKey: _omitted, ...withoutKey } = body;
+  const withoutKey = { ...body, idempotencyKey: undefined };
   assert.equal(parseCreateScheduleCommand(withoutKey, "header-key").idempotencyKey, "header-key");
   assert.equal(parseCreateScheduleCommand(body, "key-1").idempotencyKey, "key-1");
   assert.equal(parseCreateScheduleCommand(body, null).idempotencyKey, "key-1");
