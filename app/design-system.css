@@ -489,6 +489,11 @@
 .data-issues-more { display: flex; justify-content: center; }
 .data-issue-form textarea { width: 100%; resize: vertical; }
 .data-issue-scope dd { overflow-wrap: anywhere; }
+/* Service accounts (F6): the facts of an account in a compact grid, and the one-time credential panel. */
+.service-account-facts { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 20px; }
+.service-account-facts dd { overflow-wrap: anywhere; }
+.service-account-facts code { font-size: 12px; overflow-wrap: anywhere; }
+.service-account-secret .input-control { font-family: var(--mono); width: 100%; }
 /* Scheduled exports (F4): cards for the schedules, the shared table for their runs. */
 .export-schedules { display: grid; gap: 12px; }
 .export-schedule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
