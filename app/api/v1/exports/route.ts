@@ -4,6 +4,7 @@ import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-reques
 import { assertFeatureEnabled } from "@/lib/server/feature-flags";
 import { withIdempotency } from "@/lib/server/idempotency";
 import { apiError, correlationId, json } from "@/lib/server/http";
+import { performanceScorecardScope } from "@/lib/server/performance-scorecard-export";
 import { createPhysicalExport } from "@/lib/server/physical-exports";
 import { listPhysicalExportStatuses } from "@/lib/server/export-history";
 import { isNonEmptyString } from "@/lib/server/request-validation";
@@ -13,6 +14,8 @@ function exportScope(value: unknown): ExportScope | undefined | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
   if (isNonEmptyString(candidate.snapshotId)) return { snapshotId: candidate.snapshotId };
+  const scorecard = performanceScorecardScope(candidate);
+  if (scorecard) return scorecard;
   const raw = candidate.positionFinancials;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const position = raw as Record<string, unknown>;

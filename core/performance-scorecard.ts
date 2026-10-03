@@ -430,6 +430,17 @@ function exportRows(
   });
 }
 
+/** Published snapshots the shown figures come from, sorted: the snapshots a governed export of this view is pinned to. */
+export function scorecardSnapshotIds(scorecard: Scorecard): string[] {
+  const ids = new Set<string>();
+  for (const fund of scorecard.funds) {
+    for (const cell of [...fund.cells, ...fund.investments.flatMap((investment) => investment.cells)]) {
+      for (const figure of cell.figures) ids.add(figure.snapshotId);
+    }
+  }
+  return [...ids].sort();
+}
+
 /** Flat rows for the governed export: every fund's metrics, then each fund's investments' metrics, in table order. */
 export function scorecardExportRows(scorecard: Scorecard): ScorecardExportRow[] {
   return scorecard.funds.flatMap((fund) => [

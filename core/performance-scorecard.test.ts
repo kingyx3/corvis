@@ -15,6 +15,7 @@ import {
   latestFigures,
   reportedFigureStatus,
   scorecardExportRows,
+  scorecardSnapshotIds,
   type FormatNumber,
   type ScorecardFact,
   type ScorecardFigure,
@@ -304,4 +305,21 @@ test("export rows list reported figures with their source and an explicit Not re
 
 test("export rows are empty for an empty scorecard", () => {
   assert.deepEqual(scorecardExportRows({ funds: [] }), []);
+});
+
+test("a governed export is pinned to exactly the snapshots the shown figures come from", () => {
+  const scorecard = buildScorecard({
+    funds: [{ fundId: "fund-a", fund: "Alpha" }, { fundId: "fund-b", fund: "Beta" }],
+    facts: [
+      fact({ snapshotId: "snap-b", metricCode: "nav" }),
+      fact({ snapshotId: "snap-a", metricCode: "tvpi" }),
+      fact({ snapshotId: "snap-a", metricCode: "dpi" }),
+      fact({ snapshotId: "snap-old", metricCode: "nav", asOf: "2026-03-31" }),
+      fact({ snapshotId: "snap-c", level: "investment", investmentKey: "co-1", investment: "Acme", metricCode: "cost" }),
+      fact({ fundId: "fund-b", snapshotId: "snap-d", actuality: "forecast", metricCode: "nav" }),
+    ],
+  });
+  assert.deepEqual(scorecardSnapshotIds(scorecard), ["snap-a", "snap-b", "snap-c"], "history and projections are not part of the view");
+  assert.deepEqual(scorecardSnapshotIds({ funds: [] }), []);
+  assert.deepEqual(scorecardSnapshotIds(buildScorecard({ funds: [{ fundId: "fund-a", fund: "Alpha" }], facts: [] })), []);
 });

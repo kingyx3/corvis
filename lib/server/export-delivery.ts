@@ -2,10 +2,12 @@ import { createHash } from "crypto";
 import type { PositionFinancialStatementRow } from "../../core/contracts.ts";
 import type { ExportScope, PositionFinancialsExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, type RequestIdentity } from "../../core/enterprise.ts";
+import { SCORECARD_EXPORT_COLUMNS } from "../../core/performance-scorecard.ts";
 import { PostgresMembershipAuthorizationRepository } from "./authorization.ts";
 import { getServerConfig } from "./config.ts";
 import { assertExportRowLimit, EXPORT_COLUMNS, EXPORT_MAX_ROWS, POSITION_EXPORT_COLUMNS, renderExport, type ExportRow } from "./export-renderer.ts";
 import { gcs, type GcsControlClient } from "./gcs.ts";
+import { loadScorecardExportRows, performanceScorecardScope } from "./performance-scorecard-export.ts";
 import { rowsForPeriodicity } from "./position-financial-statements.ts";
 import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
@@ -276,8 +278,8 @@ async function loadPositionFinancialRows(
  * replaced it. Failed attempts delete their own object and a successful attempt
  * deletes its predecessors, so retries never leave orphans behind.
  */
-export function exportAttemptObjectKey(input: { tenantId: string; exportId: string; attempt: number; scoped: boolean; extension: string }): string {
-  const basename = input.scoped ? "position-financials" : "observations";
+export function exportAttemptObjectKey(input: { tenantId: string; exportId: string; attempt: number; scoped: boolean; scorecard?: boolean; extension: string }): string {
+  const basename = input.scorecard ? "performance-scorecard" : input.scoped ? "position-financials" : "observations";
   return `exports/${input.tenantId}/${input.exportId}/attempt-${input.attempt}/${basename}.${input.extension}`;
 }
 
@@ -286,7 +288,8 @@ function attemptKeys(row: QueuedExportRow, attempts: readonly number[]): string[
   if (format !== "csv" && format !== "xlsx" && format !== "parquet") return [];
   const manifest = row.manifest && typeof row.manifest === "object" ? row.manifest as Record<string, unknown> : {};
   const scoped = positionScope(manifest.scope as ExportScope | undefined) !== undefined;
-  return attempts.map((attempt) => exportAttemptObjectKey({ tenantId: String(row.tenant_id), exportId: String(row.export_id), attempt, scoped, extension: format }));
+  const scorecard = performanceScorecardScope(manifest.scope) !== undefined;
+  return attempts.map((attempt) => exportAttemptObjectKey({ tenantId: String(row.tenant_id), exportId: String(row.export_id), attempt, scoped, scorecard, extension: format }));
 }
 
 /** Best-effort removal of the objects the given attempts may have written. Never throws for a missing object. */
@@ -312,17 +315,20 @@ export async function deliverExportArtifact(
   if (format !== "csv" && format !== "xlsx" && format !== "parquet") throw new Error("export_invalid_format");
   const existingManifest = row.manifest && typeof row.manifest === "object" ? row.manifest as Record<string, unknown> : {};
   const scopedPosition = positionScope(existingManifest.scope as ExportScope | undefined);
+  const scopedScorecard = performanceScorecardScope(existingManifest.scope);
   const rows = scopedPosition
     ? await loadPositionFinancialRows(identity, snapshotIds, scopedPosition, store)
-    : await loadArtifactRows(identity, snapshotIds, store);
-  const rendered = renderExport(format, rows, scopedPosition ? POSITION_EXPORT_COLUMNS : EXPORT_COLUMNS);
+    : scopedScorecard
+      ? await loadScorecardExportRows(identity, snapshotIds, store)
+      : await loadArtifactRows(identity, snapshotIds, store);
+  const rendered = renderExport(format, rows, scopedPosition ? POSITION_EXPORT_COLUMNS : scopedScorecard ? SCORECARD_EXPORT_COLUMNS : EXPORT_COLUMNS);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");
-  const key = exportAttemptObjectKey({ tenantId: identity.tenantId, exportId, attempt: options.attempt ?? 1, scoped: scopedPosition !== undefined, extension: rendered.extension });
+  const key = exportAttemptObjectKey({ tenantId: identity.tenantId, exportId, attempt: options.attempt ?? 1, scoped: scopedPosition !== undefined, scorecard: scopedScorecard !== undefined, extension: rendered.extension });
   await objectStore.putObject(key, rendered.bytes, rendered.contentType);
   const ttlSeconds = getServerConfig().exportArtifactTtlSeconds;
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-  const countKey = scopedPosition ? "positionFinancials" : "observations";
+  const countKey = scopedPosition ? "positionFinancials" : scopedScorecard ? "performanceScorecard" : "observations";
   const manifest = {
     ...existingManifest,
     checksumSha256,
