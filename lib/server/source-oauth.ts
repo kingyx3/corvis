@@ -92,11 +92,10 @@ export async function discardOAuthAttempt(
 
 export type ConsumedAttempt = { providerKey: string; connectionLabel: string; codeVerifier: string };
 
+const PENDING_FIELD_TYPES = { providerKey: "string", connectionLabel: "string", state: "string", codeVerifier: "string", subject: "string", workspaceId: "string", expiresAt: "number" } as const;
+
 function isPending(value: SecretPayload): value is PendingAttempt {
-  return value.kind === "source_oauth_attempt"
-    && typeof value.providerKey === "string" && typeof value.connectionLabel === "string"
-    && typeof value.state === "string" && typeof value.codeVerifier === "string"
-    && typeof value.subject === "string" && typeof value.workspaceId === "string" && typeof value.expiresAt === "number";
+  return value.kind === "source_oauth_attempt" && Object.entries(PENDING_FIELD_TYPES).every(([field, type]) => typeof value[field] === type);
 }
 
 /**

@@ -81,6 +81,15 @@ test("write then read round-trips the secret payload through Secret Manager", as
   assert.equal(calls.filter((call) => isMetadataServer(call.url)).length, 1);
 });
 
+test("a short-lived secret (a pending OAuth attempt) is created with a TTL so Secret Manager deletes it by itself", async () => {
+  const { fetchImpl, calls } = fakeSecretManager();
+  const store = new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl });
+  const reference = await store.write(TENANT, "oauth-attempt", { state: "s" }, { ttlSeconds: 600 });
+  assert.match(reference, CONSTRAINT);
+  const createCall = calls.find((call) => call.url.includes("/secrets?secretId="));
+  assert.deepEqual(JSON.parse(createCall!.body!), { replication: { automatic: {} }, ttl: "600s" });
+});
+
 test("write cleans up the just-created secret when adding the version fails", async () => {
   const { fetchImpl, calls } = fakeSecretManager({
     onAddVersion: () => new Response(null, { status: 500 }),
