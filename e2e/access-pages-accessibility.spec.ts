@@ -73,9 +73,10 @@ const credentialFixture = (id: string, overrides: Record<string, unknown> = {}) 
 const serviceAccountFixture = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
   serviceAccountId: id, userId: "00000000-0000-4000-8000-0000000000aa", name, purpose: "Loads published fund data into the warehouse", workspaceId: "workspace-1", workspaceName: "Primary Workspace",
   roleName: "analyst", status: "active", createdBy: "admin@example.test", createdAt: "2026-06-01T00:00:00.000Z", expiresAt: "2027-06-01T00:00:00.000Z", disabledAt: null, disabledBy: null, disableReason: null,
+  ownerSubject: "admin@example.test", ownerAssignedAt: "2026-06-01T00:00:00.000Z", ownerActive: true, needsOwner: false,
   lastUsedAt: "2026-10-02T08:00:00.000Z", credentialExpiresAt: "2026-10-10T00:00:00.000Z", expiringSoon: true,
   credentials: [credentialFixture("c1c1c1c1-0000-4000-8000-000000000001"), credentialFixture("c0c0c0c0-0000-4000-8000-000000000002", { status: "rotating_out", endsAt: "2026-10-03T12:00:00.000Z", expiringSoon: false })],
-  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true }, ...overrides,
+  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true }, ...overrides,
 });
 const serviceAccounts = {
   serviceAccounts: [
@@ -83,10 +84,16 @@ const serviceAccounts = {
     serviceAccountFixture("a2a2a2a2-0000-4000-8000-000000000002", "Retired data bridge", {
       status: "disabled", expiringSoon: false, credentialExpiresAt: null, disabledAt: "2026-09-01T00:00:00.000Z", disabledBy: "admin@example.test", disableReason: "Integration retired",
       credentials: [credentialFixture("c3c3c3c3-0000-4000-8000-000000000003", { status: "revoked", revokedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-01T00:00:00.000Z", expiringSoon: false })],
-      actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false },
+      actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false },
+    }),
+    // Owned by an administrator who has since been deactivated: it keeps working and needs a new owner.
+    serviceAccountFixture("a4a4a4a4-0000-4000-8000-000000000004", "Partner data feed", {
+      expiringSoon: false, ownerSubject: "former.admin@example.test", ownerActive: false, needsOwner: true,
+      actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: false, canTransfer: true },
     }),
   ],
   workspaces: [{ workspaceId: "workspace-1", name: "Primary Workspace" }],
+  owners: [{ subject: "admin@example.test" }, { subject: "second.admin@example.test" }],
 };
 
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
@@ -128,6 +135,10 @@ for (const colorScheme of ["light", "dark"] as const) {
     await nightly.getByText(/^Credentials \(2\)/).click();
     await expect(nightly.getByRole("region", { name: /credentials of nightly reporting sync/i })).toContainText("Rotating out");
     await expect(page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Retired data bridge" })).toContainText("Integration retired");
+    // An account whose owner was deactivated is surfaced as needing a new owner (F6b).
+    const orphaned = page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Partner data feed" });
+    await expect(orphaned).toContainText("Needs a new owner.");
+    await expect(orphaned).toContainText("former.admin@example.test (no longer active)");
     // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
@@ -163,6 +174,17 @@ for (const colorScheme of ["light", "dark"] as const) {
     const nightly = section.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Nightly reporting sync" });
     await nightly.getByRole("button", { name: "Rotate credential" }).click();
     await expect(nightly.getByRole("group", { name: /rotate the credential of nightly reporting sync/i })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    // The extend and change-owner panels.
+    await nightly.getByRole("button", { name: "Extend expiry" }).click();
+    await expect(nightly.getByRole("group", { name: "Extend Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    await nightly.getByRole("button", { name: "Change owner" }).click();
+    await expect(nightly.getByRole("group", { name: "Change the owner of Nightly reporting sync" })).toBeVisible();
     violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
     expect(violations, describe(violations)).toEqual([]);
     await nightly.getByRole("button", { name: "Back" }).click();

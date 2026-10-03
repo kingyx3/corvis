@@ -30,6 +30,7 @@ const workspaceId = id(2);
 const otherWorkspaceId = id(3);
 const admin = { userId: id(11), subject: 'admin-one' };
 const analyst = { userId: id(12), subject: 'analyst-one' };
+const adminTwo = { userId: id(13), subject: 'admin-two' };
 const otherTenantId = id(51);
 const otherWorkspace = id(52);
 const otherAdmin = { userId: id(61), subject: 'admin-other' };
@@ -42,6 +43,7 @@ function identity(person, tenant, workspace, isTenantAdmin) {
 }
 const adminIdentity = identity(admin, tenantId, workspaceId, true);
 const analystIdentity = identity(analyst, tenantId, workspaceId, false);
+const adminTwoIdentity = identity(adminTwo, tenantId, workspaceId, true);
 const otherAdminIdentity = identity(otherAdmin, otherTenantId, otherWorkspace, true);
 
 // A statement that raises aborts a Postgres transaction, so every expected refusal runs under its own savepoint.
@@ -68,16 +70,18 @@ try {
     await tx.execute(`insert into corvis_control.tenant (tenant_id,slug,display_name) values ($1,'f6-ci','F6 CI'),($2,'f6-other','F6 Other')`, [tenantId, otherTenantId]);
     await tx.execute(`insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name) values ($1,$2,'ws','Primary Workspace'),($3,$2,'research','Research Workspace'),($4,$5,'ws','Other Workspace')`,
       [workspaceId, tenantId, otherWorkspaceId, otherWorkspace, otherTenantId]);
-    for (const [person, tenant] of [[admin, tenantId], [analyst, tenantId], [otherAdmin, otherTenantId]]) {
+    for (const [person, tenant] of [[admin, tenantId], [analyst, tenantId], [adminTwo, tenantId], [otherAdmin, otherTenantId]]) {
       await tx.execute(`insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject) values ($1,$2,'oidc',$3)`, [tenant, person.userId, person.subject]);
     }
-    await tx.execute(`insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name) values ($1,$2,$3,'tenant_admin'),($1,$2,$4,'analyst'),($5,$6,$7,'tenant_admin')`,
-      [tenantId, workspaceId, admin.userId, analyst.userId, otherTenantId, otherWorkspace, otherAdmin.userId]);
+    await tx.execute(`insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name) values ($1,$2,$3,'tenant_admin'),($1,$2,$4,'analyst'),($5,$6,$7,'tenant_admin'),($1,$2,$8,'tenant_admin')`,
+      [tenantId, workspaceId, admin.userId, analyst.userId, otherTenantId, otherWorkspace, otherAdmin.userId, adminTwo.userId]);
 
     // The workspaces an account can be created in are the tenant's active ones.
     const empty = await backend.list(adminIdentity, tx);
     assert.deepEqual(empty.serviceAccounts, []);
     assert.deepEqual(empty.workspaces.map((workspace) => workspace.name), ['Primary Workspace', 'Research Workspace']);
+    // Who an account can be handed to: the organization's active Organization Admins, by the SQL's own test, never an analyst or another tenant's admin.
+    assert.deepEqual(empty.owners, [{ subject: admin.subject }, { subject: adminTwo.subject }]);
 
     // Who may act is decided in SQL: an analyst is refused, and nothing is left behind.
     const refusal = await refused(tx, () => backend.create(analystIdentity, { name: 'Reporting sync', purpose: 'Nightly reporting', workspaceId, roleName: 'analyst', expiresInDays: 365, credentialExpiresInDays: 90 }, tx));
@@ -98,7 +102,8 @@ try {
     assert.equal(serviceAccount.credentials.length, 1);
     assert.equal(serviceAccount.credentials[0].status, 'active');
     assert.equal(serviceAccount.expiringSoon, true, 'a credential expiring within 14 days is flagged');
-    assert.deepEqual(serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+    assert.deepEqual(serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: false, canTransfer: true }, 'a 365 day account is already as far out as an account can be');
+    assert.deepEqual([serviceAccount.ownerSubject, serviceAccount.ownerActive, serviceAccount.needsOwner], [admin.subject, true, false], 'the creating admin is the first owner');
     assert.equal(JSON.stringify(serviceAccount).includes(credential.secret), false, 'the listed account never carries the secret');
     const stored = await tx.query(`select secret_sha256 from corvis_control.service_account_credential where credential_id=$1::uuid`, [credential.credentialId]);
     assert.equal(stored[0].secret_sha256, hashCredentialSecret(credential.secret));
@@ -169,7 +174,7 @@ try {
     assert.equal(revoked.revokedCredentials, 2);
     assert.equal(await verifyServiceAccountCredential(second.credential.secret, tx), null);
     assert.equal(await verifyServiceAccountCredential(rotated.credential.secret, tx), null);
-    assert.deepEqual(revoked.serviceAccount.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true });
+    assert.deepEqual(revoked.serviceAccount.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true, canExtend: false, canTransfer: true });
     assert.equal(code(await refused(tx, () => backend.revoke(adminIdentity, serviceAccount.serviceAccountId, tx))), 'service account has no active credential');
     // Revoking a credential does not remove the account's authorization (that is what disabling is for).
     assert.ok(await authorization.resolve(principal));
@@ -212,7 +217,7 @@ try {
     const disabled = await backend.disable(adminIdentity, serviceAccount.serviceAccountId, 'Integration retired', tx);
     assert.equal(disabled.status, 'disabled');
     assert.equal(disabled.disableReason, 'Integration retired');
-    assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false });
+    assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false });
     assert.equal(await authorization.resolve(principal), null, 'a disabled account resolves nothing');
     assert.equal(await verifyServiceAccountCredential(reissued.credential.secret, tx), null, 'and none of its credentials verify');
     const left = await tx.query(`select
@@ -226,6 +231,47 @@ try {
     assert.equal(listed.serviceAccounts.length, 1);
     assert.equal(listed.serviceAccounts[0].status, 'disabled');
 
+    // ---- Renewal and ownership (F6b): an audited extension that advances the lifecycle review date, and an owner who can be handed over.
+    const renewable = (await backend.create(adminIdentity, { name: 'Short feed', purpose: 'Renewed in this test', workspaceId, roleName: 'viewer', expiresInDays: 30, credentialExpiresInDays: 10 }, tx)).serviceAccount;
+    const renewablePrincipal = { subject: `service-account:${renewable.serviceAccountId}`, tenantId, workspaceId, authMethod: 'service_account', sessionId: 'renewable-session' };
+    assert.deepEqual([renewable.ownerSubject, renewable.actions.canExtend], [admin.subject, true]);
+    const extension = await backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 200 }, tx);
+    assert.equal(extension.previousExpiresAt, renewable.expiresAt);
+    assert.ok(Math.abs(Date.parse(extension.serviceAccount.expiresAt) - (Date.now() + 200 * 86_400_000)) < 60_000, 'the account now expires 200 days from now');
+    assert.equal(extension.serviceAccount.credentials[0].expiresAt, renewable.credentials[0].expiresAt, 'a credential keeps its own expiry');
+    const renewedRows = await tx.query(`select
+      (select valid_until from corvis_control.membership where tenant_id=$1::uuid and user_id=$2::uuid) as member_until,
+      (select valid_until from corvis_control.service_identity_grant where tenant_id=$1::uuid and subject=$3) as grant_until,
+      (select next_review_at from corvis_control.service_identity_grant where tenant_id=$1::uuid and subject=$3) as next_review,
+      (select reviewed_by_subject from corvis_control.service_identity_grant where tenant_id=$1::uuid and subject=$3) as reviewed_by`, [tenantId, renewable.userId, renewablePrincipal.subject]);
+    for (const key of ['member_until', 'grant_until', 'next_review']) assert.equal(new Date(renewedRows[0][key]).toISOString(), extension.serviceAccount.expiresAt, key);
+    assert.equal(renewedRows[0].reviewed_by, admin.subject);
+    assert.ok(await authorization.resolve(renewablePrincipal), 'the renewed account still resolves through the existing authorization lookup');
+    assert.equal(code(await refused(tx, () => backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 100 }, tx))), 'service account expiry invalid', 'an extension never shortens');
+    assert.equal(code(await refused(tx, () => backend.extend(analystIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx))), 'service account requires an active organization admin');
+    assert.equal(code(await refused(tx, () => backend.extend(otherAdminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx))), 'service account not found');
+    assert.equal(code(await refused(tx, () => backend.extend(adminIdentity, 'not-a-uuid', { action: 'extend', expiresInDays: 300 }, tx))), 'service_account_not_found');
+
+    // Handing it to another active Organization Admin; the people on offer are exactly the active admins.
+    assert.equal(code(await refused(tx, () => backend.transferOwner(adminIdentity, renewable.serviceAccountId, analyst.subject, tx))), 'service account owner must be an active organization admin');
+    assert.equal(code(await refused(tx, () => backend.transferOwner(adminIdentity, renewable.serviceAccountId, admin.subject, tx))), 'service account owner unchanged');
+    assert.equal(code(await refused(tx, () => backend.transferOwner(analystIdentity, renewable.serviceAccountId, adminTwo.subject, tx))), 'service account requires an active organization admin');
+    const handedOver = await backend.transferOwner(adminIdentity, renewable.serviceAccountId, adminTwo.subject, tx);
+    assert.equal(handedOver.previousOwner, admin.subject);
+    assert.deepEqual([handedOver.serviceAccount.ownerSubject, handedOver.serviceAccount.ownerActive, handedOver.serviceAccount.createdBy], [adminTwo.subject, true, admin.subject]);
+    // The owner is deactivated: the account is surfaced as needing a new owner, keeps working, and is not extended until it has one.
+    await tx.execute(`update corvis_control.identity_subject set status='disabled', disabled_at=now() where tenant_id=$1::uuid and user_id=$2::uuid`, [tenantId, adminTwo.userId]);
+    const orphaned = await backend.get(adminIdentity, renewable.serviceAccountId, tx);
+    assert.deepEqual([orphaned.ownerActive, orphaned.needsOwner, orphaned.status, orphaned.actions.canExtend, orphaned.actions.canTransfer], [false, true, 'active', false, true]);
+    assert.ok(await authorization.resolve(renewablePrincipal), 'an account whose owner left keeps working');
+    assert.deepEqual((await backend.list(adminIdentity, tx)).owners, [{ subject: admin.subject }], 'a deactivated admin is no longer offered as an owner');
+    assert.equal(code(await refused(tx, () => backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx))), 'service account needs an owner');
+    const taken = await backend.transferOwner(adminIdentity, renewable.serviceAccountId, admin.subject, tx);
+    assert.equal(taken.previousOwner, adminTwo.subject);
+    assert.equal(taken.serviceAccount.needsOwner, false);
+    const again = await backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx);
+    assert.ok(Math.abs(Date.parse(again.serviceAccount.expiresAt) - (Date.now() + 300 * 86_400_000)) < 60_000, 'with an owner again it extends');
+
     // ---- Every action is audited and visible in the tenant access audit (C9).
     const operations = new PostgresOperationsRepository(tx);
     const events = [
@@ -234,6 +280,8 @@ try {
       ['service_account.credential_revoked', { reason: 'Rotation drill', revokedCredentials: 2 }],
       ['service_account.credential_issued', { credentialId: reissued.credential.credentialId }],
       ['service_account.disabled', { reason: 'Integration retired' }],
+      ['service_account.extended', { previousExpiresAt: extension.previousExpiresAt, expiresAt: extension.serviceAccount.expiresAt, nextReviewAt: extension.serviceAccount.expiresAt }],
+      ['service_account.owner_transferred', { previousOwner: admin.subject, ownerSubject: adminTwo.subject }],
     ];
     for (const [action, detail] of events) await operations.audit(serviceAccountAuditEvent(adminIdentity, 'corr-f6', action, serviceAccount, detail));
     const trail = await listTenantAccessAudit(adminIdentity, tx);

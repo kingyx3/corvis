@@ -50,6 +50,7 @@ test("each demo tenant is seeded once: one account whose credential expires soon
   const { serviceAccounts, workspaces } = await demo.list(identity());
   assert.deepEqual(serviceAccounts.map((account) => [account.name, account.status, account.expiringSoon]), [
     ["Compliance export reader", "active", false],
+    ["Partner data feed", "active", false],
     ["Nightly reporting sync", "active", true],
     ["Retired data bridge", "disabled", false],
   ], "newest first");
@@ -58,15 +59,15 @@ test("each demo tenant is seeded once: one account whose credential expires soon
   assert.equal(nightly.workspaceName, "Primary Workspace");
   assert.equal(nightly.roleName, "analyst");
   assert.ok(nightly.lastUsedAt);
-  assert.deepEqual(nightly.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+  assert.deepEqual(nightly.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true , canExtend: true, canTransfer: true });
   const retired = serviceAccounts.find((account) => account.status === "disabled")!;
   assert.deepEqual([retired.actions.canDisable, retired.disableReason], [false, "Replaced by the nightly reporting sync"]);
   assert.deepEqual(statuses(retired), ["revoked"]);
   // Seeded once, and per tenant.
-  assert.equal((await demo.list(identity())).serviceAccounts.length, 3);
-  await create(demo);
   assert.equal((await demo.list(identity())).serviceAccounts.length, 4);
-  assert.equal((await demo.list(identity({ tenantId: "another-tenant" }))).serviceAccounts.length, 3, "another tenant has its own");
+  await create(demo);
+  assert.equal((await demo.list(identity())).serviceAccounts.length, 5);
+  assert.equal((await demo.list(identity({ tenantId: "another-tenant" }))).serviceAccounts.length, 4, "another tenant has its own");
   assert.equal((await demo.list(identity({ workspaceDisplayName: undefined }))).workspaces[0]!.name, "Primary Workspace", "the workspace name falls back");
   await assert.rejects(demo.get(identity({ tenantId: "yet-another" }), nightly.serviceAccountId), refusal("service_account_not_found", 404), "an account of another tenant is not found");
 });
@@ -93,7 +94,7 @@ test("an account must be in the caller's workspace, have a name unused among act
   const seeded = (await demo.list(identity())).serviceAccounts.find((account) => account.status === "disabled")!;
   await create(demo, { name: seeded.name }); // a deactivated account frees its name
   const quota = store();
-  for (let index = 0; index < 98; index += 1) await create(quota, { name: `Integration number ${index}` });
+  for (let index = 0; index < 97; index += 1) await create(quota, { name: `Integration number ${index}` });
   await assert.rejects(create(quota, { name: "One too many" }), refusal("service_account_limit_reached", 409));
 });
 
@@ -105,7 +106,7 @@ test("rotation leaves the old credential valid for the overlap, then ends it; a 
   assert.deepEqual(statuses(first.serviceAccount).sort(), ["active", "rotating_out"]);
   const old = first.serviceAccount.credentials.find((entry) => entry.credentialId === credential.credentialId)!;
   assert.equal(old.endsAt, new Date(clock.getTime() + 60 * 60_000).toISOString());
-  assert.deepEqual(first.serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+  assert.deepEqual(first.serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true , canExtend: false, canTransfer: true });
 
   advance(61 * 60_000);
   assert.deepEqual(statuses(await demo.get(identity(), serviceAccount.serviceAccountId)).sort(), ["active", "retired"], "the overlap has ended");
@@ -133,11 +134,11 @@ test("issue needs no credential in use and rotate needs one; revocation is immed
   assert.equal(revoked.revokedCredentials, 2);
   assert.deepEqual(statuses(revoked.serviceAccount), ["revoked", "revoked"]);
   assert.ok(revoked.serviceAccount.credentials.every((entry) => entry.revokedAt !== null && Date.parse(entry.endsAt!) <= clock.getTime()));
-  assert.deepEqual(revoked.serviceAccount.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true });
+  assert.deepEqual(revoked.serviceAccount.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true , canExtend: false, canTransfer: true });
   await assert.rejects(demo.revoke(identity(), id), refusal("service_account_no_active_credential", 409));
   await assert.rejects(rotate(demo, id), refusal("service_account_no_active_credential", 409));
   const reissued = await demo.issueCredential(identity(), id, { action: "issue", credentialExpiresInDays: 30 });
-  assert.deepEqual(reissued.serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+  assert.deepEqual(reissued.serviceAccount.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true , canExtend: false, canTransfer: true });
   await assert.rejects(demo.revoke(identity(), "nope"), refusal("service_account_not_found", 404));
 });
 
@@ -147,7 +148,7 @@ test("a current credential past its own expiry makes way for a new one without a
   advance(3 * DAY);
   const stale = await demo.get(identity(), serviceAccount.serviceAccountId);
   assert.deepEqual(statuses(stale), ["expired"]);
-  assert.deepEqual(stale.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true });
+  assert.deepEqual(stale.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true , canExtend: true, canTransfer: true });
   await assert.rejects(demo.revoke(identity(), serviceAccount.serviceAccountId), refusal("service_account_no_active_credential", 409), "an expired credential is not revoked: it is already unusable");
   await assert.rejects(rotate(demo, serviceAccount.serviceAccountId), refusal("service_account_no_active_credential", 409));
   const fresh = await demo.issueCredential(identity(), serviceAccount.serviceAccountId, { action: "issue", credentialExpiresInDays: 30 });
@@ -162,7 +163,7 @@ test("disabling deactivates the account for good: nothing can be issued, rotated
   const disabled = await demo.disable(identity({ subject: "second-admin" }), id, "Integration retired");
   assert.deepEqual([disabled.status, disabled.disabledBy, disabled.disableReason], ["disabled", "second-admin", "Integration retired"]);
   assert.deepEqual(statuses(disabled), ["revoked", "revoked"]);
-  assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false });
+  assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false , canExtend: false, canTransfer: false });
   await assert.rejects(demo.disable(identity(), id, "Again"), refusal("service_account_not_active", 409));
   await assert.rejects(demo.issueCredential(identity(), id, { action: "issue", credentialExpiresInDays: 30 }), refusal("service_account_not_active", 409));
   await assert.rejects(demo.revoke(identity(), id), refusal("service_account_no_active_credential", 409));
@@ -269,7 +270,7 @@ test("the routes list, create, show and act on accounts for an Organization Admi
   assert.equal(listed.status, 200);
   assert.equal(listed.headers.get("cache-control"), "no-store");
   const { data: list } = await body(listed);
-  assert.equal(list.serviceAccounts.length, 3);
+  assert.equal(list.serviceAccounts.length, 4);
   assert.equal(list.workspaces[0]!.workspaceId, "workspace_demo");
 
   const created = await createPost(request("/access/service-accounts", { tenant, method: "POST", body: { name: "Route loader", purpose: "Loads published data", workspaceId: "workspace_demo", roleName: "reviewer" } }));
@@ -328,4 +329,146 @@ test("the routes answer stable codes for bad input, a stale state and a caller w
     assert.equal((await itemPost(request(`/access/service-accounts/${id}`, { tenant, roles, method: "POST", body: { action: "disable", reason: "Nope" } }), params(id))).status, 403, roles);
   }
   assert.equal((await body(await itemGet(request(`/access/service-accounts/${id}`, { tenant }), params(id)))).data.status, "active", "a refused call changed nothing");
+});
+
+// ------------------------------------------------------------------ renewal and ownership (F6b)
+test("a seeded account owned by a deactivated administrator is surfaced as needing a new owner, not hidden and not disabled", async () => {
+  const demo = store();
+  const { serviceAccounts, owners } = await demo.list(identity());
+  const byName = (name: string) => serviceAccounts.find((account) => account.name === name)!;
+  assert.deepEqual(owners.map((owner) => owner.subject), ["demo-admin", "morgan.lee@meridian.example", "priya.nair@meridian.example"], "the people an account can be handed to: active administrators only");
+  const orphaned = byName("Partner data feed");
+  assert.deepEqual([orphaned.ownerSubject, orphaned.ownerActive, orphaned.needsOwner, orphaned.status], ["alex.rivera@meridian.example", false, true, "active"]);
+  assert.equal(orphaned.actions.canExtend, false, "an account nobody answers for is not renewed");
+  assert.equal(orphaned.actions.canTransfer, true);
+  assert.ok(orphaned.actions.canRotate, "its credentials stay manageable");
+  const owned = byName("Nightly reporting sync");
+  assert.deepEqual([owned.ownerSubject, owned.ownerActive, owned.needsOwner], ["morgan.lee@meridian.example", true, false]);
+  assert.equal(byName("Retired data bridge").needsOwner, false, "a deactivated account is not asked for an owner");
+  // The signed-in administrator is an active candidate whoever they are.
+  assert.ok((await demo.list(identity({ subject: "someone-new@meridian.example" }))).owners.some((owner) => owner.subject === "someone-new@meridian.example"));
+});
+
+test("a new account is owned by its creator", async () => {
+  const demo = store();
+  const created = await create(demo);
+  assert.deepEqual([created.serviceAccount.ownerSubject, created.serviceAccount.ownerActive, created.serviceAccount.ownerAssignedAt], ["demo-admin", true, clock.toISOString()]);
+});
+
+test("extending moves the expiry later, within the maximum from now, and only for an account that is active-or-expired and has an owner", async () => {
+  const demo = store();
+  const nightly = (await demo.list(identity())).serviceAccounts.find((account) => account.name === "Nightly reporting sync")!;
+  const before = nightly.expiresAt;
+  const extended = await demo.extend(identity(), nightly.serviceAccountId, { action: "extend", expiresInDays: 365 });
+  assert.equal(extended.previousExpiresAt, before);
+  assert.equal(extended.serviceAccount.expiresAt, new Date(clock.getTime() + 365 * DAY).toISOString());
+  assert.equal(extended.serviceAccount.actions.canExtend, false, "now a full year away: nothing later is allowed");
+  assert.equal(extended.serviceAccount.expiringSoon, true, "its credential still expires soon: renewal does not renew a credential");
+  await assert.rejects(demo.extend(identity(), nightly.serviceAccountId, { action: "extend", expiresInDays: 365 }), refusal("invalid_expiry", 400), "not later than the current expiry");
+  await assert.rejects(demo.extend(identity(), nightly.serviceAccountId, { action: "extend", expiresInDays: 30 }), refusal("invalid_expiry", 400), "an extension never shortens");
+
+  const reader = (await demo.list(identity())).serviceAccounts.find((account) => account.name === "Partner data feed")!;
+  await assert.rejects(demo.extend(identity(), reader.serviceAccountId, { action: "extend", expiresInDays: 365 }), refusal("service_account_needs_owner", 409));
+  const retired = (await demo.list(identity())).serviceAccounts.find((account) => account.status === "disabled")!;
+  await assert.rejects(demo.extend(identity(), retired.serviceAccountId, { action: "extend", expiresInDays: 365 }), refusal("service_account_not_active", 409));
+  await assert.rejects(demo.extend(identity(), "nope", { action: "extend", expiresInDays: 365 }), refusal("service_account_not_found", 404));
+
+  // An account that already expired is renewed, and can then be given a credential again.
+  const short = await create(demo, { name: "Short lived", expiresInDays: 1, credentialExpiresInDays: 1 });
+  advance(2 * DAY);
+  const expired = await demo.get(identity(), short.serviceAccount.serviceAccountId);
+  assert.deepEqual([expired.status, expired.actions.canExtend], ["expired", true]);
+  const renewed = await demo.extend(identity(), expired.serviceAccountId, { action: "extend", expiresInDays: 30 });
+  assert.equal(renewed.serviceAccount.status, "active");
+  const reissued = await demo.issueCredential(identity(), expired.serviceAccountId, { action: "issue", credentialExpiresInDays: 10 });
+  assert.equal(reissued.serviceAccount.credentials.filter((credential) => credential.status === "active").length, 1);
+  clock = new Date("2026-10-03T12:00:00.000Z");
+});
+
+test("transferring hands the account to another active administrator, and refuses anyone else", async () => {
+  const demo = store();
+  const reader = (await demo.list(identity())).serviceAccounts.find((account) => account.name === "Partner data feed")!;
+  await assert.rejects(demo.transferOwner(identity(), reader.serviceAccountId, "alex.rivera@meridian.example"), refusal("service_account_owner_invalid", 422), "a deactivated administrator cannot own it");
+  await assert.rejects(demo.transferOwner(identity(), reader.serviceAccountId, "a.member@meridian.example"), refusal("service_account_owner_invalid", 422), "nor can a person who is not an administrator");
+  const transferred = await demo.transferOwner(identity(), reader.serviceAccountId, "priya.nair@meridian.example");
+  assert.equal(transferred.previousOwner, "alex.rivera@meridian.example");
+  assert.deepEqual([transferred.serviceAccount.ownerSubject, transferred.serviceAccount.ownerActive, transferred.serviceAccount.needsOwner, transferred.serviceAccount.ownerAssignedAt], ["priya.nair@meridian.example", true, false, clock.toISOString()]);
+  assert.equal(transferred.serviceAccount.actions.canExtend, true, "with an owner again it can be renewed");
+  assert.equal(transferred.serviceAccount.createdBy, "alex.rivera@meridian.example", "who created it is history and does not change");
+  await assert.rejects(demo.transferOwner(identity(), reader.serviceAccountId, "priya.nair@meridian.example"), refusal("service_account_owner_unchanged", 409));
+  const retired = (await demo.list(identity())).serviceAccounts.find((account) => account.status === "disabled")!;
+  await assert.rejects(demo.transferOwner(identity(), retired.serviceAccountId, "priya.nair@meridian.example"), refusal("service_account_not_active", 409));
+  await assert.rejects(demo.transferOwner(identity(), "nope", "priya.nair@meridian.example"), refusal("service_account_not_found", 404));
+  // The administrator who is signed in can take an account over themselves.
+  const mine = await demo.transferOwner(identity(), reader.serviceAccountId, "demo-admin");
+  assert.equal(mine.serviceAccount.ownerSubject, "demo-admin");
+});
+
+test("extending and transferring are audited by the service with what changed, and only an Organization Admin may do either", async () => {
+  const events: AuditEvent[] = [];
+  const demo = store();
+  const service = createServiceAccountService(demo);
+  const port = platform();
+  const original = port.audit.bind(port);
+  port.audit = async (event) => { events.push(event); await original(event); };
+  try {
+    const list = await service.list(identity());
+    const nightly = list.serviceAccounts.find((account) => account.name === "Nightly reporting sync")!;
+    const extended = await service.act(identity(), nightly.serviceAccountId, { action: "extend", expiresInDays: 300 }, "corr-extend");
+    assert.equal(extended.credential, undefined);
+    const extension = events.find((event) => event.action === "service_account.extended")!;
+    assert.deepEqual([extension.targetType, extension.targetId, extension.actorSubject, extension.correlationId], ["service_account", nightly.serviceAccountId, "demo-admin", "corr-extend"]);
+    assert.deepEqual(extension.metadata, { previousExpiresAt: nightly.expiresAt, expiresAt: extended.serviceAccount.expiresAt, nextReviewAt: extended.serviceAccount.expiresAt });
+
+    await service.act(identity(), nightly.serviceAccountId, { action: "transfer", ownerSubject: "priya.nair@meridian.example" }, "corr-transfer");
+    const transfer = events.find((event) => event.action === "service_account.owner_transferred")!;
+    assert.deepEqual(transfer.metadata, { previousOwner: "morgan.lee@meridian.example", ownerSubject: "priya.nair@meridian.example" });
+
+    const before = events.length;
+    await assert.rejects(service.act(identity(), nightly.serviceAccountId, { action: "extend", expiresInDays: 300 }, "c"), refusal("invalid_expiry", 400));
+    await assert.rejects(service.act(identity(), nightly.serviceAccountId, { action: "transfer", ownerSubject: "priya.nair@meridian.example" }, "c"), refusal("service_account_owner_unchanged", 409));
+    assert.equal(events.length, before, "a refused command is not audited");
+    for (const who of [identity({ subject: "member", roles: ["analyst"], isTenantAdmin: false }), identity({ subject: "service-account:x", authMethod: "service_account" })]) {
+      await assert.rejects(service.act(who, nightly.serviceAccountId, { action: "extend", expiresInDays: 365 }, "c"), refusal("tenant_admin_required", 403));
+      await assert.rejects(service.act(who, nightly.serviceAccountId, { action: "transfer", ownerSubject: "demo-admin" }, "c"), refusal("tenant_admin_required", 403));
+    }
+  } finally { port.audit = original; }
+});
+
+test("the routes extend and transfer in the caller's tenant, and answer stable codes", async () => {
+  const tenant = `sa-renewal-${Date.now()}`;
+  const { data: list } = await body(await listGet(request("/access/service-accounts", { tenant })));
+  const reader = list.serviceAccounts.find((account) => account.name === "Partner data feed")!;
+  assert.equal(reader.needsOwner, true);
+  assert.ok((list as unknown as { owners: unknown[] }).owners.length >= 3);
+  const act = (id: string, command: unknown, who: Caller = {}) => itemPost(request(`/access/service-accounts/${id}`, { tenant, method: "POST", body: command, ...who }), params(id));
+
+  const refused = await act(reader.serviceAccountId, { action: "extend", expiresInDays: 365 });
+  assert.deepEqual([refused.status, (await body(refused)).error], [409, "service_account_needs_owner"]);
+  const handed = await act(reader.serviceAccountId, { action: "transfer", ownerSubject: "priya.nair@meridian.example" });
+  assert.equal(handed.status, 200);
+  assert.equal((await body(handed)).data.serviceAccount.ownerSubject, "priya.nair@meridian.example");
+  const extended = await act(reader.serviceAccountId, { action: "extend", expiresInDays: 365 });
+  assert.equal(extended.status, 200);
+  assert.equal((await body(extended)).data.serviceAccount.actions.canExtend, false);
+
+  for (const [command, status, error] of [
+    [{ action: "extend", expiresInDays: 365 }, 400, "invalid_expiry"],
+    [{ action: "extend", expiresInDays: 9999 }, 400, "invalid_expiry"],
+    [{ action: "transfer", ownerSubject: "priya.nair@meridian.example" }, 409, "service_account_owner_unchanged"],
+    [{ action: "transfer", ownerSubject: "nobody@meridian.example" }, 422, "service_account_owner_invalid"],
+    [{ action: "transfer" }, 400, "invalid_owner"],
+  ] as const) {
+    const response = await act(reader.serviceAccountId, command);
+    assert.deepEqual([response.status, (await body(response)).error], [status, error], JSON.stringify(command));
+  }
+  for (const roles of ["analyst", "reviewer"]) assert.equal((await act(reader.serviceAccountId, { action: "extend", expiresInDays: 365 }, { roles })).status, 403, roles);
+});
+
+test("the demo store lives on globalThis, so next dev evaluating this module again keeps the accounts", async () => {
+  const { demoServiceAccountStore } = await import("../../adapters/demo/service-account-store.ts");
+  const shared = globalThis as typeof globalThis & { demoServiceAccountStore?: unknown };
+  const first = demoServiceAccountStore();
+  assert.equal(shared.demoServiceAccountStore, first);
+  assert.equal(demoServiceAccountStore(), first);
 });

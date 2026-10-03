@@ -188,3 +188,93 @@ test("the form refuses what the server would refuse, and a duplicate name is exp
   await expect(page.getByRole("alert").filter({ hasText: /another active service account already has this name/i })).toBeVisible();
   await expect(page.getByRole("group", { name: "New API credential" })).toHaveCount(0);
 });
+
+test("an admin extends an account's expiry within the maximum, with the new date shown before confirming and an audited result @matrix", async ({ page }) => {
+  await open(page);
+  const nightly = card(page, "Nightly reporting sync");
+  const facts = nightly.locator("dl");
+  await expect(facts.locator("div").filter({ hasText: /^Owner/ })).toContainText("morgan.lee@meridian.example");
+  const before = await facts.locator("div").filter({ hasText: /^Account expires/ }).innerText();
+
+  await nightly.getByRole("button", { name: "Extend expiry" }).click();
+  const panel = nightly.getByRole("group", { name: "Extend Nightly reporting sync" });
+  const days = panel.getByLabel("New expiry, in days from today");
+  await expect(days).toHaveValue("365");
+  await expect(panel).toContainText("The account will expire on");
+  await expect(panel).toContainText("its review date moves with it");
+  // Fewer days than would move the expiry later is refused before anything is sent.
+  await days.fill("10");
+  await expect(panel).toContainText(/Choose at least \d+ days/);
+  await expect(days).toHaveAttribute("aria-invalid", "true");
+  await expect(nightly.getByRole("button", { name: "Confirm extension" })).toBeDisabled();
+  await days.fill("365");
+  await expect(days).not.toHaveAttribute("aria-invalid", "true");
+  const violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+
+  await nightly.getByRole("button", { name: "Confirm extension" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /^Expiry extended to / })).toBeVisible();
+  await expect(facts.locator("div").filter({ hasText: /^Account expires/ })).not.toHaveText(before);
+  // As far out as an account can be: nothing further to offer, and the other actions are untouched.
+  await expect(nightly.getByRole("button", { name: "Extend expiry" })).toHaveCount(0);
+  await expect(nightly.getByRole("button", { name: "Rotate credential" })).toBeVisible();
+});
+
+test("an account whose owner was deactivated is surfaced as needing a new owner, is not extended, and is handed to an active admin @matrix", async ({ page }) => {
+  await open(page);
+  const feed = card(page, "Partner data feed");
+  await expect(feed).toContainText("Needs a new owner.");
+  await expect(feed).toContainText("Needs attention");
+  await expect(feed.locator("dl")).toContainText("alex.rivera@meridian.example (no longer active)");
+  await expect(feed).toContainText("it cannot be extended until an active Organization Admin takes it over");
+  // It keeps working: its credential is still manageable. But it is not renewed while it has no owner.
+  await expect(feed.getByRole("button", { name: "Rotate credential" })).toBeVisible();
+  await expect(feed.getByRole("button", { name: "Extend expiry" })).toHaveCount(0);
+  let violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+
+  await feed.getByRole("button", { name: "Assign a new owner" }).click();
+  const panel = feed.getByRole("group", { name: "Change the owner of Partner data feed" });
+  const choice = panel.getByLabel("New owner");
+  await expect(feed.getByRole("button", { name: "Confirm new owner" })).toBeDisabled();
+  // Only active Organization Admins are offered, and not the person who no longer is one.
+  const offered = await choice.locator("option").allTextContents();
+  expect(offered).toContain("priya.nair@meridian.example");
+  expect(offered).not.toContain("alex.rivera@meridian.example");
+  violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+  await choice.selectOption("priya.nair@meridian.example");
+  await feed.getByRole("button", { name: "Confirm new owner" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Partner data feed is now owned by priya.nair@meridian.example." })).toBeVisible();
+  await expect(feed).not.toContainText("Needs a new owner.");
+  await expect(feed.locator("dl")).toContainText("priya.nair@meridian.example");
+  await expect(feed.locator("dl")).not.toContainText("no longer active");
+
+  // With an owner again it can be extended.
+  await feed.getByRole("button", { name: "Extend expiry" }).click();
+  await feed.getByRole("button", { name: "Confirm extension" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /^Expiry extended to / })).toBeVisible();
+});
+
+test("a healthy account's owner can be changed, never to the current owner, and a refused change is explained @matrix", async ({ page }) => {
+  await open(page);
+  const reader = card(page, "Compliance export reader");
+  await reader.getByRole("button", { name: "Change owner" }).click();
+  const choice = reader.getByRole("group", { name: "Change the owner of Compliance export reader" }).getByLabel("New owner");
+  expect(await choice.locator("option").allTextContents()).not.toContain("morgan.lee@meridian.example");
+  // The owner is changed under another page's feet: the server's refusal is explained, and nothing changes.
+  await page.route(/\/api\/v1\/access\/service-accounts\/[0-9a-f-]+$/, (route) => route.request().method() === "POST"
+    ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "service_account_owner_unchanged" }) })
+    : route.fallback());
+  await choice.selectOption("priya.nair@meridian.example");
+  await reader.getByRole("button", { name: "Confirm new owner" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "That person already owns this account" })).toBeVisible();
+  await expect(reader.locator("dl")).toContainText("morgan.lee@meridian.example");
+});
+
+test("a deactivated account offers neither an extension nor a new owner @matrix", async ({ page }) => {
+  await open(page);
+  const retired = card(page, "Retired data bridge");
+  await expect(retired.getByRole("button", { name: /extend expiry|change owner|assign a new owner/i })).toHaveCount(0);
+  await expect(retired).not.toContainText("Needs a new owner.");
+});
