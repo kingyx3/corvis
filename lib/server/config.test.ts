@@ -7,7 +7,8 @@ function productionEnvironment(): NodeJS.ProcessEnv {
     NODE_ENV: "production",
     CORVIS_AUTH_ISSUER: "https://idp.example.com",
     CORVIS_AUTH_AUDIENCE: "corvis",
-    CORVIS_POSTGRES_DSN: "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require",
+    CORVIS_DATABASE_DSN: "postgresql://corvis:secret@db.example.com:5432/postgres?sslmode=require",
+    CORVIS_DATABASE_PROVIDER: "gcp-cloud-sql",
     CORVIS_OBJECT_STORE_BUCKET: "corvis-prod",
   };
 }
@@ -16,10 +17,26 @@ test("configuration retains safe local defaults", () => {
   const config = getServerConfig({ NODE_ENV: "test" });
   assert.equal(config.environment, "test");
   assert.equal(config.demoMode, false);
+  assert.equal(config.databaseProvider, "unknown");
   assert.equal(config.gcsChunkSizeBytes, 8 * 1024 * 1024);
   assert.equal(config.researchTimeoutMs, 30_000);
   assert.equal(config.rateLimitRequestsPerMinute, 600);
   assert.deepEqual(config.uploadAllowedOrigins, []);
+});
+
+test("database binding is provider-neutral while the legacy Postgres env remains compatible", () => {
+  const current = getServerConfig({
+    NODE_ENV: "test",
+    CORVIS_DATABASE_DSN: "postgresql://new.example/postgres",
+    CORVIS_DATABASE_PROVIDER: "gcp-cloud-sql",
+  });
+  assert.equal(current.databaseDsn, "postgresql://new.example/postgres");
+  assert.equal(current.postgresDsn, current.databaseDsn);
+  assert.equal(current.databaseProvider, "gcp-cloud-sql");
+
+  const legacy = getServerConfig({ NODE_ENV: "test", CORVIS_POSTGRES_DSN: "postgresql://legacy.example/postgres" });
+  assert.equal(legacy.databaseDsn, "postgresql://legacy.example/postgres");
+  assert.equal(legacy.postgresDsn, legacy.databaseDsn);
 });
 
 test("OIDC discovery is the default and explicit JWKS remains optional", () => {
@@ -34,13 +51,13 @@ test("OIDC discovery is the default and explicit JWKS remains optional", () => {
   assert.equal(config.authJwksUrl, "https://idp.example.com/jwks");
 });
 
-test("production requires only authoritative cross-cutting auth, Postgres and object-store roots", () => {
+test("production requires only authoritative cross-cutting auth, database and object-store roots", () => {
   assert.doesNotThrow(() => getServerConfig(productionEnvironment()));
 
   for (const required of [
     "CORVIS_AUTH_ISSUER",
     "CORVIS_AUTH_AUDIENCE",
-    "CORVIS_POSTGRES_DSN",
+    "CORVIS_DATABASE_DSN",
     "CORVIS_OBJECT_STORE_BUCKET",
   ]) {
     const env = productionEnvironment();
@@ -53,19 +70,26 @@ test("production requires only authoritative cross-cutting auth, Postgres and ob
   }
 });
 
-test("production requires a native Postgres DSN because the HTTPS transport cannot run transactions", () => {
+test("production accepts legacy CORVIS_POSTGRES_DSN during migration", () => {
+  const env = productionEnvironment();
+  const dsn = env.CORVIS_DATABASE_DSN;
+  delete env.CORVIS_DATABASE_DSN;
+  env.CORVIS_POSTGRES_DSN = dsn;
+  assert.doesNotThrow(() => getServerConfig(env));
+});
+
+test("production requires a native PostgreSQL DSN because the HTTPS transport cannot run transactions", () => {
   for (const dsn of ["https://postgres.example.com/sql", "http://postgres.example.com/sql", "not-a-url"]) {
     assert.throws(
-      () => getServerConfig({ ...productionEnvironment(), CORVIS_POSTGRES_DSN: dsn }),
+      () => getServerConfig({ ...productionEnvironment(), CORVIS_DATABASE_DSN: dsn }),
       /native postgres/,
       dsn,
     );
   }
   for (const dsn of ["postgres://u:p@db.example.com/postgres", "postgresql://u:p@db.example.com/postgres?sslmode=require"]) {
-    assert.doesNotThrow(() => getServerConfig({ ...productionEnvironment(), CORVIS_POSTGRES_DSN: dsn }));
+    assert.doesNotThrow(() => getServerConfig({ ...productionEnvironment(), CORVIS_DATABASE_DSN: dsn }));
   }
-  // Development and tests may still use the HTTPS transport.
-  assert.doesNotThrow(() => getServerConfig({ NODE_ENV: "test", CORVIS_POSTGRES_DSN: "https://fake-postgres.test/sql" }));
+  assert.doesNotThrow(() => getServerConfig({ NODE_ENV: "test", CORVIS_DATABASE_DSN: "https://fake-postgres.test/sql" }));
 });
 
 test("optional capability bindings do not make unrelated production paths unstartable", () => {
@@ -114,7 +138,6 @@ test("bounded numeric configuration ignores invalid values and caps research tim
   assert.equal(config.rateLimitRequestsPerMinute, 600);
 });
 
-// Next's typings narrow NODE_ENV to its three known values; these tests deliberately pass arbitrary strings.
 const rawEnv = (env: Record<string, string | undefined>) => env as NodeJS.ProcessEnv;
 
 test("only development, test and unset NODE_ENV are non-production; any other value fails closed to production", () => {
@@ -125,13 +148,11 @@ test("only development, test and unset NODE_ENV are non-production; any other va
   assert.equal(getServerConfig({ ...productionEnvironment(), NODE_ENV: "production" }).environment, "production");
 
   for (const nodeEnv of ["Production", "PRODUCTION", "staging", "prod", " production", "Development", "dev"]) {
-    // Production checks fire: the missing production configuration error is raised ...
     assert.throws(
       () => getServerConfig(rawEnv({ NODE_ENV: nodeEnv })),
       (error: unknown) => error instanceof Error && error.message.includes("Missing production configuration"),
       `NODE_ENV=${JSON.stringify(nodeEnv)} must be treated as production`,
     );
-    // ... demo mode is refused, and a fully configured environment resolves to production.
     assert.throws(() => getServerConfig(rawEnv({ ...productionEnvironment(), NODE_ENV: nodeEnv, CORVIS_DEMO_MODE: "true" })), /CORVIS_DEMO_MODE must be disabled in production/);
     assert.equal(getServerConfig(rawEnv({ ...productionEnvironment(), NODE_ENV: nodeEnv })).environment, "production");
   }

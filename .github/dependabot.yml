@@ -21,6 +21,19 @@ updates:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 
+  # The Convex CLI is intentionally isolated from Corvis production dependencies.
+  # Keep the deterministic CI pin current through normal dependency PRs; the
+  # scheduled conformance canary separately exercises the upstream `latest` image.
+  - package-ecosystem: npm
+    directory: /db/convex-conformance
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      convex-conformance:
+        patterns:
+          - "convex"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
