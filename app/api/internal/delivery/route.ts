@@ -12,6 +12,7 @@ import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
 import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
+import { sweepTenantSessionActivity } from "@/lib/server/session-activity-sweep";
 import { sweepUploadSessions } from "@/lib/server/upload-sweep";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
@@ -52,6 +53,8 @@ export async function POST(request:Request){
       tenantExportSweep:()=>sweepTenantExports(),
       uploadRelease:()=>releaseScannedUploads(),
       uploadSweep:()=>sweepUploadSessions(),
+      // F7d: drop session records not seen for the whole retention window (never one a session limit is still measuring; revocations are untouched).
+      sessionActivitySweep:()=>sweepTenantSessionActivity(),
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });

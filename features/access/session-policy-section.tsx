@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   parseSessionPolicyUpdate,
+  SESSION_ACTIVITY_RETENTION_MINUTES,
   SESSION_POLICY_MAX_REASON_LENGTH,
   SESSION_POLICY_MIN_REASON_LENGTH,
   sessionLimitLabel,
@@ -159,6 +160,7 @@ export function SessionPolicySection() {
           <textarea id={ids.reason} className="input-control" rows={2} maxLength={SESSION_POLICY_MAX_REASON_LENGTH} value={reason} disabled={busy !== null} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Align with our information security policy" />
         </label>
         <p className="table-muted">A session that passes a limit ends and the person signs in again at your identity provider. Limits are measured from when Corvis first sees a session, and need your identity provider to send a session id (<code>sid</code>). {policy.updatedAt ? `Last changed ${time(policy.updatedAt)}${policy.updatedBy ? ` by ${policy.updatedBy}` : ""}.` : "No limit has been set yet."}</p>
+        <p className="table-muted">Corvis keeps a record of each session, and when it was last used, for {SESSION_ACTIVITY_RETENTION_MINUTES / 1440} days after its last use, to apply these limits and to sign people out. Older records are deleted automatically; the record holds only a sign-in identity and times, never data from your work.</p>
         <button type="submit" className="primary-button" disabled={!change || !changed || busy !== null}>{busy === "save" ? "Saving…" : "Save session policy"}</button>
       </form>
 

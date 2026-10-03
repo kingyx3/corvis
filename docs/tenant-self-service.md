@@ -51,13 +51,25 @@ These are the most conservative readings of an ambiguous story, not settled prod
 5. **Single, global identity provider.** Corvis verifies tokens from one configured issuer for every tenant; there is no per-tenant identity provider record, so the view shows that issuer and the sign-in methods actually in use.
 6. **Queued work is exempt from the idle and length limits.** An export or schedule a person started is re-authorized in the background without applying (or extending) their session limits, but it is still cancelled by sign-out-everywhere.
 
+### Housekeeping and observability (F7d)
+
+**Housekeeping.** `tenant_session_activity` has one row per session Corvis has seen. The private delivery tick (`/api/internal/delivery`, task `sessionActivitySweep`) deletes the rows of sessions **not seen for 90 days**, at most 5,000 per tick, through `corvis_control.purge_tenant_session_activity` (migration 091). It is safe by construction: the function refuses a retention shorter than 11,520 minutes, the longest allowed maximum session (10,080) plus a day, so a record that an idle or maximum-length limit could still be judging is never a candidate; an active session refreshes its record at least every 30 seconds so it is never one either; `session_revocation` is never touched, so a revoked or signed-out session stays refused whether or not its activity record exists; and sign-out-everywhere keeps working on every record that remains. The purge writes no audit event (the rows are bookkeeping) and logs how many it removed (`session_activity.purged`, with a `metric.count` of the same name). One consequence to know: a session that comes back after more than 90 days of silence is recorded as a new session and measured from then (and sign-out-everywhere could not have named it).
+
+**Observability.** `lib/server/authorization.ts` emits, for every enforced check, the `auth.session_policy` `metric.duration` (the latency of `enforce_session_policy`, tagged `outcome` with the verdict: `ok`, `idle_timeout`, `max_session`, `untracked_session` or `unknown`), and for every denial an `auth.session_policy_denied` `metric.count` tagged `reason`, next to the existing `auth.session_policy_denied` warning. Service identities and background re-authorization are exempt and emit nothing. No subject or session id is ever logged. The denial rate is denials divided by checks, from the same two series.
+
+**Alerts** (`infra/terraform/modules/gcp-observability/application-slo.tf`, thresholds in `ops/slos.yaml`; both start as WARNING / SEV3 and should be tuned from production):
+
+| Alert | Fires when | What to look at |
+| --- | --- | --- |
+| `session-policy-enforcement-p95` | p95 of `auth.session_policy` above 100 ms for 15 minutes | Every authorized request pays for this one Postgres call. Check pool waits, the size of `tenant_session_activity` and that the `sessionActivitySweep` task is not failing (`delivery.task_failed`). |
+| `session-policy-denials` | More than 200 `auth.session_policy_denied` per 5 minutes for 10 minutes | Group by the `reason` label. `idle_timeout` / `max_session`: an organization's limits are tighter than how its people work (ask its Organization Admins to relax them; clearing is always allowed). `untracked_session`: the identity provider stopped sending a stable `sid`/`jti` while a limit is set, which refuses everyone in that organization. `unknown`: the check answered nothing and failed closed, so look at Postgres first. |
+
 ### Not yet built (follow-ups)
 
 - **Require SSO** (acceptance criterion 2): there is no non-SSO sign-in path inside Corvis to block (sign-in happens at the identity provider, and Corvis receives no claim saying how the person authenticated), so a setting would have nothing to enforce. It needs a decision on the signal (an `amr`/`idp` claim, a per-tenant provider binding, or provider-side enforcement).
 - **IdP-enforced MFA display** (criterion 2): Corvis has no MFA signal from the identity provider today.
 - **Verified email domains** (criterion 1): there is no domain record or verification flow yet.
 - **Provider-side session revocation** and a session-expiry experience for the person whose session ended (#237).
-- **Housekeeping** of old `tenant_session_activity` rows.
 
 
 ## Service accounts (F6)

@@ -53,3 +53,7 @@ alerts:
     severity: SEV2
   - condition: worker_delivery_task_failed > 0 for 15m
     severity: SEV2
+  - condition: session_policy_enforcement_p95_ms > 100 for 15m
+    severity: SEV3
+  - condition: session_policy_denials > 200 per 5m for 10m
+    severity: SEV3
