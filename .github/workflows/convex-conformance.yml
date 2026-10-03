@@ -38,7 +38,10 @@ jobs:
       CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a
       CONVEX_CLI_VERSION: "1.46.0"
       # Convex accepts a PostgreSQL cluster URL and supplies its deployment DB name.
-      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432?sslmode=disable
+      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      # The disposable Actions service has no TLS. Managed providers should omit
+      # this override so Convex keeps its default TLS requirement.
+      CONVEX_POSTGRES_REQUIRE_TLS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -66,7 +69,8 @@ jobs:
     env:
       CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
       CONVEX_CLI_VERSION: latest
-      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432?sslmode=disable
+      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      CONVEX_POSTGRES_REQUIRE_TLS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
