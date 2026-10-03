@@ -281,17 +281,30 @@ test("reauthorizing a paused connection leaves it paused", async ({ page }) => {
   await expect(northgate.locator(".status-pill")).toHaveText("Paused");
 });
 
-test("OAuth connections show Reauthorize disabled with an explanation instead of a fake form", async ({ page }) => {
+test("an OAuth connection offers a real Reauthorize: a sign-in with the provider, not a form and not an \"unavailable\" note", async ({ page }) => {
   await isolate(page);
   await openSources(page);
   const summit = card(page, SUMMIT);
   const button = summit.getByRole("button", { name: `Reauthorize ${SUMMIT}` });
-  await expect(button).toHaveAttribute("aria-disabled", "true");
-  await expect(summit).toContainText("needs the provider redirect flow, which is not available yet");
-  await button.click({ force: true });
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(button).not.toHaveAttribute("aria-disabled", "true");
+  await expect(summit).not.toContainText(/not available yet|redirect flow/);
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: `Reauthorize ${SUMMIT}` });
+  await expect(dialog).toContainText("sign in on the provider's own page");
+  await expect(dialog).toContainText("The previous credential is destroyed only after the new one is saved and the change is recorded in the audit log.");
+  await expect(dialog.locator("input, textarea")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  expect(await blockingViolations(page, '[role="dialog"]')).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
   await expect(button).toBeFocused();
-  await expect(button).toHaveAttribute("aria-describedby", /source-connection-reauthorize-reason-/);
+
+  // A refused start (here, the attempt budget) is reported in the dialog and nothing leaves the app.
+  await page.route("**/api/v1/source-connections/oauth/start", (route) => route.fulfill({ status: 429, json: { error: "rate_limited" } }));
+  await button.click();
+  await dialog.getByRole("button", { name: "Go to the provider" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Too many sign-in attempts");
+  await expect(page).not.toHaveURL(/demo-consent/);
 });
 
 test("revoke is confirmed with exactly what stops, can be cancelled, and is terminal", async ({ page }) => {

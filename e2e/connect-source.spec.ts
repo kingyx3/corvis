@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { accessibilityBudget } from "./quality-budgets.ts";
-import { confirmReview, goToConsent, isolateSourceConnections, openConnectWizard, submitToken, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER } from "./support/surfaces.ts";
+import { confirmReview, goToConsent, goToReauthorizeConsent, isolateSourceConnections, openConnectWizard, submitToken, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER, REAUTHORIZE_SUMMIT } from "./support/surfaces.ts";
 
 // Connect source (B1). The demo composition serves /api/v1/source-connections from an in-memory store and offers
 // two clearly labelled demo providers, so the whole flow, including the OAuth redirect through a consent page
@@ -235,7 +235,7 @@ test("OAuth: declining at the provider creates nothing and lets the administrato
   await goToConsent(page);
   await page.getByRole("link", { name: /^deny access$/i }).click();
   await expect(stepHeading(page, /^authorization was not completed$/i)).toBeFocused();
-  await expect(dialog(page)).toContainText("Access was not approved at the provider, so nothing was connected and nothing was stored");
+  await expect(dialog(page)).toContainText("Access was not approved at the provider, so nothing was connected or changed and nothing was stored");
   expect(await blockingViolations(page, '[role="dialog"]')).toEqual([]);
   await dialog(page).getByRole("button", { name: /^start over$/i }).click();
   await expect(stepHeading(page, /^choose a source$/i)).toBeFocused();
@@ -286,4 +286,75 @@ test("a connection test can be run on demand from the list, with a plain-languag
   await expect(atlas).toContainText("Needs reauthorization");
 
   await expect(card(page, "Legacy SFTP drop").getByRole("button", { name: /^test connection/i })).toHaveCount(0);
+});
+
+test("a source the workspace is already connected to is refused with a clear reason, by token and by sign-in", async ({ page }) => {
+  await asAdmin(page);
+  await openConnectWizard(page);
+  await page.getByRole("button", { name: DEMO_TOKEN_PROVIDER }).click();
+  await confirmReview(page);
+  await submitToken(page, "demo-valid-token");
+  await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+
+  // Same provider again: refused on the credential step, and nothing is created.
+  await page.getByRole("button", { name: /^connect source$/i }).click();
+  await page.getByRole("button", { name: DEMO_TOKEN_PROVIDER }).click();
+  await confirmReview(page);
+  await submitToken(page, "demo-valid-token");
+  await expect(dialog(page).getByRole("alert")).toContainText("This workspace is already connected to this source");
+  await expect(dialog(page).getByLabel(/^api token/i)).toHaveValue("");
+  expect(await blockingViolations(page, '[role="dialog"]')).toEqual([]);
+  await dialog(page).getByRole("button", { name: /^back$/i }).click();
+  await dialog(page).getByRole("button", { name: /^back$/i }).click();
+
+  // The sign-in provider: connect it once, then the start of a second sign-in is refused before leaving Corvis.
+  await page.getByRole("button", { name: DEMO_OAUTH_PROVIDER }).click();
+  await confirmReview(page);
+  await dialog(page).getByRole("button", { name: /^go to the provider$/i }).click();
+  await page.getByRole("link", { name: /^approve access$/i }).click();
+  await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+  await page.getByRole("button", { name: /^connect source$/i }).click();
+  await page.getByRole("button", { name: DEMO_OAUTH_PROVIDER }).click();
+  await confirmReview(page);
+  await dialog(page).getByRole("button", { name: /^go to the provider$/i }).click();
+  await expect(dialog(page).getByRole("alert")).toContainText("This workspace is already connected to this source");
+  await expect(stepHeading(page, /^authorize with the provider$/i)).toBeVisible();
+  await expect(page).not.toHaveURL(/demo-consent/);
+  await dialog(page).getByRole("button", { name: /^back$/i }).click();
+  await dialog(page).getByRole("button", { name: /^back$/i }).click();
+  await dialog(page).getByRole("button", { name: /^close$/i }).click();
+  await expect(page.getByRole("list", { name: "Source connections" }).getByRole("listitem")).toHaveCount(9);
+});
+
+test("a suspended OAuth connection is reauthorized from its card through the provider and is active again once the test passes", async ({ page }) => {
+  await asAdmin(page);
+  await goToReauthorizeConsent(page);
+  await expect(page).toHaveURL(/\/api\/v1\/source-connections\/oauth\/demo-consent\?/);
+  await page.getByRole("link", { name: /^approve access$/i }).click();
+
+  await expect(stepHeading(page, /^connection reauthorized$/i)).toBeVisible();
+  await expect(stepHeading(page, /^connection reauthorized$/i)).toBeFocused();
+  await expect(dialog(page)).toContainText("The new credential is saved and the previous one was retired");
+  expect(new URL(page.url()).search, "the one-time code and state are removed from the URL").toBe("");
+  expect(await blockingViolations(page, '[role="dialog"]')).toEqual([]);
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+
+  const summit = card(page, REAUTHORIZE_SUMMIT);
+  await expect(summit.getByRole("heading", { level: 3 })).toBeFocused();
+  await expect(summit).not.toContainText("Suspended");
+  await expect(summit).not.toContainText("Needs reauthorization");
+  await expect(summit.getByRole("button", { name: `Reauthorize ${REAUTHORIZE_SUMMIT}` })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Source connections" }).getByRole("listitem")).toHaveCount(7);
+});
+
+test("declining at the provider leaves a connection that needs reauthorization exactly as it was", async ({ page }) => {
+  await asAdmin(page);
+  await goToReauthorizeConsent(page);
+  await page.getByRole("link", { name: /^deny access$/i }).click();
+  await expect(stepHeading(page, /^authorization was not completed$/i)).toBeFocused();
+  await expect(dialog(page)).toContainText("nothing was connected or changed");
+  await dialog(page).getByRole("button", { name: /^close$/i }).click();
+  await expect(card(page, REAUTHORIZE_SUMMIT)).toContainText("Suspended");
 });

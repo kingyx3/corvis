@@ -6,7 +6,7 @@ import { getServerConfig } from "./config.ts";
 import { auditSourceConnectionEvent, createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
 import { approvedSourceProvider, credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
-import { platform } from "./platform.ts";
+import { ConflictError, platform } from "./platform.ts";
 import { listSourceActivity, type SourceActivityConnection } from "./source-lifecycle.ts";
 import {
   ConnectorGovernanceError,
@@ -74,7 +74,7 @@ export type OAuthAuditEvent = { action: "source_connection.oauth_start" | "sourc
 async function assertNoLiveConnection(service: SourceConnectionService, identity: RequestIdentity, providerKey: string): Promise<void> {
   const connections = await service.list(identity);
   if (connections.some((connection) => connection.providerKey === providerKey && connection.status !== "revoked")) {
-    throw new ConnectorGovernanceError("source_connection_already_exists");
+    throw new ConflictError("source_connection_already_exists");
   }
 }
 

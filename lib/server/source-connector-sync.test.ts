@@ -272,3 +272,36 @@ test("a credential resolver hands the run a refreshed credential; one that canno
   assert.equal(driverCalled, false);
   assert.equal(db.connection.status, "reauthorization_required");
 });
+
+class StoredShapeDb extends FakeSyncDb {
+  row: PostgresRow | null | undefined;
+  override async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    const rows = await super.query(sql, parameters);
+    if (!sql.includes("from corvis_source.source_connection where") || this.row === undefined) return rows;
+    return this.row === null ? [] : rows.map((row) => ({ ...row, ...this.row }));
+  }
+}
+
+test("a run reads the scope and counters however they were stored, and refuses a connection that does not exist", async () => {
+  const scopes: Array<[unknown, unknown]> = [
+    [JSON.stringify([{ label: "String" }]), [{ label: "String" }]],
+    ["{not json", []],
+    [JSON.stringify({ label: "not an array" }), []],
+    [null, []],
+  ];
+  for (const [stored, expected] of scopes) {
+    const db = new StoredShapeDb();
+    db.row = { source_scope: stored as never, consecutive_failures: undefined };
+    let seen: unknown;
+    const outcome = await runConnectionSync(TENANT, CONNECTION_ID, "scheduled", {
+      db, secrets: new FakeSecrets(), ingest: new RecordingIngest(),
+      drivers: new Map([["acme-portal", driver({ discover: async (_credential, scope) => { seen = scope; return []; } })]]),
+    });
+    assert.equal(outcome.state, "succeeded");
+    assert.deepEqual(seen, expected);
+  }
+
+  const missing = new StoredShapeDb();
+  missing.row = null;
+  await assert.rejects(runConnectionSync(TENANT, CONNECTION_ID, "scheduled", { db: missing, secrets: new FakeSecrets(), drivers: new Map(), ingest: new RecordingIngest() }), /connection_not_found/);
+});

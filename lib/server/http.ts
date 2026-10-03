@@ -95,7 +95,7 @@ export function apiError(error: unknown, correlationId: string): Response {
   if (error instanceof ConnectorGovernanceError) {
     logEvent("warn", "source_connection.denied", { correlationId }, { code: error.code });
     const status = error.code === "connection_not_found" ? 404
-      : error.code === "connection_revoked" || error.code === "source_connection_already_exists" || error.code === "oauth_reauthorization_required" || error.code.startsWith("invalid_transition_from_") ? 409
+      : error.code === "connection_revoked" || error.code.startsWith("invalid_transition_from_") ? 409
       : error.code === "unregistered_provider" ? 422
       : 400;
     return json({ error: error.code, correlationId }, { status });

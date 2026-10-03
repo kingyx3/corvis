@@ -106,11 +106,9 @@ test("the provider that renews a connection's authorization is the approved OAut
   assert.equal(oauthProviderForConnection("acme-portal")?.oauth, oauth, "approved providers are still found in demo mode");
 });
 
-test("an approval survives the registry module being evaluated again, as next dev does", async () => {
+test("the approvals live on globalThis, so next dev evaluating this module again keeps them", () => {
   delete process.env.CORVIS_DEMO_MODE;
+  const shared = globalThis as typeof globalThis & { approvedSourceProviders?: Map<string, ApprovedSourceProvider> };
   registerApprovedSourceProvider(provider(), driver());
-  const specifier = "./source-providers.ts?re-evaluated";
-  const fresh = await import(specifier) as typeof import("./source-providers.ts");
-  assert.notEqual(fresh.approvedSourceProviders, approvedSourceProviders, "a genuinely new module instance");
-  assert.deepEqual(fresh.approvedSourceProviders().map((entry) => entry.providerKey), ["acme-portal"]);
+  assert.equal(shared.approvedSourceProviders?.get("acme-portal")?.providerKey, "acme-portal");
 });

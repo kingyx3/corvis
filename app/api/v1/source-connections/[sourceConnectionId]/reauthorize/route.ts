@@ -2,7 +2,8 @@ import { assertPermission } from "@/core/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sourceConnectionService } from "@/lib/server/source-connection-service";
-import { ConnectorGovernanceError, assertSourceConnectionId, type SourceConnection } from "@/lib/server/source-connectors";
+import { ConflictError } from "@/lib/server/platform";
+import { assertSourceConnectionId, type SourceConnection } from "@/lib/server/source-connectors";
 
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
   const { secretReference, ...rest } = connection;
@@ -32,7 +33,7 @@ export async function POST(request: Request, context: { params: Promise<{ source
     assertSourceConnectionId(sourceConnectionId);
 
     const service = sourceConnectionService();
-    if ((await service.get(identity, sourceConnectionId)).credentialType === "oauth_authorization_code") throw new ConnectorGovernanceError("oauth_reauthorization_required");
+    if ((await service.get(identity, sourceConnectionId)).credentialType === "oauth_authorization_code") throw new ConflictError("oauth_reauthorization_required");
     const data = await service.reauthorize(identity, sourceConnectionId, body.secret as Record<string, unknown>, id);
     return json({ data: toResponse(data), correlationId: id });
   } catch (error) { return apiError(error, id); }

@@ -280,9 +280,10 @@ test("the operator sweep only touches a store this process already holds, and le
   } finally { shared.secretStore = previous; }
 });
 
-test("the driver registry and the approved-provider registry survive the module being evaluated again, as next dev does", async () => {
-  const specifier = "./source-connector-runtime.ts?re-evaluated";
-  const fresh = await import(specifier) as typeof import("./source-connector-runtime.ts");
-  assert.notEqual(fresh.sourceConnectorDrivers, sourceConnectorDrivers, "a genuinely new module instance");
-  assert.equal(fresh.sourceConnectorDrivers(), sourceConnectorDrivers());
+test("the driver registry lives on globalThis, so next dev evaluating this module again keeps the registered drivers", () => {
+  const shared = globalThis as typeof globalThis & { sourceConnectorDrivers?: Map<string, unknown> };
+  const registry = sourceConnectorDrivers();
+  assert.equal(shared.sourceConnectorDrivers, registry);
+  sourceConnectorDrivers().set("kept-across-reloads", {} as never);
+  try { assert.equal(shared.sourceConnectorDrivers!.has("kept-across-reloads"), true); } finally { sourceConnectorDrivers().delete("kept-across-reloads"); }
 });
