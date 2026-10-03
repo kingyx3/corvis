@@ -89,6 +89,16 @@ export const SQL_APPLICATION_ERRORS = [
   "data issue correction required",
   "data issue correction is not resolved",
   "data issue resolution note required",
+  // corvis_control.request_tenant_export / decide_tenant_export (086)
+  "tenant export purpose required",
+  "tenant export requires an active organization admin",
+  "tenant export already in progress",
+  "tenant export requires an independent approver",
+  "tenant export can only be cancelled by its requester",
+  "tenant export approval window has passed",
+  "tenant export decision note required",
+  "tenant export status changed",
+  "tenant export transition not allowed",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -174,6 +184,16 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "data issue correction required": { code: "data_issue_correction_required", status: 409 },
   "data issue correction is not resolved": { code: "data_issue_correction_not_resolved", status: 409 },
   "data issue resolution note required": { code: "invalid_note", status: 400 },
+  // Full tenant export (F10): who may ask and decide, and what a request's current state can accept.
+  "tenant export purpose required": { code: "invalid_reason", status: 400 },
+  "tenant export requires an active organization admin": { code: "tenant_admin_required", status: 403 },
+  "tenant export already in progress": { code: "data_export_already_active", status: 409 },
+  "tenant export requires an independent approver": { code: "data_export_independent_approver_required", status: 403 },
+  "tenant export can only be cancelled by its requester": { code: "data_export_cancel_requester_only", status: 403 },
+  "tenant export approval window has passed": { code: "data_export_approval_expired", status: 409 },
+  "tenant export decision note required": { code: "invalid_note", status: 400 },
+  "tenant export status changed": { code: "data_export_status_changed", status: 409 },
+  "tenant export transition not allowed": { code: "data_export_transition_not_allowed", status: 409 },
 };
 
 /**

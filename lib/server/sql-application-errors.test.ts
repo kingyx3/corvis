@@ -102,3 +102,23 @@ test("data-issue refusals classify to stable codes, 404 for what does not exist 
     assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
   }
 });
+
+test("tenant-export refusals classify to stable codes: 400 for input, 403 for who may act, 409 for what the request's state cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "tenant export purpose required": ["invalid_reason", 400],
+    "tenant export requires an active organization admin": ["tenant_admin_required", 403],
+    "tenant export already in progress": ["data_export_already_active", 409],
+    "tenant export requires an independent approver": ["data_export_independent_approver_required", 403],
+    "tenant export can only be cancelled by its requester": ["data_export_cancel_requester_only", 403],
+    "tenant export approval window has passed": ["data_export_approval_expired", 409],
+    "tenant export decision note required": ["invalid_note", 400],
+    "tenant export status changed": ["data_export_status_changed", 409],
+    "tenant export transition not allowed": ["data_export_transition_not_allowed", 409],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});

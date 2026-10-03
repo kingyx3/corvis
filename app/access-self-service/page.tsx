@@ -8,6 +8,7 @@ import { bulkInviteErrorText, tenantAdminRows } from "@/lib/bulk-invite-csv";
 import { throwIfUnauthenticated } from "@/lib/api-errors";
 import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
+import { DataGovernanceSections } from "@/features/access/data-governance-section";
 
 type AuditEvent={auditEventId:string;occurredAt:string;workspaceId?:string;actorSubject:string;action:string;targetType:string;targetId:string;outcome:string;metadata:Record<string,unknown>};
 type Grant={supportGrantId:string;workspaceId:string;roleName:string;purpose:string;validFrom:string;validUntil:string;status:"pending_ack"|"active";requiresTenantAck:boolean;subject:string};
@@ -67,6 +68,8 @@ export default function AccessSelfServicePage(){
     </section>
 
     <section className="panel" aria-labelledby="roles-heading"><div className="panel-heading"><div><p className="eyebrow">Role guidance</p><h2 id="roles-heading">What each role means</h2></div></div><div className="table-card"><table className="data-table"><thead><tr><th>Role</th><th>Plain-language access</th></tr></thead><tbody>{ROLE_GUIDE.map(([role,description])=><tr key={role}><td><strong>{role}</strong></td><td>{description}</td></tr>)}</tbody></table></div></section>
+
+    <DataGovernanceSections/>
 
     <section className="panel" aria-labelledby="audit-heading"><div className="panel-heading"><div><p className="eyebrow">Tenant-scoped evidence</p><h2 id="audit-heading">Access audit trail</h2></div><button className="secondary-button" onClick={()=>void exportAudit()}>Export CSV</button></div><p className="lede">Invitations, member changes, lifecycle actions and support access are shown only for your tenant.</p><div className="table-card" tabIndex={0} role="region" aria-label="Tenant access audit"><table className="data-table"><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody>{audit.length?audit.map((event)=><tr key={event.auditEventId}><td>{displayDate(event.occurredAt, { timeStyle: "short" })}</td><td>{event.actorSubject}</td><td>{event.action}</td><td>{event.targetType} · {event.targetId}</td><td>{event.outcome}</td></tr>):<tr><td colSpan={5} className="empty-cell">{emptyText("No tenant access events recorded.")}</td></tr>}</tbody></table></div></section>
   </div></main>;
