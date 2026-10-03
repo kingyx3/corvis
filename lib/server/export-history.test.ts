@@ -49,7 +49,7 @@ function job(id: string, overrides: PostgresRow = {}): PostgresRow {
 
 type Call = { kind: "query" | "execute"; sql: string; parameters: PostgresPrimitive[] };
 
-function fakeStore(jobs: PostgresRow[], options: { snapshotCount?: (parameters: PostgresPrimitive[]) => number; failSnapshots?: boolean } = {}) {
+function fakeStore(jobs: PostgresRow[], options: { snapshotCount?: (parameters: PostgresPrimitive[]) => number; failSnapshots?: boolean; scheduled?: PostgresRow[] } = {}) {
   const calls: Call[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -64,6 +64,7 @@ function fakeStore(jobs: PostgresRow[], options: { snapshotCount?: (parameters: 
           if (sql.includes("export_id=$2::uuid")) return jobs.filter((row) => row.export_id === parameters[1]);
           return jobs.slice(0, Number(parameters[2]));
         }
+        if (sql.includes("from corvis_control.export_schedule_run")) return options.scheduled ?? [];
         if (sql.includes("from corvis_consolidated.fund_period_snapshot")) {
           if (options.failSnapshots) throw new Error("postgres_unavailable");
           return [{ snapshot_count: options.snapshotCount?.(parameters) ?? 0 }];
@@ -164,4 +165,25 @@ test("a download grant is issued only by the explicit single-export read", async
   const expired = await getPhysicalExportStatus(identity(), String(job("1").export_id), expiredStore);
   assert.equal(expired?.downloadUrl, undefined);
   assert.equal(expiredCalls.filter((call) => call.kind === "execute").length, 0);
+});
+
+test("an export a schedule requested carries its schedule's label and trigger; the rest are unmarked, in one bounded lookup", async () => {
+  const scheduledId = String(job("1").export_id);
+  const { store, calls } = fakeStore([job("1"), job("2")], {
+    scheduled: [{ export_id: scheduledId, schedule_id: "00000000-0000-4000-8000-0000000000s1", trigger_key: "monthly:2026-10", label: "Monthly · Sparrow" }],
+  });
+  const statuses = await listPhysicalExportStatuses(identity(), 20, store);
+  assert.deepEqual(statuses[0]!.schedule, { scheduleId: "00000000-0000-4000-8000-0000000000s1", label: "Monthly · Sparrow", triggerKey: "monthly:2026-10" });
+  assert.equal(statuses[1]!.schedule, undefined);
+  assert.equal(statuses[1]!.exportId, String(job("2").export_id));
+  const lookups = calls.filter((call) => call.sql.includes("from corvis_control.export_schedule_run"));
+  assert.equal(lookups.length, 1, "one lookup for the whole page, not one per export");
+  assert.match(lookups[0]!.sql, /where r\.tenant_id=\$1 and r\.export_id in/);
+  assert.deepEqual(lookups[0]!.parameters, [TENANT, JSON.stringify([job("1").export_id, job("2").export_id])]);
+});
+
+test("an empty history needs no schedule lookup", async () => {
+  const { store, calls } = fakeStore([]);
+  assert.deepEqual(await listPhysicalExportStatuses(identity(), 20, store), []);
+  assert.equal(calls.some((call) => call.sql.includes("export_schedule_run")), false);
 });
