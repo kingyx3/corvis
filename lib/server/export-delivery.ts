@@ -97,7 +97,8 @@ async function resolveRequestIdentity(row: QueuedExportRow, store: PostgresSqlAp
   };
 }
 
-async function loadArtifactRows(
+/** Exported so the defensive entitlement guards can be tested directly; deliverExportArtifact always passes a fully resolved identity. */
+export async function loadArtifactRows(
   identity: RequestIdentity,
   snapshotIds: readonly string[],
   store: PostgresSqlApi,
@@ -187,7 +188,7 @@ function mapPositionRow(row: PostgresRow): PositionFinancialStatementRow {
   };
 }
 
-async function loadPositionFinancialRows(
+export async function loadPositionFinancialRows(
   identity: RequestIdentity,
   snapshotIds: readonly string[],
   scope: PositionFinancialsExportScope,

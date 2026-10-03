@@ -50,7 +50,8 @@ function isSnapshotScope(scope: ExportScope | undefined): scope is { snapshotId:
   return Boolean(scope && "snapshotId" in scope);
 }
 
-async function positionFinancialSnapshots(
+/** Exported so the defensive entitlement guard (which createPhysicalExport's own pre-check makes unreachable) is testable. */
+export async function positionFinancialSnapshots(
   identity: RequestIdentity,
   scope: Extract<ExportScope, { positionFinancials: unknown }>,
   store: PostgresSqlApi,
