@@ -8,6 +8,7 @@ import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
+import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
 import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
@@ -47,6 +48,8 @@ export async function POST(request:Request){
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
       idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
       exportGrantSweep:()=>sweepExpiredExportDownloadGrants(),
+      // F10f: expired tenant-export artifacts are deleted from the object store and recorded, and spent download grants removed; both audited.
+      tenantExportSweep:()=>sweepTenantExports(),
       uploadRelease:()=>releaseScannedUploads(),
       uploadSweep:()=>sweepUploadSessions(),
       emailDigests:()=>processEmailDigests(),
@@ -56,6 +59,9 @@ export async function POST(request:Request){
     const sweepSummary=results.uploadSweep as {errors?:unknown}|null|undefined;
     const sweepErrors=typeof sweepSummary?.errors==="number"?sweepSummary.errors:0;
     if(sweepErrors>0&&!failed.includes("uploadSweep")) failed.push("uploadSweep");
+    // Likewise an artifact the sweep could not delete: the tick answers 500 so it is retried and alerted rather than silently kept.
+    const exportSweep=results.tenantExportSweep as {errors?:unknown}|null|undefined;
+    if(typeof exportSweep?.errors==="number"&&exportSweep.errors>0&&!failed.includes("tenantExportSweep")) failed.push("tenantExportSweep");
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
     return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});
