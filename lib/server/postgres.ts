@@ -21,7 +21,7 @@ export type PostgresSqlApi = DatabaseApi;
  */
 export const withTransaction = withOptionalTransaction;
 
-type QueryResult = { rows?: PostgresRow[] };
+type QueryResult = { rows: PostgresRow[] };
 
 type PostgresClientOptions = {
   dsn: string;
@@ -49,7 +49,7 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     const result = await this.request(sql, parameters);
-    return result.rows ?? [];
+    return result.rows;
   }
 
   async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
@@ -78,9 +78,9 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
       if (!response.ok) {
         throw new Error(`Postgres SQL request failed with status ${response.status}`);
       }
-      const payload = (await response.json()) as QueryResult;
+      const payload = (await response.json()) as Partial<QueryResult> | null;
       if (!payload || !Array.isArray(payload.rows)) return { rows: [] };
-      return payload;
+      return { rows: payload.rows };
     } finally {
       clearTimeout(timeout);
     }
