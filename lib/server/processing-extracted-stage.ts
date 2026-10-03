@@ -768,7 +768,6 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     if (!mediaResponse.ok) throw new Error(`GCS extraction bundle read failed (${mediaResponse.status})`);
     const bytes = Buffer.from(mediaBuffer);
     if (bytes.length !== input.descriptor.sizeBytes) throw new Error("extraction bundle body size does not match immutable metadata");
-    if (bytes.length > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (hash !== input.descriptor.contentSha256.toLowerCase()) throw new Error("extraction bundle body hash does not match immutable metadata");
     return bytes.toString("utf8");
