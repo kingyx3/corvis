@@ -9,13 +9,15 @@ import {
   type TenantExportDownload,
   type TenantExportEvent,
   type TenantExportManifest,
+  type TenantExportPage,
   type TenantExportRequest,
   type TenantExportState,
 } from "../../core/tenant-export.ts";
 import { DataGovernanceError } from "./data-governance.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "./pagination.ts";
 import type { GcsControlClient } from "./gcs.ts";
 import { exportObjectKey } from "./physical-exports.ts";
-import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 /**
  * Full tenant data export (F10, #266), Postgres side. A request, its decisions and its build live in
@@ -32,11 +34,14 @@ export type TenantExportStream = { body: BodyInit; contentType: string; contentL
 
 export type DecisionCommand = Exclude<TenantExportCommand, { action: "prepare_download" }>;
 
+export type TenantExportListQuery = { limit: number; cursor?: string | null };
+
 /** Where requests live. Postgres in production, an in-memory store in demo mode; both enforce the same rules. */
 export interface TenantExportBackend {
   readonly demo: boolean;
   request(identity: RequestIdentity, command: { reason: string }, db?: PostgresSqlApi): Promise<TenantExportRequest>;
-  list(identity: RequestIdentity, db?: PostgresSqlApi): Promise<TenantExportRequest[]>;
+  /** One page, newest first, in the stable keyset order (requested_at desc, request_id desc). A cursor that does not decode is `InvalidCursorError`. */
+  list(identity: RequestIdentity, query: TenantExportListQuery, db?: PostgresSqlApi): Promise<TenantExportPage>;
   get(identity: RequestIdentity, requestId: string, db?: PostgresSqlApi): Promise<TenantExportRequest>;
   decide(identity: RequestIdentity, requestId: string, command: DecisionCommand, db?: PostgresSqlApi): Promise<TenantExportRequest>;
   /** Issues a fresh single-use, short-lived link for a complete export. */
@@ -52,8 +57,32 @@ export function isUuid(value: string): boolean { return UUID.test(value); }
 
 /** How long one download link works, at most (it never outlives the artifact). */
 export const TENANT_EXPORT_LINK_MINUTES = 10;
-/** The most recent requests listed. Requests are rare (one open at a time), so this is a ceiling, not a page size. */
-export const TENANT_EXPORT_LIST_LIMIT = 50;
+
+// ---------------------------------------------------------------------------
+// Keyset cursors: a timestamp and an id, newest first
+// ---------------------------------------------------------------------------
+
+/** Microsecond-precision UTC text of a timestamptz, the exact value a keyset compares against (a JS Date would drop digits and skip or repeat rows). */
+export function keysetTimestampSql(column: string): string {
+  return `to_char(${column} at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+}
+const CURSOR_TIMESTAMP = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+export function encodeKeysetCursor(at: string, id: string): string { return encodeCursor(`${at}|${id}`); }
+
+/** Decoded before any query so a tampered cursor never reaches the `::timestamptz` or `::uuid` casts. */
+export function decodeKeysetCursor(cursor: string): { at: string; id: string } {
+  const key = decodeCursor(cursor);
+  const separator = key.indexOf("|");
+  const at = key.slice(0, separator);
+  const id = key.slice(separator + 1);
+  if (separator === -1 || !CURSOR_TIMESTAMP.test(at) || !isUuid(id)) throw new InvalidCursorError();
+  // Date.parse rolls impossible dates over (Feb 30, hour 24) and the Postgres cast would reject them with a 500: a round trip catches them here.
+  const millis = `${at.slice(0, 23)}Z`;
+  const parsed = Date.parse(millis);
+  if (Number.isNaN(parsed) || new Date(parsed).toISOString() !== millis) throw new InvalidCursorError();
+  return { at, id: id.toLowerCase() };
+}
 
 export function tenantExportAuditEvent(
   identity: RequestIdentity,
@@ -179,10 +208,25 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
     return toTenantExportRequest(rows[0]!, identity);
   }
 
-  async list(identity: RequestIdentity, db: PostgresSqlApi = this.defaultDb()): Promise<TenantExportRequest[]> {
-    const rows = await db.query(`select ${REQUEST_COLUMNS} from corvis_control.tenant_export_request r
-      where r.tenant_id = $1::uuid order by r.requested_at desc, r.request_id desc limit ${TENANT_EXPORT_LIST_LIMIT}`, [identity.tenantId]);
-    return rows.map((row) => toTenantExportRequest(row, identity));
+  async list(identity: RequestIdentity, query: TenantExportListQuery, db: PostgresSqlApi = this.defaultDb()): Promise<TenantExportPage> {
+    const after = query.cursor ? decodeKeysetCursor(query.cursor) : null;
+    const parameters: PostgresPrimitive[] = [identity.tenantId];
+    let where = "r.tenant_id = $1::uuid";
+    if (after) {
+      parameters.push(after.at, after.id);
+      where += " and (r.requested_at, r.request_id) < ($2::timestamptz, $3::uuid)";
+    }
+    parameters.push(query.limit + 1);
+    // One row past the page proves another page exists without counting.
+    const rows = await db.query(`select ${REQUEST_COLUMNS}, ${keysetTimestampSql("r.requested_at")} as cursor_at
+      from corvis_control.tenant_export_request r where ${where}
+      order by r.requested_at desc, r.request_id desc limit $${parameters.length}::integer`, parameters);
+    const page = rows.slice(0, query.limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((row) => toTenantExportRequest(row, identity)),
+      nextCursor: rows.length > query.limit && last ? encodeKeysetCursor(str(last, "cursor_at"), str(last, "request_id")) : null,
+    };
   }
 
   /** The request row if it exists in the caller's tenant. A missing or malformed id is the same 404. */
@@ -217,8 +261,6 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
     if (!request.actions.canDownload) throw new DataGovernanceError("data_export_not_available", 409);
     await this.assertRightsStillCover(db, identity.tenantId, artifactScope(row.manifest));
     const token = randomBytes(32).toString("base64url");
-    await db.execute(`delete from corvis_control.tenant_export_download_grant
-      where tenant_id = $1::uuid and request_id = $2::uuid and expires_at < now() - interval '1 day'`, [identity.tenantId, requestId]);
     const grant = (await db.query(`insert into corvis_control.tenant_export_download_grant (tenant_id, request_id, subject, token_sha256, expires_at)
       select $1::uuid, $2::uuid, $3, $4, least(r.artifact_expires_at, now() + make_interval(mins => $5))
       from corvis_control.tenant_export_request r where r.tenant_id = $1::uuid and r.request_id = $2::uuid

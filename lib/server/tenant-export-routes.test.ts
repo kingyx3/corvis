@@ -162,6 +162,7 @@ test("listing and reading a request are tenant-scoped; an unknown id is a 404 an
   const list = await body(await listGet(request("/access/data-exports")));
   assert.equal(list.data.length, 1);
   assert.equal(queries[0]!.parameters[0], TENANT);
+  assert.equal(queries[0]!.parameters.at(-1), 51, "the default page is 50, and one more is read to know whether there is a next page");
   const one = await body(await itemGet(request(`/access/data-exports/${REQUEST}`), params(REQUEST)));
   assert.equal(one.data.history!.length, 1);
   seed();
@@ -206,7 +207,7 @@ test("a decision, a link and a download go through the service with their own au
 test("SQL refusals reach the client as stable codes, and typed errors keep their own status", async () => {
   const refusing = (message: string) => createTenantExportService({
     demo: false,
-    request: async () => { throw new Error(message); }, list: async () => [], get: async () => { throw new DataGovernanceError("data_export_not_found", 404); },
+    request: async () => { throw new Error(message); }, list: async () => ({ items: [], nextCursor: null }), get: async () => { throw new DataGovernanceError("data_export_not_found", 404); },
     decide: async () => { throw new PostgresDriverError("query", "P0001", message as never); },
     issueDownload: async () => { throw new Error("boom"); }, redeemDownload: async () => null, openArtifact: async () => null,
   });
@@ -225,6 +226,25 @@ test("SQL refusals reach the client as stable codes, and typed errors keep their
   } finally {
     overrideTenantExportService();
   }
+});
+
+test("the list route pages through the Postgres backend: nextCursor when more remain, then the cursor drives the keyset (F10f)", async () => {
+  const older = "9f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f";
+  seed(() => [row({ cursor_at: "2026-10-01T10:00:00.000002Z" }), row({ request_id: older, cursor_at: "2026-10-01T09:00:00.000001Z" })]);
+  const page = (await (await listGet(request("/access/data-exports?limit=1"))).json()) as { data: unknown[]; nextCursor: string | null };
+  assert.equal(page.data.length, 1);
+  assert.ok(page.nextCursor);
+  seed(() => [row({ request_id: older, cursor_at: "2026-10-01T09:00:00.000001Z" })]);
+  const second = (await (await listGet(request(`/access/data-exports?limit=1&cursor=${encodeURIComponent(page.nextCursor!)}`))).json()) as { data: unknown[]; nextCursor: string | null };
+  assert.equal(second.nextCursor, null);
+  assert.match(queries[0]!.sql, /\(r\.requested_at, r\.request_id\) < \(\$2::timestamptz, \$3::uuid\)/);
+  assert.deepEqual(queries[0]!.parameters, [TENANT, "2026-10-01T10:00:00.000002Z", REQUEST, 2]);
+  seed();
+  const bad = await listGet(request("/access/data-exports?cursor=garbage"));
+  assert.equal(bad.status, 400);
+  assert.equal(((await bad.json()) as { error: string }).error, "invalid_cursor");
+  assert.equal(queries.length, 0, "a bad cursor never reaches SQL");
+  assert.equal((await listGet(request("/access/data-exports?limit=abc"))).status, 400);
 });
 
 test("the error mapper handles typed, validation, authorization and unknown failures", async () => {

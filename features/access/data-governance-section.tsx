@@ -7,6 +7,7 @@ import {
   TENANT_EXPORT_MIN_REASON_LENGTH,
   TENANT_EXPORT_STATUS_LABEL,
   tenantExportStatusSummary,
+  type TenantExportPage,
   type TenantExportRequest,
 } from "@/core/tenant-export";
 import { Icon } from "@/components/ui/icon";
@@ -84,8 +85,47 @@ function RetentionSection() {
   </section>;
 }
 
+/** Requests shown per page. Requests are rare (one is open at a time), so most organizations never see a second page. */
+export const DATA_EXPORT_PAGE_SIZE = 10;
+/** Tells the approval notice at the top of the page that a request changed, so it never contradicts the list below. */
+export const DATA_EXPORT_CHANGED_EVENT = "corvis:data-export-changed";
+
+/**
+ * The in-app signal for F10d: a request from a colleague is waiting for this Organization Admin's approval. It sits at the
+ * top of the access self-service page (no new navigation item) and links to the request. It is the same information the
+ * approval email carries, and works whether or not email is switched on. The open request is always the newest, so the
+ * first page is enough to find it.
+ */
+export function DataExportApprovalNotice() {
+  const [waiting, setWaiting] = useState(0);
+  const latest = useRef(0);
+  const refresh = useCallback((signal?: AbortSignal) => {
+    const current = ++latest.current;
+    void listDataExports({ limit: DATA_EXPORT_PAGE_SIZE, signal })
+      // Silent on failure: the export section below reports its own load failure, and a notice that cannot be confirmed is not shown.
+      .then((page) => { if (current === latest.current) setWaiting(page.items.filter((item) => item.actions.canApprove).length); })
+      .catch(() => { if (current === latest.current) setWaiting(0); });
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    refresh(controller.signal);
+    const onChanged = () => refresh();
+    window.addEventListener(DATA_EXPORT_CHANGED_EVENT, onChanged);
+    return () => { controller.abort(); window.removeEventListener(DATA_EXPORT_CHANGED_EVENT, onChanged); };
+  }, [refresh]);
+  if (waiting === 0) return null;
+  return <div className="lineage-note tone-warning" role="status" data-testid="export-approval-notice"><Icon name="shield"/><div>
+    <strong>A data export is awaiting your approval</strong>
+    <span>A colleague asked for a full export of your organization&apos;s data. It is only built if a different Organization Admin approves it. <a className="text-button" href="#export-heading">Review the request</a></span>
+  </div></div>;
+}
+
 function DataExportSection() {
-  const [state, setState] = useState<Load<TenantExportRequest[]>>({ kind: "loading" });
+  const [state, setState] = useState<Load<TenantExportPage>>({ kind: "loading" });
+  // Older pages the admin has opened. They hang off the first page's cursor, so they are dropped if a newer request moves that cursor.
+  const [older, setOlder] = useState<TenantExportPage | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const firstCursor = useRef<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -97,27 +137,47 @@ function DataExportSection() {
   const noteId = useId();
   const latest = useRef(0);
 
+  const applyFirstPage = useCallback((page: TenantExportPage) => {
+    setState({ kind: "ready", value: page });
+    // Opened older pages stay while the first page still ends where it did; a newer request moves its end, and they would then skip a request.
+    setOlder((current) => (current && firstCursor.current === page.nextCursor ? current : null));
+    firstCursor.current = page.nextCursor;
+  }, []);
+
   const refresh = useCallback(async (silent = false) => {
     const current = ++latest.current;
     try {
-      const value = await listDataExports();
-      if (current === latest.current) setState({ kind: "ready", value });
+      const page = await listDataExports({ limit: DATA_EXPORT_PAGE_SIZE });
+      if (current === latest.current) applyFirstPage(page);
     } catch {
       if (current === latest.current && !silent) setState({ kind: "error" });
     }
-  }, []);
+  }, [applyFirstPage]);
 
   useEffect(() => {
     const controller = new AbortController();
     const current = ++latest.current;
-    void listDataExports(controller.signal)
-      .then((value) => { if (current === latest.current) setState({ kind: "ready", value }); })
+    void listDataExports({ limit: DATA_EXPORT_PAGE_SIZE, signal: controller.signal })
+      .then((page) => { if (current === latest.current) applyFirstPage(page); })
       .catch(() => { if (current === latest.current && !controller.signal.aborted) setState({ kind: "error" }); });
     return () => controller.abort();
-  }, [reloadKey]);
+  }, [reloadKey, applyFirstPage]);
+
+  const showOlder = async () => {
+    const cursor = older ? older.nextCursor : state.kind === "ready" ? state.value.nextCursor : null;
+    if (!cursor) return;
+    setLoadingOlder(true);
+    try {
+      const page = await listDataExports({ limit: DATA_EXPORT_PAGE_SIZE, cursor });
+      setOlder((current) => ({ items: [...(current?.items ?? []), ...page.items], nextCursor: page.nextCursor }));
+    } catch (failure) {
+      setMessage({ tone: "error", text: dataGovernanceErrorMessage(failure, "Older requests could not be loaded. Try again.") });
+    } finally { setLoadingOlder(false); }
+  };
 
   // An approved request is built by the delivery worker within about a minute: keep the list current until it settles.
-  const items = state.kind === "ready" ? state.value : [];
+  const items = state.kind === "ready" ? [...state.value.items, ...(older?.items ?? [])] : [];
+  const moreCursor = state.kind === "ready" ? (older ? older.nextCursor : state.value.nextCursor) : null;
   const building = items.some((item) => item.status === "approved" || item.status === "building");
   useEffect(() => {
     if (!building) return;
@@ -138,7 +198,7 @@ function DataExportSection() {
     } catch (reasonForFailure) {
       setMessage({ tone: "error", text: dataGovernanceErrorMessage(reasonForFailure, failure) });
       await refresh(true);
-    } finally { setBusy(null); }
+    } finally { setBusy(null); window.dispatchEvent(new Event(DATA_EXPORT_CHANGED_EVENT)); }
   };
 
   const submit = () => run("request", async () => {
@@ -225,6 +285,7 @@ function DataExportSection() {
         </li>;
       })}
     </ul>}
+    {moreCursor && <button type="button" className="secondary-button" disabled={loadingOlder} onClick={() => void showOlder()}>{loadingOlder ? "Loading older requests…" : "Show older requests"}</button>}
   </section>;
 }
 

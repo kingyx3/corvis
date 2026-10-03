@@ -8,7 +8,7 @@ import { bulkInviteErrorText, tenantAdminRows } from "@/lib/bulk-invite-csv";
 import { throwIfUnauthenticated } from "@/lib/api-errors";
 import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
-import { DataGovernanceSections } from "@/features/access/data-governance-section";
+import { DataExportApprovalNotice, DataGovernanceSections } from "@/features/access/data-governance-section";
 import { SessionPolicySection } from "@/features/access/session-policy-section";
 import { ServiceAccountsSection } from "@/features/access/service-accounts-section";
 
@@ -49,6 +49,7 @@ export default function AccessSelfServicePage(){
   return <main id="main-content"><div className="app-content">
     <section className="page-heading"><div><p className="eyebrow">Organization access</p><h1>Tenant access controls</h1><p className="lede">Review access changes, onboard users in bulk, manage pending invitations, see every Corvis break-glass support session affecting your organization, manage service accounts for your own systems, check data retention and legal holds, and request a full data export.</p></div><div className="dialog-actions"><Link className="secondary-button" href="/">Back to workspace</Link><button className="secondary-button" disabled={loading} onClick={()=>void load()}>Refresh</button></div></section>
     {error&&<div className="lineage-note tone-danger" role="alert"><strong>Access controls need attention</strong><span>{error}</span></div>}
+    <DataExportApprovalNotice/>
 
     <section className="panel" aria-labelledby="support-heading"><div className="panel-heading"><div><p className="eyebrow">Break-glass visibility</p><h2 id="support-heading">Corvis support access</h2></div><span className="table-muted">{grants.filter((g)=>g.status==="active").length} active · {grants.filter((g)=>g.status==="pending_ack").length} awaiting acknowledgement</span></div>
       {notices.filter((n)=>!n.readAt).map((notice)=><div key={notice.notificationId} className="lineage-note tone-warning"><strong>{notice.title}</strong><span>{notice.message}</span></div>)}

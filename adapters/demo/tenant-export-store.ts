@@ -7,6 +7,7 @@ import {
   type TenantExportArtifact,
   type TenantExportDownload,
   type TenantExportEvent,
+  type TenantExportPage,
   type TenantExportRequest,
   type TenantExportState,
 } from "../../core/tenant-export.ts";
@@ -15,9 +16,12 @@ import { DataGovernanceError } from "../../lib/server/data-governance.ts";
 import { assembleTenantExportBundle } from "../../lib/server/tenant-export-bundle.ts";
 import {
   TENANT_EXPORT_LINK_MINUTES,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
   isUuid,
   type DecisionCommand,
   type RedeemedTenantExport,
+  type TenantExportListQuery,
   type TenantExportBackend,
   type TenantExportStream,
 } from "../../lib/server/tenant-export.ts";
@@ -209,8 +213,23 @@ export class DemoTenantExportStore implements TenantExportBackend {
     return this.view(entry, identity);
   }
 
-  async list(identity: RequestIdentity): Promise<TenantExportRequest[]> {
-    return [...this.tenant(identity).entries].reverse().map((entry) => this.view(entry, identity));
+  /** Newest first, keyset-paged exactly like the Postgres list: (requested_at desc, request_id desc), the cursor holding the last item's position. */
+  async list(identity: RequestIdentity, query: TenantExportListQuery): Promise<TenantExportPage> {
+    const after = query.cursor ? decodeKeysetCursor(query.cursor) : null;
+    const key = (entry: Entry) => ({ at: Date.parse(entry.requestedAt), id: entry.requestId });
+    const ordered = [...this.tenant(identity).entries].sort((a, b) => key(b).at - key(a).at || (key(a).id < key(b).id ? 1 : -1));
+    const remaining = after === null ? ordered : ordered.filter((entry) => {
+      const position = key(entry);
+      const bound = Date.parse(`${after.at.slice(0, 23)}Z`);
+      return position.at < bound || (position.at === bound && position.id < after.id);
+    });
+    const page = remaining.slice(0, query.limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((entry) => this.view(entry, identity)),
+      // The demo keeps millisecond timestamps; the cursor format carries microseconds, so pad the digits Postgres would have.
+      nextCursor: remaining.length > query.limit && last ? encodeKeysetCursor(last.requestedAt.replace("Z", "000Z"), last.requestId) : null,
+    };
   }
 
   async get(identity: RequestIdentity, requestId: string): Promise<TenantExportRequest> {
