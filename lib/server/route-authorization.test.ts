@@ -138,6 +138,8 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["access/members/route.ts", { GET: ADMIN }],
   ["access/retention/route.ts", { GET: ADMIN }],
   ["access/scim/route.ts", { POST: ADMIN }],
+  ["access/session-policy/route.ts", { GET: ADMIN, PUT: ADMIN }],
+  ["access/session-policy/sign-out/route.ts", { POST: ADMIN }],
   ["access/support/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["admin/access-policy/route.ts", { POST: ADMIN }],
   ["admin/access-review/route.ts", { GET: ADMIN }],
@@ -334,6 +336,10 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "access/scim/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     // Retention and full-export routes (F10): an Organization Admin gets past authorization to validation or an empty result.
     { file: "access/retention/route.ts", method: "GET", role: "admin", expect: 200 },
+    // Session policy and sign-out everywhere (F7): an Organization Admin gets past authorization to validation or an empty view.
+    { file: "access/session-policy/route.ts", method: "GET", role: "admin", expect: 200 },
+    { file: "access/session-policy/route.ts", method: "PUT", role: "admin", body: {}, expect: 400, error: "invalid_request" },
+    { file: "access/session-policy/sign-out/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_user" },
     { file: "access/data-exports/route.ts", method: "GET", role: "admin", expect: 200 },
     { file: "access/data-exports/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_reason" },
     { file: "access/data-exports/[exportId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },

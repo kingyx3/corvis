@@ -249,7 +249,7 @@ begin
     raise exception 'session policy requires an active organization admin';
   end if;
   if p_reason is null or length(btrim(p_reason)) < 3 or length(p_reason) > 1000 then
-    raise exception 'session sign-out reason required';
+    raise exception 'session sign-out needs a stated reason';
   end if;
   if p_user_id = v_actor then
     raise exception 'session sign-out cannot target current user';

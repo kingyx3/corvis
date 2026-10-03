@@ -254,9 +254,9 @@ select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a
 select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e1','Myself')$f$, 'session sign-out cannot target current user');
 select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e7','Other tenant user')$f$, 'session sign-out target not found');
 select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e5','Disabled user')$f$, 'session sign-out target not found');
-select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3','  ')$f$, 'session sign-out reason required');
-select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3',null)$f$, 'session sign-out reason required');
-select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3',repeat('x',1001))$f$, 'session sign-out reason required');
+select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3','  ')$f$, 'session sign-out needs a stated reason');
+select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3',null)$f$, 'session sign-out needs a stated reason');
+select pg_temp.expect_error($f$select corvis_control.sign_out_user_everywhere('a0870000-0000-4000-8000-00000000000a','oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e3',repeat('x',1001))$f$, 'session sign-out needs a stated reason');
 
 -- The notification category is accepted by the outbox (a mandatory notice, so not a preference category).
 do $$

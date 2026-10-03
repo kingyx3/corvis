@@ -79,7 +79,7 @@ async function resolveRequestIdentity(row: QueuedExportRow, store: PostgresSqlAp
     authMethod,
     sessionId: required(row, "session_id"),
   } as const;
-  const authorization = await new PostgresMembershipAuthorizationRepository(store).resolve(principal);
+  const authorization = await new PostgresMembershipAuthorizationRepository(store).resolve(principal, { applySessionPolicy: false });
   if (!authorization) throw new Error("export_authorization_expired");
   return {
     ...principal,

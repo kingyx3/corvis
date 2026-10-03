@@ -48,7 +48,8 @@ export const TENANT_ACCESS_AUDIT_FILTER = `(
       action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
       or action like 'identity.lifecycle.%' or action like 'access.scim.%' or action like 'source_connection.%'
       or action like 'data_issue.%' or action like 'data_export.%' or action like 'export_schedule.%'
-      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request','export_schedule')
+      or action like 'access.session.%' or action like 'access.session_policy.%'
+      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request','export_schedule','session_policy','user_sessions')
     )`;
 
 export async function listTenantAccessAudit(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<TenantAccessAuditEvent[]> {

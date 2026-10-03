@@ -112,6 +112,13 @@ export const SQL_APPLICATION_ERRORS = [
   "review item assignment changed",
   "review comment limit reached",
   "idempotency key reused with different review comment",
+  // corvis_control.set_tenant_session_policy / sign_out_user_everywhere (087)
+  "session policy requires an active organization admin",
+  "session policy bounds exceeded",
+  "session policy version conflict",
+  "session sign-out needs a stated reason",
+  "session sign-out cannot target current user",
+  "session sign-out target not found",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -220,6 +227,13 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "review item assignment changed": { code: "assignment_changed", status: 409 },
   "review comment limit reached": { code: "review_comment_limit_reached", status: 409 },
   "idempotency key reused with different review comment": { code: "idempotency_key_reused", status: 409 },
+  // Organization session policy (F7): who may change it, the Corvis bounds, a stale version and the sign-out refusals.
+  "session policy requires an active organization admin": { code: "tenant_admin_required", status: 403 },
+  "session policy bounds exceeded": { code: "session_policy_out_of_bounds", status: 400 },
+  "session policy version conflict": { code: "session_policy_version_conflict", status: 409 },
+  "session sign-out needs a stated reason": { code: "invalid_reason", status: 400 },
+  "session sign-out cannot target current user": { code: "cannot_sign_out_current_user", status: 409 },
+  "session sign-out target not found": { code: "member_not_found", status: 404 },
 };
 
 /**

@@ -9,13 +9,21 @@ class FakeDb implements PostgresSqlApi {
   lastParameters: PostgresPrimitive[] = [];
   lastExecuteSql = "";
   lastExecuteParameters: PostgresPrimitive[] = [];
+  enforceCalls: PostgresPrimitive[][] = [];
   private readonly rows: PostgresRow[];
+  private readonly verdict: string | null;
 
-  constructor(rows: PostgresRow[]) {
+  /** `verdict` is what enforce_session_policy answers; null means it returns no row at all. */
+  constructor(rows: PostgresRow[], verdict: string | null = "ok") {
     this.rows = rows;
+    this.verdict = verdict;
   }
 
   async query(sql: string, parameters: PostgresPrimitive[] = []) {
+    if (sql.includes("enforce_session_policy")) {
+      this.enforceCalls.push(parameters);
+      return this.verdict === null ? [] : [{ verdict: this.verdict }];
+    }
     this.lastSql = sql;
     this.lastParameters = parameters;
     return this.rows;
@@ -273,4 +281,45 @@ test("isTenantAdmin reflects a tenant_admin membership in another workspace, not
   ])).resolve(principal);
   assert.equal(result?.isTenantAdmin, true);
   assert.deepEqual(result?.roles, ["admin"]);
+});
+
+// ------------------------------------------------------------------ organization session policy (F7, #263)
+const memberRows = [{ workspace_id: principal.workspaceId, role_name: "analyst" }];
+
+test("an authorized human session is recorded and checked against the organization's session policy", async () => {
+  const db = new FakeDb(memberRows);
+  const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.deepEqual(result?.roles, ["analyst"]);
+  assert.deepEqual(db.enforceCalls, [[principal.tenantId, "oidc", principal.subject, principal.sessionId]]);
+});
+
+test("a session the policy ends (idle, too long, or not measurable) is denied exactly like a revoked one", async () => {
+  for (const verdict of ["idle_timeout", "max_session", "untracked_session", "something_new", ""]) {
+    const db = new FakeDb(memberRows, verdict);
+    assert.equal(await new PostgresMembershipAuthorizationRepository(db).resolve(principal), null, verdict);
+    assert.equal(db.enforceCalls.length, 1, verdict);
+  }
+});
+
+test("a policy check that answers nothing at all fails closed", async () => {
+  assert.equal(await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, null)).resolve(principal), null);
+});
+
+test("a subject that is not authorized is never recorded as a session", async () => {
+  const db = new FakeDb([{ workspace_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", role_name: "analyst" }]);
+  assert.equal(await new PostgresMembershipAuthorizationRepository(db).resolve(principal), null, "not a member of the requested workspace");
+  const unknownRole = new FakeDb([{ workspace_id: principal.workspaceId, role_name: "mystery" }]);
+  assert.equal(await new PostgresMembershipAuthorizationRepository(unknownRole).resolve(principal), null, "no application role");
+  assert.equal(db.enforceCalls.length + unknownRole.enforceCalls.length, 0);
+});
+
+test("service identities and background re-authorization are not subject to the session policy", async () => {
+  const service = new FakeDb(memberRows, "idle_timeout");
+  assert.ok(await new PostgresMembershipAuthorizationRepository(service).resolve({ ...principal, authMethod: "service_account" }));
+  assert.equal(service.enforceCalls.length, 0, "the policy governs people");
+
+  const background = new FakeDb(memberRows, "idle_timeout");
+  assert.ok(await new PostgresMembershipAuthorizationRepository(background).resolve(principal, { applySessionPolicy: false }));
+  assert.equal(background.enforceCalls.length, 0, "a queued export neither ends nor extends the person's session");
+  assert.equal(await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve(principal, { applySessionPolicy: true }), null);
 });

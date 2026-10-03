@@ -1,6 +1,7 @@
 import type { RequestIdentity, Role, WorkspaceMembershipSummary } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { logEvent } from "./telemetry.ts";
 
 export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId">;
 
@@ -37,8 +38,18 @@ export type SessionRevocation = {
   reason: string;
 };
 
+export type ResolveOptions = {
+  /**
+   * Whether the organization's session policy (idle timeout, maximum session length) applies, and the session's
+   * activity is recorded. Defaults to true: every request is subject to it. Only background re-authorization of work
+   * a person already started (a queued export, a schedule) passes false: it must neither be ended by, nor extend, the
+   * person's interactive session. Revocation ("sign out everywhere") is always applied.
+   */
+  applySessionPolicy?: boolean;
+};
+
 export interface MembershipAuthorizationRepository {
-  resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null>;
+  resolve(principal: AuthorizationPrincipal, options?: ResolveOptions): Promise<MembershipAuthorization | null>;
 }
 
 export interface SessionRevocationRepository {
@@ -72,7 +83,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
     this.db = db;
   }
 
-  async resolve(principal: AuthorizationPrincipal): Promise<MembershipAuthorization | null> {
+  async resolve(principal: AuthorizationPrincipal, options: ResolveOptions = {}): Promise<MembershipAuthorization | null> {
     if (principal.authMethod === "demo") return null;
     const rows = await this.db.query(`select m.workspace_id::text as workspace_id, m.role_name,
         t.display_name as tenant_display_name, w.display_name as workspace_display_name,
@@ -171,6 +182,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       .map((row) => ROLE_MAP[text(row.role_name)])
       .filter((role): role is Role => role !== undefined))];
     if (roles.length === 0) return null;
+    if (options.applySessionPolicy !== false && !(await this.sessionAllowed(principal))) return null;
     // Tenant-wide, not scoped to the requested workspace: `rows` already
     // covers every workspace this subject belongs to (only the entitlement
     // join above is workspace-scoped), so this reflects the raw tenant_admin
@@ -222,6 +234,24 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       tenantDisplayName: optionalText(requestedWorkspaceRows[0]?.tenant_display_name),
       workspaceDisplayName: optionalText(requestedWorkspaceRows[0]?.workspace_display_name),
     };
+  }
+
+  /**
+   * The organization's session policy (F7, migration 087), applied after membership has resolved so only an
+   * authorized session is ever recorded. `enforce_session_policy` records the session and answers `ok`, or why it must
+   * end (`idle_timeout`, `max_session`, `untracked_session`). Anything other than an explicit `ok` denies, so a missing
+   * or unexpected answer fails closed. The denial is the same "no authoritative context" 401 as a revoked session;
+   * the reason is logged (never the session id) so it can be told apart on a dashboard.
+   */
+  private async sessionAllowed(principal: AuthorizationPrincipal): Promise<boolean> {
+    // The policy governs people; service identities are controlled by their grants (the SQL function exempts them too).
+    if (principal.authMethod === "service_account") return true;
+    const rows = await this.db.query(`select corvis_control.enforce_session_policy($1::uuid,$2,$3,$4) as verdict`,
+      [principal.tenantId, principal.authMethod, principal.subject, principal.sessionId]);
+    const verdict = text(rows[0]?.verdict);
+    if (verdict === "ok") return true;
+    logEvent("warn", "auth.session_policy_denied", { correlationId: "session-policy" }, { reason: verdict || "unknown" });
+    return false;
   }
 }
 

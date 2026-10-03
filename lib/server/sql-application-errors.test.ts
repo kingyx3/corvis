@@ -123,6 +123,23 @@ test("tenant-export refusals classify to stable codes: 400 for input, 403 for wh
   }
 });
 
+test("session-policy refusals classify to stable codes: 400 for input, 403 for who may act, 404 for a missing user, 409 for what the current state cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "session policy requires an active organization admin": ["tenant_admin_required", 403],
+    "session policy bounds exceeded": ["session_policy_out_of_bounds", 400],
+    "session policy version conflict": ["session_policy_version_conflict", 409],
+    "session sign-out needs a stated reason": ["invalid_reason", 400],
+    "session sign-out cannot target current user": ["cannot_sign_out_current_user", 409],
+    "session sign-out target not found": ["member_not_found", 404],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});
+
 test("scheduled-export refusals classify to stable codes, 400 for a scope that cannot be scheduled and 409 for what the schedule cannot accept", () => {
   const expected: Record<string, [string, number]> = {
     "idempotency key reused with different export schedule": ["idempotency_key_reused", 409],
