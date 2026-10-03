@@ -54,7 +54,7 @@ function RetentionSection() {
   const view = state.kind === "ready" ? state.value : null;
   return <section className="panel" aria-labelledby="retention-heading">
     <div className="panel-heading"><div><p className="eyebrow">Records obligations</p><h2 id="retention-heading">Data retention and legal holds</h2></div></div>
-    <p className="lede">How long Corvis keeps each class of your organization's data, and any legal hold that stops it being deleted. This is read-only: Corvis operations set and lift both. Contact Corvis support to ask about a period or a hold.</p>
+    <p className="lede">How long Corvis keeps each class of your organization&apos;s data, and any legal hold that stops it being deleted. This is read-only: Corvis operations set and lift both. Contact Corvis support to ask about a period or a hold.</p>
     {state.kind === "loading" && <p className="empty-cell" role="status">Loading retention settings…</p>}
     {state.kind === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Retention settings are unavailable</strong><span>Nothing was changed. <button type="button" className="text-button" onClick={() => { setState({ kind: "loading" }); setReloadKey((key) => key + 1); }}>Try again</button></span></div></div>}
     {view && <>
@@ -174,7 +174,7 @@ function DataExportSection() {
 
   return <section className="panel" aria-labelledby="export-heading">
     <div className="panel-heading"><div><p className="eyebrow">Leave cleanly</p><h2 id="export-heading">Full data export</h2></div><span className="table-muted">{open ? "One request is open" : "No open request"}</span></div>
-    <p className="lede">Request a complete copy of your organization's data. A second Organization Admin must approve it before anything is built, every step is audited, and the result is a checksummed archive behind a short-lived download link.</p>
+    <p className="lede">Request a complete copy of your organization&apos;s data. A second Organization Admin must approve it before anything is built, every step is audited, and the result is a checksummed archive behind a short-lived download link.</p>
     <ul className="data-export-contents" aria-label="What a full export contains">
       <li><strong>Published data</strong>: approved observations in your published snapshots.</li>
       <li><strong>Access audit trail</strong>: invitations, member changes, support access, source connections, data issues and exports.</li>
@@ -206,7 +206,7 @@ function DataExportSection() {
           <p className="data-issue-comment">{item.reason}</p>
           <p className="data-issue-summary">{tenantExportStatusSummary(item)}</p>
           {item.artifact && <p className="data-issue-replacement">Archive {formatBytes(item.artifact.sizeBytes)} · SHA-256 <code>{item.artifact.checksumSha256}</code> · available until {time(item.artifact.expiresAt)}</p>}
-          {confirmingThis === "approve" && <div className="lineage-note tone-warning" role="group" aria-label="Confirm approval"><Icon name="shield"/><div><strong>Approve this export?</strong><span>Corvis will build and deliver a complete copy of your organization's data (what your contracts allow) and a download link will be available to Organization Admins. You are recorded as the approver.</span></div></div>}
+          {confirmingThis === "approve" && <div className="lineage-note tone-warning" role="group" aria-label="Confirm approval"><Icon name="shield"/><div><strong>Approve this export?</strong><span>Corvis will build and deliver a complete copy of your organization&apos;s data (what your contracts allow) and a download link will be available to Organization Admins. You are recorded as the approver.</span></div></div>}
           {confirmingThis === "reject" && <div className="form-field" role="group" aria-label="Confirm rejection">
             <label htmlFor={noteId}><span>Why are you rejecting it?</span></label>
             <textarea id={noteId} className="input-control" rows={2} maxLength={TENANT_EXPORT_MAX_TEXT_LENGTH} value={note} onChange={(event) => setNote(event.target.value)} />

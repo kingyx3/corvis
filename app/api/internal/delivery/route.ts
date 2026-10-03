@@ -7,6 +7,7 @@ import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
+import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
 import { sweepUploadSessions } from "@/lib/server/upload-sweep";
@@ -36,6 +37,8 @@ export async function POST(request:Request){
     // allSettled: one rejected task must not hide the others' results (their side effects already happened).
     const {results,failed}=await settleDeliveryTasks({
       exports:()=>processQueuedExports(),
+      // Full tenant exports approved by a second Organization Admin (F10): same tick, same object store and artifact lifetime.
+      tenantExports:()=>processApprovedTenantExports(),
       webhooks:()=>processWebhookDeliveries(),
       processing:()=>dispatchConfiguredProcessingTransport(processingWorkerUrl),
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),

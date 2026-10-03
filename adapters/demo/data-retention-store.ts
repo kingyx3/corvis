@@ -1,5 +1,4 @@
 import { dataClassLabel, legalHoldScopeLabel, retentionPeriodLabel, type RetentionView } from "../../core/data-retention.ts";
-import type { RequestIdentity } from "../../core/enterprise.ts";
 
 /**
  * Retention periods and legal holds for demo mode and the browser suites; not production evidence. Every demo tenant
@@ -29,7 +28,7 @@ const HOLDS: Hold[] = [
 ];
 
 export class DemoRetentionStore {
-  async view(_identity: RequestIdentity): Promise<RetentionView> {
+  async view(): Promise<RetentionView> {
     return {
       policies: POLICIES.map((policy) => ({
         dataClass: policy.dataClass,

@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
 import type { AuditEvent, RequestIdentity } from "../../core/enterprise.ts";
-import { DemoRetentionStore } from "../../adapters/demo/data-retention-store.ts";
-import { DemoTenantExportStore } from "../../adapters/demo/tenant-export-store.ts";
+import type { DemoTenantExportStore as DemoTenantExportStoreType } from "../../adapters/demo/tenant-export-store.ts";
 import type { TenantExportManifest, TenantExportRequest } from "../../core/tenant-export.ts";
 import { readStoredZip } from "./test-support/zip-reader.ts";
 
@@ -21,6 +20,9 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 }) as typeof fetch;
 test.after(() => { globalThis.fetch = originalFetch; });
 
+const { DemoRetentionStore } = await import("../../adapters/demo/data-retention-store.ts");
+const { DemoTenantExportStore } = await import("../../adapters/demo/tenant-export-store.ts");
+type DemoTenantExportStore = DemoTenantExportStoreType;
 const { DataGovernanceError } = await import("./data-governance.ts");
 const { GET: retentionGet } = await import("@/app/api/v1/access/retention/route");
 const { GET: listGet, POST: requestPost } = await import("@/app/api/v1/access/data-exports/route");
@@ -204,7 +206,7 @@ test("a link for an export that expired in between redeems nothing", async () =>
 });
 
 test("the retention view is the same read-only policy for every demo tenant", async () => {
-  const view = await new DemoRetentionStore().view(identity());
+  const view = await new DemoRetentionStore().view();
   assert.deepEqual(view.policies.map((policy) => [policy.dataClass, policy.retentionLabel, policy.legalHold, policy.deleteOnTermination]), [
     ["financials", "7 years", false, false],
     ["published_data", "No fixed retention period", false, true],

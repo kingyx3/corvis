@@ -90,7 +90,7 @@ test("a decision names the action, an optional status guard and a note (required
 });
 
 test("each status is summarised in one plain sentence that says what happens next", () => {
-  const base = { requestedByMe: false, decidedBy: null, decisionNote: null };
+  const base: { requestedByMe: boolean; decidedBy: string | null; decisionNote: string | null } = { requestedByMe: false, decidedBy: null, decisionNote: null };
   const say = (status: TenantExportStatus, extra: Partial<typeof base> = {}) => tenantExportStatusSummary({ status, ...base, ...extra });
   assert.match(say("pending_approval"), /different Organization Admin \(not the requester\) must approve/);
   assert.match(say("pending_approval", { requestedByMe: true }), /cannot approve your own request/);

@@ -427,6 +427,10 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
           # Data-issue reports (F5): reporting is inert, the case state machine and its link to the governed correction, immutability, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/data-issue-reports.sql
+          # Full tenant data export (F10): dual approval enforced in SQL, the build queue, data-rights selection, immutability, RLS. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-data-export.sql
+          # The same through the application backend and build worker: archive and checksum manifest verify, only redistributable data is exported, links are single-use, rights are re-checked at download. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
           # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
