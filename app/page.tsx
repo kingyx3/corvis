@@ -8,6 +8,7 @@ import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace"
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
 import { NO_DEMO_FIXTURES, loadDemoUiFixtures, type DemoUiFixtures } from "@/runtime/demo-fixtures";
 import { SESSION_EXPIRED_EVENT, friendlyErrorMessage, isUnauthenticatedError } from "@/lib/api-errors";
+import { OAUTH_RETURN_MARKER } from "@/core/source-connect-wizard";
 import { parseViewHash, viewHash } from "@/lib/view-hash";
 import { useDocumentTitle } from "@/components/ui/use-document-title";
 import { ViewErrorBoundary } from "@/components/ui/view-error-boundary";
@@ -96,6 +97,8 @@ export default function CorvisApp() {
   useEffect(() => {
     const openFromEmailLink = () => {
       const url = new URL(window.location.href);
+      // A source provider's consent page redirects back to `/?source_oauth=return&…`: land on Documents, where the Connect source wizard resumes.
+      if (url.searchParams.has(OAUTH_RETURN_MARKER) && !url.hash) window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${viewHash("documents")}`);
       if (url.searchParams.get("notifications") !== "settings") return;
       url.searchParams.delete("notifications");
       window.history.replaceState(window.history.state, "", url.toString());
