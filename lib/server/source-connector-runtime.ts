@@ -191,7 +191,12 @@ export class GcpSecretManagerSecretStore implements SecretStore {
   }
 }
 
-let secretStoreSingleton: SecretStore | undefined;
+/**
+ * The process-wide store is kept on `globalThis`, not in a module variable: `next dev` re-evaluates server modules
+ * whenever another route is compiled, which would otherwise drop the placeholder store's contents (a pending OAuth
+ * attempt) between the request that started a flow and the one that finishes it. Production keeps one instance anyway.
+ */
+const sharedStores = globalThis as typeof globalThis & { secretStore?: SecretStore };
 
 /**
  * The `SecretStore` wired for the `/api/v1/source-connections` routes.
@@ -210,8 +215,8 @@ export function selectSourceConnectorSecretStore(projectId: string | undefined, 
 }
 
 export function sourceConnectorSecretStore(): SecretStore {
-  if (!secretStoreSingleton) secretStoreSingleton = selectSourceConnectorSecretStore(process.env.CORVIS_GCP_PROJECT_ID?.trim(), getServerConfig().environment);
-  return secretStoreSingleton;
+  if (!sharedStores.secretStore) sharedStores.secretStore = selectSourceConnectorSecretStore(process.env.CORVIS_GCP_PROJECT_ID?.trim(), getServerConfig().environment);
+  return sharedStores.secretStore;
 }
 
 let driversSingleton: Map<string, ConnectorDriver> | undefined;

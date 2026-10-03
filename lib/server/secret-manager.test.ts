@@ -5,6 +5,7 @@ import {
   SECRET_MANAGER_REQUEST_TIMEOUT_MS,
   selectSourceConnectorSecretStore,
   sourceConnectorSecretReference,
+  sourceConnectorSecretStore,
 } from "./source-connector-runtime.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";
@@ -138,6 +139,17 @@ test("the wired store is Secret Manager when a project is configured, the placeh
   assert.deepEqual(await placeholder.read(reference), { state: "s" });
   assert.throws(() => selectSourceConnectorSecretStore(undefined, "production"), /CORVIS_GCP_PROJECT_ID is required/);
   assert.throws(() => selectSourceConnectorSecretStore("", "production"), /CORVIS_GCP_PROJECT_ID is required/);
+
+  // The process-wide store reads the configured project (trimmed) once and then keeps it.
+  const previous = process.env.CORVIS_GCP_PROJECT_ID;
+  process.env.CORVIS_GCP_PROJECT_ID = " corvis-uat-98213 ";
+  try {
+    const wired = sourceConnectorSecretStore();
+    assert.ok(wired instanceof GcpSecretManagerSecretStore);
+    assert.equal(sourceConnectorSecretStore(), wired);
+  } finally {
+    if (previous === undefined) delete process.env.CORVIS_GCP_PROJECT_ID; else process.env.CORVIS_GCP_PROJECT_ID = previous;
+  }
 });
 
 test("write cleans up the just-created secret when adding the version fails", async () => {

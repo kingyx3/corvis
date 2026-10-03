@@ -104,8 +104,8 @@ export const surfaces: Surface[] = [
   } },
   // The Connect source wizard (B1): every step and error state, in order. All are administrator-only.
   { id: "connect-empty", label: "Connect source: no approved providers", role: "admin", nav: null, heading: /^choose a source$/i, open: async (page) => {
-    await page.route("**/api/v1/source-connections/providers", (route) => route.fulfill({ json: { data: [] } }));
     await isolateSourceConnections(page);
+    await page.route("**/api/v1/source-connections/providers", (route) => route.fulfill({ json: { data: [] } }));
     await page.getByRole("button", { name: /^documents$/i }).first().click();
     await page.getByRole("button", { name: /^connect source$/i }).click();
     await page.getByTestId("connect-source-empty").waitFor();

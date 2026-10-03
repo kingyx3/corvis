@@ -38,6 +38,8 @@ the customer/admin routes under `app/api/v1/source-connections/**` (list,
 create, test, pause/resume/revoke via `PATCH`, reauthorize, activity) call the module above.
 The Documents view now has a **Source connections** section for administrators
 (stories B5 #252 and B8 #253); see "Customer connection list and controls" below.
+The **Connect source** wizard (story B1 #251) creates and tests a connection from
+that section; see "Connect source wizard" below.
 
 **Not yet implemented — the next integration step, in order:**
 1. At least one real `ConnectorDriver` for an approved representative
@@ -50,10 +52,12 @@ The Documents view now has a **Source connections** section for administrators
    `runConnectionSync` for each due `active` connection using
    `source_connection.next_scheduled_at`. `runConnectionSync` has no caller
    outside tests today.
-3. A customer-facing `Connect source` flow (create with scope confirmation, OAuth
-   redirect) and a connection-test button in the UI. Pause, resume, revoke and
-   reauthorize are routed and have UI (below); creating and testing a connection
-   are API-only.
+3. ~~A customer-facing `Connect source` flow and a connection-test button~~ —
+   done as the provider-neutral wizard below, exercised with labelled demo
+   providers. What remains is everything specific to the first real provider
+   (its `ConnectorDriver`, its `SourceOAuthClient` if it uses OAuth, its
+   disclosure copy and its certification as an approved provider) and OAuth
+   *re*authorization; see "Connect source wizard → Remaining".
 4. Provider-specific UAT fixtures per the "Testing" section below, run
    against synthetic/test portal accounts.
 
@@ -74,6 +78,33 @@ foundation, not a working connector.
 - **Attention.** The `source_attention` notification is a one-shot email (see `docs/NOTIFICATIONS.md`); the in-app attention banner is derived from live status and clears when the connection is reauthorized.
 - **Audit.** Every command writes `source_connection.<action>` in the same transaction as the change, and the tenant access audit (`GET /api/v1/access/audit`, JSON and CSV) lists them.
 - **Demo mode.** With `CORVIS_DEMO_MODE` the routes are served from an in-memory store (`adapters/demo/source-connection-store.ts`) seeded per demo tenant with healthy, stale, paused, reauthorization-required, suspended, transient-failure and revoked connections. It applies the same transition rules and never holds a credential. Production refuses demo mode.
+
+## Connect source wizard
+
+`features/documents/connect-source-wizard.tsx`, opened by **Connect source** in the Source connections section (administrators only; the section does not exist for anyone the API refuses with HTTP 403). It is a dialog of four steps, each with its own heading that takes focus when the step appears:
+
+1. **Choose a source** lists only *approved* providers, each with a one-line access description (and a `Demo` pill for demonstration providers). When none is approved it says so honestly and offers Contact support; it never offers a provider that cannot be tested.
+2. **Review what Corvis will access** shows, in plain language (no JSON, no stored identifiers), what is read (and the folders in scope), how the connection behaves and what Corvis will not do. The administrator names the connection and must tick the confirmation ("I am authorized to give Corvis access…"). Neither a credential field nor a redirect exists before this is confirmed; the server also refuses a request without `scopeConfirmed: true`.
+3. **Authorize**: either *Authorize with the provider* (OAuth: a redirect through the provider's own consent page and back) or *Enter the credential* (a masked, uncontrolled field that is read once on submit and emptied immediately; it is never held in React state, rendered back, kept in browser storage, logged or echoed by the API).
+4. **Test**: Corvis tests the connection automatically after authorization. A pass shows *Connection verified*; a failure shows *The connection test did not pass* with a plain reason and the one next step from `describeTestFailure` (core/source-connect-wizard.ts, built on `CONNECTOR_ERROR_COPY`), and says that scheduled collection stays off. A test can also be run on demand with **Test connection** on any live connection card.
+
+**Failure blocks scheduled sync.** A connection is created `pending_authorization` and only a *passing* test moves it to `active` (`testAuditedSourceConnection`); a failed first test leaves it `pending_authorization` (transient or unclassified failure), `reauthorization_required` (auth) or `suspended` (permission/provider change), and `runConnectionSync` refuses every connection that is not `active`. A pending connection shows "Run a connection test to finish setup" and a primary Test connection button.
+
+**Provider registry.** `lib/server/source-providers.ts` is the only source of approved providers: `registerApprovedSourceProvider(provider, driver)` approves a certified provider and registers its `ConnectorDriver` together, so a provider can never be offered without the means to test it. The registry is **empty** until the first customer-required provider is certified (#31); no real-vendor driver exists. In demo mode (never production) two clearly labelled providers are added from `adapters/demo/source-providers.ts` so the whole flow can be exercised end to end: *Demo GP portal (API token)* (valid token `demo-valid-token`; `demo-invalid-token`, `demo-no-access` and `demo-unreachable` reach the failed-test states) and *Demo data room (sign-in with OAuth)*, whose consent page is `GET /api/v1/source-connections/oauth/demo-consent` (404 outside demo mode, same-origin redirects only). Scope, credential type and connector version always come from the registry, never from the request.
+
+**Routes** (all `admin:manage`, workspace-scoped, audited; see `lib/server/route-authorization.test.ts`):
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/v1/source-connections/providers` | Approved providers as browser-safe descriptors (no OAuth client, no connector version). |
+| `POST …/connect` | Direct-credential path: `{ providerKey, connectionLabel, scopeConfirmed: true, secret }` → `201 { connection, test }`. The secret goes to the `SecretStore`; Postgres keeps only the reference. |
+| `POST …/oauth/start` | `{ providerKey, connectionLabel, scopeConfirmed: true }` → `{ authorizationUrl }` plus an HttpOnly, SameSite=Lax cookie pointing at the pending attempt. |
+| `POST …/oauth/complete` | `{ code, state }` (or `{ denied: true }`) → `201 { outcome: "connected", connection, test }` or `{ outcome: "denied" }`. |
+| `POST …/{id}/test` | On-demand test → `{ ok, errorClass? }`. Driver detail text never reaches the browser. |
+
+**OAuth contract** (`lib/server/source-oauth.ts`, provider-neutral). A provider implements `SourceOAuthClient` (`authorizationUrl`, `exchangeCode`). Corvis generates `state` and the PKCE verifier (S256) server-side and keeps them, with the tenant, administrator and workspace that started the attempt, in the secret store with a 10-minute TTL (`SecretWriteOptions.ttlSeconds`, a Secret Manager `ttl`); the browser holds only an opaque pointer. The provider redirects to `/?source_oauth=return&code=…&state=…`; the page lands on Documents, removes the parameters from the URL at once and the wizard posts them to `oauth/complete`. The attempt is validated (tenant in the secret's resource name, same administrator and workspace, constant-time `state` match, unexpired) and destroyed whatever the outcome, so a replayed redirect finds nothing; every failure is the same `oauth_attempt_invalid`. The code is then exchanged server-side with the verifier and the resulting tokens go straight to the secret store. No migration was needed: pending attempts are short-lived secrets, not rows.
+
+**Remaining** (not part of this slice; each is provider-specific or a separate story): a real `ConnectorDriver`, `SourceOAuthClient`, disclosure copy and certification for the first required provider; provider redirect-URI registration and token refresh/expiry handling for that provider; OAuth reauthorization from the connection card (today the card says it is unavailable, and a failed OAuth connection is revoked and connected again); turning the scheduler on, after which a connected connection starts syncing; an operator sweep of any pending-attempt secrets if a store without TTL support is used.
 
 ## Goal
 

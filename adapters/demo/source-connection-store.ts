@@ -260,8 +260,10 @@ export class DemoSourceConnectionStore {
   }
 }
 
-let store: DemoSourceConnectionStore | undefined;
+// Kept on `globalThis` so `next dev` re-evaluating server modules (it does so when another route is compiled)
+// cannot reset the demo data mid-flow, for example between creating a connection and listing it.
+const shared = globalThis as typeof globalThis & { demoSourceConnectionStore?: DemoSourceConnectionStore };
 export function demoSourceConnectionStore(): DemoSourceConnectionStore {
-  if (!store) store = new DemoSourceConnectionStore();
-  return store;
+  if (!shared.demoSourceConnectionStore) shared.demoSourceConnectionStore = new DemoSourceConnectionStore();
+  return shared.demoSourceConnectionStore;
 }
