@@ -26,12 +26,21 @@ export const DEMO_TOKENS = {
 } as const;
 
 export const DEMO_OAUTH_ACCESS_TOKEN = "demo-oauth-access-token";
+export const DEMO_OAUTH_REFRESH_TOKEN = "demo-oauth-refresh-token";
+/** The demo provider's access tokens live this long, so the expiry and refresh path (lib/server/source-oauth.ts) is real here too. */
+export const DEMO_OAUTH_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
 const DEMO_CODE_PREFIX = "demo-code.";
 
 /** The path of the in-product stand-in for a provider's consent page (see app/api/v1/source-connections/oauth/demo-consent). */
 export const DEMO_CONSENT_PATH = "/api/v1/source-connections/oauth/demo-consent";
 
 const DEMO_VERSION = "demo-1";
+
+/**
+ * Seeded demo connections (adapters/demo/source-connection-store.ts) that sign in with OAuth under a key that is not the
+ * demo OAuth provider's, mapped to the provider that renews them. They are not offered for connecting anew.
+ */
+export const DEMO_OAUTH_RENEWAL_ALIASES: Readonly<Record<string, string>> = { "demo-vdr": DEMO_OAUTH_PROVIDER_KEY };
 
 export type DemoProvider = SourceProviderDescriptor & { connectorVersion: string; oauth?: SourceOAuthClient };
 
@@ -43,7 +52,12 @@ const demoOAuthClient: SourceOAuthClient = {
     // The demo consent page issues `demo-code.<challenge>`; accepting it only for the matching verifier proves PKCE end to end.
     const challenge = createHash("sha256").update(codeVerifier).digest("base64url");
     if (code !== `${DEMO_CODE_PREFIX}${challenge}`) throw new Error("invalid_grant");
-    return { accessToken: DEMO_OAUTH_ACCESS_TOKEN, tokenType: "bearer" };
+    return { accessToken: DEMO_OAUTH_ACCESS_TOKEN, tokenType: "bearer", refreshToken: DEMO_OAUTH_REFRESH_TOKEN, expiresAt: Date.now() + DEMO_OAUTH_TOKEN_LIFETIME_MS };
+  },
+  async refresh({ refreshToken }) {
+    // The demo provider honors exactly one refresh token, so a refused refresh can be reached on purpose.
+    if (refreshToken !== DEMO_OAUTH_REFRESH_TOKEN) throw new Error("invalid_grant");
+    return { accessToken: DEMO_OAUTH_ACCESS_TOKEN, tokenType: "bearer", expiresAt: Date.now() + DEMO_OAUTH_TOKEN_LIFETIME_MS };
   },
 };
 

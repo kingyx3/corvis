@@ -102,6 +102,8 @@ export function describeOnDemandTest(label: string, result: { ok: boolean; error
 /** Plain-language reason a connect request was refused, by HTTP status. Never echoes server codes or request content. */
 export function connectFailureMessage(status: number | undefined): string {
   if (status === 403) return "You do not have permission to connect sources.";
+  if (status === 409) return "This workspace is already connected to this source. Use Test connection or Reauthorize on the existing connection, or revoke it first to connect again.";
+  if (status === 429) return "Too many connection attempts in a short time. Wait a few minutes and try again.";
   if (status === 404 || status === 422) return "This source is no longer available to connect. Close this dialog and choose again.";
   if (status === 400) return "The request was not accepted. Check what you entered and try again.";
   return "The connection could not be created. Nothing was saved; try again.";
@@ -142,8 +144,8 @@ export function withoutOAuthReturn(search: string): string {
   return rest ? `?${rest}` : "";
 }
 
-export const OAUTH_ATTEMPT_UNUSABLE = "This sign-in attempt can no longer be used. It may have expired, been used already, or been started in another browser. Nothing was connected.";
-export const OAUTH_DENIED = "Access was not approved at the provider, so nothing was connected and nothing was stored.";
+export const OAUTH_ATTEMPT_UNUSABLE = "This sign-in attempt can no longer be used. It may have expired, been used already, or been started in another browser. Nothing was connected or changed.";
+export const OAUTH_DENIED = "Access was not approved at the provider, so nothing was connected or changed and nothing was stored.";
 
 /** Shown while the wizard exchanges the one-time code. */
 export const OAUTH_COMPLETING = "Finishing the sign-in and testing the connection.";

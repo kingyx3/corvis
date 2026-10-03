@@ -6,7 +6,10 @@ import {
   selectSourceConnectorSecretStore,
   sourceConnectorSecretReference,
   sourceConnectorSecretStore,
+  sourceConnectorDrivers,
+  sweepExpiredSourceSecrets,
 } from "./source-connector-runtime.ts";
+import type { SecretStore } from "./source-connectors.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";
 const PROJECT_ID = "corvis-uat-98213";
@@ -237,4 +240,49 @@ test("no thrown error ever carries the raw secret payload", async () => {
     assert.ok(!error.message.includes(rawSecret), `error leaked secret material: ${error.message}`);
     return true;
   });
+});
+
+test("the placeholder store honors a secret's lifetime on read and its sweep reclaims the expired ones", async (t) => {
+  const store = selectSourceConnectorSecretStore(undefined, "development");
+  const live = await store.write(TENANT, "oauth-attempt", { n: 1 }, { ttlSeconds: 600 });
+  const permanent = await store.write(TENANT, "acme", { n: 2 });
+  const short = await store.write(TENANT, "oauth-attempt", { n: 3 }, { ttlSeconds: 1 });
+  const real = Date.now();
+  assert.deepEqual(await store.read(short), { n: 3 }, "readable until its time is up");
+
+  const clock = t.mock.method(Date, "now", () => real + 5_000);
+  await assert.rejects(store.read(short), /secret_reference_not_found/, "an expired secret no longer exists, as in Secret Manager");
+  assert.deepEqual(await store.read(live), { n: 1 });
+  assert.deepEqual(await store.read(permanent), { n: 2 });
+  assert.equal(await store.sweepExpired!(), 1, "the sweep removes exactly the expired one");
+  assert.equal(await store.sweepExpired!(), 0);
+  clock.mock.restore();
+
+  assert.equal(await store.sweepExpired!(real + 700_000), 1, "an explicit time sweeps the next to expire");
+  assert.deepEqual(await store.read(permanent), { n: 2 }, "a secret written without a lifetime is never swept");
+});
+
+test("the operator sweep only touches a store this process already holds, and leaves a store with native expiry alone", async () => {
+  const shared = globalThis as typeof globalThis & { secretStore?: SecretStore };
+  const previous = shared.secretStore;
+  try {
+    shared.secretStore = undefined;
+    assert.deepEqual(await sweepExpiredSourceSecrets(), { removed: 0 });
+    assert.equal(shared.secretStore, undefined, "sweeping never selects (or fails to select) a store just to sweep it");
+
+    shared.secretStore = { write: async () => "r", read: async () => ({}), revoke: async () => undefined };
+    assert.deepEqual(await sweepExpiredSourceSecrets(), { removed: 0 }, "Secret Manager expires its own secrets and has no sweep");
+
+    const placeholder = selectSourceConnectorSecretStore(undefined, "development");
+    shared.secretStore = placeholder;
+    await placeholder.write(TENANT, "oauth-attempt", { n: 1 }, { ttlSeconds: 1 });
+    assert.deepEqual(await sweepExpiredSourceSecrets(Date.now() + 5_000), { removed: 1 });
+  } finally { shared.secretStore = previous; }
+});
+
+test("the driver registry and the approved-provider registry survive the module being evaluated again, as next dev does", async () => {
+  const specifier = "./source-connector-runtime.ts?re-evaluated";
+  const fresh = await import(specifier) as typeof import("./source-connector-runtime.ts");
+  assert.notEqual(fresh.sourceConnectorDrivers, sourceConnectorDrivers, "a genuinely new module instance");
+  assert.equal(fresh.sourceConnectorDrivers(), sourceConnectorDrivers());
 });

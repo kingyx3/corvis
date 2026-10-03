@@ -205,9 +205,10 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
   }
 }
 
-let store: DemoServiceAccountStore | undefined;
-/** The process-wide demo store (module state, like the other demo stores). */
+// On `globalThis` so `next dev` re-evaluating this module (it does when another route is compiled) cannot reset the demo accounts mid-flow.
+const shared = globalThis as typeof globalThis & { demoServiceAccountStore?: DemoServiceAccountStore };
+/** The process-wide demo store. */
 export function demoServiceAccountStore(): DemoServiceAccountStore {
-  store ??= new DemoServiceAccountStore();
-  return store;
+  shared.demoServiceAccountStore ??= new DemoServiceAccountStore();
+  return shared.demoServiceAccountStore;
 }

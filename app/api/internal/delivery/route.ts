@@ -9,6 +9,7 @@ import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-t
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
 import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
+import { sweepExpiredSourceSecrets } from "@/lib/server/source-connector-runtime";
 import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
@@ -55,6 +56,8 @@ export async function POST(request:Request){
       uploadSweep:()=>sweepUploadSessions(),
       // F7d: drop session records not seen for the whole retention window (never one a session limit is still measuring; revocations are untouched).
       sessionActivitySweep:()=>sweepTenantSessionActivity(),
+      // B1d: pending OAuth attempts are short-lived secrets; a secret store with no native expiry is swept here (Secret Manager expires its own).
+      sourceSecretSweep:()=>sweepExpiredSourceSecrets(),
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
+import { OAuthCredentialExpiredError } from "./source-oauth.ts";
 import { ConnectorError, runConnectionSync } from "./source-connector-sync.ts";
 import { acquisitionKey, type ConnectorDriver, type IngestResult, type IngestSink, type RemoteDocumentRef, type SecretStore } from "./source-connectors.ts";
 
@@ -13,6 +14,7 @@ type ConnectionRow = { status: string; consecutive_failures: number; last_error_
 
 class FakeSyncDb implements PostgresSqlApi {
   connection: ConnectionRow = { status: "active", consecutive_failures: 0, last_error_class: null };
+  credentialType: string | undefined;
   readonly runs: PostgresRow[] = [];
   readonly acquisitions: PostgresRow[] = [];
 
@@ -21,6 +23,7 @@ class FakeSyncDb implements PostgresSqlApi {
       return [{
         source_connection_id: CONNECTION_ID, tenant_id: TENANT, workspace_id: WORKSPACE, provider_key: "acme-portal",
         status: this.connection.status, source_scope: [{ label: "Reports" }], secret_reference: "ref",
+        ...(this.credentialType ? { credential_type: this.credentialType } : {}),
         connector_version: "1.0.0", consecutive_failures: this.connection.consecutive_failures,
       }];
     }
@@ -242,4 +245,30 @@ test("credential material read from the secret store is never present in the run
     db, secrets: new FakeSecrets(), drivers: new Map([["acme-portal", driver()]]), ingest: new RecordingIngest(),
   });
   assert.equal(JSON.stringify(outcome).includes("secret-value"), false);
+});
+
+test("a credential resolver hands the run a refreshed credential; one that cannot renew an expired OAuth credential fails the run closed to reauthorization", async () => {
+  const db = new FakeSyncDb();
+  db.credentialType = "oauth_authorization_code";
+  const resolved: unknown[] = [];
+  let used: unknown;
+  const outcome = await runConnectionSync(TENANT, CONNECTION_ID, "scheduled", {
+    db, secrets: new FakeSecrets(), ingest: new RecordingIngest(),
+    drivers: new Map([["acme-portal", driver({ discover: async (credential) => { used = credential; return []; } })]]),
+    resolveCredential: async (connection, credential) => { resolved.push(connection); return { ...credential, token: "refreshed" }; },
+  });
+  assert.equal(outcome.state, "succeeded");
+  assert.deepEqual(used, { token: "refreshed" }, "the driver only ever sees the resolved credential");
+  assert.deepEqual(resolved, [{ sourceConnectionId: CONNECTION_ID, tenantId: TENANT, workspaceId: WORKSPACE, providerKey: "acme-portal", credentialType: "oauth_authorization_code", status: "active", sourceScope: [{ label: "Reports" }], secretReference: "ref", connectorVersion: "1.0.0", consecutiveFailures: 0 }]);
+
+  let driverCalled = false;
+  const refused = await runConnectionSync(TENANT, CONNECTION_ID, "scheduled", {
+    db, secrets: new FakeSecrets(), ingest: new RecordingIngest(),
+    drivers: new Map([["acme-portal", driver({ discover: async () => { driverCalled = true; return []; } })]]),
+    resolveCredential: async () => { throw new OAuthCredentialExpiredError(); },
+  });
+  assert.equal(refused.state, "refused");
+  assert.equal(refused.errorClass, "reauthorization");
+  assert.equal(driverCalled, false);
+  assert.equal(db.connection.status, "reauthorization_required");
 });

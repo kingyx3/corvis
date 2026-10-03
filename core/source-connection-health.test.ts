@@ -59,7 +59,6 @@ function renderedText(connection: SourceConnectionRecord): string {
   return strings([
     health.pills, health.headline, health.scopeSummary, health.credentialLabel, health.lastSuccess.relative,
     health.lastAttempt?.relative, health.nextSync, health.error, health.action,
-    health.controls.reauthorizeUnavailableReason,
   ]).join("\n");
 }
 
@@ -244,7 +243,7 @@ test("unrecognised status or error class from a newer server degrades safely ins
   assert.equal(proto.error, undefined);
 });
 
-test("controls follow the server transitions and OAuth connections cannot be reauthorized from here", () => {
+test("controls follow the server transitions, and an OAuth connection is reauthorized like any other", () => {
   const active = describeConnection(record(), NOW).controls;
   assert.deepEqual(active, { pause: true, resume: false, reauthorize: true, revoke: true, test: true });
   const paused = describeConnection(record({ status: "paused" }), NOW).controls;
@@ -257,10 +256,10 @@ test("controls follow the server transitions and OAuth connections cannot be rea
   assert.deepEqual(revoked, { pause: false, resume: false, reauthorize: false, revoke: false, test: false });
 
   const oauth = describeConnection(record({ credentialType: "oauth_authorization_code", status: "suspended" }), NOW).controls;
-  assert.equal(oauth.reauthorize, false);
-  assert.match(oauth.reauthorizeUnavailableReason ?? "", /redirect flow, which is not available yet/);
+  assert.deepEqual(oauth, { pause: false, resume: false, reauthorize: true, revoke: true, test: true }, "no more \"unavailable\" for OAuth");
   const oauthRevoked = describeConnection(record({ credentialType: "oauth_client_credentials", status: "revoked" }), NOW).controls;
-  assert.equal(oauthRevoked.reauthorizeUnavailableReason, undefined, "no explanation for an action that would be unavailable anyway");
+  assert.equal(oauthRevoked.reauthorize, false, "a revoked connection is never reauthorized, whatever its credential");
+  assert.doesNotMatch(renderedText(record({ credentialType: "oauth_authorization_code", status: "reauthorization_required" })), /not available yet|redirect flow/);
 });
 
 test("scope summaries stay short and never invent a scope", () => {
@@ -296,17 +295,16 @@ test("credential helpers describe types without leaking the enum", () => {
   assert.equal(isOAuthCredential("scoped_api_token"), false);
 });
 
-test("credential input kinds: tokens are masked text, service accounts are JSON, OAuth is unsupported", () => {
+test("credential input kinds: tokens are masked text, keys and client credentials are JSON, an OAuth sign-in has nothing to type", () => {
   assert.equal(credentialInput("scoped_api_token").kind, "token");
   assert.equal(credentialInput("browser_session").kind, "token");
   assert.equal(credentialInput("service_account").kind, "json");
-  const oauth = credentialInput("oauth_client_credentials");
-  assert.equal(oauth.kind, "unsupported");
-  assert.equal(oauth.kind === "unsupported" && /not available yet/.test(oauth.reason), true);
-  for (const type of ["scoped_api_token", "browser_session", "service_account"]) {
+  assert.deepEqual(credentialInput("oauth_authorization_code"), { kind: "oauth" });
+  for (const type of ["scoped_api_token", "browser_session", "service_account", "oauth_client_credentials"]) {
     const input = credentialInput(type);
-    assert.equal(input.kind !== "unsupported" && /never shown again/.test(input.hint), true, type);
+    assert.equal(input.kind !== "oauth" && /never shown again/.test(input.hint), true, type);
   }
+  assert.equal(credentialInput("oauth_client_credentials").kind, "json");
 });
 
 test("the reauthorize payload is {token} for tokens and the parsed key for service accounts, and errors never echo the input", () => {
@@ -321,8 +319,8 @@ test("the reauthorize payload is {token} for tokens and the parsed key for servi
     assert.equal(JSON.stringify(result).includes("SECRET-VALUE"), false, "error text never repeats the input");
   }
   const oauth = buildReauthorizeSecret("oauth_authorization_code", "anything");
-  assert.equal(oauth.ok, false);
-  assert.equal(JSON.stringify(oauth).includes("anything"), false);
+  assert.deepEqual(oauth, { ok: false, error: "Sign in with the provider to reauthorize this connection." });
+  assert.deepEqual(buildReauthorizeSecret("oauth_client_credentials", '{"client_id":"a","client_secret":"b"}'), { ok: true, secret: { client_id: "a", client_secret: "b" } });
 });
 
 test("confirmation copy states exactly what each action stops and keeps", () => {
@@ -345,6 +343,8 @@ test("outcome and failure messages are plain language for every case", () => {
   assert.match(reauthorizeOutcome("pending_authorization"), /finish setup/);
   assert.match(commandFailureMessage("pause", 403), /permission/);
   assert.match(commandFailureMessage("pause", 404), /no longer exists/);
+  assert.match(commandFailureMessage("reauthorize", 422), /no longer available to reauthorize/);
+  assert.match(commandFailureMessage("reauthorize", 429), /Too many sign-in attempts/);
   assert.match(commandFailureMessage("pause", 409), /changed state/);
   assert.match(commandFailureMessage("reauthorize", 409), /revoked or changed/);
   assert.match(commandFailureMessage("pause", 400), /not accepted/);

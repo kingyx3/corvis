@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { demoSourceConnectionStore } from "../../adapters/demo/source-connection-store.ts";
 import { demoTestOutcome } from "../../adapters/demo/source-providers.ts";
 import { getServerConfig } from "./config.ts";
-import { createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
+import { auditSourceConnectionEvent, createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
-import { credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
+import { approvedSourceProvider, credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
+import { platform } from "./platform.ts";
 import { listSourceActivity, type SourceActivityConnection } from "./source-lifecycle.ts";
 import {
   ConnectorGovernanceError,
@@ -48,8 +50,46 @@ export interface SourceConnectionService {
    * and immediately runs its first connectivity test. Only a passing test activates it, so a failure leaves scheduled sync blocked.
    */
   connect(identity: RequestIdentity, input: ConnectInput, correlationId: string): Promise<ConnectResult>;
+  /**
+   * Stores the credential an OAuth sign-in produced as the connection's new secret (the same rotation as `reauthorize`:
+   * the previous secret is destroyed only after the new one is saved and audited) and runs the test straight away.
+   * A failing test is reported with its class and moves the connection the way the test rules say.
+   */
+  reauthorizeAndTest(identity: RequestIdentity, sourceConnectionId: string, secret: SecretPayload, correlationId: string): Promise<ConnectResult>;
   /** A connectivity test on demand; never discovers or downloads a document. */
   test(identity: RequestIdentity, sourceConnectionId: string, correlationId: string): Promise<ConnectionTestOutcome>;
+  /**
+   * The duplicate-connection guard: refuses (`source_connection_already_exists`) when the workspace already has a live
+   * (not revoked) connection to the provider. `connect` applies it too, so a sign-in that was started before the other
+   * connection appeared still cannot create a second one. A revoked connection never blocks a new one.
+   */
+  assertNotConnected(identity: RequestIdentity, providerKey: string): Promise<void>;
+  /** Records an OAuth sign-in started or declined: an event that changes no connection, in the access audit. */
+  auditOAuth(identity: RequestIdentity, event: OAuthAuditEvent, correlationId: string): Promise<void>;
+}
+
+/** `targetId` is the connection being renewed, or the provider key when no connection exists yet. */
+export type OAuthAuditEvent = { action: "source_connection.oauth_start" | "source_connection.oauth_declined"; targetId: string; providerKey: string };
+
+async function assertNoLiveConnection(service: SourceConnectionService, identity: RequestIdentity, providerKey: string): Promise<void> {
+  const connections = await service.list(identity);
+  if (connections.some((connection) => connection.providerKey === providerKey && connection.status !== "revoked")) {
+    throw new ConnectorGovernanceError("source_connection_already_exists");
+  }
+}
+
+/**
+ * The test that runs straight after a credential is stored (a new connection or a renewed authorization). An unexpected
+ * fault is reported as a failed test rather than a failed request, since the credential is already saved. Only the
+ * error's name is logged: never its message, which could echo a credential.
+ */
+async function testAfterAuthorization(identity: RequestIdentity, sourceConnectionId: string, correlationId: string): Promise<ConnectionTestOutcome> {
+  try {
+    return await postgresSourceConnectionService.test(identity, sourceConnectionId, correlationId);
+  } catch (error) {
+    logEvent("error", "source_connection.initial_test_failed", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown" });
+    return { ok: false, errorClass: "network" };
+  }
 }
 
 export const postgresSourceConnectionService: SourceConnectionService = {
@@ -74,6 +114,7 @@ export const postgresSourceConnectionService: SourceConnectionService = {
     return listSourceActivity(identity);
   },
   async connect(identity, { provider, connectionLabel, secret }, correlationId) {
+    await postgresSourceConnectionService.assertNotConnected(identity, provider.providerKey);
     const created = await createAuditedSourceConnection(identity, {
       workspaceId: identity.workspaceId,
       providerKey: provider.providerKey,
@@ -83,22 +124,24 @@ export const postgresSourceConnectionService: SourceConnectionService = {
       secret,
       connectorVersion: provider.connectorVersion,
     }, correlationId, { secrets: sourceConnectorSecretStore() });
-    let test: ConnectionTestOutcome;
-    try {
-      test = await postgresSourceConnectionService.test(identity, created.sourceConnectionId, correlationId);
-    } catch (error) {
-      // The connection exists and stays pending (so nothing is collected); an unexpected fault is reported as a failed
-      // test rather than a failed connect. Only the error's name is logged: never its message, which could echo a credential.
-      logEvent("error", "source_connection.initial_test_failed", { correlationId }, { errorName: error instanceof Error ? error.name : "unknown" });
-      test = { ok: false, errorClass: "network" };
-    }
+    const test = await testAfterAuthorization(identity, created.sourceConnectionId, correlationId);
     return { connection: await postgresSourceConnectionService.get(identity, created.sourceConnectionId), test };
+  },
+  async reauthorizeAndTest(identity, sourceConnectionId, secret, correlationId) {
+    await postgresSourceConnectionService.reauthorize(identity, sourceConnectionId, secret, correlationId);
+    const test = await testAfterAuthorization(identity, sourceConnectionId, correlationId);
+    return { connection: await postgresSourceConnectionService.get(identity, sourceConnectionId), test };
   },
   async test(identity, sourceConnectionId, correlationId) {
     return outcomeOf(await testAuditedSourceConnection(identity, sourceConnectionId, correlationId, {
       secrets: sourceConnectorSecretStore(),
       drivers: sourceConnectorDrivers(),
+      oauthClient: (providerKey) => approvedSourceProvider(providerKey)?.oauth,
     }));
+  },
+  assertNotConnected(identity, providerKey) { return assertNoLiveConnection(postgresSourceConnectionService, identity, providerKey); },
+  auditOAuth(identity, event, correlationId) {
+    return auditSourceConnectionEvent(identity, correlationId, event.action, event.targetId, { providerKey: event.providerKey });
   },
 };
 
@@ -109,6 +152,7 @@ export const demoSourceConnectionService: SourceConnectionService = {
   async reauthorize(identity, sourceConnectionId) { return demoSourceConnectionStore().reauthorize(identity, sourceConnectionId); },
   async activity(identity) { return demoSourceConnectionStore().activity(identity); },
   async connect(identity, { provider, connectionLabel, secret }) {
+    await demoSourceConnectionService.assertNotConnected(identity, provider.providerKey);
     const store = demoSourceConnectionStore();
     // Only the non-secret test outcome is kept; the credential is dropped here, never stored.
     const created = store.create(identity, {
@@ -122,7 +166,22 @@ export const demoSourceConnectionService: SourceConnectionService = {
     const test = store.test(identity, created.sourceConnectionId);
     return { connection: store.get(identity, created.sourceConnectionId), test };
   },
+  async reauthorizeAndTest(identity, sourceConnectionId) {
+    const store = demoSourceConnectionStore();
+    store.reauthorize(identity, sourceConnectionId);
+    const test = store.test(identity, sourceConnectionId);
+    return { connection: store.get(identity, sourceConnectionId), test: outcomeOf(test) };
+  },
   async test(identity, sourceConnectionId) { return outcomeOf(demoSourceConnectionStore().test(identity, sourceConnectionId)); },
+  assertNotConnected(identity, providerKey) { return assertNoLiveConnection(demoSourceConnectionService, identity, providerKey); },
+  async auditOAuth(identity, event, correlationId) {
+    // Demo mode keeps its audit in memory, like every other demo mutation: not production evidence.
+    await platform().audit({
+      id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+      actorSubject: identity.subject, sessionId: identity.sessionId, action: event.action, targetType: "source_connection",
+      targetId: event.targetId, outcome: "success", correlationId, metadata: { providerKey: event.providerKey },
+    });
+  },
 };
 
 let override: SourceConnectionService | undefined;
