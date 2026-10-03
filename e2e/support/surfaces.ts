@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 // The critical customer flows. Every accessibility, performance and resilience assertion is driven
 // from this list so a new surface cannot be added without being covered.
 export type Surface = {
-  id: "overview" | "analytics" | "documents" | "sources" | "review" | "issues" | "review-discussion" | "delivery" | "schedule" | "research" | "access" | "help";
+  id: "overview" | "analytics" | "scorecard" | "documents" | "sources" | "review" | "issues" | "review-discussion" | "delivery" | "schedule" | "research" | "access" | "help";
   label: string;
   role?: "admin";
   nav: RegExp | null;
@@ -12,10 +12,20 @@ export type Surface = {
   open?: (page: Page) => Promise<void>;
 };
 
+async function openScorecard(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^portfolio analytics$/i }).first().click();
+  await page.getByRole("button", { name: /^performance scorecard$/i }).click();
+  await page.getByRole("button", { name: /^advent international gpe viii/i }).click();
+  await page.getByRole("region", { name: /underlying investments of advent international gpe viii/i }).waitFor();
+}
+
 export const surfaces: Surface[] = [
   { id: "access", label: "Access administration", role: "admin", nav: /^access administration$/i, heading: /^access administration$/i },
   { id: "overview", label: "Overview", nav: null, heading: /reporting overview/i },
   { id: "analytics", label: "Portfolio analytics", nav: /^portfolio analytics$/i, heading: /^position financials$/i },
+  // The GP-reported performance scorecard (F1) is the second lens of Portfolio analytics, not a navigation entry of its own.
+  // It is scanned loaded and with a fund expanded, so both tables are in the matrix.
+  { id: "scorecard", label: "Performance scorecard", nav: /^portfolio analytics$/i, heading: /^performance scorecard$/i, open: openScorecard },
   { id: "documents", label: "Documents", nav: /^documents$/i, heading: /^documents$/i },
   // Source connections live in the Documents view and only exist for administrators (B5/B8).
   { id: "sources", label: "Source connections", role: "admin", nav: /^documents$/i, heading: /^source connections$/i },

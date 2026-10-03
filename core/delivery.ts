@@ -29,7 +29,13 @@ export type PositionFinancialsExportScope = {
     portfolioId?: string;
   };
 };
-export type ExportScope = SnapshotExportScope | PositionFinancialsExportScope;
+/**
+ * The GP-reported performance scorecard (F1): every figure of the Analytics scorecard for the caller's entitled
+ * funds and their underlying investments, pinned to the published snapshots behind it. The view has no filters,
+ * so the scope carries none; `true` is the only accepted value.
+ */
+export type PerformanceScorecardExportScope = { performanceScorecard: true };
+export type ExportScope = SnapshotExportScope | PositionFinancialsExportScope | PerformanceScorecardExportScope;
 /** Which product surface is requesting the export, recorded on the manifest for delivery history (#182 D12). */
 export type ExportSource = NonNullable<ExportManifest["source"]>;
 export type ExportRequestOptions = { scope?: ExportScope; source?: ExportSource };

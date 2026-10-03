@@ -401,7 +401,7 @@ function exportRows(
   base: Pick<ScorecardExportRow, "level" | "fund_id" | "fund_name" | "investment_id" | "investment_name" | "holding_id" | "company_id">,
   cells: readonly ScorecardCell[],
 ): ScorecardExportRow[] {
-  return cells.flatMap((cell) => {
+  return cells.flatMap((cell): ScorecardExportRow[] => {
     const common = { ...base, metric_code: cell.metric.code, metric_label: cell.metric.label };
     if (cell.figures.length === 0) {
       return [{
