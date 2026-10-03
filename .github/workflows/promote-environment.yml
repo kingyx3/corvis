@@ -45,22 +45,10 @@ jobs:
             echo "Production-like promotion may only run from main."
             exit 1
           fi
-          case "${{ inputs.environment }}" in
-            uat|prod) ;;
-            *) echo "Promotion supports only uat or prod."; exit 1 ;;
-          esac
-          if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then
-            echo "Choose either release_sha or rollback_known_good, not both."
-            exit 1
-          fi
-          if [[ -z "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" != "true" ]]; then
-            echo "Promotion requires release_sha or rollback_known_good=true."
-            exit 1
-          fi
-          if [[ -n "${RELEASE_SHA}" && ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "release_sha must be a full 40-character lowercase Git commit SHA."
-            exit 1
-          fi
+          case "${{ inputs.environment }}" in uat|prod) ;; *) echo "Promotion supports only uat or prod."; exit 1 ;; esac
+          if [[ -n "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" == "true" ]]; then echo "Choose either release_sha or rollback_known_good, not both."; exit 1; fi
+          if [[ -z "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" != "true" ]]; then echo "Promotion requires release_sha or rollback_known_good=true."; exit 1; fi
+          if [[ -n "${RELEASE_SHA}" && ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then echo "release_sha must be a full 40-character lowercase Git commit SHA."; exit 1; fi
 
   copy-release-to-prod:
     if: inputs.environment == 'prod' && inputs.rollback_known_good != true
@@ -91,11 +79,18 @@ jobs:
       require_expected_release: true
     secrets: inherit
 
-  # A prod release that fails acceptance must not stay live (#235): redeploy the
-  # last acceptance-approved release set. Migrations are forward-only and the
-  # rollback path skips them, so this restores the known-good images and
-  # Terraform-managed runtime against the current schema. Never chains: a failed
-  # known-good rollback is itself reported, not retried.
+  bind-ai-known-good:
+    needs: [deploy, acceptance]
+    if: ${{ inputs.rollback_known_good != true && needs.acceptance.result == 'success' }}
+    uses: ./.github/workflows/augment-known-good-ai.yml
+    with:
+      environment: ${{ inputs.environment }}
+      expected_api_image: ${{ needs.deploy.outputs.api_image }}
+      expected_control_loop_image: ${{ needs.deploy.outputs.control_loop_image }}
+      expected_extractor_image: ${{ needs.deploy.outputs.extractor_image }}
+      expected_litellm_image: ${{ needs.deploy.outputs.litellm_image }}
+    secrets: inherit
+
   rollback-on-failed-acceptance:
     needs: [deploy, acceptance]
     if: ${{ always() && inputs.environment == 'prod' && inputs.rollback_known_good != true && needs.deploy.result == 'success' && needs.acceptance.result == 'failure' }}
@@ -128,11 +123,11 @@ jobs:
               echo "- **The rollback did not succeed: prod may be running the rejected release. Follow ops/RUNBOOK.md now.**"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
-          # The promotion itself failed either way; the run must stay red.
           exit 1
 
   complete:
-    needs: acceptance
+    needs: [acceptance, bind-ai-known-good]
+    if: ${{ always() && needs.acceptance.result == 'success' && (needs.bind-ai-known-good.result == 'success' || needs.bind-ai-known-good.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -150,11 +145,9 @@ jobs:
               echo "- Release selection: last acceptance-approved known-good release set"
             else
               echo "- Release source commit: \`${RELEASE_SHA}\`"
-              if [[ "${{ inputs.environment }}" == "prod" ]]; then
-                echo "- Build-once: exact UAT OCI images copied to prod and digest-verified before deploy"
-              fi
+              if [[ "${{ inputs.environment }}" == "prod" ]]; then echo "- Build-once: exact UAT OCI images copied to prod and digest-verified before deploy"; fi
             fi
             echo "- Deployment: migrations + exact Terraform apply succeeded"
             echo "- Acceptance: edge/IAM/worker/control-loop transport + live Postgres RLS succeeded"
-            echo "- Known-good: advanced only by the successful acceptance workflow"
+            echo "- Known-good: accepted API/control-loop plus matching AI runtime digests were bound after acceptance"
           } >> "${GITHUB_STEP_SUMMARY}"

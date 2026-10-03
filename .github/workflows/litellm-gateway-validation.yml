@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Compile and exercise credential loader
+      - name: Compile and exercise credential and routing loaders
         shell: bash
         run: |
           set -euo pipefail
@@ -55,6 +55,31 @@ jobs:
                   pass
               else:
                   raise AssertionError(f"unsafe provider credential payload was accepted: {payload!r}")
+
+          entries = module.model_entries('{"corvis-extract-primary":"anthropic/claude-test","corvis-extract-verifier":{"model":"openai/gpt-test","apiKeyEnv":"OPENAI_API_KEY"}}')
+          config = module.render_config(entries, {
+              "ANTHROPIC_API_KEY": "a",
+              "OPENAI_API_KEY": "o",
+              "LITELLM_MASTER_KEY": "m",
+          })
+          assert 'model_name: "corvis-extract-primary"' in config
+          assert 'model: "anthropic/claude-test"' in config
+          assert "api_key: os.environ/ANTHROPIC_API_KEY" in config
+          assert "master_key: os.environ/LITELLM_MASTER_KEY" in config
+          assert "secret" not in config
+
+          for payload in [
+              '{}',
+              '{"bad-alias":"openai/x"}',
+              '{"corvis-extract-primary":"not-a-provider-model"}',
+              '{"corvis-extract-primary":{"model":"openai/x","apiKeyEnv":"bad-key"}}',
+          ]:
+              try:
+                  module.model_entries(payload)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(f"invalid model map was accepted: {payload!r}")
           PY
 
       - name: Lint gateway Dockerfile

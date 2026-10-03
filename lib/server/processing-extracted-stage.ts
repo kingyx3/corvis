@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
-import { boundedFetch, DEFAULT_PROVIDER_TIMEOUT_MS, MAX_PROVIDER_TIMEOUT_MS, METADATA_TIMEOUT_MS, withStageBudget } from "./processing-stage-http.ts";
+import { boundedFetch, DEFAULT_PROVIDER_TIMEOUT_MS, MAX_EXTRACTION_PROVIDER_TIMEOUT_MS, METADATA_TIMEOUT_MS, withStageBudget } from "./processing-stage-http.ts";
 
 const EXTRACTION_CONTRACT_VERSION = "1";
 const EXTRACTION_SCHEMA_VERSION = "1.6";
@@ -759,7 +759,7 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     // (still capped by the stage budget) and stays armed through arrayBuffer().
     const { response: mediaResponse, value: mediaBuffer } = await boundedFetch(this.fetchImpl, mediaUrl.toString(), {
       headers: { authorization: `Bearer ${token}` },
-    }, input.signal, MAX_PROVIDER_TIMEOUT_MS, "GCS extraction bundle read", async (res) => {
+    }, input.signal, MAX_EXTRACTION_PROVIDER_TIMEOUT_MS, "GCS extraction bundle read", async (res) => {
       if (!res.ok) return new ArrayBuffer(0);
       const declaredLength = Number(res.headers.get("content-length"));
       if (Number.isFinite(declaredLength) && declaredLength > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
@@ -768,7 +768,6 @@ export class GcpExtractionBundleReader implements ExtractionBundleReader {
     if (!mediaResponse.ok) throw new Error(`GCS extraction bundle read failed (${mediaResponse.status})`);
     const bytes = Buffer.from(mediaBuffer);
     if (bytes.length !== input.descriptor.sizeBytes) throw new Error("extraction bundle body size does not match immutable metadata");
-    if (bytes.length > MAX_BUNDLE_BYTES) throw new Error("extraction candidate bundle exceeds maximum size");
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (hash !== input.descriptor.contentSha256.toLowerCase()) throw new Error("extraction bundle body hash does not match immutable metadata");
     return bytes.toString("utf8");
@@ -1011,7 +1010,7 @@ export function createExtractedDocumentStageHandler(input: {
 function positiveTimeout(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_PROVIDER_TIMEOUT_MS;
-  return Math.min(parsed, MAX_PROVIDER_TIMEOUT_MS);
+  return Math.min(parsed, MAX_EXTRACTION_PROVIDER_TIMEOUT_MS);
 }
 
 export function configuredExtractionProviderConfig(env: NodeJS.ProcessEnv = process.env): ExtractionProviderConfig | undefined {

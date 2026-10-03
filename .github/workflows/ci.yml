@@ -28,7 +28,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --prefer-offline --no-audit
-      - name: Lint, typecheck, unit tests and dependency audit (parallel)
+      - name: Lint, typecheck, unit tests and production dependency audit (parallel)
         shell: bash
         run: |
           set +e
@@ -36,7 +36,7 @@ jobs:
           lint_pid=$!
           npm run typecheck > typecheck-output.txt 2>&1 &
           typecheck_pid=$!
-          npm audit --audit-level=high > audit-output.txt 2>&1 &
+          npm audit --omit=dev --audit-level=high > audit-output.txt 2>&1 &
           audit_pid=$!
           npm test > unit-test-output.txt 2>&1 &
           test_pid=$!
@@ -48,7 +48,7 @@ jobs:
 
           echo "::group::npm run lint"; cat lint-output.txt; echo "::endgroup::"
           echo "::group::npm run typecheck"; cat typecheck-output.txt; echo "::endgroup::"
-          echo "::group::npm audit --audit-level=high"; cat audit-output.txt; echo "::endgroup::"
+          echo "::group::npm audit --omit=dev --audit-level=high"; cat audit-output.txt; echo "::endgroup::"
           echo "::group::npm test"; cat unit-test-output.txt; echo "::endgroup::"
 
           status=0

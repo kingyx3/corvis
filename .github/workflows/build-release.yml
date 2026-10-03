@@ -22,13 +22,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: asia-southeast1
       ARTIFACT_REPOSITORY: corvis
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      LITELLM_BASE_IMAGE: ${{ vars.CORVIS_LITELLM_BASE_IMAGE }}
     steps:
       - name: Guard release source
         shell: bash
@@ -46,13 +47,15 @@ jobs:
             echo "GCP_PROJECT_ID and GCP_WIF_PROVIDER are required in the selected GitHub Environment."
             exit 1
           fi
+          if [[ ! "${LITELLM_BASE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "CORVIS_LITELLM_BASE_IMAGE must be an immutable LiteLLM image reference ending in @sha256:<64 hex>."
+            exit 1
+          fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify effective release governance
         env:
-          # Ruleset bypass_actors are only returned to callers with ruleset
-          # write access, which the workflow GITHUB_TOKEN can never hold.
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
         run: node .github/scripts/release-governance.mjs
 
@@ -74,13 +77,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud artifacts repositories describe "${ARTIFACT_REPOSITORY}" \
-            --project="${GCP_PROJECT_ID}" \
-            --location="${GCP_REGION}" >/dev/null
+          gcloud artifacts repositories describe "${ARTIFACT_REPOSITORY}" --project="${GCP_PROJECT_ID}" --location="${GCP_REGION}" >/dev/null
 
-      # Write a static `auths` entry (not a gcloud credHelper): actions/attest
-      # push-to-registry reads only `auths` from ~/.docker/config.json, and
-      # BuildKit pushes use the same short-lived WIF access token.
       - name: Log in to Artifact Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -95,12 +93,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          api_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api"
-          control_loop_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/control-loop"
-          echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
-          echo "api_tagged_ref=${api_image}:git-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "control_loop_image=${control_loop_image}" >> "${GITHUB_OUTPUT}"
-          echo "control_loop_tagged_ref=${control_loop_image}:git-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          for image in api control-loop extractor litellm; do
+            repo="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/${image}"
+            key="${image//-/_}"
+            echo "${key}_image=${repo}" >> "${GITHUB_OUTPUT}"
+            echo "${key}_tagged_ref=${repo}:git-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          done
 
       - name: Build and push immutable API image
         id: api_build
@@ -114,25 +112,6 @@ jobs:
           tags: ${{ steps.refs.outputs.api_tagged_ref }}
           cache-from: type=gha,scope=release-api
           cache-to: type=gha,mode=max,scope=release-api
-
-      - name: Verify immutable API image
-        id: api
-        shell: bash
-        env:
-          IMAGE: ${{ steps.refs.outputs.api_image }}
-          TAGGED_REF: ${{ steps.refs.outputs.api_tagged_ref }}
-          BUILDX_DIGEST: ${{ steps.api_build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          registry_digest="$(gcloud artifacts docker images describe "${TAGGED_REF}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
-          [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid API digest."; exit 1; }
-          [[ "${registry_digest}" == "${BUILDX_DIGEST}" ]] || { echo "BuildKit and Artifact Registry API digests disagree."; exit 1; }
-          digest_ref="${IMAGE}@${registry_digest}"
-          gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
-          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
-          echo "digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
-          echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
-          echo "tagged_ref=${TAGGED_REF}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push immutable control-loop image
         id: control_loop_build
@@ -148,53 +127,119 @@ jobs:
           cache-from: type=gha,scope=release-control-loop
           cache-to: type=gha,mode=max,scope=release-control-loop
 
-      - name: Verify immutable control-loop image
-        id: control_loop
+      - name: Build and push immutable extractor image
+        id: extractor_build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.extractor
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.refs.outputs.extractor_tagged_ref }}
+          cache-from: type=gha,scope=release-extractor
+          cache-to: type=gha,mode=max,scope=release-extractor
+
+      - name: Build and push immutable LiteLLM gateway image
+        id: litellm_build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ops/litellm
+          file: ops/litellm/Dockerfile
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.refs.outputs.litellm_tagged_ref }}
+          build-args: |
+            LITELLM_BASE_IMAGE=${{ env.LITELLM_BASE_IMAGE }}
+          cache-from: type=gha,scope=release-litellm
+          cache-to: type=gha,mode=max,scope=release-litellm
+
+      - name: Verify immutable image digests
+        id: verified
         shell: bash
         env:
-          IMAGE: ${{ steps.refs.outputs.control_loop_image }}
-          TAGGED_REF: ${{ steps.refs.outputs.control_loop_tagged_ref }}
-          BUILDX_DIGEST: ${{ steps.control_loop_build.outputs.digest }}
+          API_IMAGE: ${{ steps.refs.outputs.api_image }}
+          API_TAGGED: ${{ steps.refs.outputs.api_tagged_ref }}
+          API_BUILDX: ${{ steps.api_build.outputs.digest }}
+          CONTROL_LOOP_IMAGE: ${{ steps.refs.outputs.control_loop_image }}
+          CONTROL_LOOP_TAGGED: ${{ steps.refs.outputs.control_loop_tagged_ref }}
+          CONTROL_LOOP_BUILDX: ${{ steps.control_loop_build.outputs.digest }}
+          EXTRACTOR_IMAGE: ${{ steps.refs.outputs.extractor_image }}
+          EXTRACTOR_TAGGED: ${{ steps.refs.outputs.extractor_tagged_ref }}
+          EXTRACTOR_BUILDX: ${{ steps.extractor_build.outputs.digest }}
+          LITELLM_IMAGE: ${{ steps.refs.outputs.litellm_image }}
+          LITELLM_TAGGED: ${{ steps.refs.outputs.litellm_tagged_ref }}
+          LITELLM_BUILDX: ${{ steps.litellm_build.outputs.digest }}
         run: |
           set -euo pipefail
-          registry_digest="$(gcloud artifacts docker images describe "${TAGGED_REF}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
-          [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry did not return a valid control-loop digest."; exit 1; }
-          [[ "${registry_digest}" == "${BUILDX_DIGEST}" ]] || { echo "BuildKit and Artifact Registry control-loop digests disagree."; exit 1; }
-          digest_ref="${IMAGE}@${registry_digest}"
-          gcloud artifacts docker images describe "${digest_ref}" --project="${GCP_PROJECT_ID}" >/dev/null
-          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
-          echo "digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
-          echo "digest_ref=${digest_ref}" >> "${GITHUB_OUTPUT}"
-          echo "tagged_ref=${TAGGED_REF}" >> "${GITHUB_OUTPUT}"
+          verify() {
+            local key="$1" image="$2" tagged="$3" buildx="$4"
+            local digest
+            digest="$(gcloud artifacts docker images describe "${tagged}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Artifact Registry returned an invalid ${key} digest."; exit 1; }
+            [[ "${digest}" == "${buildx}" ]] || { echo "BuildKit and Artifact Registry ${key} digests disagree."; exit 1; }
+            gcloud artifacts docker images describe "${image}@${digest}" --project="${GCP_PROJECT_ID}" >/dev/null
+            echo "${key}_image=${image}" >> "${GITHUB_OUTPUT}"
+            echo "${key}_digest=${digest}" >> "${GITHUB_OUTPUT}"
+            echo "${key}_digest_ref=${image}@${digest}" >> "${GITHUB_OUTPUT}"
+            echo "${key}_tagged_ref=${tagged}" >> "${GITHUB_OUTPUT}"
+          }
+          verify api "${API_IMAGE}" "${API_TAGGED}" "${API_BUILDX}"
+          verify control_loop "${CONTROL_LOOP_IMAGE}" "${CONTROL_LOOP_TAGGED}" "${CONTROL_LOOP_BUILDX}"
+          verify extractor "${EXTRACTOR_IMAGE}" "${EXTRACTOR_TAGGED}" "${EXTRACTOR_BUILDX}"
+          verify litellm "${LITELLM_IMAGE}" "${LITELLM_TAGGED}" "${LITELLM_BUILDX}"
 
       - name: Attest API build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-name: ${{ steps.api.outputs.image }}
-          subject-digest: ${{ steps.api.outputs.digest }}
+          subject-name: ${{ steps.verified.outputs.api_image }}
+          subject-digest: ${{ steps.verified.outputs.api_digest }}
           push-to-registry: true
 
       - name: Attest control-loop build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-name: ${{ steps.control_loop.outputs.image }}
-          subject-digest: ${{ steps.control_loop.outputs.digest }}
+          subject-name: ${{ steps.verified.outputs.control_loop_image }}
+          subject-digest: ${{ steps.verified.outputs.control_loop_digest }}
+          push-to-registry: true
+
+      - name: Attest extractor build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.verified.outputs.extractor_image }}
+          subject-digest: ${{ steps.verified.outputs.extractor_digest }}
+          push-to-registry: true
+
+      - name: Attest LiteLLM build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.verified.outputs.litellm_image }}
+          subject-digest: ${{ steps.verified.outputs.litellm_digest }}
           push-to-registry: true
 
       - name: Capture release metadata
         shell: bash
         env:
-          API_DIGEST_REF: ${{ steps.api.outputs.digest_ref }}
-          API_TAGGED_REF: ${{ steps.api.outputs.tagged_ref }}
-          API_DIGEST: ${{ steps.api.outputs.digest }}
-          CONTROL_LOOP_DIGEST_REF: ${{ steps.control_loop.outputs.digest_ref }}
-          CONTROL_LOOP_TAGGED_REF: ${{ steps.control_loop.outputs.tagged_ref }}
-          CONTROL_LOOP_DIGEST: ${{ steps.control_loop.outputs.digest }}
+          API_DIGEST_REF: ${{ steps.verified.outputs.api_digest_ref }}
+          API_TAGGED_REF: ${{ steps.verified.outputs.api_tagged_ref }}
+          API_DIGEST: ${{ steps.verified.outputs.api_digest }}
+          CONTROL_LOOP_DIGEST_REF: ${{ steps.verified.outputs.control_loop_digest_ref }}
+          CONTROL_LOOP_TAGGED_REF: ${{ steps.verified.outputs.control_loop_tagged_ref }}
+          CONTROL_LOOP_DIGEST: ${{ steps.verified.outputs.control_loop_digest }}
+          EXTRACTOR_DIGEST_REF: ${{ steps.verified.outputs.extractor_digest_ref }}
+          EXTRACTOR_TAGGED_REF: ${{ steps.verified.outputs.extractor_tagged_ref }}
+          EXTRACTOR_DIGEST: ${{ steps.verified.outputs.extractor_digest }}
+          LITELLM_DIGEST_REF: ${{ steps.verified.outputs.litellm_digest_ref }}
+          LITELLM_TAGGED_REF: ${{ steps.verified.outputs.litellm_tagged_ref }}
+          LITELLM_DIGEST: ${{ steps.verified.outputs.litellm_digest }}
         run: |
           set -euo pipefail
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
-            --arg schemaVersion "corvis.release-image.v2" \
+            --arg schemaVersion "corvis.release-image.v3" \
             --arg environment "${{ inputs.environment }}" \
             --arg sourceSha "${GITHUB_SHA}" \
             --arg image "${API_DIGEST_REF}" \
@@ -203,18 +248,25 @@ jobs:
             --arg controlLoopImage "${CONTROL_LOOP_DIGEST_REF}" \
             --arg controlLoopTaggedImage "${CONTROL_LOOP_TAGGED_REF}" \
             --arg controlLoopDigest "${CONTROL_LOOP_DIGEST}" \
+            --arg extractorImage "${EXTRACTOR_DIGEST_REF}" \
+            --arg extractorTaggedImage "${EXTRACTOR_TAGGED_REF}" \
+            --arg extractorDigest "${EXTRACTOR_DIGEST}" \
+            --arg litellmImage "${LITELLM_DIGEST_REF}" \
+            --arg litellmTaggedImage "${LITELLM_TAGGED_REF}" \
+            --arg litellmDigest "${LITELLM_DIGEST}" \
             --arg builtAt "${built_at}" \
             --arg workflowRunId "${GITHUB_RUN_ID}" \
-            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,controlLoopImage:$controlLoopImage,controlLoopTaggedImage:$controlLoopTaggedImage,controlLoopDigest:$controlLoopDigest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions"}' \
-            > release-image.json
+            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,controlLoopImage:$controlLoopImage,controlLoopTaggedImage:$controlLoopTaggedImage,controlLoopDigest:$controlLoopDigest,extractorImage:$extractorImage,extractorTaggedImage:$extractorTaggedImage,extractorDigest:$extractorDigest,litellmImage:$litellmImage,litellmTaggedImage:$litellmTaggedImage,litellmDigest:$litellmDigest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions"}' > release-image.json
 
           {
             echo "### Immutable release images"
             echo "- Build registry: \`${{ inputs.environment }}\`"
             echo "- Source commit: \`${GITHUB_SHA}\`"
-            echo "- API/worker image: \`${API_DIGEST_REF}\`"
-            echo "- Control-loop image: \`${CONTROL_LOOP_DIGEST_REF}\`"
-            echo "- Build provenance: GitHub artifact attestations for both images"
+            echo "- API/worker: \`${API_DIGEST_REF}\`"
+            echo "- Control loop: \`${CONTROL_LOOP_DIGEST_REF}\`"
+            echo "- Extractor: \`${EXTRACTOR_DIGEST_REF}\`"
+            echo "- LiteLLM: \`${LITELLM_DIGEST_REF}\`"
+            echo "- Build provenance: GitHub artifact attestations for all four images"
             if [[ "${{ inputs.environment }}" == "uat" ]]; then
               echo "- Production promotion: copy these exact OCI digests; do not rebuild"
             fi

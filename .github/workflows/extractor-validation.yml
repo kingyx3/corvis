@@ -1,0 +1,55 @@
+name: Governed extractor validation
+
+on:
+  pull_request:
+    paths:
+      - "ops/extractor/**"
+      - "Dockerfile.extractor"
+      - ".github/workflows/extractor-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ops/extractor/**"
+      - "Dockerfile.extractor"
+      - ".github/workflows/extractor-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 26
+
+      - name: Parse extractor runtime
+        run: node --check ops/extractor/server.mjs
+
+      - name: Guard extraction contract and privilege boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'POST' ops/extractor/server.mjs >/dev/null
+          grep -F '/v1/extractions' ops/extractor/server.mjs >/dev/null
+          grep -F 'document_interpretation_v1' ops/extractor/server.mjs >/dev/null
+          grep -F 'ifGenerationMatch' ops/extractor/server.mjs >/dev/null
+          grep -F 'CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON' ops/extractor/server.mjs >/dev/null
+          if grep -Eq 'CORVIS_ATLASSIAN_SKILL_UPDATE|CORVIS_POSTGRES_DSN' ops/extractor/server.mjs; then
+            echo "::error::Ordinary extraction must not receive Confluence write or canonical Postgres authority."
+            exit 1
+          fi
+
+      - name: Lint extractor Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
+          docker run --rm -i "${image}" hadolint --failure-threshold warning - < Dockerfile.extractor
+
+      - name: Build extractor container
+        run: docker build --pull --tag corvis-extractor-ci --file Dockerfile.extractor .
