@@ -54,6 +54,10 @@ export async function setExportScheduleStatus(scheduleId: string, action: Export
   return (await (await send(`${ENDPOINT}/${encodeURIComponent(scheduleId)}`, { method: "PATCH", body: JSON.stringify({ action }) })).json() as { data: ExportSchedule }).data;
 }
 
+export async function setExportScheduleNotification(scheduleId: string, notifyOnCompletion: boolean): Promise<ExportSchedule> {
+  return (await (await send(`${ENDPOINT}/${encodeURIComponent(scheduleId)}`, { method: "PATCH", body: JSON.stringify({ notifyOnCompletion }) })).json() as { data: ExportSchedule }).data;
+}
+
 export async function deleteExportSchedule(scheduleId: string): Promise<void> {
   await send(`${ENDPOINT}/${encodeURIComponent(scheduleId)}`, { method: "DELETE" });
 }

@@ -3,12 +3,14 @@
 // migration 087 inside one transaction that is always rolled back. Covers what the pure-SQL test (session-policy.sql)
 // cannot: that a request is really refused once its session passes a limit, that "sign out everywhere" really stops
 // the next authoritative lookup, the view's queries against the real tables, and the security notice reaching every
-// Organization Admin (and nobody else). Run after the full migration chain on a disposable database:
+// Organization Admin (and nobody else); and (F7d, #337, migration 091) that the housekeeping sweep purges old session
+// records without ever weakening enforcement, sign-out-everywhere or an existing revocation. Run after the full migration chain on a disposable database:
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/session-policy.mjs
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
 import { PostgresMembershipAuthorizationRepository } from '../../../lib/server/authorization.ts';
+import { sweepTenantSessionActivity } from '../../../lib/server/session-activity-sweep.ts';
 
 // lib/server/session-policy.ts reaches the Next.js "@/..." alias through http.ts.
 register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
@@ -143,6 +145,34 @@ try {
     assert.equal(sessionsOf(view, member).activeSessions, 1, 'only the new session counts as active');
     assert.equal((await backend.signOut(identity(admin), { userId: member.userId, reason: 'Again' }, tx)).revokedSessions, 1, 'only the session started since then is still to end');
     assert.equal((await backend.signOut(identity(admin), { userId: member.userId, reason: 'Once more' }, tx)).revokedSessions, 0, 'and then nothing is left to end');
+
+    // ------------------------------------------------------------ housekeeping: old records go, enforcement and revocations stay
+    // (the policy is cleared at this point; set both limits at their longest so every record below is one a limit may still judge)
+    const longest = await backend.update(identity(admin), { idleTimeoutMinutes: 480, maxSessionMinutes: 10080, expectedVersion: 2, reason: 'Longest allowed limits' }, tx);
+    assert.equal(longest.changed, true);
+    assert.ok(await authorization.resolve(principal(member, 'sid-hk-live')), 'a live session is recorded');
+    await tx.execute(`insert into corvis_control.tenant_session_activity (tenant_id,auth_method,subject,session_id,first_seen_at,last_seen_at)
+      values ($1,'oidc',$2,'sid-hk-old',now() - interval '200 days',now() - interval '150 days'),
+             ($1,'oidc',$2,'sid-hk-revoked-old',now() - interval '200 days',now() - interval '150 days'),
+             ($1,'oidc',$2,'sid-hk-quiet',now() - interval '9 days',now() - interval '7 days')`, [tenantId, member.subject]);
+    await tx.execute(`insert into corvis_control.session_revocation (tenant_id,auth_method,subject,session_id,revoked_by_subject,reason) values ($1,'oidc',$2,'sid-hk-revoked-old',$3,'Old sign-out')`, [tenantId, member.subject, admin.subject]);
+    const revocationsBefore = await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1`);
+    const purged = await sweepTenantSessionActivity(tx);
+    assert.equal(purged, 2, 'only records unseen for the whole retention are purged');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id in ('sid-hk-old','sid-hk-revoked-old')`), 0);
+    assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id in ('sid-hk-live','sid-hk-quiet')`), 2, 'a live session and one quiet for days are kept');
+    assert.equal(await sweepTenantSessionActivity(tx), 0, 'nothing is left to purge');
+    assert.ok(await authorization.resolve(principal(member, 'sid-hk-live')), 'an active session still resolves after the sweep');
+    assert.equal(await authorization.resolve(principal(member, 'sid-hk-revoked-old')), null, 'a revoked session stays revoked although its activity record was purged');
+    assert.equal(await authorization.resolve(principal(member, 'sid-hk-revoked-old'), { applySessionPolicy: false }), null, 'also for background re-authorization');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1`), revocationsBefore, 'the sweep never touches a revocation');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1 and session_id='sid-member-1'`), 1, 'earlier sign-outs still hold');
+    await tx.execute(`update corvis_control.tenant_session_activity set first_seen_at = now() - interval '8 days' where tenant_id=$1 and session_id='sid-hk-live'`, [tenantId]);
+    await sweepTenantSessionActivity(tx);
+    assert.equal(await authorization.resolve(principal(member, 'sid-hk-live')), null, 'a session past the maximum is still refused after a sweep: only a quiet record is ever purged');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id='sid-hk-live'`), 1);
+    assert.equal(await sweepTenantSessionActivity(tx, { retentionMinutes: 60 }), 0, 'a retention below the floor is raised to it, never obeyed');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id='sid-hk-quiet'`), 1);
 
     throw ROLLBACK;
   }), (error) => error === ROLLBACK);

@@ -31,7 +31,8 @@ export function serviceAccountErrorMessage(reason: unknown, fallback: string): s
     invalid_purpose: "Say what the service account is for, in 3 to 512 characters, on one line.",
     invalid_role: "Choose Review Analyst, Analyst or Viewer. A service account is never an administrator.",
     invalid_workspace: "Choose one of your workspaces.",
-    invalid_expiry: "Enter a lifetime of 1 to 365 days.",
+    invalid_expiry: "Enter 1 to 365 days. To extend an account, the new expiry must be later than the current one.",
+    invalid_owner: "Choose the Organization Admin who will own this account.",
     invalid_overlap: "The overlap can be 0 minutes to 24 hours.",
     invalid_reason: "Add a short reason (3 to 1,000 characters on one line). It is kept in the audit trail.",
     workspace_not_found: "That workspace is not available. Refresh the page and choose another.",
@@ -41,6 +42,9 @@ export function serviceAccountErrorMessage(reason: unknown, fallback: string): s
     service_account_not_active: "This service account is deactivated or has expired, so it cannot be changed. Create a new one if you still need it.",
     service_account_credential_exists: "This service account already has a credential. Rotate it instead.",
     service_account_no_active_credential: "This service account has no credential in use. Issue one first.",
+    service_account_needs_owner: "This account has no active owner, so it is not extended. Assign a new owner first, then extend it.",
+    service_account_owner_invalid: "The new owner must be an active Organization Admin of your organization. Refresh the page and choose again.",
+    service_account_owner_unchanged: "That person already owns this account. Choose someone else.",
   };
   return typeof code === "string" && known[code] ? known[code]! : friendlyErrorMessage(reason, fallback);
 }

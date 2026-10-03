@@ -1,4 +1,4 @@
--- Acceptance for migration 085 (F4, #260): scheduled exports.
+-- Acceptance for migrations 085 and 090 (F4 #260, F4b #328): scheduled exports and their notifications.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * a schedule is saved idempotently per owner, validated, bounded (50 per owner) and starts from "now": a calendar
@@ -12,6 +12,9 @@
 --     advanced past; a paused or deleted schedule is never due;
 --   * a run is unique per schedule and trigger key, its outcome columns are consistent, and history is append-only;
 --   * schedules stop automatically when the owner is disabled or loses the workspace membership, and only then;
+--   * (090) the owner's notification switch is on by default, chosen at creation and changed by the owner only; a run ends in at
+--     most one webhook event (completed or failed, including fail-closed refusals) whose payload is ids, the label and a closed
+--     reason code; the webhook allow-list and the F2 category checks accept the new names and still refuse unknown ones;
 --   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
@@ -416,6 +419,112 @@ begin
   perform corvis_control.create_export_schedule(tenant,'a0850000-0000-4000-8000-0000000000f5',workspace,'oidc','idp|owner','one-more',repeat('d', 64),'To stop',position_scope,'Position financials','csv','monthly');
   select * into stopped from corvis_control.stop_export_schedule(tenant,'a0850000-0000-4000-8000-0000000000f5');
   if stopped.status <> 'stopped' or stopped.stop_reason <> 'owner_inactive' then raise exception 'the application can stop one schedule: %', row_to_json(stopped); end if;
+end $$;
+
+-- 8b. F4b (migration 090): the owner's notification switch, the run webhook events and the F2 category.
+do $$
+declare
+  tenant constant uuid := 'a0850000-0000-4000-8000-00000000000a';
+  other_tenant constant uuid := 'b0850000-0000-4000-8000-00000000000b';
+  workspace constant uuid := 'a0850000-0000-4000-8000-0000000000a1';
+  position_scope constant jsonb := '{"positionFinancials":{"fundId":"fund-x","holdingId":"h-1","companyId":"c-1","periodicity":"quarterly"}}';
+  loud uuid := gen_random_uuid();
+  quiet uuid := gen_random_uuid();
+  schedule corvis_control.export_schedule%rowtype;
+  run_ok uuid := gen_random_uuid();
+  run_refused uuid := gen_random_uuid();
+  run_lost uuid := gen_random_uuid();
+  emitted uuid;
+  payload jsonb;
+  before_updated timestamptz;
+begin
+  -- The switch is on by default (every schedule that existed before 090 was notified), and chosen at creation.
+  select * into schedule from corvis_control.create_export_schedule(tenant,loud,workspace,'oidc','idp|owner','n-loud',repeat('e', 64),'Loud',position_scope,'Position financials','csv','monthly');
+  if schedule.notify_on_completion is not true then raise exception 'emails about a schedule are on unless the owner says otherwise'; end if;
+  select * into schedule from corvis_control.create_export_schedule(tenant,quiet,workspace,'oidc','idp|owner','n-quiet',repeat('f', 64),'Quiet',position_scope,'Position financials','csv','monthly',false);
+  if schedule.notify_on_completion is not false then raise exception 'the owner can opt a schedule out at creation'; end if;
+  if (select notify_on_completion from corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','n-quiet',repeat('f', 64),'Quiet',position_scope,'Position financials','csv','monthly',false)) is not false then
+    raise exception 'a replay returns the original schedule';
+  end if;
+
+  -- Only the owner changes it, in their own tenant; nothing else about the schedule moves.
+  select * into schedule from corvis_control.set_export_schedule_notification(tenant,loud,'oidc','idp|owner',false);
+  if schedule.notify_on_completion is not false or schedule.status <> 'active' or schedule.status_changed_by <> 'idp|owner' then raise exception 'the owner switches emails off: %', row_to_json(schedule); end if;
+  before_updated := schedule.updated_at;
+  perform pg_sleep(0.01);
+  select * into schedule from corvis_control.set_export_schedule_notification(tenant,loud,'oidc','idp|owner',false);
+  if schedule.updated_at is distinct from before_updated then raise exception 'setting the value it already has changes nothing'; end if;
+  select * into schedule from corvis_control.set_export_schedule_notification(tenant,loud,'oidc','idp|owner',true);
+  if schedule.notify_on_completion is not true then raise exception 'the owner switches emails back on'; end if;
+  if exists (select 1 from corvis_control.set_export_schedule_notification(tenant,loud,'oidc','idp|other',false)) then raise exception 'a colleague cannot change the switch'; end if;
+  if exists (select 1 from corvis_control.set_export_schedule_notification(tenant,loud,'saml','idp|owner',false)) then raise exception 'the same subject under another auth method is another person'; end if;
+  if exists (select 1 from corvis_control.set_export_schedule_notification(other_tenant,loud,'oidc','idp|owner',false)) then raise exception 'another tenant cannot change the switch'; end if;
+  if exists (select 1 from corvis_control.set_export_schedule_notification(tenant,gen_random_uuid(),'oidc','idp|owner',false)) then raise exception 'an unknown schedule is not found'; end if;
+  if (select notify_on_completion from corvis_control.export_schedule where schedule_id = loud) is not true then raise exception 'refused changes leave the switch alone'; end if;
+  perform pg_temp.expect_error(format($f$select * from corvis_control.set_export_schedule_notification(%L,%L,'oidc','idp|owner',null)$f$, tenant, loud), 'export schedule notification setting is required');
+  -- The guard on a schedule's content still holds beside the new workflow column.
+  perform pg_temp.expect_error(format($f$update corvis_control.export_schedule set label = 'Renamed', notify_on_completion = false where schedule_id = %L$f$, loud), 'export schedule content is immutable');
+  perform corvis_control.set_export_schedule_status(tenant,quiet,'oidc','idp|owner','delete');
+  if exists (select 1 from corvis_control.set_export_schedule_notification(tenant,quiet,'oidc','idp|owner',true)) then raise exception 'a deleted schedule has no switch to change'; end if;
+
+  -- Runs: one accepted (requested) and one refused (failed, fail-closed).
+  insert into corvis_control.export_schedule_run (tenant_id,run_id,schedule_id,trigger_key,outcome,export_id)
+  values (tenant,run_ok,loud,'monthly:2031-01','requested',gen_random_uuid());
+  insert into corvis_control.export_schedule_run (tenant_id,run_id,schedule_id,trigger_key,outcome,failure_reason)
+  values (tenant,run_refused,loud,'monthly:2031-02','failed','redistribution_not_permitted'),
+         (tenant,run_lost,loud,'monthly:2031-03','failed','owner_inactive');
+
+  -- Completion: one event per run, carrying ids and the label only.
+  emitted := corvis_control.emit_export_schedule_run_event(tenant,run_ok,'completed');
+  if emitted is null then raise exception 'a requested run completes with one event'; end if;
+  select e.payload into payload from corvis_control.outbox_event e where e.event_id = emitted and e.event_type = 'ExportScheduleRunCompleted' and e.aggregate_type = 'export_schedule_run' and e.aggregate_id = run_ok::text and e.tenant_id = tenant;
+  if payload is null then raise exception 'the completion event is on the outbox for the run'; end if;
+  if (select array_agg(k order by k) from jsonb_object_keys(payload) k) <> array['exportId','runId','scheduleId','scheduleLabel'] then raise exception 'the completion payload is ids and the label only: %', payload; end if;
+  if payload->>'scheduleId' <> loud::text or payload->>'scheduleLabel' <> 'Loud' or payload->>'runId' <> run_ok::text then raise exception 'the payload names the schedule and the run: %', payload; end if;
+  if corvis_control.emit_export_schedule_run_event(tenant,run_ok,'completed') is not null or corvis_control.emit_export_schedule_run_event(tenant,run_ok,'failed','export_failed') is not null then
+    raise exception 'a run ends in one event, however often it is announced';
+  end if;
+
+  -- Failure: a refusal carries its closed reason code (and no export); an export that could not be delivered is export_failed.
+  emitted := corvis_control.emit_export_schedule_run_event(tenant,run_refused,'failed');
+  select e.payload into payload from corvis_control.outbox_event e where e.event_id = emitted and e.event_type = 'ExportScheduleRunFailed' and e.tenant_id = tenant;
+  if (select array_agg(k order by k) from jsonb_object_keys(payload) k) <> array['failureReason','runId','scheduleId','scheduleLabel'] or payload->>'failureReason' <> 'redistribution_not_permitted' then
+    raise exception 'the refusal payload is ids, the label and the reason code: %', payload;
+  end if;
+  emitted := corvis_control.emit_export_schedule_run_event(tenant,run_lost,'failed','owner_inactive');
+  if (select e.payload->>'failureReason' from corvis_control.outbox_event e where e.event_id = emitted) <> 'owner_inactive' then raise exception 'fail-closed refusals such as owner_inactive are announced'; end if;
+  insert into corvis_control.export_schedule_run (tenant_id,run_id,schedule_id,trigger_key,outcome,export_id)
+  values (tenant,'a0850000-0000-4000-8000-0000000000f6',loud,'monthly:2031-04','requested','a0850000-0000-4000-8000-0000000000f7');
+  emitted := corvis_control.emit_export_schedule_run_event(tenant,'a0850000-0000-4000-8000-0000000000f6','failed','export_failed');
+  select e.payload into payload from corvis_control.outbox_event e where e.event_id = emitted;
+  if payload->>'failureReason' <> 'export_failed' or payload->>'exportId' <> 'a0850000-0000-4000-8000-0000000000f7' then raise exception 'an accepted export that failed to deliver is a failure: %', payload; end if;
+
+  -- Refusals of the function itself.
+  if corvis_control.emit_export_schedule_run_event(tenant,gen_random_uuid(),'completed') is not null then raise exception 'an unknown run announces nothing'; end if;
+  if corvis_control.emit_export_schedule_run_event(other_tenant,run_ok,'failed') is not null then raise exception 'another tenant announces nothing for the run'; end if;
+  perform pg_temp.expect_error(format($f$select corvis_control.emit_export_schedule_run_event(%L,%L,'cancelled')$f$, tenant, run_ok), 'outcome is invalid');
+  perform pg_temp.expect_error(format($f$select corvis_control.emit_export_schedule_run_event(%L,%L,'failed','a free text reason')$f$, tenant, run_refused), 'reason is invalid');
+  insert into corvis_control.export_schedule_run (tenant_id,run_id,schedule_id,trigger_key,outcome,failure_reason)
+  values (tenant,'a0850000-0000-4000-8000-0000000000f8',loud,'monthly:2031-05','failed','scope_unavailable');
+  perform pg_temp.expect_error(format($f$select corvis_control.emit_export_schedule_run_event(%L,'a0850000-0000-4000-8000-0000000000f8','completed')$f$, tenant), 'a refused export schedule run cannot complete');
+  if exists (select 1 from corvis_control.outbox_event e where e.aggregate_id = 'a0850000-0000-4000-8000-0000000000f8') then raise exception 'a refused completion leaves no event'; end if;
+
+  -- The webhook allow-list accepts the two new events and nothing else new; an unknown event is still refused.
+  insert into corvis_control.webhook_subscription (tenant_id,webhook_id,endpoint_url,event_types,status,created_by)
+  values (tenant,gen_random_uuid(),'https://hooks.example.test/corvis',array['ExportScheduleRunCompleted','ExportScheduleRunFailed','ExportRequested'],'active','idp|owner');
+  perform pg_temp.expect_error(format($f$insert into corvis_control.webhook_subscription (tenant_id,webhook_id,endpoint_url,event_types,status,created_by) values (%L,gen_random_uuid(),'https://hooks.example.test/x',array['ExportScheduleRunDeleted'],'active','idp|owner')$f$, tenant), 'webhook_subscription_customer_event_types');
+  perform pg_temp.expect_error(format($f$insert into corvis_control.webhook_subscription (tenant_id,webhook_id,endpoint_url,event_types,status,created_by) values (%L,gen_random_uuid(),'https://hooks.example.test/y',array[]::text[],'active','idp|owner')$f$, tenant), 'webhook_subscription_customer_event_types');
+
+  -- The F2 category is accepted by the outbox and as a preference, and a made-up one still is not.
+  insert into corvis_control.email_outbox (tenant_id,category,recipient_user_id,workspace_id,template_params,dedupe_key)
+  values (tenant,'export_schedule_failed','a0850000-0000-4000-8000-0000000000e1',workspace,'{"reason":"owner_inactive"}','export_schedule_failed:' || run_refused::text);
+  insert into corvis_control.notification_preference (tenant_id,user_id,category,enabled,delivery)
+  values (tenant,'a0850000-0000-4000-8000-0000000000e1','export_schedule_failed',false,'immediate');
+  perform pg_temp.expect_error(format($f$insert into corvis_control.email_outbox (tenant_id,category,recipient_user_id,workspace_id,template_params,dedupe_key) values (%L,'export_schedule_exploded','a0850000-0000-4000-8000-0000000000e1',%L,'{}','x-1')$f$, tenant, workspace), 'email_outbox_category_check');
+  -- The earlier categories (including 087's mandatory security notice) were not lost when the check was rebuilt.
+  insert into corvis_control.email_outbox (tenant_id,category,recipient_user_id,workspace_id,template_params,dedupe_key)
+  select tenant,c,'a0850000-0000-4000-8000-0000000000e1',workspace,'{}','keep:' || c
+  from unnest(array['invitation','export_ready','pinned_fund_published','source_attention','support_access','role_changed','digest','data_issue_update','review_discussion','security_policy']) c;
 end $$;
 
 -- 9. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.

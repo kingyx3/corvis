@@ -73,9 +73,10 @@ const credentialFixture = (id: string, overrides: Record<string, unknown> = {}) 
 const serviceAccountFixture = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
   serviceAccountId: id, userId: "00000000-0000-4000-8000-0000000000aa", name, purpose: "Loads published fund data into the warehouse", workspaceId: "workspace-1", workspaceName: "Primary Workspace",
   roleName: "analyst", status: "active", createdBy: "admin@example.test", createdAt: "2026-06-01T00:00:00.000Z", expiresAt: "2027-06-01T00:00:00.000Z", disabledAt: null, disabledBy: null, disableReason: null,
+  ownerSubject: "admin@example.test", ownerAssignedAt: "2026-06-01T00:00:00.000Z", ownerActive: true, needsOwner: false,
   lastUsedAt: "2026-10-02T08:00:00.000Z", credentialExpiresAt: "2026-10-10T00:00:00.000Z", expiringSoon: true,
   credentials: [credentialFixture("c1c1c1c1-0000-4000-8000-000000000001"), credentialFixture("c0c0c0c0-0000-4000-8000-000000000002", { status: "rotating_out", endsAt: "2026-10-03T12:00:00.000Z", expiringSoon: false })],
-  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true }, ...overrides,
+  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true }, ...overrides,
 });
 const serviceAccounts = {
   serviceAccounts: [
@@ -83,10 +84,16 @@ const serviceAccounts = {
     serviceAccountFixture("a2a2a2a2-0000-4000-8000-000000000002", "Retired data bridge", {
       status: "disabled", expiringSoon: false, credentialExpiresAt: null, disabledAt: "2026-09-01T00:00:00.000Z", disabledBy: "admin@example.test", disableReason: "Integration retired",
       credentials: [credentialFixture("c3c3c3c3-0000-4000-8000-000000000003", { status: "revoked", revokedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-01T00:00:00.000Z", expiringSoon: false })],
-      actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false },
+      actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false },
+    }),
+    // Owned by an administrator who has since been deactivated: it keeps working and needs a new owner.
+    serviceAccountFixture("a4a4a4a4-0000-4000-8000-000000000004", "Partner data feed", {
+      expiringSoon: false, ownerSubject: "former.admin@example.test", ownerActive: false, needsOwner: true,
+      actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: false, canTransfer: true },
     }),
   ],
   workspaces: [{ workspaceId: "workspace-1", name: "Primary Workspace" }],
+  owners: [{ subject: "admin@example.test" }, { subject: "second.admin@example.test" }],
 };
 
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
@@ -128,6 +135,10 @@ for (const colorScheme of ["light", "dark"] as const) {
     await nightly.getByText(/^Credentials \(2\)/).click();
     await expect(nightly.getByRole("region", { name: /credentials of nightly reporting sync/i })).toContainText("Rotating out");
     await expect(page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Retired data bridge" })).toContainText("Integration retired");
+    // An account whose owner was deactivated is surfaced as needing a new owner (F6b).
+    const orphaned = page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Partner data feed" });
+    await expect(orphaned).toContainText("Needs a new owner.");
+    await expect(orphaned).toContainText("former.admin@example.test (no longer active)");
     // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
@@ -135,6 +146,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("region", { name: "Identity provider and provisioning" })).toContainText("https://login.example.test");
     await page.getByRole("button", { name: "Sign out morgan.lee@example.test everywhere" }).click();
     await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
+    // F10d: a colleague's request is waiting for this admin, so the approval notice sits at the top of the page and is part of the scan.
+    await expect(page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" })).toContainText("Review the request");
     const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
     await ready.getByText("Contents and checksums").click();
     await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
@@ -164,6 +177,17 @@ for (const colorScheme of ["light", "dark"] as const) {
     violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
     expect(violations, describe(violations)).toEqual([]);
     await nightly.getByRole("button", { name: "Back" }).click();
+    // The extend and change-owner panels.
+    await nightly.getByRole("button", { name: "Extend expiry" }).click();
+    await expect(nightly.getByRole("group", { name: "Extend Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    await nightly.getByRole("button", { name: "Change owner" }).click();
+    await expect(nightly.getByRole("group", { name: "Change the owner of Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
     await nightly.getByRole("button", { name: "Deactivate account" }).click();
     await expect(nightly.getByText("Deactivate this account everywhere?")).toBeVisible();
     violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
@@ -177,6 +201,43 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("heading", { name: /tenant access controls/i })).toBeVisible();
     await expect(page.getByRole("alert").filter({ hasText: /access controls need attention/i })).toBeVisible();
     const violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+  });
+
+  test(`operator view of tenant export builds (loaded, empty and refused) passes axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    const issue = (requestId: string, overrides: Record<string, unknown> = {}) => ({
+      tenantId: "tenant-1", tenantName: "Meridian Capital", requestId, status: "failed", attempts: 5, lastError: "GCS object write failed (503)",
+      requestedAt: "2026-10-01T10:00:00.000Z", changedAt: "2026-10-02T10:00:00.000Z", nextAttemptAt: null, ...overrides,
+    });
+    let mode: "loaded" | "empty" | "refused" = "loaded";
+    await page.route("**/api/v1/admin/tenant-export-builds**", (route) => {
+      if (mode === "refused") return route.fulfill(json({ error: "operations_admin_required" }, 403));
+      if (mode === "empty") return route.fulfill(json({ data: [], nextCursor: null }));
+      const status = new URL(route.request().url()).searchParams.get("status");
+      const items = [issue("b1", { lastError: "export build lease expired before completion" }), issue("b2", { status: "retrying", attempts: 2, nextAttemptAt: "2026-10-02T11:00:00.000Z" })];
+      return route.fulfill(json({ data: status === null ? items : items.filter((item) => item.status === status), nextCursor: null }));
+    });
+    await page.goto("/admin/tenant-export-builds");
+    await expect(page.getByRole("heading", { name: "Tenant export builds" })).toBeVisible();
+    const table = page.getByRole("region", { name: "Tenant export builds" });
+    await expect(table).toContainText("Meridian Capital");
+    await expect(table).toContainText("export build lease expired before completion");
+    await expect(table).toContainText("Retrying");
+    let violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    await page.getByRole("button", { name: "Failed" }).click();
+    await expect(table).not.toContainText("Retrying");
+    await expect(page.getByRole("button", { name: "Failed" })).toHaveAttribute("aria-pressed", "true");
+    mode = "empty";
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(table).toContainText("No failed or retrying export builds.");
+    violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    mode = "refused";
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Only Corvis operations can view export builds." })).toBeVisible();
+    violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });
 

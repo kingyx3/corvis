@@ -39,7 +39,7 @@ const adminIdentity = (overrides: Partial<RequestIdentity> = {}) => identity({ s
 const store = () => new DemoExportScheduleStore(() => NOW);
 const position = { positionFinancials: { fundId: "fund-eqt-ix", holdingId: "holding-1", companyId: "company-1", periodicity: "annual" as const } };
 const command = (key: string, overrides: Partial<CreateExportScheduleCommand> = {}): CreateExportScheduleCommand => ({
-  idempotencyKey: key, label: "Annual sparrow", scope: position, format: "xlsx", trigger: "quarterly", ...overrides,
+  idempotencyKey: key, label: "Annual sparrow", scope: position, format: "xlsx", trigger: "quarterly", notifyOnCompletion: true, ...overrides,
 });
 
 test("each owning subject is seeded once with an active monthly schedule that delivered and a paused on-publish one whose last run was refused", async () => {
@@ -278,4 +278,57 @@ test("demo mode serves schedules without ever touching a database", async () => 
   overrideExportScheduleService();
   const response = await listGet(request("/export-schedules", { tenant: "tenant-no-db" }));
   assert.equal(response.status, 200);
+});
+
+test("emails about a schedule are on by default, chosen at creation and changed by the owner only, with each change audited", async () => {
+  const demo = store();
+  const seeded = await demo.list(identity(), { scope: "mine", limit: 50 });
+  assert.ok(seeded.items.length > 0 && seeded.items.every((item) => item.notifyOnCompletion === true), "seeded schedules keep the default");
+
+  const quiet = (await demo.create(identity(), command("key-quiet", { notifyOnCompletion: false }))).item;
+  assert.equal(quiet.notifyOnCompletion, false);
+  const loud = (await demo.create(identity(), command("key-loud"))).item;
+  assert.equal(loud.notifyOnCompletion, true);
+  await assert.rejects(() => demo.create(identity(), command("key-quiet", { notifyOnCompletion: true })), refusal("idempotency_key_reused", 409));
+  assert.equal((await demo.create(identity(), command("key-quiet", { notifyOnCompletion: false }))).created, false);
+
+  const off = await demo.setNotification(identity(), loud.scheduleId, false);
+  assert.equal(off.notifyOnCompletion, false);
+  const updatedAt = off.updatedAt;
+  assert.equal((await demo.setNotification(identity(), loud.scheduleId, false)).updatedAt, updatedAt, "setting the value it already has changes nothing");
+  assert.equal((await demo.setNotification(identity(), loud.scheduleId, true)).notifyOnCompletion, true);
+  assert.equal((await demo.get(identity(), loud.scheduleId)).notifyOnCompletion, true);
+
+  for (const attempt of [
+    () => demo.setNotification(adminIdentity(), loud.scheduleId, false),
+    () => demo.setNotification(identity({ subject: "colleague" }), loud.scheduleId, false),
+    () => demo.setNotification(identity(), "00000000-0000-4000-8000-000000000000", false),
+  ]) await assert.rejects(attempt, refusal("export_schedule_not_found", 404));
+  assert.equal((await demo.get(identity(), loud.scheduleId)).notifyOnCompletion, true, "refused changes leave it untouched");
+
+  const events: AuditEvent[] = [];
+  const service = createExportScheduleService(store());
+  const port = platform();
+  const original = port.audit.bind(port);
+  port.audit = async (event) => { events.push(event); await original(event); };
+  try {
+    const created = await service.create(identity(), command("key-audited"), "corr-n1");
+    const changed = await service.setNotification(identity(), created.item.scheduleId, false, "corr-n2");
+    assert.equal(changed.notifyOnCompletion, false);
+    await assert.rejects(() => service.setNotification(adminIdentity(), created.item.scheduleId, true, "corr-n3"), refusal("export_schedule_not_found", 404));
+    assert.deepEqual(events.map((event) => [event.action, event.correlationId]), [["export_schedule.create", "corr-n1"], ["export_schedule.notify", "corr-n2"]]);
+    assert.deepEqual(events[1]!.metadata, { label: "Annual sparrow", trigger: "quarterly", format: "xlsx", status: "active", notifyOnCompletion: false });
+  } finally { port.audit = original; }
+});
+
+test("the notification switch works through the routes in demo mode", async () => {
+  const created = await json(await createPost(request("/export-schedules", { method: "POST", body: { idempotencyKey: "route-notify", label: "Quiet one", scope: { snapshotId: "seed-snapshot-4" }, format: "csv", trigger: "monthly", notifyOnCompletion: false } })));
+  const id = String(created.data.scheduleId);
+  assert.equal(created.data.notifyOnCompletion, false);
+  const on = await itemPatch(request(`/export-schedules/${id}`, { method: "PATCH", body: { notifyOnCompletion: true } }), params(id));
+  assert.equal(on.status, 200);
+  assert.equal((await json(on)).data.notifyOnCompletion, true);
+  const other = await itemPatch(request(`/export-schedules/${id}`, { method: "PATCH", roles: "admin", subject: "demo-boss", body: { notifyOnCompletion: false } }), params(id));
+  assert.equal(other.status, 404);
+  assert.equal((await json(await itemGet(request(`/export-schedules/${id}`), params(id)))).data.notifyOnCompletion, true);
 });

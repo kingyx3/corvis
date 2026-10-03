@@ -7,6 +7,7 @@ import {
   approvedSourceProvider,
   approvedSourceProviders,
   credentialTypeOf,
+  oauthProviderForConnection,
   providerDescriptor,
   registerApprovedSourceProvider,
   unregisterApprovedSourceProvider,
@@ -85,4 +86,29 @@ test("the browser-safe descriptor is an explicit copy: no OAuth client, no conne
   assert.deepEqual(direct.connect, { method: "credential", credentialType: "scoped_api_token" });
   assert.equal("credentialHint" in direct, false);
   assert.equal(credentialTypeOf(provider({ connect: { method: "credential", credentialType: "service_account" } })), "service_account");
+});
+
+test("the provider that renews a connection's authorization is the approved OAuth provider, and in demo mode also the demo one for seeded connections", () => {
+  const oauth = { authorizationUrl: () => "https://consent.example", exchangeCode: async () => ({}) };
+  delete process.env.CORVIS_DEMO_MODE;
+  assert.equal(oauthProviderForConnection("acme-portal"), undefined, "an unknown provider has nothing to renew it");
+  assert.equal(oauthProviderForConnection("demo-vdr"), undefined, "the demo alias exists only in demo mode");
+  registerApprovedSourceProvider(provider(), driver());
+  assert.equal(oauthProviderForConnection("acme-portal"), undefined, "a provider that connects with a credential has no sign-in to renew");
+  unregisterApprovedSourceProvider("acme-portal");
+  registerApprovedSourceProvider(provider({ connect: { method: "oauth" }, oauth }), driver());
+  assert.equal(oauthProviderForConnection("acme-portal")?.oauth, oauth);
+
+  process.env.CORVIS_DEMO_MODE = "true";
+  assert.equal(oauthProviderForConnection(DEMO_OAUTH_PROVIDER_KEY)?.providerKey, DEMO_OAUTH_PROVIDER_KEY);
+  assert.equal(oauthProviderForConnection("demo-vdr")?.providerKey, DEMO_OAUTH_PROVIDER_KEY, "a seeded demo OAuth connection is renewed through the demo provider");
+  assert.equal(oauthProviderForConnection(DEMO_TOKEN_PROVIDER_KEY), undefined);
+  assert.equal(oauthProviderForConnection("acme-portal")?.oauth, oauth, "approved providers are still found in demo mode");
+});
+
+test("the approvals live on globalThis, so next dev evaluating this module again keeps them", () => {
+  delete process.env.CORVIS_DEMO_MODE;
+  const shared = globalThis as typeof globalThis & { approvedSourceProviders?: Map<string, ApprovedSourceProvider> };
+  registerApprovedSourceProvider(provider(), driver());
+  assert.equal(shared.approvedSourceProviders?.get("acme-portal")?.providerKey, "acme-portal");
 });

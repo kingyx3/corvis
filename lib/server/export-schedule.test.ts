@@ -40,13 +40,13 @@ function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
 const admin = identity({ subject: "idp|admin", roles: ["admin"], isTenantAdmin: true });
 
 const positionScope = { positionFinancials: { fundId: "fund-1", holdingId: "holding-1", companyId: "company-1", periodicity: "quarterly" as const } };
-const command: CreateExportScheduleCommand = { idempotencyKey: "key-1", label: "Monthly sparrow", scope: positionScope, format: "csv", trigger: "monthly" };
+const command: CreateExportScheduleCommand = { idempotencyKey: "key-1", label: "Monthly sparrow", scope: positionScope, format: "csv", trigger: "monthly", notifyOnCompletion: true };
 
 function scheduleRow(overrides: PostgresRow = {}): PostgresRow {
   return {
     tenant_id: TENANT, schedule_id: SCHEDULE, workspace_id: WORKSPACE, owner_auth_method: "oidc", owner_subject: "idp|owner",
     label: "Monthly sparrow", scope: positionScope, scope_label: "Position financials · company-1 · quarterly", format: "csv", trigger_kind: "monthly",
-    status: "active", stop_reason: null, next_run_at: "2026-11-01 00:00:00+00", publish_watermark: null,
+    status: "active", stop_reason: null, notify_on_completion: true, next_run_at: "2026-11-01 00:00:00+00", publish_watermark: null,
     created_at: "2026-10-01 10:00:00.123456+00", updated_at: "2026-10-01 10:00:00.123456+00", cursor_created_at: "2026-10-01T10:00:00.123456Z", ...overrides,
   };
 }
@@ -93,6 +93,7 @@ test("the fingerprint binds the whole schedule and ignores nothing that is part 
   assert.notEqual(scheduleFingerprint({ ...command, label: "other" }), base);
   assert.notEqual(scheduleFingerprint({ ...command, format: "xlsx" }), base);
   assert.notEqual(scheduleFingerprint({ ...command, trigger: "quarterly" }), base);
+  assert.notEqual(scheduleFingerprint({ ...command, notifyOnCompletion: false }), base, "the same key with the other notification choice is a different schedule");
   assert.notEqual(scheduleFingerprint({ ...command, scope: { snapshotId: SNAPSHOT } }), base);
   assert.notEqual(scheduleFingerprint({ ...command, scope: { positionFinancials: { ...positionScope.positionFinancials, portfolioId: "pf-1" } } }), base);
   assert.notEqual(scheduleFingerprint({ ...command, scope: { positionFinancials: { ...positionScope.positionFinancials, periodicity: "annual" } } }), base);
@@ -111,6 +112,8 @@ test("the audit event carries identifiers, the label, the trigger and the status
   );
   assert.match(event.id, /^[0-9a-f-]{36}$/);
   assert.ok(!Number.isNaN(Date.parse(event.occurredAt)));
+  const notify = exportScheduleAuditEvent(identity(), "corr-2", "export_schedule.notify", { scheduleId: SCHEDULE, label: "Monthly sparrow", trigger: "monthly", format: "csv", status: "active" }, { notifyOnCompletion: false });
+  assert.deepEqual(notify.metadata, { label: "Monthly sparrow", trigger: "monthly", format: "csv", status: "active", notifyOnCompletion: false });
 });
 
 test("run rows map to runs with RFC 3339 times, the export's delivery state and only a known failure reason", () => {
@@ -138,6 +141,9 @@ test("schedule rows map to schedules, with ownership from the caller's identity 
   assert.equal(mine.lastRun, null);
   assert.deepEqual(mine.scope, positionScope);
   assert.equal(mine.trigger, "monthly");
+  assert.equal(mine.notifyOnCompletion, true);
+  assert.equal(toExportSchedule(scheduleRow({ notify_on_completion: "true" }), identity(), null).notifyOnCompletion, true, "a driver that returns booleans as text is understood");
+  assert.equal(toExportSchedule(scheduleRow({ notify_on_completion: false }), identity(), null).notifyOnCompletion, false);
 
   const theirs = toExportSchedule(scheduleRow({ status: "stopped", stop_reason: "owner_inactive", next_run_at: null }), admin, toExportScheduleRun(runRow()));
   assert.equal(theirs.ownedByMe, false, "an Organization Admin sees it but does not own it");
@@ -205,7 +211,10 @@ test("creating a schedule re-checks what the owner may export, then saves it onc
   assert.equal(save.parameters[2], WORKSPACE);
   assert.deepEqual(save.parameters.slice(3, 6), ["oidc", "idp|owner", "key-1"]);
   assert.equal(save.parameters[6], scheduleFingerprint(command));
-  assert.deepEqual(save.parameters.slice(7), ["Monthly sparrow", JSON.stringify(positionScope), "Position financials · company-1 · quarterly", "csv", "monthly"]);
+  assert.deepEqual(save.parameters.slice(7), ["Monthly sparrow", JSON.stringify(positionScope), "Position financials · company-1 · quarterly", "csv", "monthly", true]);
+  assert.match(save.sql, /\$13::boolean/, "the owner's notification choice is saved with the schedule");
+  await backend.create(identity(), { ...command, notifyOnCompletion: false }, db);
+  assert.equal(db.calls.filter((call) => call.sql.includes("create_export_schedule")).at(-1)!.parameters.at(-1), false);
 
   // A new schedule is the row whose id is the one this call generated.
   const fresh = new FakeDb((sql, parameters) => sql.includes("create_export_schedule") ? [scheduleRow({ schedule_id: parameters[1] })] : []);
@@ -333,6 +342,27 @@ test("only the owner pauses, resumes or deletes: the SQL function is keyed on th
   assert.equal(none.calls.length, before);
 });
 
+test("only the owner switches the emails about a schedule, keyed on their identity, and anyone else finds nothing", async () => {
+  const db = new FakeDb((sql, parameters) => {
+    if (sql.includes("set_export_schedule_notification")) return [scheduleRow({ notify_on_completion: parameters[4] })];
+    if (sql.includes("distinct on (r.schedule_id)")) return [runRow()];
+    return [];
+  });
+  const backend = new PostgresExportScheduleBackend(() => db);
+  const off = await backend.setNotification(identity(), SCHEDULE, false, db);
+  assert.equal(off.notifyOnCompletion, false);
+  assert.equal(off.lastRun?.runId, RUN);
+  assert.deepEqual(db.calls[0]!.parameters, [TENANT, SCHEDULE, "oidc", "idp|owner", false]);
+  assert.equal((await backend.setNotification(identity(), SCHEDULE, true)).notifyOnCompletion, true, "the default connection is used when none is passed");
+
+  const none = new FakeDb(() => []);
+  const empty = new PostgresExportScheduleBackend(() => none);
+  await assert.rejects(empty.setNotification(admin, SCHEDULE, false), refusal("export_schedule_not_found", 404), "an Organization Admin does not own it");
+  const before = none.calls.length;
+  await assert.rejects(empty.setNotification(identity(), "not-a-uuid", false), refusal("export_schedule_not_found", 404));
+  assert.equal(none.calls.length, before, "a malformed id never reaches SQL");
+});
+
 test("the run history joins each run to its schedule and its export's delivery state, scoped to the caller unless an Organization Admin asks for all", async () => {
   const db = new FakeDb(() => [runRow(), runRow({ run_id: "6f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f", cursor_created_at: "2026-09-01T00:00:05.000000Z", outcome: "failed", export_id: null, export_state: null, failure_reason: "owner_inactive" })]);
   const backend = new PostgresExportScheduleBackend(() => db);
@@ -424,6 +454,7 @@ test("a due schedule is re-authorized as its owner, exported through the governe
   assert.deepEqual(audits().map(({ action, outcome, actor, target }) => ({ action, outcome, actor, target })), [{ action: "export_schedule.run", outcome: "success", actor: "idp|owner", target: SCHEDULE }]);
   assert.deepEqual(audits()[0]!.metadata, { sessionId: scheduleSessionId(SCHEDULE), triggerKey: "monthly:2026-10", format: "csv", exportId: EXPORT });
   assert.deepEqual(db.calls.find((call) => call.sql.includes("list_due_export_schedules"))!.parameters, [7]);
+  assert.equal(db.calls.some((call) => call.sql.includes("emit_export_schedule_run_event")), false, "a requested run announces nothing yet: its export has not finished");
 });
 
 test("every statement of a run goes through the transaction handle when the transport has one, and nothing is recorded when the export request throws", async () => {
@@ -468,6 +499,7 @@ test("an owner who can no longer be authorized fails the run closed, stops the s
   assert.deepEqual(summary, { stopped: 0, requested: 0, failed: 1, errors: 0 });
   assert.equal(exported, false, "nothing is exported when the owner cannot be re-authorized");
   assert.deepEqual(runs()[0]!.slice(2), [SCHEDULE, "monthly:2026-10", "failed", null, "owner_inactive"]);
+  assert.deepEqual(db.calls.find((call) => call.sql.includes("emit_export_schedule_run_event"))!.parameters.slice(2), ["owner_inactive"], "a fail-closed refusal is announced too");
   assert.deepEqual(audits().map((entry) => [entry.action, entry.outcome, entry.actor]), [["export_schedule.stop", "success", "system:export-scheduler"], ["export_schedule.run", "failure", "idp|owner"]]);
   assert.deepEqual(audits()[0]!.metadata, { sessionId: scheduleSessionId(SCHEDULE), label: "Monthly sparrow", reason: "owner_inactive", owner: "idp|owner" });
   assert.deepEqual(audits()[1]!.metadata, { sessionId: scheduleSessionId(SCHEDULE), triggerKey: "monthly:2026-10", format: "csv", reason: "owner_inactive" });
@@ -501,6 +533,13 @@ test("each way re-authorization can refuse is recorded as one stable failed run,
     assert.deepEqual(runs()[0]!.slice(4), ["failed", null, testCase.reason], testCase.name);
     assert.deepEqual(audits().map((entry) => [entry.action, entry.outcome]), [["export_schedule.run", "failure"]], testCase.name);
     assert.equal(audits()[0]!.metadata.reason, testCase.reason);
+    // The refusal is announced in the same transaction as its run: a webhook event, and the owner's email, with the reason code only.
+    const runId = String(runs()[0]![1]);
+    const event = db.calls.find((call) => call.sql.includes("emit_export_schedule_run_event"))!;
+    assert.deepEqual(event.parameters, [TENANT, runId, testCase.reason], testCase.name);
+    assert.match(event.sql, /'failed'/);
+    const email = db.executed.find((call) => call.sql.includes("'export_schedule_failed'"))!;
+    assert.deepEqual(email.parameters, [TENANT, runId, testCase.reason], testCase.name);
     assert.equal(db.calls.some((call) => call.sql.includes("stop_export_schedule(")), false, `${testCase.name}: the schedule keeps running; rights may come back`);
   }
 });

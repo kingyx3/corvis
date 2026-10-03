@@ -14,6 +14,7 @@ import {
   SERVICE_ACCOUNT_ROLES,
   SERVICE_ACCOUNT_ROLE_LABEL,
   SERVICE_ACCOUNT_STATUS_LABEL,
+  minimumExtensionDays,
   serviceAccountCredentialSummary,
   type IssuedServiceAccountCredential,
   type ServiceAccount,
@@ -27,7 +28,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { displayDate } from "@/lib/display-format";
 
 type Load<T> = { kind: "loading" } | { kind: "error" } | { kind: "ready"; value: T };
-type Panel = { serviceAccountId: string; kind: "rotate" | "issue" | "revoke" | "disable" };
+type Panel = { serviceAccountId: string; kind: "rotate" | "issue" | "revoke" | "disable" | "extend" | "transfer" };
 type Reveal = { accountName: string; heading: string; credential: IssuedServiceAccountCredential };
 
 const ROLE_GUIDE: Record<ServiceAccountRole, string> = {
@@ -57,6 +58,8 @@ export function ServiceAccountsSection() {
   const [reason, setReason] = useState("");
   const [overlap, setOverlap] = useState(SERVICE_ACCOUNT_DEFAULT_OVERLAP_MINUTES);
   const [credentialDays, setCredentialDays] = useState(SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS);
+  const [extendDays, setExtendDays] = useState(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS);
+  const [newOwner, setNewOwner] = useState("");
   // The create form.
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -64,7 +67,7 @@ export function ServiceAccountsSection() {
   const [roleName, setRoleName] = useState<ServiceAccountRole>("analyst");
   const [accountDays, setAccountDays] = useState(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS);
   const [newCredentialDays, setNewCredentialDays] = useState(SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS);
-  const ids = { name: useId(), purpose: useId(), workspace: useId(), role: useId(), roleHint: useId(), account: useId(), credential: useId(), reason: useId(), overlap: useId(), days: useId(), secret: useId() };
+  const ids = { name: useId(), purpose: useId(), workspace: useId(), role: useId(), roleHint: useId(), account: useId(), credential: useId(), reason: useId(), overlap: useId(), days: useId(), secret: useId(), extend: useId(), extendHint: useId(), owner: useId() };
   const latest = useRef(0);
 
   const refresh = useCallback(async (silent = false) => {
@@ -89,6 +92,7 @@ export function ServiceAccountsSection() {
   const list = state.kind === "ready" ? state.value : null;
   const accounts = list?.serviceAccounts ?? [];
   const workspaces = list?.workspaces ?? [];
+  const owners = list?.owners ?? [];
   const selectedWorkspace = workspaceId || workspaces[0]?.workspaceId || "";
   const nameOk = name.trim().length >= SERVICE_ACCOUNT_MIN_TEXT_LENGTH && name.trim().length <= SERVICE_ACCOUNT_MAX_NAME_LENGTH;
   const purposeOk = purpose.trim().length >= SERVICE_ACCOUNT_MIN_TEXT_LENGTH && purpose.trim().length <= SERVICE_ACCOUNT_MAX_PURPOSE_LENGTH;
@@ -164,7 +168,7 @@ export function ServiceAccountsSection() {
         <input id={ids.credential} className="input-control" type="number" min={1} max={SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} step={1} required value={newCredentialDays} disabled={busy !== null}
           onChange={(event) => setNewCredentialDays(Math.min(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, Math.max(1, Math.trunc(Number(event.target.value)) || 1)))} />
       </label>
-      <p className="table-muted">An account lasts up to {SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} days and is not renewed in place. A credential never outlasts its account.</p>
+      <p className="table-muted">An account lasts up to {SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} days. You can extend it later, up to {SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} days from the day you extend it. A credential never outlasts its account.</p>
       <button type="submit" className="primary-button" disabled={!createReady}>{busy === "create" ? "Creating…" : "Create service account"}</button>
     </form>
 
@@ -200,14 +204,16 @@ export function ServiceAccountsSection() {
             <div><h3 id={headingId}>{account.name}</h3><span className="table-secondary">{account.purpose}</span></div>
             <div className="data-issue-pills">
               <StatusPill status={SERVICE_ACCOUNT_STATUS_LABEL[account.status]}/>
-              {account.expiringSoon && <StatusPill status="Needs attention"/>}
+              {(account.expiringSoon || account.needsOwner) && <StatusPill status="Needs attention"/>}
             </div>
           </div>
+          {account.needsOwner && <p className="data-issue-summary"><strong>Needs a new owner.</strong> {account.ownerSubject} is no longer an active Organization Admin. The account and its credentials keep working, but it cannot be extended until an active Organization Admin takes it over.</p>}
           {account.expiringSoon && <p className="data-issue-summary"><strong>Expiring soon.</strong> {account.credentialExpiresAt && daysLeft(account.credentialExpiresAt) <= SERVICE_ACCOUNT_EXPIRY_WARNING_DAYS ? `Its credential expires ${day(account.credentialExpiresAt)}: rotate it before then.` : `The account itself expires ${day(account.expiresAt)}: create its replacement before then.`}</p>}
           <dl className="preview-dl service-account-facts" aria-label={`Details of ${account.name}`}>
             <div className="form-field"><dt>Role</dt><dd>{SERVICE_ACCOUNT_ROLE_LABEL[account.roleName]}</dd></div>
             <div className="form-field"><dt>Workspace</dt><dd>{account.workspaceName}</dd></div>
             <div className="form-field"><dt>Created by</dt><dd>{account.createdBy} · {day(account.createdAt)}</dd></div>
+            <div className="form-field"><dt>Owner</dt><dd>{account.ownerSubject}{account.needsOwner ? " (no longer active)" : ""} · since {day(account.ownerAssignedAt)}</dd></div>
             <div className="form-field"><dt>Last used</dt><dd>{account.lastUsedAt ? time(account.lastUsedAt) : "Never used"}</dd></div>
             <div className="form-field"><dt>Credential expires</dt><dd>{account.credentialExpiresAt ? day(account.credentialExpiresAt) : "No credential in use"}</dd></div>
             <div className="form-field"><dt>Account expires</dt><dd>{day(account.expiresAt)}</dd></div>
@@ -226,6 +232,29 @@ export function ServiceAccountsSection() {
             <label htmlFor={ids.days}><span>Credential lifetime (days)</span></label>
             <input id={ids.days} className="input-control" type="number" min={1} max={SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} step={1} value={credentialDays} disabled={busy !== null} onChange={(event) => setCredentialDays(Math.min(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, Math.max(1, Math.trunc(Number(event.target.value)) || 1)))} />
           </div>}
+          {open === "extend" && (() => {
+            const minimum = minimumExtensionDays(account.expiresAt, new Date());
+            const valid = extendDays >= minimum && extendDays <= SERVICE_ACCOUNT_MAX_LIFETIME_DAYS;
+            return <div className="form-field" role="group" aria-label={`Extend ${account.name}`}>
+              <label htmlFor={ids.extend}><span>New expiry, in days from today</span></label>
+              <input id={ids.extend} className="input-control" type="number" min={minimum} max={SERVICE_ACCOUNT_MAX_LIFETIME_DAYS} step={1} value={extendDays} disabled={busy !== null} aria-describedby={ids.extendHint} aria-invalid={valid ? undefined : true}
+                onChange={(event) => setExtendDays(Math.min(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, Math.max(1, Math.trunc(Number(event.target.value)) || 1)))} />
+              <span id={ids.extendHint} className="table-muted">{valid
+                ? `The account will expire on ${day(new Date(Date.now() + extendDays * 86_400_000).toISOString())}, and its review date moves with it. Credentials keep their own expiry: rotate or issue one if needed.`
+                : `Choose at least ${minimum} days, so the new expiry is later than ${day(account.expiresAt)}, and at most ${SERVICE_ACCOUNT_MAX_LIFETIME_DAYS}.`}</span>
+            </div>;
+          })()}
+          {open === "transfer" && (() => {
+            const candidates = owners.filter((owner) => owner.subject !== account.ownerSubject);
+            return <div className="form-field" role="group" aria-label={`Change the owner of ${account.name}`}>
+              <label htmlFor={ids.owner}><span>New owner</span></label>
+              <select id={ids.owner} className="filter-button" value={newOwner} disabled={busy !== null || candidates.length === 0} onChange={(event) => setNewOwner(event.target.value)}>
+                <option value="">Choose an Organization Admin</option>
+                {candidates.map((owner) => <option key={owner.subject} value={owner.subject}>{owner.subject}</option>)}
+              </select>
+              <span className="table-muted">{candidates.length === 0 ? "No other active Organization Admin is available to take this account over." : "Only an active Organization Admin can own an account. The change is recorded in the audit trail."}</span>
+            </div>;
+          })()}
           {(open === "revoke" || open === "disable") && <div className="form-field" role="group" aria-label={open === "revoke" ? `Revoke the credentials of ${account.name}` : `Deactivate ${account.name}`}>
             <div className="lineage-note tone-warning"><Icon name="alert"/><div><strong>{open === "revoke" ? "Revoke every credential now?" : "Deactivate this account everywhere?"}</strong><span>{open === "revoke"
               ? "Every credential of this account stops working immediately, including one that is rotating out. The account stays, and you can issue a new credential."
@@ -237,10 +266,14 @@ export function ServiceAccountsSection() {
           <div className="data-issue-actions">
             {open === null && account.actions.canRotate && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "rotate" }); setReason(""); }}>Rotate credential</button>}
             {open === null && account.actions.canIssue && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "issue" }); setReason(""); }}>Issue credential</button>}
+            {open === null && account.actions.canExtend && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "extend" }); setReason(""); setExtendDays(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS); }}>Extend expiry</button>}
+            {open === null && account.actions.canTransfer && <button type="button" className={account.needsOwner ? "primary-button button-small" : "secondary-button button-small"} disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "transfer" }); setReason(""); setNewOwner(""); }}>{account.needsOwner ? "Assign a new owner" : "Change owner"}</button>}
             {open === null && account.actions.canRevoke && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "revoke" }); setReason(""); }}>Revoke credential</button>}
             {open === null && account.actions.canDisable && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "disable" }); setReason(""); }}>Deactivate account</button>}
             {open === "rotate" && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => void act(account, key("rotate"), { action: "rotate", overlapMinutes: overlap, credentialExpiresInDays: credentialDays }, () => "Credential rotated.", "The credential could not be rotated. Try again.")}>{busy === key("rotate") ? "Rotating…" : "Confirm rotation"}</button>}
             {open === "issue" && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => void act(account, key("issue"), { action: "issue", credentialExpiresInDays: credentialDays }, () => "Credential issued.", "The credential could not be issued. Try again.")}>{busy === key("issue") ? "Issuing…" : "Confirm issue"}</button>}
+            {open === "extend" && <button type="button" className="primary-button button-small" disabled={busy !== null || extendDays < minimumExtensionDays(account.expiresAt, new Date())} onClick={() => void act(account, key("extend"), { action: "extend", expiresInDays: extendDays }, (updated) => `Expiry extended to ${day(updated.expiresAt)}.`, "The expiry could not be extended. Try again.")}>{busy === key("extend") ? "Extending…" : "Confirm extension"}</button>}
+            {open === "transfer" && <button type="button" className="primary-button button-small" disabled={busy !== null || newOwner === ""} onClick={() => void act(account, key("transfer"), { action: "transfer", ownerSubject: newOwner }, (updated) => `${updated.name} is now owned by ${updated.ownerSubject}.`, "The owner could not be changed. Try again.")}>{busy === key("transfer") ? "Changing…" : "Confirm new owner"}</button>}
             {open === "revoke" && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk} onClick={() => void act(account, key("revoke"), { action: "revoke", reason: reason.trim() }, () => "Credentials revoked. They stopped working immediately.", "The credentials could not be revoked. Try again.")}>{busy === key("revoke") ? "Revoking…" : "Confirm revocation"}</button>}
             {open === "disable" && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk} onClick={() => void act(account, key("disable"), { action: "disable", reason: reason.trim() }, (updated) => `${updated.name} deactivated everywhere.`, "The account could not be deactivated. Try again.")}>{busy === key("disable") ? "Deactivating…" : "Confirm deactivation"}</button>}
             {open !== null && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={closePanel}>Back</button>}

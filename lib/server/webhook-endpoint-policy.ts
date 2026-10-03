@@ -30,6 +30,8 @@ export const WEBHOOK_EVENT_TYPES = [
   "DataCorrectionResolved",
   "CorrectionReplacementDeliveryRequested",
   "ExportRequested",
+  "ExportScheduleRunCompleted",
+  "ExportScheduleRunFailed",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
@@ -128,15 +130,15 @@ export function policyCheckedLookup(lookup: WebhookHostLookup = defaultWebhookHo
  * Outbound webhook POST over `node:https` whose socket connects only to
  * policy-checked addresses (see `policyCheckedLookup`). Never follows
  * redirects, never reads the response body, and honors `init.signal`.
- * Shaped like `fetch` so tests can substitute a fake.
+ * Shaped like `fetch` so tests can substitute a fake; `requestImpl` lets them substitute the transport too.
  */
-export function policyPinnedWebhookFetch(lookup: WebhookHostLookup = defaultWebhookHostLookup): typeof fetch {
+export function policyPinnedWebhookFetch(lookup: WebhookHostLookup = defaultWebhookHostLookup, requestImpl: typeof httpsRequest = httpsRequest): typeof fetch {
   const checkedLookup = policyCheckedLookup(lookup);
   return ((input: string | URL | Request, init: RequestInit = {}) => new Promise<Response>((resolve, reject) => {
     const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
     if (url.protocol !== "https:") { reject(new Error("webhook endpoint refused: endpoint_url_must_be_https")); return; }
     const body = typeof init.body === "string" ? init.body : undefined;
-    const request = httpsRequest(url, {
+    const request = requestImpl(url, {
       method: init.method ?? "POST",
       headers: { ...(init.headers as Record<string, string> | undefined), ...(body === undefined ? {} : { "content-length": String(Buffer.byteLength(body)) }) },
       signal: init.signal ?? undefined,

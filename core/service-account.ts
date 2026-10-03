@@ -9,6 +9,10 @@
  *   credential:  active -> rotating_out -> retired       (rotation, after a short overlap)
  *                active | rotating_out -> revoked        (revocation, effective immediately)
  *                active | rotating_out -> expired        (its expiry passed)
+ *   expiry:      moved later only, by an audited extension, never past the maximum lifetime from the moment of the extension
+ *   owner:       an active Organization Admin who answers for the account (the creator first); handed to another by an
+ *                audited transfer. An owner who is deactivated is never silently orphaned: the account is flagged as
+ *                needing a new owner, and it is not extended until it has one.
  *
  * This contract says nothing about how a presented credential is accepted at the API edge: see docs/SERVICE_ACCOUNTS.md.
  */
@@ -28,8 +32,13 @@ export const SERVICE_ACCOUNT_MIN_TEXT_LENGTH = 3;
 export const SERVICE_ACCOUNT_MAX_NAME_LENGTH = 120;
 export const SERVICE_ACCOUNT_MAX_PURPOSE_LENGTH = 512;
 export const SERVICE_ACCOUNT_MAX_REASON_LENGTH = 1000;
+/** The longest identity subject the identity tables hold. */
+export const SERVICE_ACCOUNT_MAX_SUBJECT_LENGTH = 1024;
 
-/** An account lives at most this long (the 009 lifecycle rule: finite, never open-ended); it is not renewed in place. */
+/**
+ * An account's expiry is at most this many days away (the 009 lifecycle rule: finite, never open-ended): at creation,
+ * and again whenever an Organization Admin extends it, which is the audited renewal that also advances its review date.
+ */
 export const SERVICE_ACCOUNT_MAX_LIFETIME_DAYS = 365;
 /** A credential is shorter-lived than its account by default, and is never valid past it. */
 export const SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS = 90;
@@ -72,7 +81,15 @@ export type ServiceAccountCredential = {
 };
 
 /** The actions the Organization Admin may take on an account right now. Derived once, here, so API and UI agree. */
-export type ServiceAccountActions = { canIssue: boolean; canRotate: boolean; canRevoke: boolean; canDisable: boolean };
+export type ServiceAccountActions = {
+  canIssue: boolean;
+  canRotate: boolean;
+  canRevoke: boolean;
+  canDisable: boolean;
+  /** Not deactivated, owned by an active admin, and its expiry can still be moved later. */
+  canExtend: boolean;
+  canTransfer: boolean;
+};
 
 export type ServiceAccount = {
   serviceAccountId: string;
@@ -90,6 +107,13 @@ export type ServiceAccount = {
   disabledAt: string | null;
   disabledBy: string | null;
   disableReason: string | null;
+  /** The Organization Admin who answers for the account: its creator until it is transferred. */
+  ownerSubject: string;
+  ownerAssignedAt: string;
+  /** False when the owner was deactivated or is no longer an Organization Admin. */
+  ownerActive: boolean;
+  /** Not deactivated and without an active owner: it keeps working, and must be given a new owner. */
+  needsOwner: boolean;
   /** The most recent use of any of its credentials; null when none was ever used. */
   lastUsedAt: string | null;
   /** The expiry of the credential in use now (the newest valid one); null when it has none. */
@@ -109,6 +133,9 @@ export type IssuedServiceAccountCredential = {
 export type ServiceAccountCreated = { serviceAccount: ServiceAccount; credential: IssuedServiceAccountCredential };
 export type ServiceAccountCredentialIssued = { serviceAccount: ServiceAccount; credential: IssuedServiceAccountCredential };
 
+/** A person the account can be transferred to: an active Organization Admin of the organization. */
+export type ServiceAccountOwnerCandidate = { subject: string };
+
 export type CreateServiceAccountCommand = {
   name: string;
   purpose: string;
@@ -122,7 +149,10 @@ export type ServiceAccountCommand =
   | { action: "issue"; credentialExpiresInDays: number }
   | { action: "rotate"; credentialExpiresInDays: number; overlapMinutes: number }
   | { action: "revoke"; reason: string }
-  | { action: "disable"; reason: string };
+  | { action: "disable"; reason: string }
+  /** Moves the expiry to this many days from now, which must be later than the current expiry. */
+  | { action: "extend"; expiresInDays: number }
+  | { action: "transfer"; ownerSubject: string };
 export type ServiceAccountAction = ServiceAccountCommand["action"];
 
 // ---------------------------------------------------------------------------
@@ -150,10 +180,24 @@ export function serviceAccountStatus(disabled: boolean, expiresAt: string, now: 
   return Date.parse(expiresAt) <= now.getTime() ? "expired" : "active";
 }
 
-type AccountFacts = { disabled: boolean; expiresAt: string; credentials: Array<Pick<ServiceAccountCredential, "status" | "expiresAt" | "lastUsedAt">> };
+/**
+ * The fewest days from now that move an account's expiry at least one day past its current one (and at least one day from
+ * now). An extension is allowed when this is within the maximum lifetime, so an account whose expiry is already about a
+ * year away cannot be "extended" by a few minutes.
+ */
+export function minimumExtensionDays(expiresAt: string, now: Date): number {
+  return Math.max(1, Math.ceil((Date.parse(expiresAt) - now.getTime()) / DAY_MS) + 1);
+}
 
-/** Everything an account's presentation derives from its facts: status, last use, current expiry, flag and actions. */
-export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<ServiceAccount, "status" | "lastUsedAt" | "credentialExpiresAt" | "expiringSoon" | "actions"> {
+type AccountFacts = {
+  disabled: boolean;
+  expiresAt: string;
+  ownerActive: boolean;
+  credentials: Array<Pick<ServiceAccountCredential, "status" | "expiresAt" | "lastUsedAt">>;
+};
+
+/** Everything an account's presentation derives from its facts: status, last use, current expiry, flag, owner state and actions. */
+export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<ServiceAccount, "status" | "lastUsedAt" | "credentialExpiresAt" | "expiringSoon" | "needsOwner" | "actions"> {
   const status = serviceAccountStatus(facts.disabled, facts.expiresAt, now);
   const usable = facts.credentials.filter((credential) => credential.status === "active" || credential.status === "rotating_out");
   const current = facts.credentials.filter((credential) => credential.status === "active")
@@ -168,11 +212,15 @@ export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<Se
     lastUsedAt,
     credentialExpiresAt: current?.expiresAt ?? null,
     expiringSoon: live && (expiresSoon(facts.expiresAt, now) || (current !== undefined && expiresSoon(current.expiresAt, now))),
+    needsOwner: status !== "disabled" && !facts.ownerActive,
     actions: {
       canIssue: live && current === undefined,
       canRotate: live && current !== undefined,
       canRevoke: live && usable.length > 0,
       canDisable: status !== "disabled",
+      // An account whose owner is gone is not renewed until someone takes it over.
+      canExtend: status !== "disabled" && facts.ownerActive && minimumExtensionDays(facts.expiresAt, now) <= SERVICE_ACCOUNT_MAX_LIFETIME_DAYS,
+      canTransfer: status !== "disabled",
     },
   };
 }
@@ -180,8 +228,8 @@ export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<Se
 /** An active workspace of the organization an account can be created in. */
 export type ServiceAccountWorkspace = { workspaceId: string; name: string };
 
-/** Everything the list screen needs: the accounts, and the workspaces a new account can be created in. */
-export type ServiceAccountList = { serviceAccounts: ServiceAccount[]; workspaces: ServiceAccountWorkspace[] };
+/** Everything the list screen needs: the accounts, the workspaces a new account can be created in, and who can own one. */
+export type ServiceAccountList = { serviceAccounts: ServiceAccount[]; workspaces: ServiceAccountWorkspace[]; owners: ServiceAccountOwnerCandidate[] };
 
 /** One plain sentence saying where a credential stands. */
 export function serviceAccountCredentialSummary(credential: Pick<ServiceAccountCredential, "status" | "endsAt" | "expiresAt" | "expiringSoon">): string {
@@ -257,6 +305,8 @@ export function parseServiceAccountCommand(body: unknown): ServiceAccountCommand
     };
     case "revoke": return { action: "revoke", reason: text(body.reason, SERVICE_ACCOUNT_MAX_REASON_LENGTH, "invalid_reason") };
     case "disable": return { action: "disable", reason: text(body.reason, SERVICE_ACCOUNT_MAX_REASON_LENGTH, "invalid_reason") };
+    case "extend": return { action: "extend", expiresInDays: wholeNumber(body.expiresInDays, 1, SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, "invalid_expiry") };
+    case "transfer": return { action: "transfer", ownerSubject: text(body.ownerSubject, SERVICE_ACCOUNT_MAX_SUBJECT_LENGTH, "invalid_owner") };
     default: return fail("invalid_action");
   }
 }

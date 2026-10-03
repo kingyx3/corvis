@@ -8,9 +8,12 @@ import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
+import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
+import { sweepExpiredSourceSecrets } from "@/lib/server/source-connector-runtime";
 import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
+import { sweepTenantSessionActivity } from "@/lib/server/session-activity-sweep";
 import { sweepUploadSessions } from "@/lib/server/upload-sweep";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
@@ -47,8 +50,14 @@ export async function POST(request:Request){
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
       idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
       exportGrantSweep:()=>sweepExpiredExportDownloadGrants(),
+      // F10f: expired tenant-export artifacts are deleted from the object store and recorded, and spent download grants removed; both audited.
+      tenantExportSweep:()=>sweepTenantExports(),
       uploadRelease:()=>releaseScannedUploads(),
       uploadSweep:()=>sweepUploadSessions(),
+      // F7d: drop session records not seen for the whole retention window (never one a session limit is still measuring; revocations are untouched).
+      sessionActivitySweep:()=>sweepTenantSessionActivity(),
+      // B1d: pending OAuth attempts are short-lived secrets; a secret store with no native expiry is swept here (Secret Manager expires its own).
+      sourceSecretSweep:()=>sweepExpiredSourceSecrets(),
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });
@@ -56,6 +65,9 @@ export async function POST(request:Request){
     const sweepSummary=results.uploadSweep as {errors?:unknown}|null|undefined;
     const sweepErrors=typeof sweepSummary?.errors==="number"?sweepSummary.errors:0;
     if(sweepErrors>0&&!failed.includes("uploadSweep")) failed.push("uploadSweep");
+    // Likewise an artifact the sweep could not delete: the tick answers 500 so it is retried and alerted rather than silently kept.
+    const exportSweep=results.tenantExportSweep as {errors?:unknown}|null|undefined;
+    if(typeof exportSweep?.errors==="number"&&exportSweep.errors>0&&!failed.includes("tenantExportSweep")) failed.push("tenantExportSweep");
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
     return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});

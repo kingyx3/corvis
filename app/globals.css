@@ -3643,3 +3643,12 @@ button.snapshot-row:focus-visible {
   background: #173126;
   color: #eff5f1;
 }
+
+/* Corvis operations: the status filter above a table (tenant export builds). */
+.ops-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}

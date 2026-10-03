@@ -1,4 +1,4 @@
--- Acceptance for migration 087 (F7, #263): organization session policy and "sign out everywhere".
+-- Acceptance for migrations 087 and 091 (F7 #263, F7d #337): organization session policy, "sign out everywhere" and housekeeping.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * the policy is bounded by CHECK constraints (idle 15 min to 8 h, session 1 h to 7 days, idle never above the
@@ -12,6 +12,9 @@
 --   * "sign out everywhere" revokes every session recorded for every identity of the named user (and only theirs),
 --     it is idempotent, refuses the caller themself, a user outside the tenant and a missing reason;
 --   * the application's authoritative lookup (session_revocation) really excludes the revoked sessions;
+--   * (091) the housekeeping purge removes only session records not seen for the whole retention (never below the longest
+--     allowed session plus a day), in every tenant, a bounded batch at a time, never touches session revocations, and leaves
+--     enforcement and sign-out-everywhere working;
 --   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
@@ -269,6 +272,80 @@ begin
     raise exception 'a mandatory security notice must not be a preference category';
   exception when check_violation then null;
   end;
+end $$;
+
+-- ---------------------------------------------------------------- housekeeping (migration 091, F7d #337)
+do $$
+declare
+  t constant uuid := 'a0870000-0000-4000-8000-00000000000a';
+  other constant uuid := 'b0870000-0000-4000-8000-00000000000b';
+  removed integer;
+  revocations_before integer;
+begin
+  -- The longest allowed maximum session is 10080 minutes; the purge refuses any retention that does not outlast it by a day.
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(11519)$f$, 'session activity retention is shorter than the longest session');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(10080)$f$, 'session activity retention is shorter than the longest session');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(0)$f$, 'session activity retention is shorter than the longest session');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(null)$f$, 'session activity retention is shorter than the longest session');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(129600, 0)$f$, 'session activity purge limit is out of range');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(129600, 10001)$f$, 'session activity purge limit is out of range');
+  perform pg_temp.expect_error($f$select corvis_control.purge_tenant_session_activity(129600, null)$f$, 'session activity purge limit is out of range');
+
+  -- A policy with both limits at their longest, so every session below is one a limit may still be measuring.
+  perform * from corvis_control.set_tenant_session_policy(t,'oidc','idp|admin-1',480,10080,(select version from corvis_control.tenant_session_policy where tenant_id = t));
+
+  insert into corvis_control.tenant_session_activity (tenant_id, auth_method, subject, session_id, first_seen_at, last_seen_at) values
+    (t,     'oidc', 'idp|member',  'hk-active',    now() - interval '6 days',   now() - interval '1 minute'),
+    (t,     'oidc', 'idp|member',  'hk-quiet',     now() - interval '5 days',   now() - interval '4 days'),
+    (t,     'oidc', 'idp|member',  'hk-edge',      now() - interval '12 days',  now() - interval '11519 minutes'),
+    (t,     'oidc', 'idp|member',  'hk-old-1',     now() - interval '120 days', now() - interval '100 days'),
+    (t,     'saml', 'saml|member', 'hk-old-2',     now() - interval '120 days', now() - interval '95 days'),
+    (t,     'oidc', 'idp|analyst', 'hk-revoked',   now() - interval '120 days', now() - interval '99 days'),
+    (other, 'oidc', 'idp|b-owner', 'hk-old-other', now() - interval '110 days', now() - interval '91 days');
+  insert into corvis_control.session_revocation (tenant_id, auth_method, subject, session_id, revoked_by_subject, reason)
+  values (t, 'oidc', 'idp|analyst', 'hk-revoked', 'idp|admin-1', 'Housekeeping test');
+  select count(*) into revocations_before from corvis_control.session_revocation;
+
+  -- Retention 129600 (90 days): only sessions not seen for 90 days go, in every tenant, oldest first, at most p_limit per call.
+  removed := corvis_control.purge_tenant_session_activity(129600, 2);
+  if removed <> 2 then raise exception 'the batch limit bounds one call, removed %', removed; end if;
+  if exists (select 1 from corvis_control.tenant_session_activity where session_id in ('hk-old-1', 'hk-revoked')) then raise exception 'the oldest are removed first'; end if;
+  removed := corvis_control.purge_tenant_session_activity(129600);
+  if removed <> 2 then raise exception 'the rest of the old records go on the next call, removed %', removed; end if;
+  if exists (select 1 from corvis_control.tenant_session_activity where session_id like 'hk-old%') then raise exception 'every session unseen for 90 days is purged, in every tenant'; end if;
+  if (select count(*) from corvis_control.tenant_session_activity where session_id in ('hk-active', 'hk-quiet', 'hk-edge')) <> 3 then raise exception 'recent sessions are never purged'; end if;
+  if corvis_control.purge_tenant_session_activity(129600) <> 0 then raise exception 'purging is idempotent'; end if;
+
+  -- Even the shortest retention allowed (11520 minutes) removes nothing a limit can still be measuring: the longest maximum
+  -- session is 10080 minutes, so a record not seen for 11520 minutes was first seen longer ago than any maximum.
+  if corvis_control.purge_tenant_session_activity(11520) <> 0 then raise exception 'at the floor, nothing a limit still measures is purged (hk-edge was seen 11519 minutes ago)'; end if;
+  if corvis_control.enforce_session_policy(t,'oidc','idp|member','hk-active') <> 'ok' then raise exception 'an active session survives the purge and is still allowed'; end if;
+  update corvis_control.tenant_session_activity set first_seen_at = now() - interval '8 days', last_seen_at = now() - interval '1 minute' where tenant_id = t and session_id = 'hk-active';
+  if corvis_control.enforce_session_policy(t,'oidc','idp|member','hk-active') <> 'max_session' then raise exception 'a session past the maximum is still refused after a purge'; end if;
+  update corvis_control.tenant_session_activity set last_seen_at = now() - interval '12000 minutes' where tenant_id = t and session_id = 'hk-edge';
+  if corvis_control.enforce_session_policy(t,'oidc','idp|member','hk-edge') <> 'max_session' then raise exception 'a session first seen 12 days ago is past the maximum'; end if;
+  update corvis_control.tenant_session_activity set first_seen_at = now() - interval '13000 minutes', last_seen_at = now() - interval '12000 minutes' where tenant_id = t and session_id = 'hk-quiet';
+  if corvis_control.purge_tenant_session_activity(11520) <> 2 then raise exception 'at the floor, a session unseen for over 11520 minutes is purged'; end if;
+  if exists (select 1 from corvis_control.tenant_session_activity where session_id in ('hk-edge', 'hk-quiet')) then raise exception 'those two are gone'; end if;
+  -- A session that comes back after its record was purged is simply a new session: it is recorded again and measured from now.
+  if corvis_control.enforce_session_policy(t,'oidc','idp|member','hk-edge') <> 'ok' then raise exception 'a purged session that returns is recorded as new'; end if;
+
+  -- Revoked sessions keep working as revoked: the revocation table is not touched, so the authoritative lookup still excludes them.
+  if (select count(*) from corvis_control.session_revocation) <> revocations_before then raise exception 'the purge never touches session revocations'; end if;
+  if exists (
+    select 1 from corvis_control.identity_subject s
+    where s.tenant_id = t and s.subject = 'idp|analyst' and s.auth_method = 'oidc'
+      and not exists (select 1 from corvis_control.session_revocation r
+        where r.tenant_id = s.tenant_id and r.auth_method = s.auth_method and r.subject = s.subject and r.session_id = 'hk-revoked')
+  ) then raise exception 'a revoked session must not resolve, though its activity record was purged'; end if;
+  if (select count(*) from corvis_control.tenant_session_activity where session_id = 'hk-revoked') <> 0 then raise exception 'the revoked session''s activity record was purged'; end if;
+
+  -- Sign-out-everywhere still works on what remains, and the revocations it writes are not purged either.
+  perform corvis_control.enforce_session_policy(t,'oidc','idp|analyst','hk-live');
+  if corvis_control.sign_out_user_everywhere(t,'oidc','idp|admin-1','a0870000-0000-4000-8000-0000000000e4','Housekeeping check') < 1 then raise exception 'sign out everywhere still finds the live sessions'; end if;
+  if not exists (select 1 from corvis_control.session_revocation where tenant_id = t and session_id = 'hk-live') then raise exception 'and revokes them'; end if;
+  perform corvis_control.purge_tenant_session_activity(11520);
+  if not exists (select 1 from corvis_control.session_revocation where tenant_id = t and session_id = 'hk-live') then raise exception 'a purge never removes a revocation'; end if;
 end $$;
 
 -- ---------------------------------------------------------------- RLS: enabled, forced, no client policy

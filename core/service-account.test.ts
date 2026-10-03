@@ -9,6 +9,7 @@ import {
   credentialStatus,
   expiresSoon,
   isServiceAccountId,
+  minimumExtensionDays,
   parseCreateServiceAccount,
   parseServiceAccountCommand,
   serviceAccountCredentialSummary,
@@ -60,45 +61,45 @@ test("an account is disabled, expired or active", () => {
 test("what an Organization Admin can do follows the account's lifecycle, derived once", () => {
   const credential = (status: ServiceAccountCredentialStatus, expiresInDays: number, lastUsedAt: string | null = null) => ({ status, expiresAt: at(expiresInDays), lastUsedAt });
   // In use: rotate, revoke, disable; not issue.
-  const live = serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("active", 60, at(-1))] }, NOW);
-  assert.deepEqual(live.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true });
+  const live = serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("active", 60, at(-1))] }, NOW);
+  assert.deepEqual(live.actions, { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true });
   assert.equal(live.status, "active");
   assert.equal(live.credentialExpiresAt, at(60));
   assert.equal(live.lastUsedAt, at(-1));
   assert.equal(live.expiringSoon, false);
 
   // The current credential close to its expiry flags the account.
-  assert.equal(serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("active", 5)] }, NOW).expiringSoon, true);
+  assert.equal(serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("active", 5)] }, NOW).expiringSoon, true);
   // So does the account itself close to its own expiry.
-  assert.equal(serviceAccountLifecycle({ disabled: false, expiresAt: at(5), credentials: [credential("active", 3)] }, NOW).expiringSoon, true);
-  assert.equal(serviceAccountLifecycle({ disabled: false, expiresAt: at(5), credentials: [] }, NOW).expiringSoon, true);
+  assert.equal(serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(5), credentials: [credential("active", 3)] }, NOW).expiringSoon, true);
+  assert.equal(serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(5), credentials: [] }, NOW).expiringSoon, true);
   // A rotating-out credential close to its expiry is not the current one and does not flag the account.
-  assert.equal(serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("active", 60), credential("rotating_out", 2)] }, NOW).expiringSoon, false);
+  assert.equal(serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("active", 60), credential("rotating_out", 2)] }, NOW).expiringSoon, false);
 
   // The newest-expiring active credential is the current one; the most recent use of any credential is reported.
-  const two = serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("active", 20, at(-3)), credential("active", 80, null), credential("rotating_out", 1, at(-2)), credential("retired", 1, at(-9))] }, NOW);
+  const two = serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("active", 20, at(-3)), credential("active", 80, null), credential("rotating_out", 1, at(-2)), credential("retired", 1, at(-9))] }, NOW);
   assert.equal(two.credentialExpiresAt, at(80));
   assert.equal(two.lastUsedAt, at(-2));
 
   // Nothing in use: issue only, nothing to revoke.
-  const none = serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("revoked", 60, at(-5)), credential("expired", -1), credential("retired", 10)] }, NOW);
-  assert.deepEqual(none.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true });
+  const none = serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("revoked", 60, at(-5)), credential("expired", -1), credential("retired", 10)] }, NOW);
+  assert.deepEqual(none.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true, canExtend: true, canTransfer: true });
   assert.equal(none.credentialExpiresAt, null);
   assert.equal(none.lastUsedAt, at(-5));
-  assert.equal(serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [] }, NOW).lastUsedAt, null);
+  assert.equal(serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [] }, NOW).lastUsedAt, null);
 
   // Only a rotating-out credential remains: it can still be revoked, and a new one issued.
-  const rotating = serviceAccountLifecycle({ disabled: false, expiresAt: at(300), credentials: [credential("rotating_out", 10)] }, NOW);
-  assert.deepEqual(rotating.actions, { canIssue: true, canRotate: false, canRevoke: true, canDisable: true });
+  const rotating = serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(300), credentials: [credential("rotating_out", 10)] }, NOW);
+  assert.deepEqual(rotating.actions, { canIssue: true, canRotate: false, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true });
 
-  // An expired account can only be disabled; a disabled one nothing at all, and neither is flagged.
-  const expired = serviceAccountLifecycle({ disabled: false, expiresAt: at(-1), credentials: [credential("expired", -1)] }, NOW);
+  // An expired account can be renewed or disabled; a disabled one nothing at all, and neither is flagged.
+  const expired = serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(-1), credentials: [credential("expired", -1)] }, NOW);
   assert.equal(expired.status, "expired");
-  assert.deepEqual(expired.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: true });
+  assert.deepEqual(expired.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: true, canExtend: true, canTransfer: true }, "an expired account can still be renewed (then issued a credential) or disabled");
   assert.equal(expired.expiringSoon, false);
-  const disabled = serviceAccountLifecycle({ disabled: true, expiresAt: at(5), credentials: [credential("revoked", 3)] }, NOW);
+  const disabled = serviceAccountLifecycle({ disabled: true, ownerActive: true, expiresAt: at(5), credentials: [credential("revoked", 3)] }, NOW);
   assert.equal(disabled.status, "disabled");
-  assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false });
+  assert.deepEqual(disabled.actions, { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false });
   assert.equal(disabled.expiringSoon, false);
 });
 
@@ -163,4 +164,47 @@ test("an action on an account validates its own parameters", () => {
   }
   for (const body of [{ action: "delete" }, { action: 5 }, {}, { action: "ROTATE" }]) assert.throws(() => parseServiceAccountCommand(body), invalid("invalid_action"));
   for (const body of [null, undefined, [], "issue"]) assert.throws(() => parseServiceAccountCommand(body), invalid("invalid_request"));
+});
+
+test("the fewest days that move an expiry past the current one, and so whether it can be extended at all", () => {
+  assert.equal(minimumExtensionDays(at(300), NOW), 301, "300 days away: 301 days from now is a day later");
+  assert.equal(minimumExtensionDays(at(300.5), NOW), 302, "an extension moves the expiry at least a whole day");
+  assert.equal(minimumExtensionDays(at(364), NOW), 365);
+  assert.equal(minimumExtensionDays(at(365), NOW), 366, "already a full year away: nothing within the maximum is later");
+  assert.equal(minimumExtensionDays(at(1), NOW), 2);
+  assert.equal(minimumExtensionDays(NOW.toISOString(), NOW), 1, "expiring this instant: any day from now is later");
+  assert.equal(minimumExtensionDays(at(-30), NOW), 1, "an account that already expired needs at least one day from now");
+});
+
+test("an account is extendable until its expiry is a full year away, and only while it has an active owner and is not deactivated", () => {
+  const facts = (overrides: Partial<Parameters<typeof serviceAccountLifecycle>[0]> = {}) => serviceAccountLifecycle({ disabled: false, ownerActive: true, expiresAt: at(100), credentials: [], ...overrides }, NOW);
+  assert.equal(facts().actions.canExtend, true);
+  assert.equal(facts({ expiresAt: at(364) }).actions.canExtend, true);
+  assert.equal(facts({ expiresAt: at(364.5) }).actions.canExtend, false, "not by a few hours");
+  assert.equal(facts({ expiresAt: at(365) }).actions.canExtend, false, "at the maximum there is nothing later to move to");
+  assert.equal(facts({ expiresAt: at(-3) }).actions.canExtend, true, "an expired account can be renewed");
+  assert.equal(facts({ disabled: true }).actions.canExtend, false);
+
+  // An owner who was deactivated: surfaced, not silently orphaned, and the account is not renewed until it has a new one.
+  const orphaned = facts({ ownerActive: false });
+  assert.equal(orphaned.needsOwner, true);
+  assert.equal(orphaned.actions.canExtend, false);
+  assert.equal(orphaned.actions.canTransfer, true, "a new owner can always be assigned to an account that is not deactivated");
+  assert.equal(orphaned.status, "active", "it keeps working");
+  assert.equal(orphaned.actions.canRotate || orphaned.actions.canIssue, true, "credentials can still be rotated or issued");
+  assert.equal(facts().needsOwner, false);
+  assert.equal(facts({ ownerActive: false, expiresAt: at(-1) }).needsOwner, true, "an expired account without an owner needs one too");
+  const disabled = facts({ disabled: true, ownerActive: false });
+  assert.equal(disabled.needsOwner, false, "a deactivated account is not asked for an owner");
+  assert.equal(disabled.actions.canTransfer, false);
+});
+
+test("extending and transferring validate their own parameters", () => {
+  assert.deepEqual(parseServiceAccountCommand({ action: "extend" }), { action: "extend", expiresInDays: SERVICE_ACCOUNT_MAX_LIFETIME_DAYS }, "a year from now by default");
+  assert.deepEqual(parseServiceAccountCommand({ action: "extend", expiresInDays: 90 }), { action: "extend", expiresInDays: 90 });
+  assert.deepEqual(parseServiceAccountCommand({ action: "extend", expiresInDays: null }), { action: "extend", expiresInDays: SERVICE_ACCOUNT_MAX_LIFETIME_DAYS });
+  for (const expiresInDays of [0, -5, 366, 1.5, "90", NaN]) assert.throws(() => parseServiceAccountCommand({ action: "extend", expiresInDays }), invalid("invalid_expiry"), String(expiresInDays));
+
+  assert.deepEqual(parseServiceAccountCommand({ action: "transfer", ownerSubject: "  idp|priya.nair  " }), { action: "transfer", ownerSubject: "idp|priya.nair" });
+  for (const ownerSubject of [undefined, null, 7, "", "ab", "x".repeat(1025), "line\nbreak"]) assert.throws(() => parseServiceAccountCommand({ action: "transfer", ownerSubject }), invalid("invalid_owner"), String(ownerSubject));
 });

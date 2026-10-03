@@ -42,7 +42,8 @@ type Step =
   | { id: "authorize"; provider: Provider }
   /** `label` is null while the sign-in redirect is being completed and the provider is not yet known. */
   | { id: "testing"; label: string | null }
-  | { id: "success"; connection: SourceConnectionRecord }
+  /** `reauthorized` is set when the sign-in renewed an existing connection instead of creating one. */
+  | { id: "success"; connection: SourceConnectionRecord; reauthorized?: boolean }
   | { id: "failed"; connection: SourceConnectionRecord; errorClass?: string }
   | { id: "oauth-problem"; kind: "denied" | "invalid" };
 
@@ -131,7 +132,7 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     }
     void request<{ outcome: string; connection: SourceConnectionRecord; test: TestResult }>(`${CONNECTIONS}/oauth/complete`, "POST", { code: resume.code, state: resume.state }).then((reply) => {
       if (!reply.ok) { setStep({ id: "oauth-problem", kind: "invalid" }); return; }
-      showResult(reply.data.connection, reply.data.test);
+      showResult(reply.data.connection, reply.data.test, reply.data.outcome === "reauthorized");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per redirect; `showResult` only reads stable setters and the prop callback.
   }, [resume]);
@@ -141,10 +142,10 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     if (focus) { focusTarget.current = focus; setErrorSeq((seq) => seq + 1); }
   }
 
-  function showResult(connection: SourceConnectionRecord, test: TestResult) {
+  function showResult(connection: SourceConnectionRecord, test: TestResult, reauthorized = false) {
     setBusy(false);
     onConnected(connection.sourceConnectionId);
-    setStep(test.ok ? { id: "success", connection } : { id: "failed", connection, ...(test.errorClass ? { errorClass: test.errorClass } : {}) });
+    setStep(test.ok ? { id: "success", connection, ...(reauthorized ? { reauthorized: true } : {}) } : { id: "failed", connection, ...(test.errorClass ? { errorClass: test.errorClass } : {}) });
   }
 
   function choose(provider: Provider) {
@@ -296,9 +297,11 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     </>}
 
     {step.id === "success" && <>
-      <div className="dialog-header"><div>{eyebrow("Step 4 of 4 · Test")}{heading("Connection verified")}<p>{step.connection.connectionLabel}</p></div></div>
+      <div className="dialog-header"><div>{eyebrow(step.reauthorized ? "Reauthorization · Test" : "Step 4 of 4 · Test")}{heading(step.reauthorized ? "Connection reauthorized" : "Connection verified")}<p>{step.connection.connectionLabel}</p></div></div>
       <div className="dialog-body">
-        <div className="lineage-note tone-success"><Icon name="check"/><div><strong>Corvis can reach the provider with the access you confirmed.</strong><span>The connection is active. Scheduled collection is not switched on yet, so nothing has been collected; once it is, documents enter the normal Corvis review process.</span></div></div>
+        <div className="lineage-note tone-success"><Icon name="check"/><div><strong>Corvis can reach the provider with the access you confirmed.</strong><span>{step.reauthorized
+          ? `The new credential is saved and the previous one was retired. ${step.connection.status === "paused" ? "The connection is paused and stays paused until you resume it." : "The connection is active again."}`
+          : "The connection is active. Scheduled collection is not switched on yet, so nothing has been collected; once it is, documents enter the normal Corvis review process."}</span></div></div>
         <p>You can test again, pause, reauthorize or revoke this connection from the Source connections list.</p>
       </div>
       <div className="dialog-actions"><button type="button" className="primary-button" onClick={onClose}>Done</button></div>

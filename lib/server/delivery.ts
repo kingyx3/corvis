@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { deleteExportAttemptArtifacts, deliverExportArtifact } from "./export-delivery.ts";
 import { getServerConfig } from "./config.ts";
 import type { GcsControlClient } from "./gcs.ts";
+import { notifyScheduledExportOutcome } from "./export-schedule-notifications.ts";
 import { bestEffortNotification, enqueueExportReady } from "./notifications.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { errorClassOf, safeErrorText } from "./processing-error-text.ts";
@@ -104,7 +105,11 @@ export async function reclaimStaleExportDeliveries(store: PostgresSqlApi): Promi
         last_error='export delivery lease expired before completion'
     where state='delivering'
       and coalesce(delivery_started_at,'-infinity'::timestamptz) < now()-make_interval(mins => $2)
-    returning export_id`, [EXPORT_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+    returning tenant_id,export_id,state`, [EXPORT_MAX_ATTEMPTS, DELIVERING_RECLAIM_AFTER_MINUTES]);
+  // An export that just ran out of attempts is final: a scheduled run behind it ends in a failure notice (F4b).
+  for (const row of rows) {
+    if (String(row.state) === "failed") await notifyScheduledExportOutcome(store, { tenantId: String(row.tenant_id), exportId: String(row.export_id), outcome: "failed" });
+  }
   return rows.length;
 }
 
@@ -140,7 +145,10 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         durationValueMetric("delivery.export",completedAt-startedAt,context,{format:String(row.format)});
       }
       countMetric("delivery.export",1,context,{outcome:"complete",format:String(row.format)});
-      if(completed[0]) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
+      // A scheduled run behind this export ends in a completion event for webhook subscribers, and its owner's ready email
+      // follows that schedule's switch (F4b); any other export is a no-op here and always emails its requester.
+      const scheduled=completed[0]?await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"complete"}):{ownerEmails:false};
+      if(completed[0]&&scheduled.ownerEmails) await bestEffortNotification(store,`export_ready:${exportId}`,()=>enqueueExportReady(store,{
         // deliverExportArtifact only resolves after required() has rejected a null or blank workspace_id,
         // auth_method and requested_by, so none of them can be absent here.
         tenantId,exportId,workspaceId:String(row.workspace_id),
@@ -161,6 +169,8 @@ export async function processQueuedExports(limit=25, store: PostgresSqlApi = db(
         where tenant_id=$3 and export_id=$4::uuid and state='delivering' and delivery_attempts=$5`,
       [state,safeErrorText(error),tenantId,exportId,attempt,nextAttemptAt]);
       countMetric("delivery.export",1,context,{outcome:state,format:String(row.format)});
+      // Final failure of an export a schedule requested ends the run in a failure notice (F4b).
+      if(state==="failed") await notifyScheduledExportOutcome(store,{tenantId,exportId,outcome:"failed"});
     }
   }
   return {processed,failed};

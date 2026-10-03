@@ -16,6 +16,7 @@ import {
   type RemoteDocumentRef,
   type RunState,
   type RunTrigger,
+  type SecretPayload,
   type SecretStore,
   type SourceScope,
 } from "./source-connectors.ts";
@@ -36,6 +37,7 @@ type ConnectionForSync = {
   tenantId: string;
   workspaceId: string;
   providerKey: string;
+  credentialType: string;
   status: string;
   sourceScope: SourceScope[];
   secretReference: string;
@@ -63,7 +65,7 @@ function connectorErrorClass(error: unknown): ConnectorErrorClass {
 }
 
 async function loadConnectionForSync(db: PostgresSqlApi, tenantId: string, sourceConnectionId: string): Promise<ConnectionForSync> {
-  const rows = await db.query(`select source_connection_id, tenant_id, workspace_id, provider_key, status,
+  const rows = await db.query(`select source_connection_id, tenant_id, workspace_id, provider_key, credential_type, status,
       source_scope, secret_reference, connector_version, consecutive_failures
     from corvis_source.source_connection where tenant_id=$1 and source_connection_id=$2::uuid limit 1`,
   [tenantId, sourceConnectionId]);
@@ -74,6 +76,7 @@ async function loadConnectionForSync(db: PostgresSqlApi, tenantId: string, sourc
     tenantId: String(row.tenant_id),
     workspaceId: String(row.workspace_id),
     providerKey: String(row.provider_key),
+    credentialType: String(row.credential_type ?? ""),
     status: String(row.status),
     sourceScope: jsonArray(row.source_scope),
     secretReference: String(row.secret_reference),
@@ -129,6 +132,13 @@ export async function runConnectionSync(
     drivers: Map<string, ConnectorDriver>;
     ingest: IngestSink;
     maxAttempts?: number;
+    /**
+     * Turns the stored credential into one safe to use now: the seam for OAuth token refresh
+     * (`resolveConnectionCredential` in source-connector-governance.ts, which needs the scheduler's system identity).
+     * A refusal it throws with a `connectorErrorClass` (an expired OAuth credential is `reauthorization`) fails the run
+     * closed like any credential the provider rejects.
+     */
+    resolveCredential?: (connection: { sourceConnectionId: string; workspaceId: string; providerKey: string; credentialType: string; secretReference: string }, credential: SecretPayload) => Promise<SecretPayload>;
   },
 ): Promise<SyncOutcome> {
   const db = dependencies.db ?? controlDb();
@@ -157,7 +167,8 @@ export async function runConnectionSync(
   const counts = { discovered: 0, accepted: 0, duplicate: 0, rejected: 0 };
 
   try {
-    const credential = await dependencies.secrets.read(connection.secretReference);
+    const stored = await dependencies.secrets.read(connection.secretReference);
+    const credential = dependencies.resolveCredential ? await dependencies.resolveCredential(connection, stored) : stored;
     const refs = await driver.discover(credential, connection.sourceScope, undefined);
     counts.discovered = refs.length;
 

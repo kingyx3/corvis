@@ -27,6 +27,8 @@ export interface ExportScheduleService {
   list(identity: RequestIdentity, query: ExportScheduleListQuery): Promise<ExportSchedulePage>;
   get(identity: RequestIdentity, scheduleId: string): Promise<ExportSchedule>;
   setStatus(identity: RequestIdentity, scheduleId: string, action: ExportScheduleAction, correlationId: string): Promise<ExportSchedule>;
+  /** The owner switches the emails about their schedule on or off (F4b). Audited with the new value. */
+  setNotification(identity: RequestIdentity, scheduleId: string, notifyOnCompletion: boolean, correlationId: string): Promise<ExportSchedule>;
   remove(identity: RequestIdentity, scheduleId: string, correlationId: string): Promise<DeletedExportSchedule>;
   /** Every run (including refused ones) of the schedules the caller may list: the scheduled part of delivery history. */
   listRuns(identity: RequestIdentity, query: ExportScheduleRunListQuery): Promise<ExportScheduleRunPage>;
@@ -52,6 +54,13 @@ export function createExportScheduleService(backend: ExportScheduleBackend): Exp
         demoMode: backend.demo,
         mutate: (db) => backend.setStatus(identity, scheduleId, action, db),
         audit: (item) => exportScheduleAuditEvent(identity, correlationId, `export_schedule.${action}`, item),
+      });
+    },
+    async setNotification(identity, scheduleId, notifyOnCompletion, correlationId) {
+      return runAuditedMutation({
+        demoMode: backend.demo,
+        mutate: (db) => backend.setNotification(identity, scheduleId, notifyOnCompletion, db),
+        audit: (item) => exportScheduleAuditEvent(identity, correlationId, "export_schedule.notify", item, { notifyOnCompletion: item.notifyOnCompletion }),
       });
     },
     async remove(identity, scheduleId, correlationId) {

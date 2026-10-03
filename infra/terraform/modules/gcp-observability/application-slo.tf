@@ -527,3 +527,140 @@ resource "google_monitoring_alert_policy" "delivery_task_failed" {
     mime_type = "text/markdown"
   }
 }
+
+# F7d (#337). lib/server/authorization.ts times every session policy check
+# (metric.duration "auth.session_policy", tagged with the verdict, so its count
+# is the denominator of the denial rate) and counts every denial
+# (metric.count "auth.session_policy_denied", tagged with the reason:
+# idle_timeout, max_session, untracked_session or unknown). Neither carries a
+# subject or a session id. A burst of denials is a policy that is too tight, an
+# identity provider that stopped sending a stable session id (untracked_session)
+# or a fail-closed lookup (unknown); see docs/tenant-self-service.md.
+resource "google_logging_metric" "session_policy_enforcement_duration" {
+  project = var.project_id
+  name    = "corvis_${var.environment}_session_policy_enforcement_duration_ms"
+  filter  = <<-FILTER
+    resource.type="cloud_run_revision"
+    jsonPayload.event="metric.duration"
+    jsonPayload.metric="auth.session_policy"
+  FILTER
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "DISTRIBUTION"
+    unit        = "ms"
+  }
+
+  value_extractor = "EXTRACT(jsonPayload.durationMs)"
+
+  bucket_options {
+    exponential_buckets {
+      num_finite_buckets = 16
+      growth_factor      = 2
+      scale              = 1
+    }
+  }
+}
+
+resource "google_logging_metric" "session_policy_denied" {
+  project = var.project_id
+  name    = "corvis_${var.environment}_session_policy_denied"
+  filter  = <<-FILTER
+    resource.type="cloud_run_revision"
+    jsonPayload.event="metric.count"
+    jsonPayload.metric="auth.session_policy_denied"
+  FILTER
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    unit        = "1"
+
+    labels {
+      key         = "reason"
+      value_type  = "STRING"
+      description = "Why the session policy ended the session: idle_timeout, max_session, untracked_session or unknown."
+    }
+  }
+
+  label_extractors = {
+    reason = "EXTRACT(jsonPayload.reason)"
+  }
+}
+
+# Every authorized request pays for one session policy check, so a slow check
+# is a slow API. The check is one indexed Postgres call; 100ms at p95 is far
+# above its normal cost and well inside the web_api latency objective.
+resource "google_monitoring_alert_policy" "session_policy_enforcement_latency" {
+  count = local.api_monitoring_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-session-policy-enforcement-p95"
+  combiner     = "OR"
+  severity     = "WARNING"
+
+  conditions {
+    display_name = "Session policy enforcement p95 above 100ms for 15m"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/${google_logging_metric.session_policy_enforcement_duration.name}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 100
+      duration        = "900s"
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_PERCENTILE_95"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "Checking an organization's session policy (corvis_control.enforce_session_policy) is slow for 15 minutes; every authorized request pays for it. Check Postgres pool waits and the tenant_session_activity table size and its housekeeping (the sessionActivitySweep task of the delivery tick) before changing the threshold (docs/tenant-self-service.md)."
+    mime_type = "text/markdown"
+  }
+}
+
+# Denials are expected (that is the policy working), so the alert is a rate far
+# above the normal background: more than 200 in 5 minutes, sustained for 10.
+resource "google_monitoring_alert_policy" "session_policy_denials" {
+  count = local.api_monitoring_enabled ? 1 : 0
+
+  project      = var.project_id
+  display_name = "corvis-${var.environment}-session-policy-denials"
+  combiner     = "OR"
+  severity     = "WARNING"
+
+  conditions {
+    display_name = "More than 200 session policy denials per 5m for 10m"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/${google_logging_metric.session_policy_denied.name}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 200
+      duration        = "600s"
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.notification_channel_ids
+
+  documentation {
+    content   = "Session policy denials (auth.session_policy_denied) are far above the usual rate. Group by the reason label: idle_timeout or max_session means an organization's limits are tighter than its people's working pattern; untracked_session means the identity provider stopped sending a stable session id (sid or jti) while a limit is set, which refuses everyone; unknown means the policy check answered nothing and failed closed (docs/tenant-self-service.md)."
+    mime_type = "text/markdown"
+  }
+}

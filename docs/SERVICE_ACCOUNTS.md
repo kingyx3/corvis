@@ -15,7 +15,9 @@ Organization Admins create service accounts and issue, rotate and revoke their A
 | `axe-core` coverage of the screens | Shipped (`e2e/access-pages-accessibility.spec.ts`, light and dark) |
 | Record-side credential check (`verifyServiceAccountCredential`: constant-time compare, immediate revocation, rotation overlap, expiry, last-used) | Shipped and tested, **not called by any request path** |
 | **Accepting a credential on an API request** | **Not shipped. Decision needed (below).** |
-| Renewing/extending an account in place, an account-owner field, expiry notifications, a "last used from" source | Not shipped (follow-ups) |
+| Extend an account's expiry (audited; advances the 009 `next_review_at` with it, within the 365-day maximum) | Shipped (F6b, migration 092) |
+| An owner on every account, transfer to another active Organization Admin, and a rule for an owner who is deactivated | Shipped (F6b) |
+| Expiry notifications, a "last used from" source | Not shipped (follow-ups) |
 
 Until the decision is made and implemented, a credential issued here is stored and managed but **does not authenticate any request**. The screen says so in a visible note, so no one is led to believe it works. Nothing is half-wired in the other direction either: no request path can accept a credential by accident, because none reads these tables.
 
@@ -35,7 +37,17 @@ plus `service_account` (the managed record: name, purpose, creator, expiry) and 
 
 **Data access.** Creating an account grants no fund or document entitlement and changes no data right. As for people, fund and document entitlements are granted by Corvis operations through the existing operator path (`POST /api/v1/admin/access-policy`, which is limited to the operations tenant), addressed to the account's *identity reference* (its `user_id`, shown on each account). Until then the account sees nothing. A customer-self-service entitlement editor does not exist for people either, and is out of scope here.
 
-**Lifetime.** An account lasts at most 365 days and is not renewed in place (009's rule: finite, never open-ended). A credential defaults to 90 days, is clamped to its account's expiry, and is flagged "Needs attention / Expiring soon" within 14 days of expiring (the account itself is flagged the same way).
+**Lifetime.** An account's expiry is at most 365 days away (009's rule: finite, never open-ended), at creation and again at every extension (below). A credential defaults to 90 days, is clamped to its account's expiry when issued, and is flagged "Needs attention / Expiring soon" within 14 days of expiring (the account itself is flagged the same way).
+
+### Renewal: extend expiry (F6b, #341)
+
+An Organization Admin extends an account with `{ action: "extend", expiresInDays }` (1 to 365, default 365, counted from the moment of the extension). `corvis_control.extend_service_account` requires the new expiry to be at least a day later than the current one (an account about a year out cannot be "extended" by minutes; the screen shows the minimum and refuses less before sending), later than now, and at most 366 days from now (365 plus the day of grace creation allows), and moves, in one statement: the account's `expires_at`, its membership's `valid_until`, and its 009 lifecycle grant (`valid_until`, `next_review_at` and a fresh `reviewed_at`/`reviewed_by_subject`: an extension is a review). So the authorization lookup keeps resolving the account exactly as long as the account says it does. A **credential keeps its own expiry** (it was clamped to the account's at issue time): an extended account issues or rotates a credential as usual. An account that already expired can be extended (then given a credential again); a deactivated one cannot (`409 service_account_not_active`), and nothing but this function can change an expiry (a guard trigger refuses any other update, and any shortening). The audit event is `service_account.extended` with `previousExpiresAt`, `expiresAt` and `nextReviewAt`.
+
+### Ownership (F6b, #341)
+
+Every account has an **owner**, an active Organization Admin who answers for it (`owner_subject`, `owner_user_id`, `owner_assigned_at`). The creating admin is the first owner (existing accounts were backfilled with their creator); `created_by_*` stays as history. `{ action: "transfer", ownerSubject }` hands the account to **another active Organization Admin** (`corvis_control.transfer_service_account_owner`; the people on offer are the `owners` in the list response, computed by the same SQL test `service_account_owner_active`: an active human `oidc`/`saml` identity with an active `tenant_admin` membership). Any Organization Admin can transfer, including to themselves; the owner must differ from the current one (`409 service_account_owner_unchanged`), must be eligible (`422 service_account_owner_invalid`), and a deactivated account cannot change hands. Audit event `service_account.owner_transferred` with `previousOwner` and `ownerSubject`.
+
+**When the owner is deactivated or loses the Organization Admin role**, the account is **not silently orphaned and not disabled**: its credentials keep working, `ownerActive` turns false and `needsOwner` true, the list shows "Needs attention" and "Needs a new owner" with the former owner named, and **it is not extended until an active admin takes it over** (`409 service_account_needs_owner`; the UI hides Extend and makes "Assign a new owner" the primary action). Rotating, issuing, revoking and deactivating stay available, so an ownerless account can always be made safe. Assumption to confirm: ownerless accounts are blocked from *renewal* only, not from credential rotation, so a security response never waits on finding an owner.
 
 ### Credentials
 
@@ -52,15 +64,15 @@ Only a **person** who is an Organization Admin (`isTenantAdmin === true` and `au
 
 ### Deactivate everywhere (C14)
 
-`disable_service_account` is the service-account counterpart of the member **Deactivate everywhere** flow, in one transaction: the identity subject and the lifecycle grant are disabled, every membership is revoked (`valid_until = now()`), every entitlement is ended, and every credential is revoked. The account row stays as the audit record and a new account is created if one is needed again (it frees its name). The human member list and the human deactivation flow deliberately exclude service accounts (they select `oidc`/`saml` subjects only), so the two flows cannot be confused. Deactivating a *person* who created an account does not touch the account; ownership transfer is a follow-up.
+`disable_service_account` is the service-account counterpart of the member **Deactivate everywhere** flow, in one transaction: the identity subject and the lifecycle grant are disabled, every membership is revoked (`valid_until = now()`), every entitlement is ended, and every credential is revoked. The account row stays as the audit record and a new account is created if one is needed again (it frees its name). The human member list and the human deactivation flow deliberately exclude service accounts (they select `oidc`/`saml` subjects only), so the two flows cannot be confused. Deactivating a *person* who created or owns an account does not touch the account: it is surfaced as needing a new owner (see "Ownership").
 
 ### Audit (C9)
 
-Every state change writes an `audit_event` in the same transaction (target type `service_account`, target id the account id): `service_account.created`, `.credential_issued`, `.credential_rotated`, `.credential_revoked`, `.disabled`, with identifiers, role, workspace, expiry, overlap and the stated reason, never a secret. `TENANT_ACCESS_AUDIT_FILTER` includes them, so they appear in `GET /api/v1/access/audit` (and its CSV) and in the access-audit file of a full tenant export. Refused commands write nothing.
+Every state change writes an `audit_event` in the same transaction (target type `service_account`, target id the account id): `service_account.created`, `.credential_issued`, `.credential_rotated`, `.credential_revoked`, `.disabled`, `.extended`, `.owner_transferred`, with identifiers, role, workspace, expiry, overlap and the stated reason, never a secret. `TENANT_ACCESS_AUDIT_FILTER` includes them, so they appear in `GET /api/v1/access/audit` (and its CSV) and in the access-audit file of a full tenant export. Refused commands write nothing.
 
 ### Demo mode
 
-`adapters/demo/service-account-store.ts` enforces the same rules in memory, seeded per demo tenant with an account whose credential expires soon, one in regular use and one deactivated. Secrets are minted and hashed exactly as in production. It is not production evidence.
+`adapters/demo/service-account-store.ts` enforces the same rules in memory, seeded per demo tenant with an account whose credential expires soon, one in regular use, one owned by an administrator who was deactivated (so it needs a new owner) and one deactivated. Secrets are minted and hashed exactly as in production. It is not production evidence.
 
 ## Decision needed: how a credential is accepted at the API edge
 
@@ -101,7 +113,7 @@ Either way, "last used" stays `Never` and no credential works until the chosen p
 ## Remaining work (proposed follow-up issues)
 
 1. **Credential verification path** (blocked on the decision above): the exchange endpoint (option B) or IdP mapping (option A), assertion-signing key custody, rate limiting and abuse controls, calling `verifyServiceAccountCredential`, an e2e that a rotated-out credential stops working at the end of its overlap, and removing the "not yet accepted" notice.
-2. **Account renewal and ownership**: extend an account's expiry (renewal as an audited control action, advancing `next_review_at`), an owner field and transfer, and what happens to an account whose creator is deactivated.
+2. ~~Account renewal and ownership~~ Shipped (F6b, #341; see above). Still open: a periodic review separate from expiry.
 3. **Expiry notifications and usage visibility**: notify Organization Admins before a credential or account expires, and show recent use (count and last source) without writing per request.
 4. **Customer entitlement self-service for service accounts**: let an Organization Admin grant fund/document entitlements to an account (and people) within their data rights.
 5. **Multi-workspace accounts and the `accountadmin` role decision**.

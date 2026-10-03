@@ -185,8 +185,6 @@ export type ConnectionControls = {
   revoke: boolean;
   /** A connectivity test can be run on demand for every live connection. */
   test: boolean;
-  /** Set when reauthorize is unavailable for a reason other than the connection's state. */
-  reauthorizeUnavailableReason?: string;
 };
 
 export type ConnectionHealth = {
@@ -206,8 +204,6 @@ export type ConnectionHealth = {
   action: RequiredAction;
   controls: ConnectionControls;
 };
-
-const OAUTH_REAUTHORIZE_UNAVAILABLE = "Reauthorizing a connection that signs in with OAuth needs the provider redirect flow, which is not available yet. Contact support to renew it.";
 
 /** "just now", "3 hours ago", "5 days ago". Unparseable input is "unknown". */
 export function describeAge(from: string | undefined, now: Date): string {
@@ -258,15 +254,12 @@ function knownErrorClass(errorClass: string | undefined): SourceConnectorErrorCl
 function controlsFor(record: SourceConnectionRecord, status: SourceConnectionStatus | undefined): ConnectionControls {
   // A state this page does not recognise offers no controls: it must not guess at the server's rules.
   if (status === undefined) return { pause: false, resume: false, reauthorize: false, revoke: false, test: false };
-  const oauth = isOAuthCredential(record.credentialType);
-  const stateAllowsReauthorize = "status" in connectionTransition("reauthorize", status);
   return {
     pause: "status" in connectionTransition("pause", status),
     resume: "status" in connectionTransition("resume", status),
-    reauthorize: stateAllowsReauthorize && !oauth,
+    reauthorize: "status" in connectionTransition("reauthorize", status),
     revoke: status !== "revoked",
     test: status !== "revoked",
-    ...(stateAllowsReauthorize && oauth ? { reauthorizeUnavailableReason: OAUTH_REAUTHORIZE_UNAVAILABLE } : {}),
   };
 }
 
@@ -384,14 +377,21 @@ export const CONNECTION_ACTION_COPY = {
   },
 } as const satisfies Record<"pause" | "resume" | "revoke", ActionDialogCopy>;
 
-/** How a reauthorization dialog collects the new credential for a credential type. */
+/**
+ * How a reauthorization dialog collects the new credential for a credential type. A connection that signs in with
+ * OAuth is renewed by signing in again at the provider, so there is nothing to type (`oauth`); a client-credentials
+ * connection has no sign-in and takes its client credentials as a pasted JSON object.
+ */
 export type CredentialInput =
   | { kind: "token"; label: string; hint: string }
   | { kind: "json"; label: string; hint: string }
-  | { kind: "unsupported"; reason: string };
+  | { kind: "oauth" };
+
+export const OAUTH_REAUTHORIZE_REQUIRES_SIGN_IN = "Sign in with the provider to reauthorize this connection.";
 
 export function credentialInput(credentialType: string): CredentialInput {
-  if (isOAuthCredential(credentialType)) return { kind: "unsupported", reason: OAUTH_REAUTHORIZE_UNAVAILABLE };
+  if (credentialType === "oauth_authorization_code") return { kind: "oauth" };
+  if (credentialType === "oauth_client_credentials") return { kind: "json", label: "New client credentials (JSON)", hint: "Paste the client credentials as a JSON object. It is sent once, never shown again and never stored in your browser." };
   if (credentialType === "service_account") return { kind: "json", label: "New service account key (JSON)", hint: "Paste the full JSON key. It is sent once, never shown again and never stored in your browser." };
   if (credentialType === "browser_session") return { kind: "token", label: "New session token", hint: "Paste the session token the provider issued. It is sent once, never shown again and never stored in your browser." };
   return { kind: "token", label: "New API token", hint: "Paste the new token. It is sent once, never shown again and never stored in your browser." };
@@ -411,7 +411,7 @@ export function buildReauthorizeSecret(credentialType: string, raw: string): Sec
 /** The secret body for a credential typed into a form: the shared rule behind both reauthorization and the connect wizard. */
 export function buildCredentialSecret(credentialType: string, raw: string, emptyMessage: string): SecretBuildResult {
   const input = credentialInput(credentialType);
-  if (input.kind === "unsupported") return { ok: false, error: input.reason };
+  if (input.kind === "oauth") return { ok: false, error: OAUTH_REAUTHORIZE_REQUIRES_SIGN_IN };
   const value = raw.trim();
   if (!value) return { ok: false, error: emptyMessage };
   if (input.kind === "token") return { ok: true, secret: { token: value } };
@@ -434,6 +434,8 @@ export function reauthorizeOutcome(previousStatus: string): string {
 export function commandFailureMessage(action: ConnectionAction, status: number | undefined): string {
   if (status === 403) return "You do not have permission to change source connections.";
   if (status === 404) return "This connection no longer exists. Refresh the list.";
+  if (status === 422) return "This source is no longer available to reauthorize. Contact Corvis support and mention this connection's name.";
+  if (status === 429) return "Too many sign-in attempts in a short time. Wait a few minutes and try again.";
   if (status === 409) return action === "reauthorize"
     ? "This connection was revoked or changed while you were working. Refresh the list."
     : "This connection changed state while you were working. Refresh the list and try again.";

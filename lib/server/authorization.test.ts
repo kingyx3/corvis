@@ -331,3 +331,40 @@ test("a demo identity never resolves an authoritative context, and the shared re
   assert.equal(membershipAuthorizationRepository("https://fake-postgres.test/sql"), membershipAuthorizationRepository());
   assert.equal(sessionRevocationRepository("https://fake-postgres.test/sql"), sessionRevocationRepository());
 });
+
+test("session policy enforcement is observable: latency for every check, a denial count tagged with the reason, and never a subject or a session id (F7d)", async (t) => {
+  const lines: Array<Record<string, unknown>> = [];
+  t.mock.method(console, "info", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+  t.mock.method(console, "warn", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+
+  await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "ok")).resolve(principal);
+  const allowed = lines.filter((line) => line.metric === "auth.session_policy");
+  assert.equal(allowed.length, 1);
+  assert.equal(allowed[0]!.event, "metric.duration");
+  assert.equal(allowed[0]!.outcome, "ok");
+  assert.equal(typeof allowed[0]!.durationMs, "number");
+  assert.ok((allowed[0]!.durationMs as number) >= 0);
+  assert.equal(allowed[0]!.tenantId, principal.tenantId);
+  assert.equal(lines.some((line) => line.metric === "auth.session_policy_denied"), false, "an allowed session is not a denial");
+
+  lines.length = 0;
+  for (const verdict of ["idle_timeout", "max_session", "untracked_session", ""]) {
+    await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, verdict)).resolve(principal);
+  }
+  await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, null)).resolve(principal);
+  const reason = (line: Record<string, unknown>) => line.reason ?? line.outcome;
+  assert.deepEqual(lines.filter((line) => line.metric === "auth.session_policy").map(reason), ["idle_timeout", "max_session", "untracked_session", "unknown", "unknown"], "every check is timed and tagged with its verdict");
+  const denials = lines.filter((line) => line.metric === "auth.session_policy_denied");
+  assert.deepEqual(denials.map(reason), ["idle_timeout", "max_session", "untracked_session", "unknown", "unknown"]);
+  assert.ok(denials.every((line) => line.event === "metric.count" && line.value === 1 && line.tenantId === principal.tenantId));
+  assert.equal(lines.filter((line) => line.event === "auth.session_policy_denied").length, 5, "the readable warning is still logged once per denial");
+  for (const line of lines) {
+    const serialized = JSON.stringify(line);
+    assert.ok(!serialized.includes(principal.subject) && !serialized.includes(principal.sessionId), "telemetry never names the person or the session");
+  }
+
+  lines.length = 0;
+  await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve({ ...principal, authMethod: "service_account" });
+  await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve(principal, { applySessionPolicy: false });
+  assert.deepEqual(lines, [], "exempt callers are neither timed nor counted");
+});

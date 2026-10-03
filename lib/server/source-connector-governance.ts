@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
+import { OAuthCredentialExpiredError, freshOAuthCredential, type SourceOAuthClient } from "./source-oauth.ts";
+import { isOAuthCredential } from "../../core/source-connection-health.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import {
   ConnectorGovernanceError,
@@ -70,6 +72,23 @@ async function writeAudit(
     correlationId,
     metadata,
   });
+}
+
+/**
+ * Records one customer-visible event of the connect flow that changes no connection row (an OAuth sign-in started or
+ * declined) in the access audit. It stands alone, not inside another change's transaction, and a failure to write it
+ * fails the request: the flow never proceeds without its evidence. `targetId` is the connection being renewed, or the
+ * provider key for a connection that does not exist yet. Metadata holds the provider key only, never a credential.
+ */
+export async function auditSourceConnectionEvent(
+  identity: RequestIdentity,
+  correlationId: string,
+  action: string,
+  targetId: string,
+  metadata: Record<string, string | number | boolean | null> = {},
+  dependencies: { db?: PostgresSqlApi } = {},
+): Promise<void> {
+  await writeAudit(dependencies.db ?? controlDb(), identity, correlationId, action, targetId, "success", metadata);
 }
 
 async function loadRawConnection(db: PostgresSqlApi, identity: RequestIdentity, sourceConnectionId: string): Promise<PostgresRow> {
@@ -223,11 +242,58 @@ export async function reauthorizeAuditedSourceConnection(
  * provider cannot hold database locks/connections open while still ensuring a
  * status mutation cannot commit without audit evidence.
  */
+export type ConnectionCredentialRef = { sourceConnectionId: string; providerKey: string; credentialType: string; secretReference: string };
+
+/**
+ * Returns the credential to use for a connection right now. An OAuth credential that has expired, or is about to, is
+ * refreshed through its provider's client (see `freshOAuthCredential`) and the replacement is stored as a new secret
+ * and swapped in with a compare-and-set on the old reference, audited as `source_connection.token_refresh`; the old
+ * secret is destroyed only afterwards. If another request already swapped the credential, the replacement made here is
+ * destroyed and used for this call only. Any other credential type is returned untouched. Throws
+ * `OAuthCredentialExpiredError` (connector error class `reauthorization`) when an expired credential cannot be renewed.
+ * A scheduler passes this to `runConnectionSync` as its `resolveCredential`.
+ */
+export async function resolveConnectionCredential(
+  identity: RequestIdentity,
+  connection: ConnectionCredentialRef,
+  credential: SecretPayload,
+  correlationId: string,
+  dependencies: { db?: PostgresSqlApi; secrets: SecretStore; oauthClient?: (providerKey: string) => SourceOAuthClient | undefined; now?: () => number },
+): Promise<SecretPayload> {
+  if (!isOAuthCredential(connection.credentialType)) return credential;
+  const fresh = await freshOAuthCredential(credential, dependencies.oauthClient?.(connection.providerKey), dependencies.now);
+  if (!fresh.refreshed) return fresh.credential;
+  const db = dependencies.db ?? controlDb();
+  const newReference = await dependencies.secrets.write(identity.tenantId, connection.providerKey, fresh.credential);
+  try {
+    const swapped = await withTransaction(db, async (tx) => {
+      const updated = await tx.query(`update corvis_source.source_connection set secret_reference=$3, updated_at=now()
+        where tenant_id=$1 and source_connection_id=$2::uuid and secret_reference=$4 and status<>'revoked' and workspace_id=$5::uuid
+        returning source_connection_id`,
+      [identity.tenantId, connection.sourceConnectionId, newReference, connection.secretReference, identity.workspaceId]);
+      if (updated.length === 0) return false;
+      await writeAudit(tx, identity, correlationId, "source_connection.token_refresh", connection.sourceConnectionId, "success", { providerKey: connection.providerKey });
+      return true;
+    });
+    await dependencies.secrets.revoke(swapped ? connection.secretReference : newReference).catch(() => undefined);
+  } catch (error) {
+    await dependencies.secrets.revoke(newReference).catch(() => undefined);
+    throw error;
+  }
+  return fresh.credential;
+}
+
 export async function testAuditedSourceConnection(
   identity: RequestIdentity,
   sourceConnectionId: string,
   correlationId: string,
-  dependencies: { db?: PostgresSqlApi; secrets: SecretStore; drivers: Map<string, ConnectorDriver> },
+  dependencies: {
+    db?: PostgresSqlApi;
+    secrets: SecretStore;
+    drivers: Map<string, ConnectorDriver>;
+    oauthClient?: (providerKey: string) => SourceOAuthClient | undefined;
+    now?: () => number;
+  },
 ): Promise<ConnectionTestResult> {
   const db = dependencies.db ?? controlDb();
   const row = await loadRawConnection(db, identity, sourceConnectionId);
@@ -236,8 +302,18 @@ export async function testAuditedSourceConnection(
   const providerKey = requiredText(row, "provider_key");
   const driver = dependencies.drivers.get(providerKey);
   if (!driver) throw new ConnectorGovernanceError("unregistered_provider");
-  const credential = await dependencies.secrets.read(requiredText(row, "secret_reference"));
-  const result = await driver.testConnection(credential, sourceScope(row));
+  const secretReference = requiredText(row, "secret_reference");
+  let result: ConnectionTestResult;
+  try {
+    const credential = await resolveConnectionCredential(identity, {
+      sourceConnectionId, providerKey, credentialType: requiredText(row, "credential_type"), secretReference,
+    }, await dependencies.secrets.read(secretReference), correlationId, dependencies);
+    result = await driver.testConnection(credential, sourceScope(row));
+  } catch (error) {
+    // An expired credential that cannot be renewed is a failed test with the class that sends the connection to reauthorization.
+    if (!(error instanceof OAuthCredentialExpiredError)) throw error;
+    result = { ok: false, errorClass: error.connectorErrorClass };
+  }
 
   await withTransaction(db, async (tx) => {
     if (result.ok && status === "pending_authorization") {

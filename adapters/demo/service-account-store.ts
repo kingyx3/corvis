@@ -6,6 +6,7 @@ import {
   credentialStatus,
   expiresSoon,
   serviceAccountLifecycle,
+  minimumExtensionDays,
   type CreateServiceAccountCommand,
   type ServiceAccount,
   type ServiceAccountCommand,
@@ -20,7 +21,8 @@ import { hashCredentialSecret, mintCredential } from "../../lib/server/service-a
 
 /**
  * In-memory service accounts for demo mode and the browser suites; not production evidence. Each demo tenant gets its
- * own seeded accounts on first use (one whose credential expires soon and so is flagged, one in regular use, and one
+ * own seeded accounts on first use (one whose credential expires soon and so is flagged, one in regular use, one owned by a
+ * deactivated administrator and so needing a new owner, and one
  * that was deactivated), so a test that creates, rotates or revokes under its own demo tenant header never disturbs
  * another. The rules are the Postgres rules (migration 088): the same roles, lifetimes, one current credential, a
  * rotation overlap that ends any earlier overlap, immediate revocation, a name that is unique among active accounts,
@@ -30,6 +32,9 @@ import { hashCredentialSecret, mintCredential } from "../../lib/server/service-a
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const COLLEAGUE = "morgan.lee@meridian.example";
+const SECOND_ADMIN = "priya.nair@meridian.example";
+/** An Organization Admin who was deactivated: the accounts they own need a new owner. */
+const FORMER_ADMIN = "alex.rivera@meridian.example";
 
 type StoredCredential = {
   credentialId: string;
@@ -52,6 +57,7 @@ type StoredAccount = {
   createdBy: string;
   createdAt: string;
   expiresAt: string;
+  owner: { subject: string; assignedAt: string };
   disabled: { at: string; by: string; reason: string } | null;
   credentials: StoredCredential[];
 };
@@ -81,23 +87,32 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
       credentialId: randomUUID(), secretSha256: hashCredentialSecret(randomUUID()), createdBy: COLLEAGUE, createdAt: this.iso(createdOffset),
       expiresAt: this.iso(expiresOffset), endsAt: null, revokedAt: null, lastUsedAt: lastUsedOffset === null ? null : this.iso(lastUsedOffset), ...extra,
     });
-    const account = (name: string, purpose: string, roleName: ServiceAccountRole, createdOffset: number, expiresOffset: number, credentials: StoredCredential[], disabled: StoredAccount["disabled"] = null): StoredAccount => ({
+    const account = (name: string, purpose: string, roleName: ServiceAccountRole, createdOffset: number, expiresOffset: number, credentials: StoredCredential[], disabled: StoredAccount["disabled"] = null, creator = COLLEAGUE): StoredAccount => ({
       serviceAccountId: randomUUID(), userId: randomUUID(), name, purpose, workspaceId: identity.workspaceId, workspaceName: this.workspaceName(identity), roleName,
-      createdBy: COLLEAGUE, createdAt: this.iso(createdOffset), expiresAt: this.iso(expiresOffset), disabled, credentials,
+      createdBy: creator, createdAt: this.iso(createdOffset), expiresAt: this.iso(expiresOffset), owner: { subject: creator, assignedAt: this.iso(createdOffset) }, disabled, credentials,
     });
     return [
       account("Nightly reporting sync", "Pulls published fund data into the reporting warehouse every night", "analyst", -200 * DAY_MS, 165 * DAY_MS,
         [credential(-85 * DAY_MS, 9 * DAY_MS, -2 * HOUR_MS)]),
       account("Compliance export reader", "Reads approved observations for the compliance archive", "viewer", -30 * DAY_MS, 335 * DAY_MS,
         [credential(-30 * DAY_MS, 60 * DAY_MS, -3 * DAY_MS)]),
+      // Created, and so owned, by an administrator who has since been deactivated: it keeps working and needs a new owner.
+      account("Partner data feed", "Receives a partner's published reference data", "viewer", -90 * DAY_MS, 275 * DAY_MS,
+        [credential(-60 * DAY_MS, 40 * DAY_MS, -1 * DAY_MS)], null, FORMER_ADMIN),
       account("Retired data bridge", "Legacy integration, replaced by the nightly reporting sync", "reviewer", -300 * DAY_MS, 65 * DAY_MS,
         [credential(-300 * DAY_MS, 20 * DAY_MS, -40 * DAY_MS, { endsAt: this.iso(-35 * DAY_MS), revokedAt: this.iso(-35 * DAY_MS) })],
         { at: this.iso(-35 * DAY_MS), by: COLLEAGUE, reason: "Replaced by the nightly reporting sync" }),
     ];
   }
 
-  private view(account: StoredAccount): ServiceAccount {
+  /** The Organization Admins of a demo tenant who are active: whoever is signed in and two colleagues. The former admin is not. */
+  private activeAdmins(identity: RequestIdentity): string[] {
+    return [...new Set([identity.subject, COLLEAGUE, SECOND_ADMIN])].sort();
+  }
+
+  private view(account: StoredAccount, identity: RequestIdentity): ServiceAccount {
     const now = this.now();
+    const ownerActive = this.activeAdmins(identity).includes(account.owner.subject);
     const credentials: ServiceAccountCredential[] = [...account.credentials]
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.credentialId < b.credentialId ? 1 : -1))
       .slice(0, SERVICE_ACCOUNT_CREDENTIAL_HISTORY)
@@ -111,8 +126,9 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
     return {
       serviceAccountId: account.serviceAccountId, userId: account.userId, name: account.name, purpose: account.purpose, workspaceId: account.workspaceId,
       workspaceName: account.workspaceName, roleName: account.roleName, createdBy: account.createdBy, createdAt: account.createdAt, expiresAt: account.expiresAt,
-      disabledAt: account.disabled?.at ?? null, disabledBy: account.disabled?.by ?? null, disableReason: account.disabled?.reason ?? null, credentials,
-      ...serviceAccountLifecycle({ disabled: account.disabled !== null, expiresAt: account.expiresAt, credentials }, now),
+      disabledAt: account.disabled?.at ?? null, disabledBy: account.disabled?.by ?? null, disableReason: account.disabled?.reason ?? null,
+      ownerSubject: account.owner.subject, ownerAssignedAt: account.owner.assignedAt, ownerActive, credentials,
+      ...serviceAccountLifecycle({ disabled: account.disabled !== null, expiresAt: account.expiresAt, ownerActive, credentials }, now),
     };
   }
 
@@ -123,12 +139,12 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
   }
 
   async list(identity: RequestIdentity): Promise<ServiceAccountList> {
-    const serviceAccounts = [...this.accounts(identity)].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).map((account) => this.view(account));
-    return { serviceAccounts, workspaces: [{ workspaceId: identity.workspaceId, name: this.workspaceName(identity) }] };
+    const serviceAccounts = [...this.accounts(identity)].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).map((account) => this.view(account, identity));
+    return { serviceAccounts, workspaces: [{ workspaceId: identity.workspaceId, name: this.workspaceName(identity) }], owners: this.activeAdmins(identity).map((subject) => ({ subject })) };
   }
 
   async get(identity: RequestIdentity, serviceAccountId: string): Promise<ServiceAccount> {
-    return this.view(this.find(identity, serviceAccountId));
+    return this.view(this.find(identity, serviceAccountId), identity);
   }
 
   async create(identity: RequestIdentity, command: CreateServiceAccountCommand): Promise<ServiceAccountCreated> {
@@ -142,10 +158,11 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
     const credential = this.newCredential(identity, minted, daysFromNow(command.credentialExpiresInDays, this.now()), expiresAt);
     const account: StoredAccount = {
       serviceAccountId: randomUUID(), userId: randomUUID(), name: command.name, purpose: command.purpose, workspaceId: command.workspaceId,
-      workspaceName: this.workspaceName(identity), roleName: command.roleName, createdBy: identity.subject, createdAt: this.iso(), expiresAt, disabled: null, credentials: [credential],
+      workspaceName: this.workspaceName(identity), roleName: command.roleName, createdBy: identity.subject, createdAt: this.iso(), expiresAt,
+      owner: { subject: identity.subject, assignedAt: this.iso() }, disabled: null, credentials: [credential],
     };
     accounts.push(account);
-    return { serviceAccount: this.view(account), credential: { credentialId: minted.credentialId, secret: minted.secret, expiresAt: credential.expiresAt } };
+    return { serviceAccount: this.view(account, identity), credential: { credentialId: minted.credentialId, secret: minted.secret, expiresAt: credential.expiresAt } };
   }
 
   /** A credential never outlives its account. */
@@ -178,7 +195,7 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
     const minted = mintCredential();
     const credential = this.newCredential(identity, minted, daysFromNow(command.credentialExpiresInDays, this.now()), account.expiresAt);
     account.credentials.push(credential);
-    return { serviceAccount: this.view(account), credential: { credentialId: minted.credentialId, secret: minted.secret, expiresAt: credential.expiresAt } };
+    return { serviceAccount: this.view(account, identity), credential: { credentialId: minted.credentialId, secret: minted.secret, expiresAt: credential.expiresAt } };
   }
 
   async revoke(identity: RequestIdentity, serviceAccountId: string): Promise<{ serviceAccount: ServiceAccount; revokedCredentials: number }> {
@@ -187,7 +204,7 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
     const inUse = account.credentials.filter((stored) => stored.revokedAt === null && Date.parse(stored.expiresAt) > now && (stored.endsAt === null || Date.parse(stored.endsAt) > now));
     if (inUse.length === 0) throw new ServiceAccountError("service_account_no_active_credential", 409);
     for (const stored of inUse) { stored.revokedAt = this.iso(); stored.endsAt = stored.revokedAt; }
-    return { serviceAccount: this.view(account), revokedCredentials: inUse.length };
+    return { serviceAccount: this.view(account, identity), revokedCredentials: inUse.length };
   }
 
   async disable(identity: RequestIdentity, serviceAccountId: string, reason: string): Promise<ServiceAccount> {
@@ -201,12 +218,36 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
       }
     }
     account.disabled = { at, by: identity.subject, reason };
-    return this.view(account);
+    return this.view(account, identity);
+  }
+
+  async extend(identity: RequestIdentity, serviceAccountId: string, command: Extract<ServiceAccountCommand, { action: "extend" }>): Promise<{ serviceAccount: ServiceAccount; previousExpiresAt: string }> {
+    const account = this.find(identity, serviceAccountId);
+    if (account.disabled !== null) throw new ServiceAccountError("service_account_not_active", 409);
+    if (!this.activeAdmins(identity).includes(account.owner.subject)) throw new ServiceAccountError("service_account_needs_owner", 409);
+    // The new expiry must be later than the current one (and so than now), as the SQL function requires.
+    if (command.expiresInDays < minimumExtensionDays(account.expiresAt, this.now())) throw new ServiceAccountError("invalid_expiry", 400);
+    const previousExpiresAt = account.expiresAt;
+    account.expiresAt = daysFromNow(command.expiresInDays, this.now());
+    return { serviceAccount: this.view(account, identity), previousExpiresAt };
+  }
+
+  async transferOwner(identity: RequestIdentity, serviceAccountId: string, ownerSubject: string): Promise<{ serviceAccount: ServiceAccount; previousOwner: string }> {
+    const account = this.find(identity, serviceAccountId);
+    if (account.disabled !== null) throw new ServiceAccountError("service_account_not_active", 409);
+    if (!this.activeAdmins(identity).includes(ownerSubject)) throw new ServiceAccountError("service_account_owner_invalid", 422);
+    if (ownerSubject === account.owner.subject) throw new ServiceAccountError("service_account_owner_unchanged", 409);
+    const previousOwner = account.owner.subject;
+    account.owner = { subject: ownerSubject, assignedAt: this.iso() };
+    return { serviceAccount: this.view(account, identity), previousOwner };
   }
 }
 
+// Deliberately module state, not `globalThis`: the store throws `ServiceAccountError`, and `next dev` re-evaluating the
+// modules (when another route is compiled) would leave a surviving store throwing the previous copy of that class, which
+// the routes' `instanceof` checks no longer recognise (a 500 instead of a 409).
 let store: DemoServiceAccountStore | undefined;
-/** The process-wide demo store (module state, like the other demo stores). */
+/** The process-wide demo store. */
 export function demoServiceAccountStore(): DemoServiceAccountStore {
   store ??= new DemoServiceAccountStore();
   return store;

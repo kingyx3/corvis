@@ -18,6 +18,7 @@ import {
   exportScheduleErrorMessage,
   listExportScheduleRuns,
   listExportSchedules,
+  setExportScheduleNotification,
   setExportScheduleStatus,
   type ScheduleScopeChoice,
 } from "@/features/export-schedules/api";
@@ -68,6 +69,17 @@ export function ExportSchedulesPanel({ canViewAll, refreshKey = 0 }: { canViewAl
       setMessage({ tone: "error", text: exportScheduleErrorMessage(reason, "The schedule could not be changed. Try again.") });
     } finally { setBusy(null); }
   };
+  const toggleNotification = async (item: ExportSchedule) => {
+    setBusy(item.scheduleId);
+    setMessage(null);
+    try {
+      await setExportScheduleNotification(item.scheduleId, !item.notifyOnCompletion);
+      setMessage({ tone: "success", text: item.notifyOnCompletion ? `Emails about “${item.label}” are off.` : `Emails about “${item.label}” are on.` });
+      reload();
+    } catch (reason) {
+      setMessage({ tone: "error", text: exportScheduleErrorMessage(reason, "The notification setting could not be changed. Try again.") });
+    } finally { setBusy(null); }
+  };
   const remove = async (item: ExportSchedule) => {
     setBusy(item.scheduleId);
     setMessage(null);
@@ -105,7 +117,9 @@ export function ExportSchedulesPanel({ canViewAll, refreshKey = 0 }: { canViewAl
           </div>
           <p className="data-issue-summary">{EXPORT_SCHEDULE_TRIGGER_LABEL[item.trigger]}. {scheduleSummary(item)}</p>
           <p className="data-issue-summary">{item.nextRunAt ? <>Next run: <time dateTime={item.nextRunAt}>{displayDate(item.nextRunAt, { dateStyle: "medium" })}</time> (UTC). </> : null}{item.lastRun ? `Last run ${displayDate(item.lastRun.createdAt, { timeStyle: "short" })}: ${runResult(item.lastRun).pill}${item.lastRun.failureReason ? ` — ${EXPORT_SCHEDULE_FAILURE_REASON_LABEL[item.lastRun.failureReason]}` : ""}.` : "It has not run yet."}</p>
+          <p className="data-issue-summary">{item.notifyOnCompletion ? "The owner is emailed when a run is ready, and when a run is refused or fails." : "Emails about this schedule are off. Runs still appear below."}</p>
           {item.ownedByMe && <div className="data-issue-actions">
+            <button type="button" className="secondary-button" disabled={busy === item.scheduleId} aria-pressed={item.notifyOnCompletion} aria-label={`Email me about ${item.label}`} onClick={() => void toggleNotification(item)}>{item.notifyOnCompletion ? "Emails on" : "Emails off"}</button>
             {item.status === "active" && <button type="button" className="secondary-button" disabled={busy === item.scheduleId} aria-label={`Pause ${item.label}`} onClick={() => void change(item, "pause")}>Pause</button>}
             {item.status === "paused" && <button type="button" className="secondary-button" disabled={busy === item.scheduleId} aria-label={`Resume ${item.label}`} onClick={() => void change(item, "resume")}>Resume</button>}
             {confirmDelete === item.scheduleId

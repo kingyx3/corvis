@@ -61,6 +61,11 @@ test("the delivery route reports an upload sweep with errors as a failed task", 
   assert.match(route, /failed\.push\("uploadSweep"\)/);
 });
 
+test("the delivery tick sweeps expired pending-OAuth-attempt secrets on a store with no native expiry", async () => {
+  const route = await read("app/api/internal/delivery/route.ts");
+  assert.match(route, /sourceSecretSweep:\(\)=>sweepExpiredSourceSecrets\(\)/);
+});
+
 test("known-good only advances to the release the promotion accepted", async () => {
   const acceptance = await read(".github/workflows/security-acceptance.yml");
   const deploy = await read(".github/workflows/terraform-deploy.yml");

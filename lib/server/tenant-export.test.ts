@@ -5,6 +5,7 @@ import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import type { RedeemedTenantExport } from "./tenant-export.ts";
+import { InvalidCursorError, decodeCursor, encodeCursor } from "./pagination.ts";
 
 // data-governance.ts reaches the Next.js "@/..." alias through http.ts; see lib/server/http.test.ts.
 register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -13,6 +14,8 @@ const {
   PostgresTenantExportBackend,
   TENANT_EXPORT_LINK_MINUTES,
   artifactScope,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
   isUuid,
   tenantExportAuditEvent,
   toTenantExportRequest,
@@ -156,12 +159,55 @@ test("a malformed workspace, and a concurrent request that loses the race, are c
   await assert.rejects(() => backend(odd).request(identity(), { reason: "Records review" }), (error) => error === null);
 });
 
-test("listing is tenant-scoped, newest first and bounded", async () => {
-  const db = new FakeDb(() => [row(), completeRow({ request_id: "9f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f" })]);
-  const items = await backend(db).list(morgan);
-  assert.equal(items.length, 2);
-  assert.match(db.calls[0]!.sql, /where r\.tenant_id = \$1::uuid order by r\.requested_at desc, r\.request_id desc limit 50/);
-  assert.deepEqual(db.calls[0]!.parameters, [TENANT]);
+test("listing is tenant-scoped, newest first and one page at a time", async () => {
+  const db = new FakeDb(() => [row({ cursor_at: "2026-10-01T10:00:00.000002Z" }), completeRow({ request_id: "9f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f", cursor_at: "2026-10-01T09:00:00.000001Z" })]);
+  const page = await backend(db).list(morgan, { limit: 5 });
+  assert.equal(page.items.length, 2);
+  assert.equal(page.nextCursor, null);
+  assert.match(db.calls[0]!.sql, /where r\.tenant_id = \$1::uuid\s+order by r\.requested_at desc, r\.request_id desc limit \$2::integer/);
+  assert.deepEqual(db.calls[0]!.parameters, [TENANT, 6], "one row past the page is fetched to know whether another page exists");
+});
+
+test("paging is a newest-first keyset: the cursor carries the last row's microsecond timestamp and id (F10f)", async () => {
+  const second = "9f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f";
+  const rows = [
+    row({ cursor_at: "2026-10-01T10:00:00.000002Z" }),
+    row({ request_id: second, cursor_at: "2026-10-01T10:00:00.000001Z" }),
+    row({ request_id: "a0000000-0000-4000-8000-00000000000a", cursor_at: "2026-10-01T09:00:00.000000Z" }),
+  ];
+  const db = new FakeDb(() => rows);
+  const page = await backend(db).list(morgan, { limit: 2 });
+  assert.deepEqual(page.items.map((item) => item.requestId), [REQUEST, second]);
+  assert.ok(page.nextCursor);
+  assert.equal(decodeCursor(page.nextCursor), `2026-10-01T10:00:00.000001Z|${second}`);
+  assert.match(db.calls[0]!.sql, /to_char\(r\.requested_at at time zone 'UTC'/, "the cursor timestamp keeps microseconds");
+
+  await backend(db).list(morgan, { limit: 2, cursor: page.nextCursor });
+  assert.match(db.calls[1]!.sql, /\(r\.requested_at, r\.request_id\) < \(\$2::timestamptz, \$3::uuid\)/);
+  assert.deepEqual(db.calls[1]!.parameters, [TENANT, "2026-10-01T10:00:00.000001Z", second, 3]);
+
+  const exact = new FakeDb(() => rows.slice(0, 2));
+  assert.equal((await backend(exact).list(morgan, { limit: 2 })).nextCursor, null, "exactly a full page is the last page");
+  assert.deepEqual(await backend(new FakeDb(() => [])).list(morgan, { limit: 2 }), { items: [], nextCursor: null });
+});
+
+test("a tampered or foreign cursor is rejected before any query runs, and a re-cased id cannot split a page boundary", async () => {
+  const db = new FakeDb();
+  const bad = [
+    "not-base64-json",
+    encodeCursor("no-separator"),
+    encodeCursor(`2026-10-01T10:00:00Z|${REQUEST}`),
+    encodeCursor("2026-10-01T10:00:00.000000Z|not-a-uuid"),
+    encodeCursor(`0000-10-01T10:00:00.000000Z|${REQUEST}`),
+    encodeCursor(`2026-02-30T10:00:00.000000Z|${REQUEST}`),
+    encodeCursor(`2026-13-01T10:00:00.000000Z|${REQUEST}`),
+  ];
+  for (const cursor of bad) await assert.rejects(() => backend(db).list(morgan, { limit: 5, cursor }), InvalidCursorError, cursor);
+  assert.equal(db.calls.length, 0);
+  const ok = new FakeDb(() => []);
+  await backend(ok).list(morgan, { limit: 5, cursor: encodeCursor(`2026-10-01T10:00:00.000000Z|${REQUEST.toUpperCase()}`) });
+  assert.equal(ok.calls[0]!.parameters[2], REQUEST);
+  assert.deepEqual(decodeKeysetCursor(encodeKeysetCursor("2026-10-01T10:00:00.000000Z", REQUEST)), { at: "2026-10-01T10:00:00.000000Z", id: REQUEST });
 });
 
 test("one request is read with its history; a missing or malformed id is the same 404", async () => {
@@ -204,7 +250,7 @@ test("a link is issued only for a downloadable export whose data is still redist
   assert.deepEqual(insert.parameters, [TENANT, REQUEST, "idp|morgan", sha(token), TENANT_EXPORT_LINK_MINUTES]);
   assert.match(insert.sql, /least\(r\.artifact_expires_at, now\(\) \+ make_interval\(mins => \$5\)\)/);
   assert.equal(JSON.stringify(db.calls).includes(token), false, "the token itself is never stored or logged in a query");
-  assert.match(db.executed[0]!.sql, /delete from corvis_control\.tenant_export_download_grant[\s\S]*expires_at < now\(\) - interval '1 day'/);
+  assert.equal(db.executed.length, 0, "issuing a link only inserts the grant; expired ones are removed by the periodic sweep, not on this path");
 
   const second = await backend(db).issueDownload(morgan, REQUEST);
   assert.notEqual(second.download.downloadUrl, download.downloadUrl, "every link is fresh");

@@ -16,6 +16,7 @@ import {
   parseCreateScheduleCommand,
   parseExportScheduleScope,
   parseScheduleAction,
+  parseSchedulePatch,
   publishTriggerKey,
   scheduleSummary,
   scopeFundId,
@@ -62,7 +63,7 @@ test("the saved scope is exactly what an Export this view request carries", () =
 });
 
 test("a new schedule is validated: scope, format, trigger, a bounded single-line label and one idempotency key", () => {
-  assert.deepEqual(parseCreateScheduleCommand(body), { idempotencyKey: "key-1", label: "Monthly sparrow", scope: position, format: "csv", trigger: "monthly" });
+  assert.deepEqual(parseCreateScheduleCommand(body), { idempotencyKey: "key-1", label: "Monthly sparrow", scope: position, format: "csv", trigger: "monthly", notifyOnCompletion: true });
   for (const format of ["csv", "xlsx", "parquet"]) assert.equal(parseCreateScheduleCommand({ ...body, format }).format, format);
   for (const trigger of ["on_publish", "monthly", "quarterly"]) assert.equal(parseCreateScheduleCommand({ ...body, trigger }).trigger, trigger);
   assert.equal(parseCreateScheduleCommand({ ...body, label: `  ${"x".repeat(MAX_SCHEDULE_LABEL_LENGTH)}  ` }).label, "x".repeat(MAX_SCHEDULE_LABEL_LENGTH));
@@ -93,6 +94,26 @@ test("the owner's only actions are pause and resume", () => {
   assert.equal(parseScheduleAction({ action: "resume" }), "resume");
   for (const bad of [{ action: "delete" }, { action: "PAUSE" }, {}, { action: 1 }]) assert.throws(() => parseScheduleAction(bad), refusal("invalid_action"));
   for (const bad of [undefined, null, "pause", []]) assert.throws(() => parseScheduleAction(bad), refusal("invalid_request"));
+});
+
+test("emails about a schedule are opt-out at creation: on unless the request says false, and only a boolean says anything", () => {
+  assert.equal(parseCreateScheduleCommand(body).notifyOnCompletion, true);
+  assert.equal(parseCreateScheduleCommand({ ...body, notifyOnCompletion: true }).notifyOnCompletion, true);
+  assert.equal(parseCreateScheduleCommand({ ...body, notifyOnCompletion: false }).notifyOnCompletion, false);
+  for (const bad of [null, "false", 0, 1, "yes", {}]) assert.throws(() => parseCreateScheduleCommand({ ...body, notifyOnCompletion: bad }), refusal("invalid_notify_on_completion"), String(bad));
+});
+
+test("one owner change per request: pause or resume, or the notification switch, never both", () => {
+  assert.deepEqual(parseSchedulePatch({ action: "pause" }), { kind: "action", action: "pause" });
+  assert.deepEqual(parseSchedulePatch({ action: "resume" }), { kind: "action", action: "resume" });
+  assert.deepEqual(parseSchedulePatch({ notifyOnCompletion: false }), { kind: "notification", notifyOnCompletion: false });
+  assert.deepEqual(parseSchedulePatch({ notifyOnCompletion: true }), { kind: "notification", notifyOnCompletion: true });
+  assert.throws(() => parseSchedulePatch({ action: "pause", notifyOnCompletion: false }), refusal("invalid_request"));
+  assert.throws(() => parseSchedulePatch({ notifyOnCompletion: "no" }), refusal("invalid_notify_on_completion"));
+  assert.throws(() => parseSchedulePatch({ notifyOnCompletion: null }), refusal("invalid_notify_on_completion"));
+  assert.throws(() => parseSchedulePatch({}), refusal("invalid_action"));
+  assert.throws(() => parseSchedulePatch({ action: "delete" }), refusal("invalid_action"));
+  for (const bad of [undefined, null, "pause", []]) assert.throws(() => parseSchedulePatch(bad), refusal("invalid_request"));
 });
 
 test("calendar triggers are the first of the next month or quarter in UTC", () => {

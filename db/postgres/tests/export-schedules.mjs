@@ -1,3 +1,4 @@
+// (F4b, #328: also the owner's per-schedule notification switch, the run webhook events and the refusal email, end to end.)
 // Real-Postgres acceptance for scheduled exports (F4, #260), through the application code: the backend and the worker in
 // lib/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
 // (createPhysicalExport) inside one transaction that is always rolled back. Covers what the pure-SQL test
@@ -10,6 +11,10 @@ import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
 import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../lib/server/export-schedule.ts';
 import { listPhysicalExportStatuses } from '../../../lib/server/export-history.ts';
+import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
+import { notifyScheduledExportOutcome } from '../../../lib/server/export-schedule-notifications.ts';
+import { processEmailOutbox } from '../../../lib/server/notifications.ts';
+import { processQueuedExports } from '../../../lib/server/delivery.ts';
 
 console.info = () => undefined;
 const dsn = process.env.CORVIS_POSTGRES_DSN;
@@ -36,7 +41,8 @@ function identity(person, overrides = {}) {
 }
 const asBoss = identity(boss, { roles: ['admin'], isTenantAdmin: true });
 const position = { positionFinancials: { fundId: 'fund-x', holdingId: 'holding-1', companyId: 'company-1', periodicity: 'quarterly' } };
-const command = (key, overrides = {}) => ({ idempotencyKey: key, label: `Schedule ${key}`, scope: { snapshotId: snapshotA }, format: 'csv', trigger: 'monthly', ...overrides });
+const command = (key, overrides = {}) => ({ idempotencyKey: key, label: `Schedule ${key}`, scope: { snapshotId: snapshotA }, format: 'csv', trigger: 'monthly', notifyOnCompletion: true, ...overrides });
+const appUrl = 'https://app.corvis.test';
 // A statement that raises aborts a Postgres transaction, so every expected refusal runs under its own savepoint.
 async function refused(tx, run) {
   await tx.execute('savepoint probe');
@@ -135,6 +141,56 @@ try {
     assert.equal((await backend.listRuns(identity(colleague), { scope: 'mine', limit: 10 }, tx)).items.length, 0);
     assert.equal((await backend.listRuns(asBoss, { scope: 'all', limit: 10 }, tx)).items.length, 1);
 
+    // ------------------------------------------------------------ F4b: the owner's switch, the completion event and the ready email
+    await tx.execute(`insert into corvis_control.notification_recipient (tenant_id,user_id,email,source) values ($1,$2,'owner@example.com','verified_identity_claim')`, [tenantId, owner.userId]);
+    assert.equal(monthly.item.notifyOnCompletion, true, 'on by default');
+    const runIdOf = async (triggerKey, scheduleId) => (await tx.query(`select run_id from corvis_control.export_schedule_run where tenant_id=$1 and schedule_id=$2 and trigger_key=$3`, [tenantId, scheduleId, triggerKey]))[0].run_id;
+    const eventsOf = async (type) => (await tx.query(`select aggregate_id,payload from corvis_control.outbox_event where tenant_id=$1 and event_type=$2 order by created_at,aggregate_id`, [tenantId, type])).map((row) => ({ runId: row.aggregate_id, ...row.payload }));
+    const readyRows = () => count(`select count(*)::int as n from corvis_control.email_outbox where tenant_id=$1 and category='export_ready'`);
+    const off = await backend.setNotification(identity(owner), monthly.item.scheduleId, false, tx);
+    assert.equal(off.notifyOnCompletion, false);
+    assert.equal((await refused(tx, () => backend.setNotification(asBoss, monthly.item.scheduleId, true, tx))).code, 'export_schedule_not_found', 'only the owner changes the switch');
+    assert.equal((await refused(tx, () => backend.setNotification(identity(colleague), monthly.item.scheduleId, true, tx))).code, 'export_schedule_not_found');
+    assert.equal((await backend.get(identity(owner), monthly.item.scheduleId, tx)).notifyOnCompletion, false, 'refused changes leave the switch alone');
+    // The export worker re-authorizes its requester and needs some document entitlement to read published rows (there are none here, so the files are empty).
+    // It is granted only around the worker runs below, so the refusal scenarios after them keep their fixture.
+    await tx.execute(`insert into corvis_control.resource_entitlement (tenant_id,workspace_id,subject_user_id,resource_type,resource_id,permission) values ($1,$2,$3,'document','doc-x','read')`, [tenantId, workspaceId, owner.userId]);
+    await tx.execute(`insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible) values ($1,'document','doc-x',true)`, [tenantId]);
+    // The real export worker finishes the export (against a fake object store): the completion event does not depend on the
+    // owner's email switch, the ready email does.
+    const stored = [];
+    const objects = { bucket: 'corvis-exports', async putObject(key) { stored.push(key); }, async deleteObject() {} };
+    assert.deepEqual(await processQueuedExports(5, tx, () => 0.5, objects), { processed: 1, failed: 0 });
+    assert.equal((await tx.query(`select state from corvis_serving.export_job where export_id=$1`, [run.export_id]))[0].state, 'complete');
+    assert.equal(await readyRows(), 0, 'switched off: the owner is not emailed about this schedule\'s run');
+    assert.deepEqual(await eventsOf('ExportScheduleRunCompleted'), [{ runId: await runIdOf(run.trigger_key, monthly.item.scheduleId), scheduleId: monthly.item.scheduleId, scheduleLabel: 'Schedule m-1', exportId: run.export_id }],
+      'one completion event naming the schedule, its label, the run and the export, and nothing else');
+    await notifyScheduledExportOutcome(tx, { tenantId, exportId: run.export_id, outcome: 'complete' });
+    assert.equal((await eventsOf('ExportScheduleRunCompleted')).length, 1, 'announced once, however often the export worker reports it');
+    assert.equal((await backend.setNotification(identity(owner), monthly.item.scheduleId, true, tx)).notifyOnCompletion, true);
+    // A second schedule of the same owner, switched on: its run completes and the owner is emailed, as for any export.
+    const loud = await backend.create(identity(owner), command('m-loud'), tx);
+    await forceDue(loud.item.scheduleId);
+    assert.deepEqual(await tick(), { stopped: 0, requested: 1, failed: 0, errors: 0 });
+    assert.deepEqual(await processQueuedExports(5, tx, () => 0.5, objects), { processed: 1, failed: 0 });
+    assert.equal(await readyRows(), 1, 'switched on: the owner is emailed');
+    assert.equal((await eventsOf('ExportScheduleRunCompleted')).length, 2);
+    assert.deepEqual((await audits(monthly.item.scheduleId)).map(([action]) => action), ['export_schedule.run']);
+    await notifyScheduledExportOutcome(tx, { tenantId, exportId: 'f4000000-0000-4000-8000-0000000000e8', outcome: 'complete' });
+    assert.equal((await eventsOf('ExportScheduleRunCompleted')).length, 2, 'an export no schedule requested announces no schedule event');
+    // An export that ran out of delivery attempts ends its run in a failure notice (webhook event, and the owner's email).
+    const failing = await backend.create(identity(owner), command('m-failing'), tx);
+    await forceDue(failing.item.scheduleId);
+    assert.deepEqual(await tick(), { stopped: 0, requested: 1, failed: 0, errors: 0 });
+    const failedRun = (await runsOf(failing.item.scheduleId))[0];
+    await tx.execute(`update corvis_serving.export_job set state='delivering',delivery_attempts=5,delivery_started_at=now() - interval '1 hour' where export_id=$1`, [failedRun.export_id]);
+    assert.deepEqual(await processQueuedExports(5, tx, () => 0.5, objects), { processed: 0, failed: 0 }, 'a stale lease on the last attempt is reclaimed as failed');
+    assert.equal((await tx.query(`select state from corvis_serving.export_job where export_id=$1`, [failedRun.export_id]))[0].state, 'failed');
+    assert.deepEqual((await eventsOf('ExportScheduleRunFailed')).map((event) => [event.scheduleLabel, event.failureReason, event.exportId]), [['Schedule m-failing', 'export_failed', failedRun.export_id]]);
+    assert.equal(await count(`select count(*)::int as n from corvis_control.email_outbox where tenant_id=$1 and category='export_schedule_failed' and template_params->>'reason'='export_failed'`), 1);
+    await tx.execute(`delete from corvis_control.resource_entitlement where tenant_id=$1 and resource_id='doc-x'`, [tenantId]);
+    await tx.execute(`delete from corvis_control.data_rights where tenant_id=$1 and resource_id='doc-x'`, [tenantId]);
+
     // ------------------------------------------------------------ publication triggers: coalesced, scoped, refused when rights are gone
     // (The fund-level schedule has a Position Financials scope. This fixture has no position statements, so its runs are refused as
     // "scope no longer resolves": that is the fail-closed path, and exactly what should happen when the data is not there.)
@@ -151,6 +207,14 @@ try {
     const xlsx = (await tx.query(`select format,snapshot_ids from corvis_serving.export_job where export_id=$1`, [(await runsOf(forSnapshot.item.scheduleId))[0].export_id]))[0];
     assert.deepEqual([xlsx.format, xlsx.snapshot_ids], ['xlsx', [snapshotB]]);
     assert.deepEqual(await tick(), { stopped: 0, requested: 0, failed: 0, errors: 0 }, 'a publication triggers once');
+    // F4b: the refused run of the fund schedule was announced in the same transaction: a failure event and an email, reason code only.
+    const refusedRunId = await runIdOf(`publish:${snapshotB}:v1`, byFund.item.scheduleId);
+    assert.deepEqual((await eventsOf('ExportScheduleRunFailed')).filter((event) => event.failureReason !== 'export_failed'), [{ runId: refusedRunId, scheduleId: byFund.item.scheduleId, scheduleLabel: 'Fund X on publish', failureReason: 'scope_unavailable' }]);
+    const failureMail = await tx.query(`select recipient_user_id::text,workspace_id::text,fund_id,required_roles,template_params,dedupe_key from corvis_control.email_outbox where tenant_id=$1 and category='export_schedule_failed' and template_params->>'reason' <> 'export_failed'`, [tenantId]);
+    assert.deepEqual(failureMail.map((row) => [row.recipient_user_id, row.workspace_id, row.fund_id, row.required_roles, row.template_params, row.dedupe_key]),
+      [[owner.userId, workspaceId, null, null, { reason: 'scope_unavailable' }, `export_schedule_failed:${refusedRunId}`]], 'the queued notice names a reason code and nothing else');
+    // The owner turns emails off for the snapshot schedule, so its next refusal is announced to subscribers but not mailed.
+    await backend.setNotification(identity(owner), forSnapshot.item.scheduleId, false, tx);
 
     // Contractual redistribution rights are withdrawn: the next version of the snapshot is refused, nothing is exported, the reason is stable.
     await tx.execute(`update corvis_control.data_rights set redistribution_allowed=false where tenant_id=$1 and resource_type='workspace'`, [tenantId]);
@@ -160,6 +224,27 @@ try {
     const jobsBefore = await exportJobs();
     assert.deepEqual(await tick(), { stopped: 0, requested: 0, failed: 2, errors: 0 });
     assert.equal(await exportJobs(), jobsBefore, 'a refused run exports nothing');
+    assert.deepEqual((await eventsOf('ExportScheduleRunFailed')).map((event) => [event.scheduleLabel, event.failureReason]).sort(),
+      [['Fund X on publish', 'redistribution_not_permitted'], ['Fund X on publish', 'scope_unavailable'], ['Schedule m-failing', 'export_failed'], ['Schedule p-2', 'redistribution_not_permitted']], 'fail-closed refusals are announced to webhook subscribers whatever the owner\'s email switch');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.email_outbox where tenant_id=$1 and category='export_schedule_failed'`), 3, 'the two refusals of the fund schedule and the failed export are mailed; the opted-out schedule\'s refusal is not');
+    // Dispatch: the owner is emailed in words only (no schedule name, scope, fund or snapshot), and a preference can silence the category.
+    const sender = new RecordingEmailSender();
+    const dispatched = await processEmailOutbox({ db: tx, sender, appUrl });
+    assert.equal(dispatched.sent, 4, 'one ready email and three failure emails');
+    const failures = sender.sent.filter((email) => email.category === 'export_schedule_failed');
+    assert.equal(failures.length, 3);
+    assert.ok(failures.every((email) => email.to === 'owner@example.com' && email.subject === 'A scheduled Corvis export did not run'));
+    assert.deepEqual(failures.map((email) => email.text.match(/(did not run because|was requested but) [^.]*\./)?.[0]).sort(), [
+      'did not run because its scope no longer resolves to published data.',
+      'did not run because your organization\'s data rights no longer permit redistribution.',
+      'was requested but could not be delivered.',
+    ]);
+    for (const email of failures) {
+      for (const secret of ['Fund X on publish', 'Schedule p-2', 'Schedule m-failing', 'fund-x', 'company-1', snapshotA, snapshotB, 'holding-1']) {
+        assert.ok(!email.text.includes(secret) && !email.html.includes(secret) && !email.subject.includes(secret), `${secret} must never be emailed`);
+      }
+      assert.match(email.text, /Open Data delivery: https:\/\/app\.corvis\.test\//);
+    }
     const refusedRun = (await runsOf(forSnapshot.item.scheduleId))[1];
     assert.deepEqual([refusedRun.trigger_key, refusedRun.outcome, refusedRun.export_id, refusedRun.failure_reason], [`publish:${snapshotB}:v2`, 'failed', null, 'redistribution_not_permitted']);
     assert.deepEqual((await audits(forSnapshot.item.scheduleId)).map(([action, outcome]) => `${action}:${outcome}`).sort(), ['export_schedule.run:failure', 'export_schedule.run:success']);

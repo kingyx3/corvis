@@ -48,7 +48,8 @@ function accountRow(overrides: Record<string, unknown> = {}): Record<string, unk
   return {
     service_account_id: ACCOUNT, user_id: "55555555-eeee-4eee-8eee-555555555555", display_name: "Reporting sync", purpose: "Nightly", workspace_id: WORKSPACE,
     workspace_name: "Primary Workspace", role_name: "analyst", status: "active", created_by_subject: "idp|alex", created_at: "2026-10-01 08:00:00+00",
-    expires_at: "2027-10-01 08:00:00+00", disabled_at: null, disabled_by_subject: null, disable_reason: null, ...overrides,
+    expires_at: "2027-10-01 08:00:00+00", disabled_at: null, disabled_by_subject: null, disable_reason: null,
+    owner_subject: "idp|alex", owner_assigned_at: "2026-10-01 08:00:00+00", owner_active: true, ...overrides,
   };
 }
 function credentialRow(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -86,6 +87,8 @@ function world(): (query: Query) => unknown[] {
   return (query) => {
     if (/create_service_account|issue_service_account_credential/.test(query.sql)) minted = String(query.parameters[/create_service_account/.test(query.sql) ? 2 : 2]);
     if (/revoke_service_account_credentials/.test(query.sql)) return [{ revoked: 2 }];
+    if (/extend_service_account/.test(query.sql)) return [{ previous_expires_at: "2027-01-01 08:00:00+00" }];
+    if (/transfer_service_account_owner/.test(query.sql)) return [{ previous_owner: "idp|alex" }];
     if (/from corvis_control\.workspace/.test(query.sql)) return [{ workspace_id: WORKSPACE, display_name: "Primary Workspace" }];
     if (/from corvis_control\.service_account a\b/.test(query.sql)) return [accountRow()];
     if (/from corvis_control\.service_account_credential c\b/.test(query.sql)) return [credentialRow(minted)];
@@ -176,6 +179,57 @@ test("rotate, revoke and disable each audit their own action, with no secret in 
   seed(world());
   assert.equal((await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: { action: "issue" } }), params(ACCOUNT))).status, 200);
   assert.ok(queries.find(isAudit)!.parameters.includes("service_account.credential_issued"));
+});
+
+test("extending and transferring are audited with what changed, attributed to the caller; the body never names a tenant or an actor", async () => {
+  seed(world());
+  const extended = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: { action: "extend", expiresInDays: 200, tenantId: "someone-else", actor: "someone-else" } }), params(ACCOUNT));
+  assert.equal(extended.status, 200);
+  assert.equal((await body(extended)).data.credential, undefined, "an extension issues no credential");
+  const call = queries.find((query) => /extend_service_account/.test(query.sql))!;
+  assert.deepEqual([call.parameters[0], call.parameters[1], call.parameters[2], call.parameters[3]], [TENANT, ACCOUNT, "oidc", "idp|alex"]);
+  assert.equal(call.parameters.includes("someone-else"), false);
+  const audit = queries.find(isAudit)!;
+  assert.ok(audit.parameters.includes("service_account.extended"));
+  const detail = JSON.parse(String(audit.parameters.find((value) => typeof value === "string" && value.includes("previousExpiresAt")))) as Record<string, string>;
+  assert.equal(detail.previousExpiresAt, "2027-01-01T08:00:00.000Z");
+  assert.equal(detail.expiresAt, "2027-10-01T08:00:00.000Z", "what the account now says it expires");
+  assert.equal(detail.nextReviewAt, detail.expiresAt, "the lifecycle review date advances with it");
+  assert.ok(queries.indexOf(call) < queries.indexOf(audit));
+
+  seed(world());
+  const transferred = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: { action: "transfer", ownerSubject: "idp|sam" } }), params(ACCOUNT));
+  assert.equal(transferred.status, 200);
+  assert.deepEqual(queries.find((query) => /transfer_service_account_owner/.test(query.sql))!.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "idp|sam"]);
+  const transferAudit = queries.find(isAudit)!;
+  assert.ok(transferAudit.parameters.includes("service_account.owner_transferred"));
+  assert.match(String(transferAudit.parameters.find((value) => typeof value === "string" && value.includes("previousOwner"))), /"previousOwner":"idp\|alex"/);
+
+  // Bad input is a 400 before any SQL.
+  seed(world());
+  for (const bad of [{ action: "extend", expiresInDays: 400 }, { action: "extend", expiresInDays: 0 }, { action: "transfer" }, { action: "transfer", ownerSubject: "x" }]) {
+    const response = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: bad }), params(ACCOUNT));
+    assert.equal(response.status, 400, JSON.stringify(bad));
+  }
+  assert.equal(queries.length, 0);
+});
+
+test("the renewal and ownership refusals surface as stable codes, and a refused command leaves no audit event", async () => {
+  const refusals: Array<[string, string, number, string]> = [
+    ["extend", "service account needs an owner", 409, "service_account_needs_owner"],
+    ["extend", "service account expiry invalid", 400, "invalid_expiry"],
+    ["extend", "service account is not active", 409, "service_account_not_active"],
+    ["transfer", "service account owner must be an active organization admin", 422, "service_account_owner_invalid"],
+    ["transfer", "service account owner unchanged", 409, "service_account_owner_unchanged"],
+    ["transfer", "service account requires an active organization admin", 403, "tenant_admin_required"],
+  ];
+  for (const [action, message, status, error] of refusals) {
+    seed(world());
+    fail = (query) => /extend_service_account|transfer_service_account_owner/.test(query.sql) ? new PostgresDriverError("query", "P0001", message as never) : undefined;
+    const response = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: action === "extend" ? { action, expiresInDays: 30 } : { action, ownerSubject: "idp|sam" } }), params(ACCOUNT));
+    assert.deepEqual([response.status, (await body(response)).error], [status, error], message);
+    assert.equal(queries.some(isAudit), false, `${message}: a refused command is not audited`);
+  }
 });
 
 test("the SQL function's refusals surface as stable codes, and a refused command leaves no audit event", async () => {

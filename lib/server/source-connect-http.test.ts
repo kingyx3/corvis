@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import { DEMO_OAUTH_PROVIDER_KEY, DEMO_TOKEN_PROVIDER_KEY } from "../../adapters/demo/source-providers.ts";
-import { oauthRedirectUri, parseConnectRequest, parseSecret, redactedConnection, usesSecureCookies } from "./source-connect-http.ts";
+import { oauthRedirectUri, parseConnectRequest, parseOAuthStartRequest, parseSecret, redactedConnection, usesSecureCookies } from "./source-connect-http.ts";
 import type { SourceConnection } from "./source-connectors.ts";
 
 const originalDemo = process.env.CORVIS_DEMO_MODE;
@@ -57,4 +57,18 @@ test("a connect request needs a provider, a name, the confirmation and an approv
 test("a typed secret must be a non-empty object", () => {
   assert.deepEqual(parseSecret({ token: "t" }), { token: "t" });
   for (const bad of [undefined, null, [], "x", {}]) assert.throws(() => parseSecret(bad), refused("secret_required"));
+});
+
+test("an OAuth start is either a new connection (the connect body) or the renewal of one connection (only its id)", () => {
+  process.env.CORVIS_DEMO_MODE = "true";
+  const id = "00000000-0000-4000-8000-00000000d005";
+  assert.deepEqual(parseOAuthStartRequest({ sourceConnectionId: id }), { kind: "reauthorize", sourceConnectionId: id });
+  const created = parseOAuthStartRequest({ providerKey: DEMO_OAUTH_PROVIDER_KEY, connectionLabel: " Room ", scopeConfirmed: true });
+  assert.equal(created.kind, "connect");
+  assert.equal(created.kind === "connect" && created.parsed.connectionLabel, "Room");
+
+  for (const bad of [null, [], "x"]) assert.throws(() => parseOAuthStartRequest(bad), refused("invalid_request"));
+  assert.throws(() => parseOAuthStartRequest({ sourceConnectionId: 7 }), refused("invalid_request"));
+  assert.throws(() => parseOAuthStartRequest({ sourceConnectionId: "not-a-uuid" }), refused("connection_not_found"), "an id that cannot name a connection is a not-found, never a database error");
+  assert.throws(() => parseOAuthStartRequest({ providerKey: DEMO_TOKEN_PROVIDER_KEY, connectionLabel: "X", scopeConfirmed: true }), refused("unregistered_provider"));
 });
