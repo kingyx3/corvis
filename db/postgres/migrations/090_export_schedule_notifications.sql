@@ -37,11 +37,11 @@ alter table corvis_control.webhook_subscription add constraint webhook_subscript
 alter table corvis_control.email_outbox drop constraint if exists email_outbox_category_check;
 alter table corvis_control.email_outbox add constraint email_outbox_category_check check (category in (
   'invitation','export_ready','pinned_fund_published','source_attention',
-  'support_access','role_changed','digest','data_issue_update','review_discussion','security_policy','export_schedule_failed'
+  'support_access','role_changed','digest','data_issue_update','review_discussion','security_policy','tenant_export_approval','tenant_export_outcome','export_schedule_failed'
 ));
 alter table corvis_control.notification_preference drop constraint if exists notification_preference_category_check;
 alter table corvis_control.notification_preference add constraint notification_preference_category_check
-  check (category in ('export_ready','pinned_fund_published','source_attention','data_issue_update','review_discussion','export_schedule_failed'));
+  check (category in ('export_ready','pinned_fund_published','source_attention','data_issue_update','review_discussion','tenant_export_outcome','export_schedule_failed'));
 
 -- Saving a schedule now takes the switch. The 12-argument form is replaced, not overloaded: callers that do not pass it
 -- get the default (on).
