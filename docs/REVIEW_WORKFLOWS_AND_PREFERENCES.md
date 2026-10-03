@@ -26,6 +26,12 @@ Display preferences offer an IANA time zone, day-first/month-first/ISO dates, an
 
 Calendar-only financial/as-of dates stay on their original date in every zone. True instants convert to the selected zone. Stored values, authored answer prose, query inputs, identifiers and machine exports keep their original representation. Numeric source tokens retain decimal precision rather than passing through binary floating-point conversion.
 
+## Assigning and discussing review items
+
+Story F3 (#259). In Data review every observation row and every reconciliation exception shows who holds it ("Assigned to you", "Assigned to <person>" or "Unassigned") and an **Assign or discuss** button, for roles with review access only. The dialog assigns, reassigns or clears the assignee (only workspace members with review access to the item's fund are offered) and shows the comment thread with a composer. A teammate is mentioned by choosing them from **Mention a teammate**, which inserts `@<name>`; mentions that are still in the text when it is posted notify that person. A toolbar **Assignment** filter (All assignees, Assigned to me, Unassigned) applies to both tables and is remembered with the other review filters for the session. On the Overview, the **Needs your attention** list has an **Assigned to me** view of the caller's open assigned items, blocking exceptions first, each opening Data review on the item.
+
+Discussion is deliberately inert: it never changes a value, never records an approval, rejection, correction or resolution, and never counts toward dual control. Comments cannot be edited or deleted, are audited, and are never emailed. Known limits of this first slice: mentions are chosen from a list rather than typed with a live suggestion box; the assignment filter is not part of saved views; the thread has no assignment history list beyond the audit trail; and "Assigned to me" on the Overview lists individual items rather than narrowing the per-snapshot counts above it. Demo mode has two fixed review teammates and no seeded threads.
+
 ## Rollout and validation
 
 Apply forward migration `076_saved_views_display_preferences.sql` with the existing migration runner before deploying the application. It extends the existing forced-RLS preference table without changing grants or resource policy. No provider credentials or email-delivery flags are enabled by this change.

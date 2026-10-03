@@ -71,6 +71,8 @@ Source connections (stories B5/B8) added `Paused` and `Revoked` (neutral), `Retr
 
 Data issues (story F5) added `Received` and `No change` (neutral), `Investigating` and `Updated` (info) and `Corrected` (success). `Updated` marks a case whose status changed since its reporter last looked; the case card also gets a leading bar, so the signal is never colour alone. The classes are `data-issue-*` and `data-issues-*` in `app/design-system.css`.
 
+Assigning and discussing review items (story F3) states the assignee in words ("Assigned to you", "Assigned to <person>", "Unassigned"), never by colour alone; the person's own assignment is also bold. A mention in a comment is bold and tinted (`.review-mention`). The Overview attention filter reuses the segmented `table-density-toggle` control with `aria-pressed`. The classes are `review-*` and `attention-filter` in `app/design-system.css`.
+
 `STATUS_PILL_VOCABULARY` is the source of truth. Known states map to `success`, `warning`, `danger`, `info`, or `neutral`. `StatusPill` intentionally accepts future server-provided strings, but an unknown value uses the neutral fallback and keeps its original label. This prevents a new backend state from accidentally inheriting a misleading color through class-name construction.
 
 ## Dense-table rules

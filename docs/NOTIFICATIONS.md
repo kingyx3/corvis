@@ -10,6 +10,7 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 | `export_ready` | Export job reaches `complete` | The requesting person | On/off, immediate or daily digest (default: on, immediate) |
 | `pinned_fund_published` | Snapshot published | Everyone who pinned that fund, per workspace | On/off, immediate or daily digest (default: on, digest) |
 | `data_issue_update` | A data issue case you reported moves to Investigating, Corrected or No change (F5) | The person who reported it (a verified human identity; service identities get the in-app status only) | On/off, immediate or daily digest (default: on, immediate) |
+| `review_discussion` | A review item is assigned to you, or you are @mentioned in its discussion (F3) | The assigned or mentioned person, who must still hold review access to the item's fund in that workspace | On/off, immediate or daily digest (default: on, immediate) |
 | `source_attention` | Sync moves a connection to `reauthorization_required` or `suspended` | `tenant_admin` and `accountadmin` members of the workspace | On/off, immediate or daily digest (default: on, immediate) |
 | `support_access` | Support access granted (active or pending acknowledgement) | Every `tenant_admin` | No: always sent immediately |
 | `role_changed` | Tenant admin changes or removes a member's role | The affected member | No: always sent immediately |
@@ -17,7 +18,7 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 
 `source_attention` is a one-shot email enqueued when a sync moves a connection to `reauthorization_required` or `suspended`; it is deduplicated per run and there is no stored in-app notification record to clear. The in-app signal (the attention banner on Documents and the connection list) is derived from the live connection status, so it disappears as soon as the connection is healthy again. Only reauthorization returns a `reauthorization_required` or `suspended` connection to `active`: a successful sync cannot, because `runConnectionSync` refuses any connection that is not already `active`.
 
-The catalog, audiences and templates live in `core/notifications.ts`. Stories that don't exist yet (F3 assignment/mentions, F7 sign-in policy) add a category there when they ship. F5 data-issue updates shipped as `data_issue_update` (below).
+The catalog, audiences and templates live in `core/notifications.ts`. Stories that don't exist yet (F7 sign-in policy) add a category there when they ship. F5 data-issue updates shipped as `data_issue_update` and F3 assignments and mentions as `review_discussion` (both below).
 
 ### F5 data-issue updates
 
@@ -28,6 +29,12 @@ The email says only that a data issue the person reported moved to a status ("Da
 ### F4 scheduled exports
 
 A scheduled run creates an ordinary export job, so its completion sends the same `export_ready` email to the schedule's owner (subject to their preference: switch the category off or to a daily digest to quieten a busy schedule), and `ExportRequested` webhook subscribers receive the event for every run. There is no per-schedule notification switch and no completion webhook event yet; see `API_CONVENTIONS.md` (Scheduled exports).
+
+### F3 review assignments and mentions
+
+`review_discussion` is enqueued by `lib/server/review-discussion.ts` (through `bestEffortNotification` and `enqueueForUser`, inside the same transaction as the assignment or comment, so a notification fault never blocks it) in two cases: a review item is assigned or reassigned to someone other than the person acting (`dedupe_key = review_discussion:assigned:<kind>:<id>:<thread version>`), and a comment mentions a teammate other than its author (`review_discussion:mention:<commentId>:<userId>`). The outbox row carries the recipient, the workspace, the item's `fund_id`, `required_roles = [tenant_admin, accountadmin, reviewer]` and `template_params = {"event": "assigned" | "mentioned"}`, so send-time eligibility re-checks the identity, the workspace membership **in a review role** and the fund entitlement, and the preference.
+
+The email says only that "A review item in <workspace> was assigned to you" or "You were mentioned in a discussion on a review item", and links to `/#/review`. It never names the item, the fund, the company, the person who acted or any comment text: comments are free text and stay in Data review, behind normal authorization (and out of audit events too). Assignment and discussion work without email: the assignee shows on the row and in the Overview "Assigned to me" view whatever the recipient's preference or address.
 
 ## Content rules
 
@@ -87,5 +94,6 @@ Until then, the settings dialog says "Email delivery isn't switched on yet", and
 - `lib/server/route-authorization.test.ts` — service identities are refused; mandatory and hidden categories cannot be changed.
 - `core/notifications.test.ts` also pins the `data_issue_update` template: status wording only, no figure, name or case detail.
 - `db/postgres/tests/data-issue-reports.mjs` — the F5 notice end to end against real Postgres in CI: queued with status-only params, dispatched in words without any fund, company, metric or comment text, suppressed when the person opted out.
+- `db/postgres/tests/review-item-discussion.mjs` — the F3 notice end to end against real Postgres in CI: assigned and mention notices queued with event-only params, dispatched in words without any item, fund, person or comment text, not sent to the author, suppressed when the recipient lost review access or opted out.
 - `db/postgres/tests/email-notifications.mjs` — end to end against real Postgres in CI: capture, preferences, audience enqueueing, deduplication, send-time eligibility, retries, digests, invitation records.
 - `e2e/notification-settings.spec.ts` — dialog reachable from the sidebar, the mobile workspace dialog, the command palette and the email link; axe in light and dark.

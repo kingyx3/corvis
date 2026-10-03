@@ -25,7 +25,7 @@ const UNASSIGNED = "";
  * decides anything: approving, rejecting, correcting and resolving stay with the review actions, and a comment never counts
  * toward dual control. Comment text is shown as text only, never as markup.
  */
-function ReviewItemDialog({ subject, itemLabel, onClose, onChanged }: {
+export function ReviewItemDialog({ subject, itemLabel, onClose, onChanged }: {
   subject: ReviewSubjectRef;
   itemLabel: string;
   onClose: () => void;
@@ -170,24 +170,25 @@ function ReviewItemDialog({ subject, itemLabel, onClose, onChanged }: {
   </Modal>;
 }
 
+/** What the dialog is opened on: the item and a label a person recognises (company and metric, or the exception summary). */
+export type ReviewDiscussionTarget = { subject: ReviewSubjectRef; itemLabel: string };
+
 /**
  * The assignee and the way into the discussion, placed in the row of a review item. It shows who holds the item ("Assigned
- * to you", "Assigned to Priya" or "Unassigned") and how much has been said, and opens the dialog to change either.
+ * to you", "Assigned to Priya" or "Unassigned") and how much has been said, and asks the screen to open the dialog. The
+ * screen owns the dialog, not the row: changing the assignee can make the row drop out of an active assignment filter, and
+ * the person must still see the result of what they just did.
  */
-export function ReviewItemDiscussion({ subject, itemLabel, summary, onChanged }: {
-  subject: ReviewSubjectRef;
-  /** What the item is, in words a person recognises (company and metric, or the exception summary). */
-  itemLabel: string;
+export function ReviewItemDiscussion({ target, summary, onOpen }: {
+  target: ReviewDiscussionTarget;
   summary?: ReviewThreadSummary;
-  onChanged: (summary: ReviewThreadSummary) => void;
+  onOpen: (target: ReviewDiscussionTarget) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const count = summary?.commentCount ?? 0;
   return <div className="review-discussion">
     <span className="review-assignee" data-assigned={summary?.assignee ? (summary.assignee.isMe ? "me" : "other") : "none"}>{assigneeLabel(summary?.assignee)}</span>
-    <button type="button" className="text-button" aria-haspopup="dialog" aria-label={`Assign or discuss ${itemLabel}${count ? `, ${count} ${count === 1 ? "comment" : "comments"}` : ""}`} onClick={() => setOpen(true)}>
+    <button type="button" className="text-button" aria-haspopup="dialog" aria-label={`Assign or discuss ${target.itemLabel}${count ? `, ${count} ${count === 1 ? "comment" : "comments"}` : ""}`} onClick={() => onOpen(target)}>
       {count ? `Discuss (${count})` : "Assign or discuss"}
     </button>
-    {open && <ReviewItemDialog subject={subject} itemLabel={itemLabel} onClose={() => setOpen(false)} onChanged={onChanged}/>}
   </div>;
 }
