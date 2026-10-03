@@ -9,11 +9,15 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
 
 // lib/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
 register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
 const { PostgresTenantExportBackend } = await import('../../../lib/server/tenant-export.ts');
 const { processApprovedTenantExports } = await import('../../../lib/server/tenant-export-worker.ts');
+const { processEmailOutbox } = await import('../../../lib/server/notifications.ts');
+const { sweepTenantExports } = await import('../../../lib/server/tenant-export-sweep.ts');
+const { listTenantExportBuildIssues } = await import('../../../lib/server/tenant-export-operations.ts');
 const { readStoredZip } = await import('../../../lib/server/test-support/zip-reader.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
@@ -183,11 +187,119 @@ try {
     assert.equal((await refused(tx, () => backend.issueDownload(identity(admin1, true), mine.requestId, tx))).code, 'data_export_rights_changed', 'no new link either');
 
     // Listing, and the tenant's audit trail: every system step is audited, human steps are audited by the service layer.
-    assert.equal((await backend.list(identity(admin1, true), tx)).length, 1);
+    assert.equal((await backend.list(identity(admin1, true), { limit: 10 }, tx)).items.length, 1);
     const audit = await tx.query(`select action, actor_subject from corvis_control.audit_event where target_type='tenant_export_request' order by action`);
     // Both rows share one transaction timestamp and the id is random, so order by action rather than by time.
     assert.deepEqual(audit.map((row) => row.action), ['data_export.build_completed', 'data_export.build_started']);
     assert.ok(audit.every((row) => row.actor_subject === 'system:tenant-export'));
+
+    // ------------------------------------------------------------------------------------------------------------------
+    // F10d: approval and outcome notices, dispatched through the application's outbox worker.
+    // ------------------------------------------------------------------------------------------------------------------
+    for (const person of [admin1, admin2]) {
+      await tx.execute(`insert into corvis_control.notification_recipient (tenant_id,user_id,email,source,verified_at,updated_at) values ($1,$2,$3,'verified_identity_claim',now(),now())`,
+        [tenantId, person.userId, `${person.subject}@corvis.test`]);
+    }
+    const mailer = new RecordingEmailSender();
+    const dispatch = () => processEmailOutbox({ db: tx, sender: mailer, appUrl: 'https://app.corvis.test' });
+    const outboxFor = async (category, userId) => (await tx.query(`select status,suppression_reason,template_params->>'event' as event from corvis_control.email_outbox where tenant_id=$1 and category=$2 and recipient_user_id=$3 order by status,template_params->>'event',dedupe_key`, [tenantId, category, userId])).map((row) => ({ ...row }));
+    const readEmails = () => mailer.sent.map((email) => ({ to: email.to, subject: email.subject, text: email.text, category: email.category }));
+    const REASON = /Records review at contract end|admin-one|admin-two|SECRET/;
+
+    // Admin one asked and admin two approved; admin one then turns the optional outcome notice off. The approval notice
+    // to admin two cannot be turned off and is sent; admin one's approved and ready notices are suppressed as opted out.
+    assert.deepEqual(await outboxFor('tenant_export_approval', admin2.userId), [{ status: 'queued', suppression_reason: null, event: 'approval_needed' }]);
+    assert.deepEqual(await outboxFor('tenant_export_approval', admin1.userId), [], 'the requester is not asked to approve their own request');
+    assert.deepEqual((await outboxFor('tenant_export_outcome', admin1.userId)).map((row) => row.event).sort(), ['approved', 'ready']);
+    await tx.execute(`insert into corvis_control.notification_preference (tenant_id,user_id,category,enabled,delivery) values ($1,$2,'tenant_export_outcome',false,'immediate')`, [tenantId, admin1.userId]);
+    await dispatch();
+    assert.deepEqual((await outboxFor('tenant_export_approval', admin2.userId)).map((row) => row.status), ['sent']);
+    assert.deepEqual((await outboxFor('tenant_export_outcome', admin1.userId)).map((row) => [row.status, row.suppression_reason]), [['suppressed', 'opted_out'], ['suppressed', 'opted_out']]);
+    let emails = readEmails().filter((email) => email.to.endsWith('@corvis.test'));
+    assert.deepEqual(emails.map((email) => [email.to, email.category]), [['admin-two@corvis.test', 'tenant_export_approval']]);
+    assert.match(emails[0].subject, /needs your approval/);
+    assert.match(emails[0].text, /\/access-self-service/);
+    assert.match(emails[0].text, /cannot be turned off/);
+    assert.doesNotMatch(emails[0].text, REASON, 'no reason, name or note in the email');
+    await tx.execute(`delete from corvis_control.notification_preference where tenant_id=$1 and user_id=$2`, [tenantId, admin1.userId]);
+
+    // A rejection tells the requester in words only; the other admin is asked to approve the new request.
+    const second = await backend.request(identity(admin2, true), { reason: 'SECRET purpose from admin two' }, tx);
+    await backend.decide(identity(admin1, true), second.requestId, { action: 'reject', note: 'SECRET note from admin one' }, tx);
+    await dispatch();
+    emails = readEmails().filter((email) => email.to.endsWith('@corvis.test')).slice(1);
+    assert.deepEqual(emails.map((email) => [email.to, email.category]).sort(), [['admin-one@corvis.test', 'tenant_export_approval'], ['admin-two@corvis.test', 'tenant_export_outcome']]);
+    assert.match(emails.find((email) => email.to === 'admin-two@corvis.test').subject, /was rejected/);
+    for (const email of emails) assert.doesNotMatch(email.text, REASON);
+
+    // Eligibility is re-checked when the notice is sent: an admin demoted after it was queued is not emailed.
+    const third = await backend.request(identity(admin1, true), { reason: 'Demotion check' }, tx);
+    assert.deepEqual(await outboxFor('tenant_export_approval', admin2.userId), [{ status: 'queued', suppression_reason: null, event: 'approval_needed' }, { status: 'sent', suppression_reason: null, event: 'approval_needed' }]);
+    await tx.execute(`update corvis_control.membership set status='revoked' where tenant_id=$1 and user_id=$2`, [tenantId, admin2.userId]);
+    const sentBefore = mailer.sent.length;
+    await dispatch();
+    assert.equal(mailer.sent.length, sentBefore, 'nothing is sent to a demoted admin');
+    assert.deepEqual((await outboxFor('tenant_export_approval', admin2.userId)).map((row) => [row.status, row.suppression_reason]), [['sent', null], ['suppressed', 'not_eligible']]);
+    await tx.execute(`update corvis_control.membership set status='active' where tenant_id=$1 and user_id=$2`, [tenantId, admin2.userId]);
+    await backend.decide(identity(admin1, true), third.requestId, { action: 'cancel' }, tx);
+
+    // A build that keeps failing: retried with backoff, then the requester is told, and operations see why.
+    const fourth = await backend.request(identity(admin1, true), { reason: 'Failing build' }, tx);
+    await backend.decide(identity(admin2, true), fourth.requestId, { action: 'approve' }, tx);
+    const broken = { bucket: 'ci-bucket', async putObject() { throw new Error('object store down'); }, async deleteObject() {} };
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      assert.deepEqual(await processApprovedTenantExports(5, { store: tx, objectStore: broken }), { processed: 0, failed: 1 });
+      const retrying = await listTenantExportBuildIssues(tx, { limit: 10 });
+      const issue = retrying.items.find((item) => item.requestId === fourth.requestId);
+      assert.equal(issue.status, attempt < 5 ? 'retrying' : 'failed');
+      assert.equal(issue.attempts, attempt);
+      assert.match(issue.lastError, /object store down/);
+      assert.equal(issue.tenantName, 'F10 CI');
+      assert.deepEqual(Object.keys(issue).sort(), ['attempts', 'changedAt', 'lastError', 'nextAttemptAt', 'requestId', 'requestedAt', 'status', 'tenantId', 'tenantName'], 'no requester, reason or approver reaches operations');
+      if (attempt < 5) await tx.execute(`update corvis_control.tenant_export_request set build_next_attempt_at=now() where request_id=$1`, [fourth.requestId]);
+    }
+    assert.equal((await backend.get(identity(admin1, true), fourth.requestId, tx)).status, 'failed');
+    assert.deepEqual((await listTenantExportBuildIssues(tx, { limit: 10, status: 'retrying' })).items.filter((item) => item.requestId === fourth.requestId), []);
+    assert.equal((await listTenantExportBuildIssues(tx, { limit: 10, status: 'failed' })).items.filter((item) => item.requestId === fourth.requestId).length, 1);
+    assert.equal((await outboxFor('tenant_export_outcome', admin1.userId)).filter((row) => row.event === 'failed').length, 1, 'the requester is told once, when the build gives up');
+    await dispatch();
+    emails = readEmails().filter((email) => email.to === 'admin-one@corvis.test' && email.category === 'tenant_export_outcome');
+    assert.deepEqual(emails.map((email) => email.subject).sort(), ['Your Corvis organization export could not be built', 'Your Corvis organization export was approved']);
+
+    // Operations paging is keyset-stable even for rows sharing one timestamp.
+    const failedPage = await listTenantExportBuildIssues(tx, { limit: 1 });
+    assert.equal(failedPage.items.length, 1);
+    assert.equal(failedPage.nextCursor, null, 'one failed build, nothing more');
+
+    // F10f: the request list is paged with a keyset cursor. All four requests share this transaction's timestamp, so the
+    // order and the cursor rest on the id tie-break: every request appears once, in the same order as one big page.
+    const everything = (await backend.list(identity(admin1, true), { limit: 50 }, tx)).items.map((item) => item.requestId);
+    assert.equal(everything.length, 4);
+    assert.deepEqual([...everything], [...everything].sort().reverse(), 'same timestamp: newest-first falls back to id descending');
+    const walked = [];
+    let cursor = null;
+    for (let pages = 0; pages < 10; pages += 1) {
+      const page = await backend.list(identity(admin1, true), { limit: 3, cursor }, tx);
+      walked.push(...page.items.map((item) => item.requestId));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    assert.deepEqual(walked, everything, 'paging by cursor yields each request exactly once, in order');
+
+    // F10f: the sweep. Make the first export's artifact lifetime pass; its object is deleted, the deletion is recorded and
+    // audited once, its grants go with it, and an old grant on another request is swept too.
+    await tx.execute(`update corvis_control.tenant_export_request set artifact_expires_at = now() - interval '1 minute' where request_id=$1`, [mine.requestId]);
+    await tx.execute(`insert into corvis_control.tenant_export_download_grant (tenant_id,request_id,subject,token_sha256,expires_at) values ($1,$2,'admin-one',$3,now()-interval '3 days')`, [tenantId, second.requestId, 'ab'.repeat(32)]);
+    assert.equal(objects.objects.size, 1);
+    assert.deepEqual(await sweepTenantExports({ store: tx, objectStore: objects }), { artifactsDeleted: 1, grantsDeleted: 1, errors: 0 });
+    assert.equal(objects.objects.size, 0, 'the stored archive was deleted from the object store');
+    const swept = await backend.get(identity(admin1, true), mine.requestId, tx);
+    assert.equal(swept.status, 'download_expired');
+    assert.equal(swept.history.at(-1).eventType, 'artifact_deleted');
+    assert.equal((await tx.query(`select count(*)::int as n from corvis_control.tenant_export_download_grant where tenant_id=$1`, [tenantId]))[0].n, 0);
+    assert.deepEqual((await tx.query(`select action from corvis_control.audit_event where tenant_id=$1 and action in ('data_export.artifact_deleted','data_export.grants_swept') order by action`, [tenantId])).map((row) => row.action),
+      ['data_export.artifact_deleted', 'data_export.grants_swept']);
+    assert.deepEqual(await sweepTenantExports({ store: tx, objectStore: objects }), { artifactsDeleted: 0, grantsDeleted: 0, errors: 0 }, 'a second sweep has nothing to do');
 
     // Nothing touched the per-user export queue or the outbox.
     const after = await tx.query(`select (select count(*) from corvis_serving.export_job)::int as jobs, (select count(*) from corvis_control.outbox_event)::int as outbox`);
