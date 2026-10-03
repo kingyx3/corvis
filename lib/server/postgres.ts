@@ -94,7 +94,11 @@ const nativeClients = new Map<string, NativePostgresSqlApi>();
  * from a failed native connection.
  */
 export function postgres(dsn?: string): PostgresSqlApi {
-  if (!dsn) throw new Error("A PostgreSQL database DSN is required for persistence");
+  if (!dsn) {
+    throw new Error(
+      "A PostgreSQL database DSN is required for persistence. Set CORVIS_DATABASE_DSN (preferred); CORVIS_POSTGRES_DSN is required only for the legacy binding.",
+    );
+  }
   if (/^postgres(?:ql)?:\/\//.test(dsn)) {
     let client = nativeClients.get(dsn);
     if (!client) {
