@@ -56,6 +56,7 @@ test("public app URL accepts secure origins and localhost only", () => {
   assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: " https://app.example.com/path?q=1 " }).publicAppUrl, "https://app.example.com");
   assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "http://localhost:3000/path" }).publicAppUrl, "http://localhost:3000");
   assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "http://example.com" }).publicAppUrl, undefined);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "ftp://example.com/resource" }).publicAppUrl, undefined);
   assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "not a url" }).publicAppUrl, undefined);
   assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "   " }).publicAppUrl, undefined);
 });
