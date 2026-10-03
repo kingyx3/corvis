@@ -345,7 +345,7 @@ export type ExportScheduleRunnerDependencies = {
 };
 
 const DEFAULT_RUNNER_DEPENDENCIES: Required<ExportScheduleRunnerDependencies> = {
-  authorize: (store, principal) => new PostgresMembershipAuthorizationRepository(store).resolve(principal),
+  authorize: (store, principal) => new PostgresMembershipAuthorizationRepository(store).resolve(principal, { applySessionPolicy: false }),
   requestExport: createPhysicalExport,
   formatGate: defaultFormatGate,
 };

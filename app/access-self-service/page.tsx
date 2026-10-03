@@ -9,6 +9,7 @@ import { throwIfUnauthenticated } from "@/lib/api-errors";
 import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 import { DataGovernanceSections } from "@/features/access/data-governance-section";
+import { SessionPolicySection } from "@/features/access/session-policy-section";
 
 type AuditEvent={auditEventId:string;occurredAt:string;workspaceId?:string;actorSubject:string;action:string;targetType:string;targetId:string;outcome:string;metadata:Record<string,unknown>};
 type Grant={supportGrantId:string;workspaceId:string;roleName:string;purpose:string;validFrom:string;validUntil:string;status:"pending_ack"|"active";requiresTenantAck:boolean;subject:string};
@@ -68,6 +69,8 @@ export default function AccessSelfServicePage(){
     </section>
 
     <section className="panel" aria-labelledby="roles-heading"><div className="panel-heading"><div><p className="eyebrow">Role guidance</p><h2 id="roles-heading">What each role means</h2></div></div><div className="table-card"><table className="data-table"><thead><tr><th>Role</th><th>Plain-language access</th></tr></thead><tbody>{ROLE_GUIDE.map(([role,description])=><tr key={role}><td><strong>{role}</strong></td><td>{description}</td></tr>)}</tbody></table></div></section>
+
+    <SessionPolicySection/>
 
     <DataGovernanceSections/>
 

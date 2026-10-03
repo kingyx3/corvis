@@ -15,6 +15,7 @@ export type NotificationCategoryId =
   | "data_issue_update"
   | "review_discussion"
   | "support_access"
+  | "security_policy"
   | "role_changed";
 
 /** Outbox-only categories: never shown as a preference. */
@@ -43,6 +44,7 @@ export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] 
   { id: "review_discussion", label: "Review assignments and mentions", description: "A review item was assigned to you, or you were mentioned in a discussion on one.", mandatory: false, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "source_attention", label: "Source connection needs attention", description: "A source connection in a workspace you administer needs to be reauthorized or was suspended.", mandatory: false, audience: "workspace_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "support_access", label: "Corvis support access", description: "Corvis support was granted access to your organization, or a grant is waiting for your acknowledgement.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
+  { id: "security_policy", label: "Sign-in and session policy changes", description: "An Organization Admin changed your organization's session policy or signed a user out of every session.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "role_changed", label: "Your access changed", description: "Your role in a workspace was changed or removed.", mandatory: true, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
 ];
 
@@ -244,6 +246,18 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
           : `Corvis support was granted time-limited access${where}.`,
         "Review the purpose, approver and expiry, or revoke it, in Access administration."],
         action: { label: "Review support access", url: home },
+        optional: false,
+      };
+    }
+    case "security_policy": {
+      const signedOut = params.event === "user_signed_out";
+      return {
+        subject: signedOut ? "A Corvis user was signed out of every session" : "Your organization's Corvis session policy changed",
+        lines: [signedOut
+          ? `An Organization Admin signed a user out of all of their Corvis sessions${where}.`
+          : `An Organization Admin changed the sign-in and session policy${where}.`,
+        "Review who made the change, and why, in the access audit trail. If you did not expect it, contact your other Organization Admins."],
+        action: { label: "Review access audit", url: new URL("/access-self-service", context.appUrl).toString() },
         optional: false,
       };
     }

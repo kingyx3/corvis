@@ -21,7 +21,7 @@ test("categories are visible only to the audience that can receive them", () => 
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
   assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "role_changed"]);
   assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "support_access", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "source_attention", "support_access", "security_policy", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -39,6 +39,7 @@ test("preference changes reject mandatory, hidden, duplicate and malformed categ
   };
   assert.equal(code({ categories: [{ id: "export_ready", enabled: false, delivery: "immediate" }] }), "ok");
   assert.equal(code({ categories: [{ id: "role_changed", enabled: false, delivery: "immediate" }] }), "category_not_configurable");
+  assert.equal(code({ categories: [{ id: "security_policy", enabled: false, delivery: "immediate" }] }, orgAdmin), "category_not_configurable", "a policy-change notice cannot be turned off");
   assert.equal(code({ categories: [{ id: "support_access", enabled: false, delivery: "immediate" }] }, orgAdmin), "category_not_configurable");
   assert.equal(code({ categories: [{ id: "source_attention", enabled: false, delivery: "immediate" }] }), "unknown_category", "an analyst cannot configure an admin-only category");
   assert.equal(code({ categories: [{ id: "source_attention", enabled: false, delivery: "immediate" }] }, workspaceAdmin), "ok");
@@ -65,6 +66,8 @@ test("every email links back to the app, and optional ones link to notification 
     ["data_issue_update", { status: "corrected" }, true],
     ["review_discussion", { event: "assigned" }, true],
     ["support_access", { status: "pending_ack" }, false],
+    ["security_policy", { event: "policy_changed" }, false],
+    ["security_policy", { event: "user_signed_out" }, false],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],
     ["invitation", { roleName: "analyst", invitationUrl: `${appUrl}/invite?tenantId=t#token`, expiresOn: "2026-10-07" }, false],
@@ -89,6 +92,13 @@ test("templates escape and bound untrusted names and never render figures they w
   const role = renderEmail("role_changed", { roleName: null }, { appUrl, workspaceName: "W" });
   assert.match(role.text, /was removed/);
   assert.match(renderEmail("role_changed", { roleName: "reviewer" }, { appUrl }).text, /Review Analyst/, "raw role keys are never shown");
+  const policy = renderEmail("security_policy", { event: "policy_changed" }, { appUrl, workspaceName: "W" });
+  assert.match(policy.text, /changed the sign-in and session policy in W/);
+  assert.match(policy.text, /cannot be turned off/);
+  assert.doesNotMatch(policy.text, /minutes|idle|hours/i, "no policy values or user names in the email");
+  const signedOut = renderEmail("security_policy", { event: "user_signed_out" }, { appUrl });
+  assert.match(signedOut.subject, /signed out of every session/);
+  assert.match(signedOut.text, /\/access-self-service/);
 });
 
 test("an invitation or action link must be an absolute https URL", () => {
