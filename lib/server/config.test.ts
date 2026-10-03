@@ -52,6 +52,14 @@ test("database provider values are normalized and unknown providers fail closed"
   );
 });
 
+test("public app URL accepts secure origins and localhost only", () => {
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: " https://app.example.com/path?q=1 " }).publicAppUrl, "https://app.example.com");
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "http://localhost:3000/path" }).publicAppUrl, "http://localhost:3000");
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "http://example.com" }).publicAppUrl, undefined);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "not a url" }).publicAppUrl, undefined);
+  assert.equal(getServerConfig({ NODE_ENV: "test", CORVIS_PUBLIC_APP_URL: "   " }).publicAppUrl, undefined);
+});
+
 test("OIDC discovery is the default and explicit JWKS remains optional", () => {
   const config = getServerConfig({
     NODE_ENV: "test",
