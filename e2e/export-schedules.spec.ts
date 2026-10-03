@@ -127,7 +127,8 @@ test("Data delivery lists the seeded schedules and every run with its scope and 
   await expect(paused).toContainText("Contractual data rights no longer permit redistribution.");
 
   const runs = page.getByRole("region", { name: "Scheduled runs" }).getByRole("row");
-  await expect(runs).toHaveCount(4, { message: "a header row and the three seeded runs" });
+  // A header row and the three seeded runs.
+  await expect(runs).toHaveCount(4);
   const refused = runs.filter({ hasText: "On publish · Hg Genesis 9 Q1 2026" }).filter({ hasText: "Failed" });
   await expect(refused).toContainText("Snapshot seed-snapshot-4");
   await expect(refused).toContainText("Contractual data rights no longer permit redistribution.");
