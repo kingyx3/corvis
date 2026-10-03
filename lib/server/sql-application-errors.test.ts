@@ -122,3 +122,18 @@ test("tenant-export refusals classify to stable codes: 400 for input, 403 for wh
     assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
   }
 });
+
+test("scheduled-export refusals classify to stable codes, 400 for a scope that cannot be scheduled and 409 for what the schedule cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "idempotency key reused with different export schedule": ["idempotency_key_reused", 409],
+    "export schedule scope is invalid": ["invalid_scope", 400],
+    "export schedule limit reached": ["export_schedule_limit_reached", 409],
+    "export schedule transition not allowed": ["export_schedule_transition_not_allowed", 409],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});
