@@ -6,6 +6,10 @@ export type ServerConfig = {
   authJwksUrl?: string;
   trustedAuthProxySecret?: string;
 
+  /** Provider-neutral primary database binding. PostgreSQL is the current dialect. */
+  databaseDsn?: string;
+  databaseProvider: "supabase" | "gcp-cloud-sql" | "aws-rds" | "azure-postgresql" | "self-hosted" | "unknown";
+  /** @deprecated Compatibility alias. New infrastructure should set CORVIS_DATABASE_DSN. */
   postgresDsn?: string;
 
   objectStoreBucket?: string;
@@ -57,6 +61,19 @@ function csv(value?: string): string[] {
   return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+const DATABASE_PROVIDERS = new Set<ServerConfig["databaseProvider"]>([
+  "supabase",
+  "gcp-cloud-sql",
+  "aws-rds",
+  "azure-postgresql",
+  "self-hosted",
+  "unknown",
+]);
+function databaseProvider(value?: string): ServerConfig["databaseProvider"] {
+  const normalized = value?.trim().toLowerCase() as ServerConfig["databaseProvider"] | undefined;
+  return normalized && DATABASE_PROVIDERS.has(normalized) ? normalized : "unknown";
+}
+
 /** Accepts only an https origin (or http://localhost for development); anything else is treated as unset. */
 function publicOrigin(value?: string): string | undefined {
   if (!value?.trim()) return undefined;
@@ -90,6 +107,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   const environment = resolveEnvironment(env.NODE_ENV);
   const demoMode = truthy(env.CORVIS_DEMO_MODE);
   const exportArtifactTtlSeconds = Math.min(positiveInteger(env.CORVIS_EXPORT_ARTIFACT_TTL_SECONDS) ?? 24 * 60 * 60, 7 * 24 * 60 * 60);
+  const databaseDsn = env.CORVIS_DATABASE_DSN ?? env.CORVIS_POSTGRES_DSN;
   const config: ServerConfig = {
     environment,
     demoMode,
@@ -97,7 +115,10 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     authAudience: env.CORVIS_AUTH_AUDIENCE,
     authJwksUrl: env.CORVIS_AUTH_JWKS_URL,
     trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
-    postgresDsn: env.CORVIS_POSTGRES_DSN,
+    databaseDsn,
+    databaseProvider: databaseProvider(env.CORVIS_DATABASE_PROVIDER),
+    // Preserve the old property until repository callers migrate to databaseDsn.
+    postgresDsn: databaseDsn,
     objectStoreBucket: env.CORVIS_OBJECT_STORE_BUCKET,
     gcpAccessToken: env.CORVIS_GCP_ACCESS_TOKEN,
     gcsChunkSizeBytes: positiveInteger(env.CORVIS_GCS_CHUNK_SIZE_BYTES) ?? 8 * 1024 * 1024,
@@ -130,22 +151,21 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   if (environment === "production") {
     if (demoMode) throw new Error("CORVIS_DEMO_MODE must be disabled in production");
     // Startup requires only authoritative cross-cutting bindings. Optional
-    // capability configuration (upload CORS, AI/search, observability and
-    // lifecycle adapters) fails closed at its own boundary and is reported as
-    // incomplete readiness instead of taking unrelated paths down.
+    // capability configuration fails closed at its own boundary.
     const missing = [
       ["CORVIS_AUTH_ISSUER", config.authIssuer],
       ["CORVIS_AUTH_AUDIENCE", config.authAudience],
-      ["CORVIS_POSTGRES_DSN", config.postgresDsn],
+      ["CORVIS_DATABASE_DSN", config.databaseDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
-    // The HTTPS SQL transport has no single connection to hold a transaction
-    // on, so `withTransaction` would silently run non-atomically there and a
-    // mutation could commit without its required audit row (or an export job
-    // without its outbox event). Production must use the native wire protocol.
-    if (!/^postgres(?:ql)?:\/\//i.test(config.postgresDsn ?? "")) {
-      throw new Error("CORVIS_POSTGRES_DSN must be a native postgres:// or postgresql:// URL in production (the HTTPS transport cannot provide transactions)");
+    // The required-configuration guard above establishes this invariant before
+    // the production transport check; keep the runtime branch aligned with it.
+    const productionDatabaseDsn = config.databaseDsn as string;
+    // Production mutations require a native PostgreSQL connection. The HTTPS
+    // compatibility transport cannot guarantee transaction atomicity.
+    if (!/^postgres(?:ql)?:\/\//i.test(productionDatabaseDsn)) {
+      throw new Error("CORVIS_DATABASE_DSN must be a native postgres:// or postgresql:// URL in production");
     }
   }
   return config;

@@ -27,6 +27,7 @@ function config(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
     environment: "development",
     demoMode: false,
+    databaseProvider: "unknown",
     gcsChunkSizeBytes: 8 * 1024 * 1024,
     uploadAllowedOrigins: [],
     gcsMalwareMetadataKey: "corvis-malware-status",

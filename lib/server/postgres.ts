@@ -1,41 +1,27 @@
+import {
+  POSTGRES_BASELINE_CAPABILITIES,
+  withOptionalTransaction,
+  type DatabaseApi,
+  type DatabasePrimitive,
+  type DatabaseProvider,
+  type DatabaseRow,
+  type DatabaseRuntime,
+} from "./database.ts";
 import { NativePostgresSqlApi } from "./postgres-native.ts";
 
-export type PostgresPrimitive = string | number | boolean | null;
-export type PostgresRow = Record<string, unknown>;
-
-export interface PostgresSqlApi {
-  query(sql: string, parameters?: PostgresPrimitive[]): Promise<PostgresRow[]>;
-  execute(sql: string, parameters?: PostgresPrimitive[]): Promise<void>;
-  health(): Promise<boolean>;
-  /**
-   * Runs `fn` against a single connection wrapped in `begin`/`commit`: every
-   * query or execute the callback issues through the `tx` handle it receives
-   * runs on that one connection, so they all commit together, and any error
-   * the callback throws (or that one of those queries throws) rolls the
-   * whole transaction back before the error propagates. The connection is
-   * always released back to the pool afterwards, success or failure.
-   *
-   * Optional: the stateless HTTP transport (`PostgresHttpSqlApi`) has no
-   * single connection to hold a transaction open on, so it does not implement
-   * this. Route code should go through `withTransaction` below rather than
-   * calling `db.transaction` directly, so it degrades safely on a transport
-   * that lacks it instead of throwing.
-   */
-  transaction?<T>(fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T>;
-}
+/** Backwards-compatible aliases while callers migrate to the provider-neutral names. */
+export type PostgresPrimitive = DatabasePrimitive;
+export type PostgresRow = DatabaseRow;
+export type PostgresSqlApi = DatabaseApi;
 
 /**
- * Runs `fn` inside `db.transaction` when the underlying transport supports
- * one (the native Postgres client does), so a mutation and its audit-event
- * insert commit or roll back together. Falls back to calling `fn(db)`
- * directly when the transport has no `transaction` method, so callers never
- * have to special-case the transport themselves.
+ * Compatibility helper for existing callers. New mutation code should prefer
+ * requireTransaction from database.ts so a non-transactional transport cannot
+ * silently weaken atomicity.
  */
-export function withTransaction<T>(db: PostgresSqlApi, fn: (tx: PostgresSqlApi) => Promise<T>): Promise<T> {
-  return db.transaction ? db.transaction(fn) : fn(db);
-}
+export const withTransaction = withOptionalTransaction;
 
-type QueryResult = { rows?: PostgresRow[] };
+type QueryResult = { rows: PostgresRow[] };
 
 type PostgresClientOptions = {
   dsn: string;
@@ -44,11 +30,11 @@ type PostgresClientOptions = {
 };
 
 /**
- * Minimal provider adapter for Supabase/Postgres HTTP SQL execution.
+ * Minimal HTTP SQL adapter retained for non-production compatibility.
  *
  * Product/domain modules must depend on their own repository ports rather than
- * this shared transport primitive. Keep runtime syntax erasable because Node 24
- * executes these TypeScript tests directly.
+ * this shared transport primitive. Provider SDK semantics must not leak through
+ * this interface.
  */
 export class PostgresHttpSqlApi implements PostgresSqlApi {
   private readonly dsn: string;
@@ -63,7 +49,7 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
 
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     const result = await this.request(sql, parameters);
-    return result.rows ?? [];
+    return result.rows;
   }
 
   async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
@@ -92,9 +78,9 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
       if (!response.ok) {
         throw new Error(`Postgres SQL request failed with status ${response.status}`);
       }
-      const payload = (await response.json()) as QueryResult;
+      const payload = (await response.json()) as Partial<QueryResult> | null;
       if (!payload || !Array.isArray(payload.rows)) return { rows: [] };
-      return payload;
+      return { rows: payload.rows };
     } finally {
       clearTimeout(timeout);
     }
@@ -103,12 +89,16 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
 
 const nativeClients = new Map<string, NativePostgresSqlApi>();
 
-/** Native provider DSNs use the Postgres wire protocol; explicit HTTPS SQL
+/** Native provider DSNs use the PostgreSQL wire protocol; explicit HTTPS SQL
  * gateway bindings remain supported for compatibility and are never inferred
  * from a failed native connection.
  */
 export function postgres(dsn?: string): PostgresSqlApi {
-  if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required for Postgres persistence");
+  if (!dsn) {
+    throw new Error(
+      "A PostgreSQL database DSN is required for persistence. Set CORVIS_DATABASE_DSN (preferred); CORVIS_POSTGRES_DSN is required only for the legacy binding.",
+    );
+  }
   if (/^postgres(?:ql)?:\/\//.test(dsn)) {
     let client = nativeClients.get(dsn);
     if (!client) {
@@ -117,6 +107,27 @@ export function postgres(dsn?: string): PostgresSqlApi {
     }
     return client;
   }
-  if (!dsn.startsWith("https://")) throw new Error("Unsupported Postgres transport");
+  if (!dsn.startsWith("https://")) throw new Error("Unsupported PostgreSQL transport");
   return new PostgresHttpSqlApi({ dsn });
+}
+
+/**
+ * Provider-neutral runtime descriptor used by readiness checks and future
+ * adapters. Moving between managed PostgreSQL providers should change only
+ * configuration and provider-specific connection plumbing, not domain code.
+ */
+export function postgresRuntime(dsn: string, provider: DatabaseProvider = "unknown"): DatabaseRuntime {
+  const api = postgres(dsn);
+  return {
+    api,
+    provider,
+    capabilities: {
+      ...POSTGRES_BASELINE_CAPABILITIES,
+      nativeTransactions: Boolean(api.transaction),
+      // The legacy HTTPS SQL compatibility transport cannot safely advertise
+      // session-scoped PostgreSQL features even if the backend is PostgreSQL.
+      advisoryLocks: Boolean(api.transaction),
+      logicalReplication: /^postgres(?:ql)?:\/\//.test(dsn),
+    },
+  };
 }

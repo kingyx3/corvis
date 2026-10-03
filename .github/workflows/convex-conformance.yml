@@ -1,0 +1,79 @@
+name: Convex Conformance
+
+on:
+  pull_request:
+    paths:
+      - "lib/server/database.ts"
+      - "lib/server/database.test.ts"
+      - "lib/server/postgres.ts"
+      - "db/convex-conformance/**"
+      - "docs/DATABASE_PORTABILITY.md"
+      - "docs/CONVEX_CONFORMANCE.md"
+      - ".github/workflows/convex-conformance.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  pinned:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: convex_self_hosted
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d convex_self_hosted"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a
+      CONVEX_CLI_VERSION: "1.46.0"
+      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      CONVEX_POSTGRES_REQUIRE_TLS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Run Corvis database semantics against pinned upstream Convex + PostgreSQL
+        run: bash db/convex-conformance/run.sh
+
+  upstream-canary:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: convex_self_hosted
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d convex_self_hosted"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
+      CONVEX_CLI_VERSION: latest
+      CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      CONVEX_POSTGRES_REQUIRE_TLS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Run Corvis database semantics against current upstream Convex + PostgreSQL
+        run: bash db/convex-conformance/run.sh
