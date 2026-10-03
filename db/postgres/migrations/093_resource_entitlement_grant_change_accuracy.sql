@@ -8,6 +8,8 @@
 -- Adding a WHERE clause to the DO UPDATE makes Postgres skip (and not count) a conflicting row whose values
 -- are already identical, so row_count — and the audited `changed` flag — now reflects whether the grant
 -- actually changed anything.
+begin;
+
 create or replace function corvis_control.apply_resource_entitlement_admin(
   p_tenant_id uuid,
   p_actor_subject text,
@@ -106,3 +108,5 @@ begin
     'workspaceId',p_workspace_id,'resourceType',p_resource_type,'resourceId',p_resource_id,'permission',p_permission);
 end;
 $$;
+
+commit;
