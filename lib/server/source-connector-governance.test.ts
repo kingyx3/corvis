@@ -199,7 +199,7 @@ function scripted(overrides: Partial<Script> = {}): { db: PostgresSqlApi; script
       if (sql.includes("insert into corvis_source.source_connection")) { if (script.failInsert) throw new Error("insert failed"); return [{ source_connection_id: CONNECTION_ID }]; }
       if (sql.includes("'redacted' as secret_reference")) return script.shown ? [script.shown] : [];
       if (sql.includes("for update")) return script.forUpdate ? [script.forUpdate] : [];
-      if (sql.includes("set secret_reference=$3, status=case")) return script.swapped;
+      if (/secret_reference=\$3,\s*status=case/.test(sql)) return script.swapped;
       if (sql.includes("select * from corvis_source.source_connection")) return script.raw ? [script.raw] : [];
       return [];
     },
@@ -321,4 +321,37 @@ test("a test refuses a revoked connection and one whose provider has no driver, 
   }
   // A timestamp column arrives as a Date from some drivers and is read as an instant.
   assert.deepEqual(await run({ ...connectionRow(), scope_confirmed_at: new Date("2026-10-01T00:00:00Z") }), { ok: true });
+});
+
+test("a store that cannot destroy a secret never turns a finished or refused command into a different failure", async () => {
+  const failing = (): SecretStore => ({ write: async () => "projects/p/secrets/corvis-src-new", read: async () => ({ token: "t" }), revoke: async () => { throw new Error("store unavailable"); } });
+
+  // The insert fails and the compensating revoke fails too: the caller still sees the insert's failure.
+  await assert.rejects(createAuditedSourceConnection(identity, newConnection(), "corr", { db: scripted({ failInsert: true }).db, secrets: failing() }), /insert failed/);
+  // The reauthorization is saved, destroying the previous secret fails: the reauthorization still succeeds.
+  const reauthorized = await reauthorizeAuditedSourceConnection(identity, CONNECTION_ID, { token: "n" }, "corr", { db: scripted().db, secrets: failing() });
+  assert.equal(reauthorized.sourceConnectionId, CONNECTION_ID);
+  // The reauthorization loses its compare-and-set and destroying the new secret fails: the caller still sees why it lost.
+  await assert.rejects(reauthorizeAuditedSourceConnection(identity, CONNECTION_ID, { token: "n" }, "corr", { db: scripted({ swapped: [] }).db, secrets: failing() }), refusedWith("invalid_transition_from_concurrent_change"));
+
+  // The same holds for a refreshed credential: swapped, lost, or failed to save.
+  const connection = { sourceConnectionId: CONNECTION_ID, providerKey: "acme-oauth", credentialType: "oauth_authorization_code", secretReference: "projects/p/secrets/corvis-src-old" };
+  const client = { authorizationUrl: () => "x", exchangeCode: async () => ({}), refresh: async () => ({ accessToken: "new", expiresAt: 9_999_999_999_999 }) };
+  const expired = { accessToken: "old", refreshToken: "r", expiresAt: 1_000 };
+  const resolve = (db: PostgresSqlApi) => resolveConnectionCredential(identity, connection, expired, "corr", { db, secrets: failing(), oauthClient: () => client, now: () => 2_000 });
+  assert.equal((await resolve(recordingDb().db)).accessToken, "new", "swapped, and the old secret could not be destroyed");
+  assert.equal((await resolve(recordingDb([]).db)).accessToken, "new", "lost the race, and the replacement could not be destroyed");
+  const broken = { query: async () => { throw new Error("database unavailable"); }, execute: async () => undefined } as unknown as PostgresSqlApi;
+  await assert.rejects(resolve(broken), /database unavailable/);
+});
+
+test("a failed test reads the failure counter however it was stored, and a timestamp or secret reference may arrive as a Date", async () => {
+  const drivers = new Map([["acme-portal", { providerKey: "acme-portal", connectorVersion: "1", testConnection: async () => ({ ok: false, errorClass: "network" as const }), discover: async () => [], download: async () => ({ bytes: Buffer.alloc(0), contentType: "x" }) }]]);
+  const { secrets } = countingSecrets();
+  for (const stored of ["not-a-number", 2, undefined]) {
+    const { db } = scripted({ raw: { ...connectionRow(), consecutive_failures: stored as never } });
+    assert.deepEqual(await testAuditedSourceConnection(identity, CONNECTION_ID, "corr", { db, secrets, drivers }), { ok: false, errorClass: "network" });
+  }
+  const { db } = scripted({ raw: { ...connectionRow(), secret_reference: new Date("2026-10-01T00:00:00Z") } });
+  assert.deepEqual(await testAuditedSourceConnection(identity, CONNECTION_ID, "corr", { db, secrets, drivers }), { ok: false, errorClass: "network" });
 });

@@ -243,10 +243,12 @@ export class DemoServiceAccountStore implements ServiceAccountBackend {
   }
 }
 
-// On `globalThis` so `next dev` re-evaluating this module (it does when another route is compiled) cannot reset the demo accounts mid-flow.
-const shared = globalThis as typeof globalThis & { demoServiceAccountStore?: DemoServiceAccountStore };
+// Deliberately module state, not `globalThis`: the store throws `ServiceAccountError`, and `next dev` re-evaluating the
+// modules (when another route is compiled) would leave a surviving store throwing the previous copy of that class, which
+// the routes' `instanceof` checks no longer recognise (a 500 instead of a 409).
+let store: DemoServiceAccountStore | undefined;
 /** The process-wide demo store. */
 export function demoServiceAccountStore(): DemoServiceAccountStore {
-  shared.demoServiceAccountStore ??= new DemoServiceAccountStore();
-  return shared.demoServiceAccountStore;
+  store ??= new DemoServiceAccountStore();
+  return store;
 }

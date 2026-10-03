@@ -465,10 +465,9 @@ test("the routes extend and transfer in the caller's tenant, and answer stable c
   for (const roles of ["analyst", "reviewer"]) assert.equal((await act(reader.serviceAccountId, { action: "extend", expiresInDays: 365 }, { roles })).status, 403, roles);
 });
 
-test("the demo store lives on globalThis, so next dev evaluating this module again keeps the accounts", async () => {
+test("the demo store is one instance per module evaluation, not shared through globalThis", async () => {
   const { demoServiceAccountStore } = await import("../../adapters/demo/service-account-store.ts");
-  const shared = globalThis as typeof globalThis & { demoServiceAccountStore?: unknown };
   const first = demoServiceAccountStore();
-  assert.equal(shared.demoServiceAccountStore, first);
   assert.equal(demoServiceAccountStore(), first);
+  assert.equal("demoServiceAccountStore" in globalThis, false, "its errors are classes of this evaluation, so it must not outlive it");
 });

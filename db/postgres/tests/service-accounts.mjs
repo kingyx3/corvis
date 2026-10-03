@@ -43,7 +43,6 @@ function identity(person, tenant, workspace, isTenantAdmin) {
 }
 const adminIdentity = identity(admin, tenantId, workspaceId, true);
 const analystIdentity = identity(analyst, tenantId, workspaceId, false);
-const adminTwoIdentity = identity(adminTwo, tenantId, workspaceId, true);
 const otherAdminIdentity = identity(otherAdmin, otherTenantId, otherWorkspace, true);
 
 // A statement that raises aborts a Postgres transaction, so every expected refusal runs under its own savepoint.
