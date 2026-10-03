@@ -26,6 +26,16 @@ test("resource entitlement and data-right admin commands are tenant scoped, effe
   assert.match(route, /apply_data_right_admin/);
 });
 
+test("re-granting an entitlement with unchanged dates is not counted as a change in the audit trail", async () => {
+  // A plain `on conflict ... do update` always reports row_count=1, so a repeat grant with identical
+  // valid_from/valid_until would otherwise read as a fresh change in audit_event.metadata.changed.
+  const sql = (await read("db/postgres/migrations/089_resource_entitlement_grant_change_accuracy.sql")).toLowerCase();
+  assert.match(sql, /do update set valid_from=excluded\.valid_from, valid_until=excluded\.valid_until/);
+  assert.match(sql, /where corvis_control\.resource_entitlement\.valid_from is distinct from excluded\.valid_from/);
+  assert.match(sql, /or corvis_control\.resource_entitlement\.valid_until is distinct from excluded\.valid_until/);
+  assert.match(sql, /get diagnostics v_changed = row_count/);
+});
+
 test("disabled human identities require an explicit separately audited reactivation", async () => {
   const ordinary = (await read("db/postgres/migrations/011_identity_lifecycle_sync.sql")).toLowerCase();
   const privileged = (await read("db/postgres/migrations/041_reactivation_support_access.sql")).toLowerCase();
