@@ -35,7 +35,7 @@ export function AnalyticsView({ canReadSources = false, onOpenDocument, focusReq
       {LENSES.map((item) => <button type="button" key={item.id} aria-pressed={lens === item.id} className={lens === item.id ? "active" : ""} onClick={() => choose(item.id)}>{item.label}</button>)}
     </fieldset>
     {lens === "financials"
-      ? <PositionFinancialsView canReadSources={canReadSources} onOpenDocument={onOpenDocument} focusRequest={focusActive ? focusRequest : null}/>
+      ? <PositionFinancialsView canExport={canExport} canReadSources={canReadSources} onOpenDocument={onOpenDocument} focusRequest={focusActive ? focusRequest : null}/>
       : <PerformanceScorecardView canReadSources={canReadSources} onOpenDocument={onOpenDocument} canExport={canExport}/>}
   </div>;
 }
