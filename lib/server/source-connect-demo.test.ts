@@ -144,7 +144,7 @@ async function consentLinks(authorizationUrl: string): Promise<{ approve: URL; d
   const response = await consentGet(new Request(`https://corvis.test${authorizationUrl}`));
   assert.equal(response.status, 200);
   const html = await response.text();
-  const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replaceAll("&amp;", "&").replaceAll("&#38;", "&"));
+  const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replace(/&(?:amp|#38);/g, "&"));
   return { approve: new URL(hrefs[0]!), deny: new URL(hrefs[1]!), html };
 }
 
