@@ -84,3 +84,5 @@ Data issues (story F5) added `Received` and `No change` (neutral), `Investigatin
 ## Accessibility and theming
 
 The Playwright accessibility matrix runs customer surfaces under both light and dark OS color schemes. Semantic state always has text/icon support; focus uses `--focus`; chart identity is never color-only; charts retain a keyboard-reachable table representation.
+
+Scheduled exports (story F4) reuse the existing vocabulary: `Active`, `Paused` and `Failed` pills, plus `Stopped` (neutral fallback) for a schedule whose owner was deactivated, and the run state (`Queued`, `Complete`) of the export a run produced. Schedules are cards (`export-schedule-*` in `app/design-system.css`) so they stay readable on a phone; their runs use the shared history table. Pause, resume and the two-step delete are plain buttons named with the schedule (`Pause <name>`).

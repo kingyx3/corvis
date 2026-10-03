@@ -285,6 +285,39 @@ Implementation tracker: GitHub issue #261. A customer who doubts a **published**
 
 **Demo mode** serves the same routes from an in-memory per-tenant store (`adapters/demo/data-issue-store.ts`, selected in `lib/server/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
 
+## Scheduled exports (F4)
+
+Implementation tracker: GitHub issue #260. A schedule saves one "Export this view" (D3) scope with a format and a trigger. It never exports anything itself: each due trigger becomes one governed export request made **as the schedule's owner**, through the same `createPhysicalExport` and export worker as `POST /api/v1/exports` (no second export path), and appears in Data delivery with the schedule's label. The routes are product surfaces, classified `workspace_control` in `openapi/v1-route-classification.json`.
+
+| Route | Who | Purpose |
+| --- | --- | --- |
+| `POST /api/v1/export-schedules` | `exports:create`, redistribution rights, entitled to the scope's fund | Save a schedule. Body `{ idempotencyKey, label, scope, format, trigger }`; `201` with the schedule, or `200` with `replayed: true` on an idempotent retry. |
+| `GET /api/v1/export-schedules` | `exports:create` | The caller's own schedules, newest first, each with its latest run; `?scope=all` lists every schedule in the tenant (Organization Admins only, else `403 tenant_admin_required`); `?limit=` / `?cursor=` page. |
+| `GET /api/v1/export-schedules/{scheduleId}` | the owner, or an Organization Admin | One schedule. Anyone else, and a missing, deleted or malformed id, get the same `404 export_schedule_not_found`. |
+| `PATCH /api/v1/export-schedules/{scheduleId}` | the owner only | `{ "action": "pause" or "resume" }`. An Organization Admin who is not the owner gets `404`. |
+| `DELETE /api/v1/export-schedules/{scheduleId}` | the owner only | The schedule never runs again; its runs and the exports they produced stay in history. |
+| `GET /api/v1/export-schedules/runs` | `exports:create` | The scheduled part of delivery history: every run, including refused ones, with the schedule label, scope, trigger and (for a requested run) the export's delivery state. `?scope=all` (Organization Admins), `?scheduleId=`, paging as above. |
+
+**Scope, format, trigger.** `scope` is exactly what `POST /exports` accepts: `{ snapshotId }` or `{ positionFinancials: { fundId, holdingId, companyId, periodicity, portfolioId? } }`. `format` is `csv`, `xlsx` or `parquet`; Parquet is refused with `403 feature_disabled` unless `exports.parquet_delivery` is enabled, at creation and again at every run. `trigger` is `on_publish`, `monthly` or `quarterly`. `label` is 1 to 80 single-line characters and is shown with every run. An owner holds at most 50 schedules that are not deleted (`409 export_schedule_limit_reached`).
+
+**Triggers.** Calendar triggers run on the first day of the month, or of January, April, July and October, in UTC; the first run is the next such date after the schedule is saved, never "now". A long outage yields one run for the current period, not one per missed period. `on_publish` follows the scope: a snapshot scope fires when a new version of that snapshot is published, a position scope when any snapshot of its fund is published. Only publications after the schedule was saved count, a publication counts once it has settled for a minute (`published_at` is the transaction start time), and a burst of publications is **one** run for the newest. A paused schedule does not run and does not catch up when resumed.
+
+**Re-authorization at run time.** The worker never trusts what was true when the schedule was saved. For every run it resolves the owner's current membership, entitlements and contractual data rights from Postgres (the same resolution a request goes through, under a stable per-schedule synthetic session that is never a user's revocable one), then requires `exports:create`, an enabled format, the entitled fund and redistribution rights, and finally lets `createPhysicalExport` enforce them again. A refusal is **fail-closed**: the run is recorded as `failed` with one stable reason and nothing is exported. Reasons: `owner_inactive`, `export_permission_revoked`, `redistribution_not_permitted`, `scope_not_entitled`, `scope_unavailable` (the scope no longer resolves to published data, e.g. a withdrawn snapshot), `format_unavailable`. Only `owner_inactive` stops the schedule; the others leave it running because rights may come back. The delivery worker re-authorizes the owner once more when it renders the file.
+
+**Idempotency.** A run is unique per `(schedule, trigger key)`: `publish:<snapshot id>:v<version>`, `monthly:2026-10` or `quarterly:2026-Q4`. The worker claims a trigger under a row lock on the schedule, advances the schedule past it, requests the export and records the run in **one transaction**, so a crash leaves nothing behind (the next tick claims it again), two workers can never both run a trigger, and a refused trigger is not retried. Creation is idempotent per owner like Data issues: `idempotencyKey` (body) or `Idempotency-Key` (one namespace), same content returns the original, different content is `409 idempotency_key_reused`.
+
+**Deactivated owners.** Every worker tick stops each schedule whose owner's identity is disabled or who no longer holds an active membership in the schedule's workspace (`status: "stopped"`, `stopReason: "owner_inactive"`, audited as `export_schedule.stop` by `system:export-scheduler`); a run that finds the owner unauthorizable also stops it. A stopped schedule is final and can only be deleted.
+
+**Visibility.** A schedule is read by its owner and by Organization Admins, and changed by its owner only. The tables are server-managed with RLS enabled and forced and no client policy (the 071/083 pattern).
+
+**Notifications.** A completed run notifies exactly as any completed export does: the existing `export_ready` email to the owner (their F2 preference applies; see `NOTIFICATIONS.md`), and webhook subscribers to `ExportRequested` receive the same event an interactive request emits. There is no per-schedule notification switch and no completion webhook event yet.
+
+**Errors:** `invalid_request`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_label`, `invalid_scope`, `invalid_export_format`, `invalid_trigger`, `invalid_action`, `invalid_scope` on the list parameter, `tenant_admin_required` (403), `export_scope_not_entitled` (403), `feature_disabled` (403), `forbidden` (403, no redistribution rights), `export_schedule_not_found` (404), and 409s `idempotency_key_reused`, `export_schedule_limit_reached`, `export_schedule_transition_not_allowed`. The SQL refusals behind them are allow-listed in `lib/server/sql-application-errors.ts`.
+
+**Audit.** `export_schedule.create`, `.pause`, `.resume` and `.delete` (actor: the owner, in the same transaction as the change), `export_schedule.run` (actor: the owner, outcome `success` or `failure` with the reason) and `export_schedule.stop` (actor `system:export-scheduler`); target `export_schedule`. Events carry identifiers, the label, the trigger, the format and the status, never data, and appear in the tenant access audit listing.
+
+**Demo mode** serves the same routes from an in-memory per-tenant store (`adapters/demo/export-schedule-store.ts`, selected in `lib/server/export-schedule-service.ts`), seeded per owning subject with an active monthly schedule that delivered and a paused on-publish schedule whose last run was refused. Demo mode has no worker, so a schedule created there never runs and its next run only shows; the seeded runs are illustrative.
+
 ## Versioning and deprecation
 
 `/api/v1` is the published version today. `openapi/v1-compatibility-baseline.json`

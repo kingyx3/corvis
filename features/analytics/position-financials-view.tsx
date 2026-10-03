@@ -24,6 +24,7 @@ import { SavedViews } from "@/features/preferences/saved-views";
 import { VIEW_COLUMNS, type ViewConfiguration } from "@/core/saved-views";
 import { positionFinancialsReportContext } from "@/features/data-issues/report-contexts";
 import { ReportIssueButton } from "@/features/data-issues/report-issue-dialog";
+import { ScheduleExportButton } from "@/features/export-schedules/schedule-export-dialog";
 
 type ApiEnvelope = { data?: PositionFinancialStatementRow[]; error?: string };
 type Portfolio = { id: string; displayName: string; fundPositionCount: number };
@@ -95,7 +96,7 @@ function moneyFormatter(currency: string | null): (value: number) => string {
   return (value) => formatter.format(value);
 }
 
-export function PositionFinancialsView({ canReadSources = false, onOpenDocument, focusRequest }: { canReadSources?: boolean; onOpenDocument?: (documentId: string, location?: SourceEvidence) => void; focusRequest?: PositionFinancialsFocusRequest | null }) {
+export function PositionFinancialsView({ canExport = false, canReadSources = false, onOpenDocument, focusRequest }: { canExport?: boolean; canReadSources?: boolean; onOpenDocument?: (documentId: string, location?: SourceEvidence) => void; focusRequest?: PositionFinancialsFocusRequest | null }) {
   usePreferences();
   const [visibleColumns, setVisibleColumns] = useState(VIEW_COLUMNS.analytics);
   const [tableSort, setTableSort] = useState<{ columnId: string; direction: "ascending" | "descending" } | null>(null);
@@ -348,6 +349,7 @@ export function PositionFinancialsView({ canReadSources = false, onOpenDocument,
     <TableDensityToggle value={density} onChange={setDensity} label="Financial table density"/>
     <button type="button" className="secondary-button" aria-expanded={compareOpen} disabled={positions.length < 2} onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Hide comparison" : "Compare positions"}</button>
     <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>
+    {canExport && <ScheduleExportButton scope={chosen && selectedRows.length ? { positionFinancials: { fundId: chosen.fundId, holdingId: chosen.holdingId, companyId: chosen.companyId, periodicity, ...(selectedPortfolio ? { portfolioId: selectedPortfolio } : {}) } } : null}/>}
     <ReportIssueButton context={positionFinancialsReportContext(chosen, selectedRows)}/>
   </div>;
 

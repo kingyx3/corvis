@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
 import { getServerConfig } from "@/lib/server/config";
 import { sweepExpiredExportDownloadGrants } from "@/lib/server/export-grant-sweep";
+import { processDueExportSchedules } from "@/lib/server/export-schedule";
 import { apiError, correlationId, json } from "@/lib/server/http";
 import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
@@ -39,6 +40,8 @@ export async function POST(request:Request){
       exports:()=>processQueuedExports(),
       // Full tenant exports approved by a second Organization Admin (F10): same tick, same object store and artifact lifetime.
       tenantExports:()=>processApprovedTenantExports(),
+      // F4: due schedule triggers become governed export requests made as the schedule's owner; the export worker above delivers them.
+      exportSchedules:()=>processDueExportSchedules(),
       webhooks:()=>processWebhookDeliveries(),
       processing:()=>dispatchConfiguredProcessingTransport(processingWorkerUrl),
       webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),

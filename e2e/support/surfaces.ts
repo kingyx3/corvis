@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 // The critical customer flows. Every accessibility, performance and resilience assertion is driven
 // from this list so a new surface cannot be added without being covered.
 export type Surface = {
-  id: "overview" | "analytics" | "documents" | "sources" | "review" | "issues" | "delivery" | "research" | "access" | "help";
+  id: "overview" | "analytics" | "documents" | "sources" | "review" | "issues" | "delivery" | "schedule" | "research" | "access" | "help";
   label: string;
   role?: "admin";
   nav: RegExp | null;
@@ -23,6 +23,11 @@ export const surfaces: Surface[] = [
   // Reports on published figures and their status (F5). Seeded per demo subject, so the unseen-update badge is present.
   { id: "issues", label: "Data issues", nav: /^data issues$/i, heading: /^data issues$/i },
   { id: "delivery", label: "Data delivery", nav: /^data delivery$/i, heading: /deliver structured data/i },
+  // "Schedule this export" (F4): a dialog opened from a published snapshot in Data review, reachable on every viewport.
+  { id: "schedule", label: "Schedule this export", nav: null, heading: /^schedule this export$/i, open: async (page) => {
+    await page.getByRole("button", { name: "Open EQT IX Q1 2026" }).click();
+    await page.getByRole("button", { name: "Schedule export" }).click();
+  } },
   { id: "research", label: "Ask Corvis", nav: /^ask corvis$/i, heading: /^ask corvis$/i },
   // The Help menu (F9): a dialog opened from the top bar, reachable on every viewport.
   { id: "help", label: "Help and support", nav: null, heading: /^help and support$/i, open: async (page) => { await page.getByRole("button", { name: /^help and support$/i }).first().click(); } },

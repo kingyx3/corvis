@@ -489,6 +489,16 @@
 .data-issues-more { display: flex; justify-content: center; }
 .data-issue-form textarea { width: 100%; resize: vertical; }
 .data-issue-scope dd { overflow-wrap: anywhere; }
+/* Scheduled exports (F4): cards for the schedules, the shared table for their runs. */
+.export-schedules { display: grid; gap: 12px; }
+.export-schedule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.export-schedule-card { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); min-width: 0; }
+.export-schedule-card[data-status="paused"], .export-schedule-card[data-status="stopped"] { border-inline-start: 6px solid var(--border-strong, var(--border)); }
+.export-schedule-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.export-schedule-head h3 { margin: 0 0 2px; font-size: 16px; color: var(--text-strong); overflow-wrap: anywhere; }
+.export-schedule-runs-heading { margin: 8px 0 0; font-size: 14px; color: var(--text-strong); }
+.schedule-scope dd { overflow-wrap: anywhere; }
+.schedule-form select, .schedule-form input { width: 100%; }
 
 /* An absolutely positioned visually-hidden header cell inside a scrolling table card used to escape its clipping and widen the whole page on phones. */
 .table-card { position: relative; }

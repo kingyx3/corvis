@@ -89,7 +89,7 @@ export const SQL_APPLICATION_ERRORS = [
   "data issue correction required",
   "data issue correction is not resolved",
   "data issue resolution note required",
-  // corvis_control.request_tenant_export / decide_tenant_export (086)
+  // corvis_control.request_tenant_export / decide_tenant_export (084)
   "tenant export purpose required",
   "tenant export requires an active organization admin",
   "tenant export already in progress",
@@ -99,6 +99,11 @@ export const SQL_APPLICATION_ERRORS = [
   "tenant export decision note required",
   "tenant export status changed",
   "tenant export transition not allowed",
+  // corvis_control.create_export_schedule / set_export_schedule_status (085)
+  "idempotency key reused with different export schedule",
+  "export schedule scope is invalid",
+  "export schedule limit reached",
+  "export schedule transition not allowed",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -194,6 +199,11 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "tenant export decision note required": { code: "invalid_note", status: 400 },
   "tenant export status changed": { code: "data_export_status_changed", status: 409 },
   "tenant export transition not allowed": { code: "data_export_transition_not_allowed", status: 409 },
+  // Scheduled exports (F4): refusals of a schedule or a status change that its key history, quota or current state cannot accept.
+  "idempotency key reused with different export schedule": { code: "idempotency_key_reused", status: 409 },
+  "export schedule scope is invalid": { code: "invalid_scope", status: 400 },
+  "export schedule limit reached": { code: "export_schedule_limit_reached", status: 409 },
+  "export schedule transition not allowed": { code: "export_schedule_transition_not_allowed", status: 409 },
 };
 
 /**

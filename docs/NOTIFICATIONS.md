@@ -25,6 +25,10 @@ The catalog, audiences and templates live in `core/notifications.ts`. Stories th
 
 The email says only that a data issue the person reported moved to a status ("Data Operations is investigating...", "was corrected. A replacement publication is available.", "was reviewed and no change was needed.") and links to `/#/issues`. It never names the fund, company, metric, period or snapshot, never quotes the comment or a resolution note, and never carries a figure: those live in the Data issues view, behind normal authorization. The in-app signal is independent of email: the reporter's case list shows an **Updated** badge and the sidebar a count until they open or acknowledge the case (`reporter_seen_status` on the case, cleared by `PATCH /api/v1/data-issues/{caseId}` `{"seen": true}`), so a person with no verified address, a service identity, or one who switched the category off still sees the change in the app.
 
+### F4 scheduled exports
+
+A scheduled run creates an ordinary export job, so its completion sends the same `export_ready` email to the schedule's owner (subject to their preference: switch the category off or to a daily digest to quieten a busy schedule), and `ExportRequested` webhook subscribers receive the event for every run. There is no per-schedule notification switch and no completion webhook event yet; see `API_CONVENTIONS.md` (Scheduled exports).
+
 ## Content rules
 
 Emails never contain financial figures, document content, fund or company names, or support-grant purposes. They carry a short event description, at most a workspace name, and a link back into the app, where normal authorization applies. Every optional email links to `/?notifications=settings`, which opens the settings dialog. Mandatory notices say they cannot be turned off. Names are escaped and length-bounded, and a link that is not absolute `https` is refused at render time.
