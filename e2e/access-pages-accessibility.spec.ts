@@ -135,6 +135,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("region", { name: "Identity provider and provisioning" })).toContainText("https://login.example.test");
     await page.getByRole("button", { name: "Sign out morgan.lee@example.test everywhere" }).click();
     await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
+    // F10d: a colleague's request is waiting for this admin, so the approval notice sits at the top of the page and is part of the scan.
+    await expect(page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" })).toContainText("Review the request");
     const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
     await ready.getByText("Contents and checksums").click();
     await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
@@ -177,6 +179,43 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("heading", { name: /tenant access controls/i })).toBeVisible();
     await expect(page.getByRole("alert").filter({ hasText: /access controls need attention/i })).toBeVisible();
     const violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+  });
+
+  test(`operator view of tenant export builds (loaded, empty and refused) passes axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    const issue = (requestId: string, overrides: Record<string, unknown> = {}) => ({
+      tenantId: "tenant-1", tenantName: "Meridian Capital", requestId, status: "failed", attempts: 5, lastError: "GCS object write failed (503)",
+      requestedAt: "2026-10-01T10:00:00.000Z", changedAt: "2026-10-02T10:00:00.000Z", nextAttemptAt: null, ...overrides,
+    });
+    let mode: "loaded" | "empty" | "refused" = "loaded";
+    await page.route("**/api/v1/admin/tenant-export-builds**", (route) => {
+      if (mode === "refused") return route.fulfill(json({ error: "operations_admin_required" }, 403));
+      if (mode === "empty") return route.fulfill(json({ data: [], nextCursor: null }));
+      const status = new URL(route.request().url()).searchParams.get("status");
+      const items = [issue("b1", { lastError: "export build lease expired before completion" }), issue("b2", { status: "retrying", attempts: 2, nextAttemptAt: "2026-10-02T11:00:00.000Z" })];
+      return route.fulfill(json({ data: status === null ? items : items.filter((item) => item.status === status), nextCursor: null }));
+    });
+    await page.goto("/admin/tenant-export-builds");
+    await expect(page.getByRole("heading", { name: "Tenant export builds" })).toBeVisible();
+    const table = page.getByRole("region", { name: "Tenant export builds" });
+    await expect(table).toContainText("Meridian Capital");
+    await expect(table).toContainText("export build lease expired before completion");
+    await expect(table).toContainText("Retrying");
+    let violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    await page.getByRole("button", { name: "Failed" }).click();
+    await expect(table).not.toContainText("Retrying");
+    await expect(page.getByRole("button", { name: "Failed" })).toHaveAttribute("aria-pressed", "true");
+    mode = "empty";
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(table).toContainText("No failed or retrying export builds.");
+    violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    mode = "refused";
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Only Corvis operations can view export builds." })).toBeVisible();
+    violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });
 
