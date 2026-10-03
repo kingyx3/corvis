@@ -443,6 +443,8 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/review-item-discussion.sql
           # Review-item discussion through the application repository: visibility, paging, open assignments, the assignee's and mentioned person's notice and send-time eligibility, audit round trip, dual control untouched. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/review-item-discussion.mjs
+          # Organization session policy (F7): bounded idle/maximum session limits, Organization-Admin-only changes, compare-and-set, enforcement that ends sessions for good and fails closed, sign-out-everywhere revocation, tenant/RLS. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/session-policy.sql
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
           # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.
