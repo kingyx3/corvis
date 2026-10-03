@@ -4,6 +4,7 @@ set -euo pipefail
 CONVEX_BACKEND_IMAGE="${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a}"
 CONVEX_CLI_VERSION="${CONVEX_CLI_VERSION:-1.46.0}"
 CONVEX_POSTGRES_URL="${CONVEX_POSTGRES_URL:-}"
+CONVEX_POSTGRES_REQUIRE_TLS="${CONVEX_POSTGRES_REQUIRE_TLS:-true}"
 CONTAINER="corvis-convex-conformance-${RANDOM}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULT_DIR="$(mktemp -d)"
@@ -43,6 +44,12 @@ if [[ -n "$CONVEX_POSTGRES_URL" ]]; then
     --add-host=host.docker.internal:host-gateway
     -e "POSTGRES_URL=$CONVEX_POSTGRES_URL"
   )
+  # Managed providers should keep Convex's TLS requirement enabled. The GitHub
+  # Actions PostgreSQL service is an isolated disposable server without TLS, so
+  # its workflow sets this to false and we use Convex's own supported flag.
+  if [[ "$CONVEX_POSTGRES_REQUIRE_TLS" == "false" ]]; then
+    docker_args+=(-e DO_NOT_REQUIRE_SSL=1)
+  fi
 fi
 
 docker run "${docker_args[@]}" "$CONVEX_BACKEND_IMAGE" >/dev/null
