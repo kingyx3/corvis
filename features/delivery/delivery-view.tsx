@@ -34,6 +34,8 @@ function scopeLabel(manifest: ExportManifest): string {
 }
 function rowCoverage(manifest: ExportManifest): string {
   const positionRows = manifest.rowCounts.positionFinancials;
+  const scorecardRows = manifest.rowCounts.performanceScorecard;
+  if (scorecardRows != null) return `${scorecardRows} scorecard rows · ${manifest.snapshotIds.length} snapshots`;
   if (positionRows != null) return `${positionRows} financial rows · ${manifest.snapshotIds.length} snapshots`;
   return `${manifest.rowCounts.observations ?? 0} observations · ${manifest.snapshotIds.length} snapshots`;
 }
