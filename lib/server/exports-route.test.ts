@@ -183,6 +183,17 @@ test("POST /exports rejects a malformed scope with 400 instead of silently ignor
   }
 });
 
+test("POST /exports accepts the performance scorecard scope only as `true`, and with no entitlement it fails closed with 403 rather than exporting an empty file", async () => {
+  const valid = request("csv");
+  const post = (scope: unknown) => exportsPost(new Request(valid.url, { method: "POST", headers: valid.headers, body: JSON.stringify({ format: "csv", scope }) }));
+  for (const scope of [{ performanceScorecard: false }, { performanceScorecard: "true" }, { performanceScorecard: { fundId: "x" } }, { performanceScorecard: null }]) {
+    const response = await post(scope);
+    assert.equal(response.status, 400, JSON.stringify(scope));
+    assert.equal(((await response.json()) as { error: string }).error, "invalid_export_scope", JSON.stringify(scope));
+  }
+  assert.equal((await post({ performanceScorecard: true })).status, 403, "the demo identity carries no fund entitlement, so the scorecard resolves to nothing");
+});
+
 test("POST /exports with a well-formed scope but no fund entitlement fails closed with 403, never silently exporting every entitled snapshot", async () => {
   // The demo identity path this suite uses never carries fundIds, so a scoped
   // request can never resolve to the requested snapshot here — exactly the

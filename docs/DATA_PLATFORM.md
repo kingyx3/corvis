@@ -152,7 +152,9 @@ Customer exports (`POST /exports`, CSV / XLSX / Parquet) render in `lib/server/e
 
 | Export | Column | Parquet type |
 | --- | --- | --- |
-| Observations and Position Financials | `value_number` | `DECIMAL(38,10)` (exact; never DOUBLE) |
+| Observations, Position Financials and Performance scorecard | `value_number` | `DECIMAL(38,10)` (exact; never DOUBLE) |
+| Performance scorecard | `is_derived` | `BOOLEAN` (nullable; null on a `Not reported` row) |
+| Performance scorecard | every other column (`level`, `status`, `as_of_date`, `source_page`, ...) | `BYTE_ARRAY` / `UTF8` |
 | Observations | `version` | `DOUBLE` |
 | Position Financials | `display_order`, `depth`, `fiscal_year`, `fiscal_quarter` | `INT32` (nullable) |
 | Position Financials | `preliminary`, `is_restatement`, `is_derived` | `BOOLEAN` (nullable) |

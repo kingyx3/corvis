@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type HTMLAttributes, type Key, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type HTMLAttributes, type Key, type ReactNode } from "react";
 import type { TableDensity } from "./table-density-toggle";
 
 type SortValue = string | number | null | undefined;
@@ -39,6 +39,7 @@ export function SortableDataTable<Row>({
   density = "comfortable",
   className = "",
   getRowAttributes,
+  renderRowDetail,
 }: {
   caption: string;
   sort?: { columnId: string; direction: Direction } | null;
@@ -49,6 +50,8 @@ export function SortableDataTable<Row>({
   density?: TableDensity;
   className?: string;
   getRowAttributes?: (row: Row) => SortableRowAttributes;
+  /** Optional content for a full-width row directly under `row` (e.g. an expanded child table); null renders no row. */
+  renderRowDetail?: (row: Row) => ReactNode | null;
 }) {
   const [localSort, setSort] = useState<{ columnId: string; direction: Direction } | null>(null);
   const sort = controlledSort === undefined ? localSort : controlledSort;
@@ -57,7 +60,11 @@ export function SortableDataTable<Row>({
     const column = columns.find((candidate) => candidate.id === sort.columnId);
     if (!column?.sortValue) return [...rows];
     return rows.map((row, index) => ({ row, index })).sort((left, right) => {
-      const compared = compareSortValues(column.sortValue!(left.row), column.sortValue!(right.row));
+      const leftValue = column.sortValue!(left.row);
+      const rightValue = column.sortValue!(right.row);
+      // A row with no value (for example a metric that was "Not reported") stays last in both directions instead of leading a descending sort.
+      if ((leftValue == null) !== (rightValue == null)) return leftValue == null ? 1 : -1;
+      const compared = compareSortValues(leftValue, rightValue);
       const stable = compared || left.index - right.index;
       return sort.direction === "ascending" ? stable : -stable;
     }).map(({ row }) => row);
@@ -80,11 +87,17 @@ export function SortableDataTable<Row>({
           </button> : column.header}
         </th>;
       })}</tr></thead>
-      <tbody>{orderedRows.map((row) => <tr key={rowKey(row)} {...getRowAttributes?.(row)}>{columns.map((column) => {
-        const content = column.render(row);
-        const common = { className: column.cellClassName, title: column.cellTitle?.(row), style: { textAlign: column.align === "end" ? "right" as const : "left" as const } };
-        return column.rowHeader ? <th key={column.id} scope="row" {...common}>{content}</th> : <td key={column.id} {...common}>{content}</td>;
-      })}</tr>)}</tbody>
+      <tbody>{orderedRows.map((row) => {
+        const detail = renderRowDetail?.(row);
+        return <Fragment key={rowKey(row)}>
+          <tr {...getRowAttributes?.(row)}>{columns.map((column) => {
+            const content = column.render(row);
+            const common = { className: column.cellClassName, title: column.cellTitle?.(row), style: { textAlign: column.align === "end" ? "right" as const : "left" as const } };
+            return column.rowHeader ? <th key={column.id} scope="row" {...common}>{content}</th> : <td key={column.id} {...common}>{content}</td>;
+          })}</tr>
+          {detail != null && <tr className="data-table-detail-row"><td colSpan={columns.length}>{detail}</td></tr>}
+        </Fragment>;
+      })}</tbody>
     </table>
   );
 }

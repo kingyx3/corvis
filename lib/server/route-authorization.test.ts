@@ -193,6 +193,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["my-workspaces/route.ts", { GET: null }],
   ["notification-preferences/route.ts", { GET: null, PUT: null }],
   ["observations/route.ts", { GET: "observations:read" }],
+  ["performance-scorecard/route.ts", { GET: "observations:read" }],
   ["portfolio-holdings/route.ts", { GET: "observations:read" }],
   ["portfolios/route.ts", { GET: "observations:read" }],
   ["position-financials/route.ts", { GET: "observations:read" }],

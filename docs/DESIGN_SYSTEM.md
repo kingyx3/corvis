@@ -59,6 +59,14 @@ These are the supported global styling hooks in `app/globals.css` and `app/desig
 
 If a reusable pattern is missing, promote it to a typed primitive first and document it here; do not add an unscoped one-off class to a feature.
 
+## Portfolio analytics lenses and the performance scorecard (F1)
+
+Portfolio analytics is one navigation entry with two lenses switched by an `aria-pressed` segmented control (`.analytics-lens-switch`, `AnalyticsView`): **Position financials** (the default, and the target of every drill-through from Data review and the Overview) and **Performance scorecard** (`PerformanceScorecardView`). Adding a lens never adds a navigation entry, so the nav-count assertions are unchanged. The scorecard is registered in the axe-core surface matrix (`e2e/support/surfaces.ts`, id `scorecard`) and is scanned loaded with a fund expanded, in light and dark and on desktop and phone.
+
+Scorecard presentation rules (classes `scorecard-*`): every figure shows its value, a `StatusPill` of `Final`, `Preliminary` or `Restated`, a second `Derived` pill when Corvis rather than the GP produced it, and "As of <date>" (or "Period <label>" when the report carries no as-of date). A metric the GP did not report reads "Not reported" in muted italics, never 0 or an empty cell. The figure itself is the single control that opens its source document (a native button; its accessible name carries the subject, metric and value, and its title the text as printed in the source). A fund row expands (`aria-expanded`, a native button) to a nested sortable table of its underlying investments, rendered through `SortableDataTable`'s `renderRowDetail`.
+
+`SortableDataTable` gained two behaviours used here and available to every table: `renderRowDetail` (an optional full-width row under a row) and rows whose sort value is missing now stay last in both directions instead of leading a descending sort. The scorecard's money columns sort at the scale the GP stated ("USD 1,958 millions" sorts above "USD 1,271,000,000" units correctly).
+
 ## Help and support
 
 `HelpDialog` (`components/help/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.

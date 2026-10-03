@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "crypto";
 import type { ExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { resolveScorecardExport, SCORECARD_EXPORT_LABEL } from "./performance-scorecard-export.ts";
 import { PostgresPositionFinancialStatementRepository } from "./position-financial-statements.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
@@ -49,7 +50,8 @@ function isSnapshotScope(scope: ExportScope | undefined): scope is { snapshotId:
   return Boolean(scope && "snapshotId" in scope);
 }
 
-async function positionFinancialSnapshots(
+/** Exported so the defensive entitlement guard (which createPhysicalExport's own pre-check makes unreachable) is testable. */
+export async function positionFinancialSnapshots(
   identity: RequestIdentity,
   scope: Extract<ExportScope, { positionFinancials: unknown }>,
   store: PostgresSqlApi,
@@ -118,9 +120,11 @@ export async function createPhysicalExport(
   const documentIds = identity.entitlements.documentIds ?? [];
   const snapshotScope = isSnapshotScope(scope) ? scope : undefined;
   const positionScope = scope && "positionFinancials" in scope ? scope : undefined;
+  const scorecardScope = scope && "performanceScorecard" in scope ? scope : undefined;
 
   let snapshots: PostgresRow[];
   let positionRowCount: number | undefined;
+  let scorecardRowCount = 0;
   if (positionScope) {
     const p = positionScope.positionFinancials;
     const rows = await new PostgresPositionFinancialStatementRepository(store).list(identity, {
@@ -134,6 +138,10 @@ export async function createPhysicalExport(
     if (rows.length === 0) throw new AuthorizationError("exports:scope");
     positionRowCount = rows.length;
     snapshots = await positionFinancialSnapshots(identity, positionScope, store);
+  } else if (scorecardScope) {
+    const resolved = await resolveScorecardExport(identity, store);
+    scorecardRowCount = resolved.rowCount;
+    snapshots = resolved.snapshots;
   } else {
     snapshots = fundIds.length === 0 ? [] : await store.query(`select s.snapshot_id,s.schema_version,s.taxonomy_version,s.fund_id,s.version,s.blocking_exception_count
       from corvis_serving.fund_period_snapshots s
@@ -152,7 +160,7 @@ export async function createPhysicalExport(
   if (scope && snapshots.length === 0) throw new AuthorizationError("exports:scope");
 
   const scopedFundIds = scope ? [...new Set(snapshots.map((row) => text(row, "fund_id")))] : fundIds;
-  const counts = positionScope || scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
+  const counts = positionScope || scorecardScope || scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
     from corvis_serving.observations o
     join corvis_source.source_reference r
       on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
@@ -165,9 +173,11 @@ export async function createPhysicalExport(
   const generatedAt = new Date().toISOString();
   const scopeLabel = positionScope
     ? `Position financials · ${positionScope.positionFinancials.companyId} · ${positionScope.positionFinancials.periodicity}${positionScope.positionFinancials.portfolioId ? ` · portfolio ${positionScope.positionFinancials.portfolioId}` : ""}`
+    : scorecardScope ? SCORECARD_EXPORT_LABEL
     : snapshotScope ? `Snapshot ${snapshotScope.snapshotId}` : undefined;
   const rowCounts: Record<string, number> = positionScope
     ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }
+    : scorecardScope ? { performanceScorecard: scorecardRowCount, snapshots: snapshots.length }
     : { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length };
   const snapshotState = snapshots
     .filter((row) => row.version != null)

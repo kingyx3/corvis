@@ -10,7 +10,10 @@
  * stable reasons below and exports nothing.
  */
 
-import type { ExportFormat, ExportScope } from "./delivery.ts";
+import type { ExportFormat, PositionFinancialsExportScope, SnapshotExportScope } from "./delivery.ts";
+
+/** What can be scheduled today: the performance scorecard export (F1) is not a schedulable scope yet. */
+export type ScheduledExportScope = SnapshotExportScope | PositionFinancialsExportScope;
 
 export const EXPORT_SCHEDULE_TRIGGERS = ["on_publish", "monthly", "quarterly"] as const;
 export type ExportScheduleTrigger = (typeof EXPORT_SCHEDULE_TRIGGERS)[number];
@@ -107,7 +110,7 @@ export type ExportScheduleRun = {
 export type ExportSchedule = {
   scheduleId: string;
   label: string;
-  scope: ExportScope;
+  scope: ScheduledExportScope;
   scopeLabel: string;
   format: ExportFormat;
   trigger: ExportScheduleTrigger;
@@ -129,7 +132,7 @@ export type ScheduledExportMarker = { scheduleId: string; label: string; trigger
 export type CreateExportScheduleCommand = {
   idempotencyKey: string;
   label: string;
-  scope: ExportScope;
+  scope: ScheduledExportScope;
   format: ExportFormat;
   trigger: ExportScheduleTrigger;
 };
@@ -167,7 +170,7 @@ function optionalLine(value: unknown, max: number, code: string): string | undef
 }
 
 /** The saved scope: exactly what an "Export this view" request carries (a published snapshot, or one Position Financials view). */
-export function parseExportScheduleScope(value: unknown): ExportScope {
+export function parseExportScheduleScope(value: unknown): ScheduledExportScope {
   if (!isRecord(value)) throw new ExportScheduleValidationError("invalid_scope");
   if (value.snapshotId !== undefined) return { snapshotId: requiredLine(value.snapshotId, MAX_ID_LENGTH, "invalid_scope") };
   const raw = value.positionFinancials;
@@ -262,19 +265,19 @@ export function describeTriggerKey(triggerKey: string): string {
 // ---------------------------------------------------------------------------
 
 /** The scope in words, identical to the "Scope" shown for the export it produces in delivery history. */
-export function exportScopeSummary(scope: ExportScope): string {
+export function exportScopeSummary(scope: ScheduledExportScope): string {
   if ("snapshotId" in scope) return `Snapshot ${scope.snapshotId}`;
   const p = scope.positionFinancials;
   return `Position financials · ${p.companyId} · ${p.periodicity}${p.portfolioId ? ` · portfolio ${p.portfolioId}` : ""}`;
 }
 
 /** The fund whose publications can trigger an on-publish run, when the scope names one (a snapshot scope names the snapshot itself). */
-export function scopeFundId(scope: ExportScope): string | null {
+export function scopeFundId(scope: ScheduledExportScope): string | null {
   return "positionFinancials" in scope ? scope.positionFinancials.fundId : null;
 }
 
 /** A suggested label for a new schedule, which the person can edit. */
-export function defaultScheduleLabel(scope: ExportScope, trigger: ExportScheduleTrigger): string {
+export function defaultScheduleLabel(scope: ScheduledExportScope, trigger: ExportScheduleTrigger): string {
   const cadence = trigger === "on_publish" ? "On publish" : trigger === "monthly" ? "Monthly" : "Quarterly";
   return `${cadence} · ${exportScopeSummary(scope)}`.slice(0, MAX_SCHEDULE_LABEL_LENGTH);
 }
