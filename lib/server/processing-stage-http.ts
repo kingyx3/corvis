@@ -1,16 +1,9 @@
 /**
  * Shared cancellation primitives for the HTTP-backed processing stages.
  *
- * Two rules keep a hung provider from outliving its stage:
- *
- * 1. A per-call timeout stays live until the response BODY has been read. The
- *    previous helper disposed its timer as soon as headers arrived, so a
- *    provider that trickled or stalled its body pinned the handler with no
- *    bound and no abort.
- * 2. Every call in a stage draws from one stage-wide budget that is strictly
- *    smaller than the router's hard limit, so the router's own timeout (which
- *    rejects the caller but cannot stop an orphaned handler) is never the first
- *    thing to fire and the retry cannot run alongside a still-running attempt.
+ * Provider calls stay bounded through body consumption. Extraction is the one
+ * deliberately long-running stage: map/reduce inference may take several minutes,
+ * while registration/representation and metadata calls retain the short budget.
  */
 
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
@@ -19,8 +12,12 @@ import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 export const STAGE_ROUTER_TIMEOUT_MS = 30_000;
 /** Stage-wide budget: every provider/metadata/GCS call in one stage shares it. */
 export const STAGE_EXECUTION_BUDGET_MS = 27_000;
+/** Extraction-only stage budget; the router allows 540s and the worker's Cloud Run deadline is 600s. */
+export const EXTRACTION_STAGE_EXECUTION_BUDGET_MS = 510_000;
 /** Ceiling for a configured provider timeout: identity token (5s) + provider must fit the stage budget. */
 export const MAX_PROVIDER_TIMEOUT_MS = 20_000;
+/** Ceiling for the extraction provider timeout only; must fit EXTRACTION_STAGE_EXECUTION_BUDGET_MS. */
+export const MAX_EXTRACTION_PROVIDER_TIMEOUT_MS = 480_000;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000;
 export const METADATA_TIMEOUT_MS = 5_000;
 
@@ -42,17 +39,15 @@ export function boundedSignal(parent: AbortSignal, timeoutMs: number, label: str
   };
 }
 
-/**
- * Wraps a stage handler so every collaborator call shares one execution budget:
- * the signal it receives aborts when the router aborts OR when the budget is
- * spent, whichever is first. The timer is released when the handler settles.
- */
 export function withStageBudget(
   handler: ProcessingStageHandler,
   budgetMs: number = STAGE_EXECUTION_BUDGET_MS,
 ): ProcessingStageHandler {
   return async (effect, routerSignal) => {
-    const execution = boundedSignal(routerSignal, budgetMs, "processing stage execution budget");
+    const effectiveBudget = effect.stage === "extracted"
+      ? Math.max(budgetMs, EXTRACTION_STAGE_EXECUTION_BUDGET_MS)
+      : budgetMs;
+    const execution = boundedSignal(routerSignal, effectiveBudget, "processing stage execution budget");
     try { return await handler(effect, execution.signal); }
     finally { execution.dispose(); }
   };
@@ -66,18 +61,10 @@ function abortRejection(signal: AbortSignal): { promise: Promise<never>; dispose
     listener = fail;
     signal.addEventListener("abort", fail, { once: true });
   });
-  // The race below may settle first; never leave an unhandled rejection behind.
   promise.catch(() => undefined);
   return { promise, dispose() { if (listener) signal.removeEventListener("abort", listener); } };
 }
 
-/**
- * Fetches `url` and runs `read` on the response (typically `.text()`,
- * `.json()` or `.arrayBuffer()`) while the timeout and parent abort are still
- * armed. Both the fetch and the read are raced against the abort signal, so a
- * body that never ends rejects even when the transport ignores the signal. An
- * unread body is cancelled so the connection is released.
- */
 export async function boundedFetch<T>(
   fetchImpl: typeof fetch,
   url: string,

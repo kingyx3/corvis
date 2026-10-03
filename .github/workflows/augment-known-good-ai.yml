@@ -1,0 +1,129 @@
+name: Bind AI images to known-good release
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      expected_api_image:
+        required: true
+        type: string
+      expected_control_loop_image:
+        required: true
+        type: string
+      expected_extractor_image:
+        required: false
+        type: string
+        default: ""
+      expected_litellm_image:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: asia-southeast1
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      EXPECTED_API_IMAGE: ${{ inputs.expected_api_image }}
+      EXPECTED_CONTROL_LOOP_IMAGE: ${{ inputs.expected_control_loop_image }}
+      EXPECTED_EXTRACTOR_IMAGE: ${{ inputs.expected_extractor_image }}
+      EXPECTED_LITELLM_IMAGE: ${{ inputs.expected_litellm_image }}
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.environment }}" in uat|prod) ;; *) echo "Only uat/prod are supported."; exit 1 ;; esac
+          [[ "${EXPECTED_API_IMAGE}" =~ /api@sha256:[0-9a-f]{64}$ ]] || { echo "Expected API image is invalid."; exit 1; }
+          [[ "${EXPECTED_CONTROL_LOOP_IMAGE}" =~ /control-loop@sha256:[0-9a-f]{64}$ ]] || { echo "Expected control-loop image is invalid."; exit 1; }
+          if [[ -n "${EXPECTED_EXTRACTOR_IMAGE}" || -n "${EXPECTED_LITELLM_IMAGE}" ]]; then
+            [[ "${EXPECTED_EXTRACTOR_IMAGE}" =~ /extractor@sha256:[0-9a-f]{64}$ ]] || { echo "Expected extractor image is invalid."; exit 1; }
+            [[ "${EXPECTED_LITELLM_IMAGE}" =~ /litellm@sha256:[0-9a-f]{64}$ ]] || { echo "Expected LiteLLM image is invalid."; exit 1; }
+          fi
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Verify live AI runtime and bind accepted release
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="gs://${TF_STATE_BUCKET}/releases/${{ inputs.environment }}/known-good.json"
+          gcloud storage cat "${manifest}" > known-good.json || { echo "Security acceptance did not create known-good.json."; exit 1; }
+          [[ "$(jq -r '.image // empty' known-good.json)" == "${EXPECTED_API_IMAGE}" ]] || { echo "Known-good API image differs from accepted deployment."; exit 1; }
+          [[ "$(jq -r '.controlLoopImage // empty' known-good.json)" == "${EXPECTED_CONTROL_LOOP_IMAGE}" ]] || { echo "Known-good control-loop image differs from accepted deployment."; exit 1; }
+
+          extractor_live=""
+          litellm_live=""
+          if [[ -n "${EXPECTED_EXTRACTOR_IMAGE}" ]]; then
+            extractor_name="corvis-extractor-${{ inputs.environment }}"
+            litellm_name="corvis-litellm-${{ inputs.environment }}"
+            extractor_live="$(gcloud run services describe "${extractor_name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
+            litellm_live="$(gcloud run services describe "${litellm_name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(spec.template.spec.containers.image)')"
+            [[ "${extractor_live}" == "${EXPECTED_EXTRACTOR_IMAGE}" ]] || { echo "Live extractor differs from accepted deployment."; exit 1; }
+            [[ "${litellm_live}" == "${EXPECTED_LITELLM_IMAGE}" ]] || { echo "Live LiteLLM differs from accepted deployment."; exit 1; }
+
+            worker_member="serviceAccount:corvis-worker-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            extractor_member="serviceAccount:corvis-extractor-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            extractor_policy="$(gcloud run services get-iam-policy "${extractor_name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+            litellm_policy="$(gcloud run services get-iam-policy "${litellm_name}" --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format=json)"
+            mapfile -t extractor_invokers < <(jq -r '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]?] | unique[]' <<<"${extractor_policy}")
+            mapfile -t litellm_invokers < <(jq -r '[.bindings[]? | select(.role == "roles/run.invoker") | .members[]?] | unique[]' <<<"${litellm_policy}")
+            [[ "${#extractor_invokers[@]}" -eq 1 && "${extractor_invokers[0]}" == "${worker_member}" ]] || { echo "Extractor Cloud Run IAM is broader than the Corvis worker boundary."; exit 1; }
+            [[ "${#litellm_invokers[@]}" -eq 1 && "${litellm_invokers[0]}" == "${extractor_member}" ]] || { echo "LiteLLM Cloud Run IAM is broader than the extractor boundary."; exit 1; }
+
+            worker_sa="corvis-worker-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            api_sa="corvis-api-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            litellm_sa="corvis-litellm-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            extractor_sa="corvis-extractor-${{ inputs.environment }}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+            provider_policy="$(gcloud secrets get-iam-policy "corvis-ai-provider-credentials-${{ inputs.environment }}" --project="${GCP_PROJECT_ID}" --format=json)"
+            master_policy="$(gcloud secrets get-iam-policy "corvis-litellm-master-key-${{ inputs.environment }}" --project="${GCP_PROJECT_ID}" --format=json)"
+            skill_policy="$(gcloud secrets get-iam-policy "corvis-atlassian-skill-read-${{ inputs.environment }}" --project="${GCP_PROJECT_ID}" --format=json)"
+            has_accessor() { local policy="$1" member="$2"; jq -e --arg member "serviceAccount:${member}" '[.bindings[]? | select(.role == "roles/secretmanager.secretAccessor") | .members[]? | select(. == $member)] | length == 1' <<<"${policy}" >/dev/null; }
+            lacks_accessor() { local policy="$1" member="$2"; ! has_accessor "${policy}" "${member}"; }
+            has_accessor "${provider_policy}" "${litellm_sa}" || { echo "LiteLLM lacks provider credential access."; exit 1; }
+            lacks_accessor "${provider_policy}" "${extractor_sa}" || { echo "Extractor must not receive provider credentials."; exit 1; }
+            lacks_accessor "${provider_policy}" "${worker_sa}" || { echo "Worker must not receive provider credentials."; exit 1; }
+            lacks_accessor "${provider_policy}" "${api_sa}" || { echo "API must not receive provider credentials."; exit 1; }
+            has_accessor "${master_policy}" "${litellm_sa}" || { echo "LiteLLM lacks its gateway credential."; exit 1; }
+            has_accessor "${master_policy}" "${extractor_sa}" || { echo "Extractor lacks its gateway credential."; exit 1; }
+            lacks_accessor "${master_policy}" "${worker_sa}" || { echo "Worker must not receive the LiteLLM gateway credential."; exit 1; }
+            has_accessor "${skill_policy}" "${extractor_sa}" || { echo "Extractor lacks skill-read access."; exit 1; }
+            lacks_accessor "${skill_policy}" "${litellm_sa}" || { echo "LiteLLM must not receive the Confluence skill credential."; exit 1; }
+            lacks_accessor "${skill_policy}" "${worker_sa}" || { echo "Worker must not receive the Confluence skill credential."; exit 1; }
+          fi
+
+          jq \
+            --arg schemaVersion "corvis.known-good-release.v3" \
+            --arg extractorImage "${extractor_live}" \
+            --arg litellmImage "${litellm_live}" \
+            '.schemaVersion=$schemaVersion | .extractorImage=$extractorImage | .litellmImage=$litellmImage' \
+            known-good.json > known-good-v3.json
+          gcloud storage cp known-good-v3.json "${manifest}"
+          {
+            echo "### Known-good AI release binding"
+            echo "- Extractor: \`${extractor_live:-disabled}\`"
+            echo "- LiteLLM: \`${litellm_live:-disabled}\`"
+            [[ -z "${extractor_live}" ]] || echo "- IAM/secret boundary: verified"
+            echo "- Manifest: \`${manifest}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

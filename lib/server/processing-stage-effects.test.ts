@@ -40,12 +40,12 @@ test("fails closed when a production stage has no configured effect implementati
   await assert.rejects(router.execute(base), /has no configured effect handler/);
 });
 
-test("aborts a slow provider handler without invoking unrelated stages", async () => {
+test("aborts a slow short-stage provider handler without invoking unrelated stages", async () => {
   let observedSignal: AbortSignal | undefined;
   let publishedCalls = 0;
   const router = new BoundedProcessingStageEffectRouter(
     {
-      extracted: async (_input, signal) => {
+      represented: async (_input, signal) => {
         observedSignal = signal;
         await new Promise<void>(() => undefined);
       },
@@ -57,7 +57,7 @@ test("aborts a slow provider handler without invoking unrelated stages", async (
     10,
   );
 
-  await assert.rejects(router.execute(base), ProcessingStageTimeoutError);
+  await assert.rejects(router.execute({ ...base, stage: "represented" }), ProcessingStageTimeoutError);
   assert.equal(observedSignal?.aborted, true);
   assert.equal(publishedCalls, 0);
 });

@@ -58,6 +58,6 @@ test("release build emits separately attested API and control-loop images", () =
   assert.match(build, /Dockerfile\.control-loop/);
   assert.match(build, /Attest API build provenance/);
   assert.match(build, /Attest control-loop build provenance/);
-  assert.match(build, /corvis\.release-image\.v2/);
+  assert.match(build, /corvis\.release-image\.v3/);
   assert.match(build, /controlLoopImage/);
 });

@@ -8,14 +8,16 @@ Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow r
 
 | Name | Kind | Scope | Required | Read by | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `GCP_PROJECT_ID` | variable | `dev`, `uat`, `prod` | yes | build-release, cloudflare-zone-policy, copy-release-to-prod, gcp-bootstrap, gcp-cost-control, gcp-cost-hygiene, gcp-decommission, runtime-secrets, security-acceptance, terraform-deploy, ai-integration-secrets | Externally owned GCP project for the environment. |
+| `GCP_PROJECT_ID` | variable | `dev`, `uat`, `prod` | yes | build-release, cloudflare-zone-policy, copy-release-to-prod, gcp-bootstrap, gcp-cost-control, gcp-cost-hygiene, gcp-decommission, runtime-secrets, security-acceptance, terraform-deploy, ai-integration-secrets, augment-known-good-ai | Externally owned GCP project for the environment. |
 | `GCP_WIF_PROVIDER` | variable | `dev`, `uat`, `prod` | yes | same as `GCP_PROJECT_ID` | Environment-scoped GitHub Workload Identity Provider resource name. |
 | `CORVIS_AUTH_ISSUER` | variable | `uat`, `prod` (and `dev` with a runtime) | before a runtime deploy | terraform-deploy, gcp-decommission | Approved HTTPS OIDC issuer. |
 | `CORVIS_AUTH_AUDIENCE` | variable | as above | no (default `corvis`) | terraform-deploy, gcp-decommission | Approved OIDC audience/client identifier. |
 | `CORVIS_AUTH_JWKS_URL` | variable | as above | no | terraform-deploy, gcp-decommission | Explicit JWKS URL; OIDC discovery is preferred. |
 | `CORVIS_EXTRACTION_ENDPOINT` | variable | `uat`, `prod` | when governed extraction is enabled | terraform-deploy | HTTPS endpoint implementing Corvis `/v1/extractions`. Leave unset to keep extraction fail-closed; do not point this directly at LiteLLM or a raw model API. |
 | `CORVIS_EXTRACTION_AUDIENCE` | variable | `uat`, `prod` | no | terraform-deploy | Google OIDC audience for the extraction harness; when empty application code defaults it to `CORVIS_EXTRACTION_ENDPOINT`. |
-| `CORVIS_EXTRACTION_TIMEOUT_MS` | variable | `uat`, `prod` | no (default `20000`) | terraform-deploy | Extraction-provider request timeout in milliseconds; deployment validation accepts 1000-25000. |
+| `CORVIS_EXTRACTION_TIMEOUT_MS` | variable | `uat`, `prod` | no (default `300000`) | terraform-deploy | Extraction-provider request timeout in milliseconds; deployment validation accepts 1000-480000. |
+| `CORVIS_LITELLM_BASE_IMAGE` | variable | `dev`, `uat` build environments | yes for **Build release image** | build-release | Immutable upstream LiteLLM image reference ending in `@sha256:<digest>`. The Corvis wrapper is built from this pinned base; production copies the UAT-built image instead of rebuilding. |
+| `CORVIS_LITELLM_MODELS_JSON` | variable | `uat`, `prod` | when managed AI extraction is enabled | terraform-deploy | Non-secret JSON map from Corvis logical extraction aliases to approved `provider/model` identifiers. Presence activates deployment of the release-set extractor and LiteLLM images. Must include `corvis-extract-primary`; `corvis-extract-verifier` is recommended. |
 | `CORVIS_CONTROL_TENANT_ID` | variable | `uat`, `prod` | for security acceptance | security-acceptance | Tenant used for retained sanitized control evidence. |
 | `CORVIS_POSTGRES_CA_CERT` | variable | `dev`, `uat`, `prod` | when the provider uses a private CA (Supabase) | terraform-deploy, security-acceptance | Public PEM CA bundle for verified Postgres TLS (not a secret; see RUNTIME_SECRETS.md). |
 | `GCP_BILLING_ACCOUNT_ID` | variable | `dev`, `uat`, `prod` | no | gcp-bootstrap, gcp-decommission, terraform-deploy | Attaches a monthly budget. |
@@ -34,7 +36,7 @@ Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow r
 | `CORVIS_ATLASSIAN_SKILL_UPDATE_CREDENTIALS_JSON` | secret | `uat`, `prod` | only when automated skill maintenance is approved | ai-integration-secrets | Separately governed Atlassian credential/config for the skill-update path; normal extraction must not receive it. |
 | `GITHUB_TOKEN` | secret (built in) | automatic | n/a | public-repo-leak-guard | The workflow's own token; never configured by hand. |
 
-Persistent runtime secrets live in GCP Secret Manager or the relevant provider-managed store. The four AI integration GitHub Environment secrets above are protected **provisioning inputs only**: the provisioning workflow writes new Secret Manager versions and never makes them application/Terraform variables. See [`RUNTIME_SECRETS.md`](RUNTIME_SECRETS.md) and [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
+Persistent runtime secrets live in GCP Secret Manager or the relevant provider-managed store. The four AI integration GitHub Environment secrets above are protected **provisioning inputs only**: the provisioning workflow writes new Secret Manager versions and never makes them application/Terraform variables. See [`RUNTIME_SECRETS.md`](RUNTIME_SECRETS.md), [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md), and [`../ops/extractor/README.md`](../ops/extractor/README.md).
 
 ## Required environment variables
 
@@ -59,11 +61,24 @@ Before promoting a production-like UAT/prod runtime, also configure:
 
 ### Governed extraction harness
 
-Quarterly-report extraction remains disabled until an approved harness is available. Configure `CORVIS_EXTRACTION_ENDPOINT` only with an HTTPS service that implements Corvis's governed `/v1/extractions` contract, produces the deterministic immutable JSONL bundle and orchestration manifest, and accepts the worker's Google-signed OIDC token. `CORVIS_EXTRACTION_AUDIENCE` is optional and `CORVIS_EXTRACTION_TIMEOUT_MS` defaults to `20000`.
+The repository now contains the managed production boundary: `corvis-worker-<env>` calls `corvis-extractor-<env>` with Google OIDC; the extractor acquires only immutable `document_interpretation_v1` evidence plus one fixed Confluence skill snapshot; it calls the private `corvis-litellm-<env>` gateway with Google OIDC and its gateway credential; LiteLLM alone receives model-provider credentials. The extractor has no Postgres credential or Confluence write credential and writes only immutable candidate JSONL plus its orchestration manifest to the Corvis evidence bucket.
 
-The extraction endpoint is deliberately one layer above the model gateway. A LiteLLM proxy exposes model APIs such as `/v1/responses`, `/v1/messages`, and `/v1/chat/completions`; it does **not** implement the Corvis extraction contract and must therefore sit behind an extraction harness. This separation lets the harness use LiteLLM, a direct provider SDK, a coding/agent harness, or another compatible gateway without changing Corvis's canonical data/review pipeline. See [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
+Managed AI deployment remains disabled until `CORVIS_LITELLM_MODELS_JSON` is configured. Example:
 
-The AI integration secret containers are Terraform-managed in UAT/prod. After Terraform has created them, set whichever protected GitHub Environment provisioning secrets are required and run **AI integration secret provisioning**. The workflow rotates only supplied values and refuses a no-op run. The Confluence read and update credentials are deliberately separate; leave the update secret unset until automated skill maintenance is approved.
+```json
+{
+  "corvis-extract-primary": "anthropic/<approved-model-id>",
+  "corvis-extract-verifier": "openai/<approved-model-id>"
+}
+```
+
+`CORVIS_LITELLM_BASE_IMAGE` is a build input, not a runtime model choice: set it in the UAT build environment to an immutable upstream LiteLLM digest. **Build release image** then builds and attests API/worker, control-loop, extractor, and LiteLLM as one release set. Production copies those exact UAT OCI images and verifies their digests rather than rebuilding them.
+
+Activation is intentionally two-step and GitHub-only. First configure the model map and provision enabled versions of `CORVIS_AI_PROVIDER_CREDENTIALS_JSON`, `CORVIS_LITELLM_MASTER_KEY`, and `CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON` via **AI integration secret provisioning**, then apply the release. Terraform creates the private AI pair and outputs `corvis_extraction_endpoint` / `corvis_extraction_audience`. Set `CORVIS_EXTRACTION_ENDPOINT` and `CORVIS_EXTRACTION_AUDIENCE` to that private extractor URI and apply the **same** release again. Until the endpoint variable is set, the worker's extracted stage remains fail-closed.
+
+`CORVIS_EXTRACTION_TIMEOUT_MS` defaults to `300000` ms and accepts 1000-480000. The extracted-stage application budget is 510 seconds and the worker/PubSub boundary is 600 seconds, retaining shutdown/retry headroom. `CORVIS_EXTRACTION_ENDPOINT` must always point at the governed `/v1/extractions` service, never LiteLLM or a provider API.
+
+Coding-agent clients such as Claude Code or Codex may use LiteLLM for controlled development or separately governed maintenance, but ordinary production extraction does not depend on a personal subscription/login or an interactive coding-agent process. Any future harness adapter remains behind the extractor boundary and must emit the same immutable Corvis evidence contract.
 
 `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED` (per environment, default `false`): set `true` after adding an enabled version to the Terraform-managed `corvis-control-loop-github-token-<env>` secret (a read-only, fine-grained token for this repository); only then do the control-loop jobs receive `GITHUB_TOKEN` instead of the 60-requests-per-hour anonymous GitHub API budget.
 
@@ -127,7 +142,9 @@ Use a fine-grained token or GitHub App credential scoped only to this repository
 | Shared Cloudflare Terraform root | `infra/terraform/shared/cloudflare` |
 | Source bucket | `${GCP_PROJECT_ID}-documents` |
 | Artifact Registry API repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/api` |
-| Runtime API/worker image | selected release tag resolved to the immutable `image@sha256:<digest>` before Terraform runs |
+| Artifact Registry extractor repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/extractor` |
+| Artifact Registry LiteLLM repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/litellm` |
+| Runtime images | selected release tags resolved to immutable `image@sha256:<digest>` references before Terraform runs |
 | Postgres runtime secret | `corvis-postgres-dsn-${environment}` |
 | AI provider credentials secret | `corvis-ai-provider-credentials-${environment}` |
 | LiteLLM master-key secret | `corvis-litellm-master-key-${environment}` |
@@ -136,11 +153,11 @@ Use a fine-grained token or GitHub App credential scoped only to this repository
 | Cloudflare zone/account IDs | Provider lookup from `CLOUDFLARE_ZONE_NAME` |
 | Public hostnames | Derived from the single zone and environment as listed above |
 
-`API_IMAGE` is not a human-managed GitHub Environment variable. The build/deploy path derives the runtime API/worker image from a reviewed `main` release and its immutable registry digest. Known-good rollback state is acceptance-gated rather than manually entered.
+`API_IMAGE`, `EXTRACTOR_IMAGE`, and `LITELLM_IMAGE` are not human-managed GitHub Environment variables. The build/deploy path derives runtime images from a reviewed `main` release and immutable registry digests. Known-good rollback state is acceptance-gated rather than manually entered.
 
 ## Remove or avoid creating
 
-Do not create GitHub variables for derived values such as `API_IMAGE`, Cloudflare zone/account IDs, API/customer/admin hostnames, API Gateway hostnames/keys, Cloud Run URLs, service-account names, state bucket names or image digests.
+Do not create GitHub variables for derived values such as image digest refs, Cloudflare zone/account IDs, API/customer/admin hostnames, API Gateway hostnames/keys, Cloud Run URLs, service-account names or state bucket names.
 
 Do not hardcode `corvis.com`, `corvis.ai`, or another candidate TLD anywhere in the deployment contract.
 
@@ -148,7 +165,7 @@ Do not hardcode `corvis.com`, `corvis.ai`, or another candidate TLD anywhere in 
 
 Runtime secret values belong in GCP Secret Manager or the relevant provider-managed store, not ordinary GitHub variables. The Postgres DSN is written directly to `corvis-postgres-dsn-${environment}` and read through WIF/IAM by migrations and runtime workloads. Terraform generates the restricted API Gateway edge key and passes it to the Worker as a sensitive binding.
 
-Model-provider API keys, LiteLLM master/virtual keys, and Atlassian credentials follow the same persistent-storage rule: keep them in the extraction-harness or gateway runtime's secret store, never in `CORVIS_EXTRACTION_ENDPOINT`, Terraform variables, LiteLLM YAML committed to Git, extraction candidate JSONL, logs, or model prompts. The designated AI GitHub Environment secrets are rotation/provisioning inputs only. The **AI integration secret provisioning** workflow copies supplied values to the corresponding Secret Manager containers without logging them; the deployed gateway/harness should then consume those Secret Manager values through least-privilege IAM. The model/skill configuration contract is documented in [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
+Model-provider API keys, LiteLLM master/virtual keys, and Atlassian credentials follow the same persistent-storage rule: keep them in the extraction-harness or gateway runtime's secret store, never in `CORVIS_EXTRACTION_ENDPOINT`, Terraform variables, LiteLLM YAML committed to Git, extraction candidate JSONL, logs, or model prompts. The designated AI GitHub Environment secrets are rotation/provisioning inputs only. The **AI integration secret provisioning** workflow copies supplied values to the corresponding Secret Manager containers without logging them; the deployed gateway/harness consumes those Secret Manager values through least-privilege IAM. The non-secret alias map is the only model-routing configuration passed through Terraform. The model/skill configuration contract is documented in [`AI_MODEL_GATEWAY.md`](AI_MODEL_GATEWAY.md).
 
 ## Setup order
 
@@ -160,9 +177,9 @@ Model-provider API keys, LiteLLM master/virtual keys, and Atlassian credentials 
 6. When a domain is selected, activate it as the single Cloudflare zone and set repository `CLOUDFLARE_ZONE_NAME`.
 7. Configure `CLOUDFLARE_ZONE_POLICY_TOKEN`; run **Cloudflare shared zone policy** plan then apply from `main`.
 8. Configure the environment `CLOUDFLARE_API_TOKEN`; deploy UAT/prod through the normal immutable-release Terraform path.
-9. When extraction is being activated, first apply Terraform to create the AI integration secret containers, configure the required protected GitHub Environment provisioning secrets, and run **AI integration secret provisioning**.
-10. Deploy the separately permissioned extraction harness/model gateway and configure `CORVIS_EXTRACTION_ENDPOINT` plus its optional audience/timeout.
-11. Run Security acceptance before treating the release as known-good.
+9. For extraction, set the immutable UAT `CORVIS_LITELLM_BASE_IMAGE`, configure the target `CORVIS_LITELLM_MODELS_JSON`, provision the required AI secrets through **AI integration secret provisioning**, and build/promote the normal four-image release set.
+10. Apply once to create the private AI pair, copy the resulting `corvis_extraction_endpoint` / audience output into the target GitHub Environment variables, then re-apply the same release to activate worker -> extractor calls.
+11. Validate representative quarterly-report packages in UAT and run Security acceptance before treating a release as known-good.
 
 Steps 1-4 require no domain, Cloudflare, Postgres, IdP, AI provider or Atlassian credential.
 
@@ -176,7 +193,7 @@ Steps 1-4 require no domain, Cloudflare, Postgres, IdP, AI provider or Atlassian
 - Bootstrap refuses to delete or replace existing resources; the `allow_destroy` input is honoured for `dev`/`uat` only, never `prod`.
 - Normal Terraform deploy never doubles as decommission; `gcp-decommission.yml` owns environment idle/full transitions.
 - UAT cost hibernation is non-destructive: it pauses Scheduler jobs and the processing queue, retains data/state/secrets/images, and is manually resumable through `gcp-cost-control.yml`.
-- Artifact Registry cleanup and `gcp-cost-hygiene.yml` prune low-value historical versions while preserving active and known-good rollback artifacts.
+- Artifact Registry cleanup and `gcp-cost-hygiene.yml` prune low-value historical versions while preserving active and known-good rollback artifacts. Active tags are maintained for API, control-loop, extractor, and LiteLLM images when those runtimes are deployed.
 
 ## Checklist
 
@@ -185,7 +202,9 @@ Steps 1-4 require no domain, Cloudflare, Postgres, IdP, AI provider or Atlassian
 - [ ] `RELEASE_GOVERNANCE_TOKEN` is configured for each environment.
 - [ ] GCP foundation bootstrap succeeds before runtime activation.
 - [ ] production-like Postgres/IdP roots are configured before runtime promotion.
-- [ ] when extraction is enabled, `CORVIS_EXTRACTION_ENDPOINT` targets the governed extraction harness (not LiteLLM/raw model APIs).
+- [ ] UAT release builds have immutable `CORVIS_LITELLM_BASE_IMAGE` configured.
+- [ ] when managed extraction is enabled, `CORVIS_LITELLM_MODELS_JSON` defines `corvis-extract-primary` and preferably an independent `corvis-extract-verifier`.
+- [ ] `CORVIS_EXTRACTION_ENDPOINT` targets the managed governed extractor (not LiteLLM/raw model APIs).
 - [ ] provider/LiteLLM/Atlassian values are provisioned through protected GitHub Environment secrets into Secret Manager, not stored as Terraform variables or repo config.
 - [ ] normal extraction receives only the Confluence read credential; skill-update authority remains separate until explicitly approved.
 - [ ] when Cloudflare is enabled, one repository `CLOUDFLARE_ZONE_NAME` is used by both UAT and prod.
