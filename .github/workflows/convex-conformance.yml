@@ -27,20 +27,18 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: convex_self_hosted
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -d convex_self_hosted"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
       CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a
       CONVEX_CLI_VERSION: "1.46.0"
-      # Convex accepts a PostgreSQL cluster URL and supplies its deployment DB name.
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
-      # The disposable Actions service has no TLS. Managed providers should omit
-      # this override so Convex keeps its default TLS requirement.
       CONVEX_POSTGRES_REQUIRE_TLS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,10 +57,11 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: convex_self_hosted
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -d convex_self_hosted"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
