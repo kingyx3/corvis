@@ -3,7 +3,10 @@
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
-// rights change after the build blocks the download. Run after the full migration chain on a disposable database:
+// rights change after the build blocks the download. Migration 089 (F10d, F10f) adds: the approval and outcome notices
+// dispatched through the outbox worker (send-time eligibility, opt-out, no reason or note in any email), the keyset-paged
+// request list, the sweep of expired artifacts and grants, and the operator view of failed builds. Run after the full
+// migration chain on a disposable database:
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/tenant-data-export.mjs
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
