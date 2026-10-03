@@ -39,6 +39,19 @@ test("database binding is provider-neutral while the legacy Postgres env remains
   assert.equal(legacy.postgresDsn, legacy.databaseDsn);
 });
 
+test("database provider values are normalized and unknown providers fail closed", () => {
+  for (const provider of ["supabase", "gcp-cloud-sql", "aws-rds", "azure-postgresql", "self-hosted", "unknown"] as const) {
+    assert.equal(
+      getServerConfig({ NODE_ENV: "test", CORVIS_DATABASE_PROVIDER: `  ${provider.toUpperCase()}  ` }).databaseProvider,
+      provider,
+    );
+  }
+  assert.equal(
+    getServerConfig({ NODE_ENV: "test", CORVIS_DATABASE_PROVIDER: "unexpected-provider" }).databaseProvider,
+    "unknown",
+  );
+});
+
 test("OIDC discovery is the default and explicit JWKS remains optional", () => {
   const config = getServerConfig({
     NODE_ENV: "test",
