@@ -155,6 +155,30 @@ test("scheduled-export refusals classify to stable codes, 400 for a scope that c
   }
 });
 
+test("service-account refusals classify to stable codes: 400 for what a request may ask for, 403 for who may act, 404 for an unknown account, 409 for what its state cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "service account requires an active organization admin": ["tenant_admin_required", 403],
+    "service account name required": ["invalid_name", 400],
+    "service account purpose required": ["invalid_purpose", 400],
+    "service account role not allowed": ["invalid_role", 400],
+    "service account expiry invalid": ["invalid_expiry", 400],
+    "service account name already in use": ["service_account_name_in_use", 409],
+    "service account limit reached": ["service_account_limit_reached", 409],
+    "service account credential request invalid": ["invalid_request", 400],
+    "service account not found": ["service_account_not_found", 404],
+    "service account is not active": ["service_account_not_active", 409],
+    "service account already has a credential": ["service_account_credential_exists", 409],
+    "service account has no active credential": ["service_account_no_active_credential", 409],
+    "service account reason required": ["invalid_reason", 400],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});
+
 test("review-discussion refusals classify to stable codes: 404 for what is not visible, 422 for an ineligible person, 409 for a stale or replayed command", () => {
   const expected: Record<string, [string, number]> = {
     "review item not found": ["review_item_not_found", 404],
