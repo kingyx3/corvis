@@ -19,3 +19,12 @@ The second demo workspace intentionally has no data and read-only document capab
 - `POST /api/v1/access/invitations/bulk` no longer confirms `tenant_admin` rows implicitly: those rows fail with `tenant_admin_confirmation_required` unless the request carries `?confirmTenantAdmin=true`. Per-row failures report a stable code, not the raw error message.
 - `POST /api/v1/admin/identity-lifecycle` refuses to disable or demote the calling administrator (`cannot_deactivate_current_user`, `cannot_change_current_user`) or the last active tenant administrator (`last_tenant_admin`), all 409. SQL business errors raised by the identity-lifecycle, access-policy and support-access functions map to 4xx instead of 500.
 - Upload access remains uploader-or-`admin` (`lib/server/upload-access.ts`). Open product decision: an `accountadmin` of another workspace in the tenant maps to `admin` and can act on any tenant upload.
+
+## Data retention and full data export (F10)
+
+The same page (`/access-self-service`) now shows, for Organization Admins only:
+
+- **Data retention and legal holds**: a read-only table of how long each class of the organization's data is kept, what happens when the contract ends, and any legal hold (matter reference and what it covers). Corvis operations set and lift both; a hold overrides retention. The view hides who placed a hold.
+- **Full data export**: an Organization Admin states why the export is needed; a *different* Organization Admin approves (or rejects with a reason) before anything is built, and the requester can withdraw it until the build starts. When built, the export is a checksummed archive (published data, the access audit trail and a source-document inventory) behind a single-use, ten-minute download link. Only data the organization may redistribute under its contracts is included, and the manifest says how many funds and documents were left out. Source document files are not part of the export yet. Every step is audited and appears in the access audit trail.
+
+Demo mode serves both from in-memory stores (a colleague's pending request is seeded so the approval flow can be exercised; the archive is built at the moment of approval from the demo catalog). Contract: `API_CONVENTIONS.md`, "Data retention and full data export (F10)".

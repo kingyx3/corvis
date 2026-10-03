@@ -127,12 +127,16 @@ async function errorOf(response: Response): Promise<string> {
 const ADMIN = "admin:manage" as const;
 const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["access/audit/route.ts", { GET: ADMIN }],
+  ["access/data-exports/[exportId]/download/route.ts", { GET: ADMIN }],
+  ["access/data-exports/[exportId]/route.ts", { GET: ADMIN, POST: ADMIN }],
+  ["access/data-exports/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["access/invitations/[invitationId]/route.ts", { POST: ADMIN }],
   ["access/invitations/bulk/route.ts", { POST: ADMIN }],
   ["access/invitations/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["access/members/deactivate/route.ts", { POST: ADMIN }],
   ["access/members/role/route.ts", { POST: ADMIN }],
   ["access/members/route.ts", { GET: ADMIN }],
+  ["access/retention/route.ts", { GET: ADMIN }],
   ["access/scim/route.ts", { POST: ADMIN }],
   ["access/support/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["admin/access-policy/route.ts", { POST: ADMIN }],
@@ -319,6 +323,11 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "access/members/deactivate/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     { file: "access/members/role/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     { file: "access/scim/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
+    // Retention and full-export routes (F10): an Organization Admin gets past authorization to validation or an empty result.
+    { file: "access/retention/route.ts", method: "GET", role: "admin", expect: 200 },
+    { file: "access/data-exports/route.ts", method: "GET", role: "admin", expect: 200 },
+    { file: "access/data-exports/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_reason" },
+    { file: "access/data-exports/[exportId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },
     { file: "admin/tenants/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     { file: "exports/route.ts", method: "POST", role: "analyst", body: {}, expect: 400, error: "invalid_export_format" },
     // Any role that can read published figures may report on them and read its own cases; moving a case is Organization Admin only.

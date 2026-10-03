@@ -27,6 +27,33 @@ const invitation = {
   createdAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-08T00:00:00.000Z",
 };
 
+const retention = {
+  policies: [
+    { dataClass: "financials", label: "Financial data", retentionDays: 2555, retentionLabel: "7 years", deleteOnTermination: false, legalHold: false, policyVersion: "2026-01", effectiveFrom: "2026-01-01T00:00:00.000Z", inEffect: true },
+    { dataClass: "source_documents", label: "Source documents", retentionDays: null, retentionLabel: "No fixed retention period", deleteOnTermination: true, legalHold: true, policyVersion: "2026-03", effectiveFrom: "2026-03-01T00:00:00.000Z", inEffect: true },
+  ],
+  legalHolds: [{ holdId: "h1", dataClass: "source_documents", label: "Source documents", scopeLabel: "3 documents within source documents", matterReference: "MATTER-2026-014", placedAt: "2026-04-12T09:30:00.000Z" }],
+};
+const exportBase = {
+  reason: "Records review at contract end", requestedAt: "2026-09-30T10:00:00.000Z", approvalExpiresAt: "2026-10-07T10:00:00.000Z", decidedBy: null, decidedAt: null,
+  decisionNote: null, cancelledAt: null, statusChangedAt: "2026-09-30T10:00:00.000Z", artifact: null,
+};
+const dataExports = [
+  { ...exportBase, requestId: "x1", status: "pending_approval", requestedBy: "morgan.lee@example.test", requestedByMe: false, actions: { canApprove: true, canReject: true, canCancel: false, canDownload: false } },
+  {
+    ...exportBase, requestId: "x2", status: "complete", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decidedAt: "2026-09-30T11:00:00.000Z",
+    artifact: {
+      checksumSha256: "a".repeat(64), sizeBytes: 4694, expiresAt: "2026-10-04T10:00:00.000Z",
+      manifest: { manifestVersion: 1, requestId: "x2", tenantId: "tenant-1", generatedAt: "2026-09-30T11:05:00.000Z", requestedBy: "alex.chen@example.test", approvedBy: "admin@example.test",
+        files: [{ path: "published-data/observations.csv", description: "Approved observations", sha256: "b".repeat(64), sizeBytes: 702, rowCount: 5 }],
+        dataRights: { basis: "Only redistributable data.", funds: { included: 2, excluded: 1 }, documents: { included: 2, excluded: 2 } },
+        notIncluded: [{ item: "Source document files", reason: "Not included in this release." }] },
+    },
+    actions: { canApprove: false, canReject: false, canCancel: false, canDownload: true },
+  },
+  { ...exportBase, requestId: "x3", status: "rejected", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decisionNote: "Not authorised.", actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false } },
+];
+
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
   await page.route("**/api/v1/access/**", async (route) => {
     if (mode === "failed") return route.fulfill(json({ error: "temporarily_unavailable" }, 503));
@@ -34,6 +61,8 @@ async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<voi
     if (path.endsWith("/audit")) {
       return route.fulfill(json({ data: [{ auditEventId: "a1", occurredAt: "2026-09-02T10:00:00.000Z", actorSubject: "admin@example.test", action: "invitation.created", targetType: "invitation", targetId: "inv-1", outcome: "success", metadata: {} }] }));
     }
+    if (path.endsWith("/retention")) return route.fulfill(json({ data: retention }));
+    if (path.endsWith("/data-exports")) return route.fulfill(json({ data: dataExports }));
     if (path.endsWith("/support")) {
       return route.fulfill(json({ data: {
         grants: [{ supportGrantId: "g1", workspaceId: "workspace-1", roleName: "support", purpose: "Investigate a data incident", validFrom: "2026-09-01T00:00:00.000Z", validUntil: "2026-09-02T00:00:00.000Z", status: "pending_ack", requiresTenantAck: true, subject: "support@corvis.example" }],
@@ -51,6 +80,12 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.goto("/access-self-service");
     await expect(page.getByRole("heading", { name: /tenant access controls/i })).toBeVisible();
     await expect(page.getByText("new.analyst@example.test").first()).toBeVisible();
+    // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
+    await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
+    await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
+    const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
+    await ready.getByText("Contents and checksums").click();
+    await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
     const violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });

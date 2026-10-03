@@ -39,16 +39,23 @@ export type TenantAccessAuditEvent = {
   metadata: Record<string, unknown>;
 };
 
+/**
+ * Which audit events a customer's Organization Admins see: access changes, support access, source connections, data
+ * issues and full data exports. Shared by the listing below and the access-audit file of a full tenant export, so
+ * what the export contains is exactly what the admin could already read here.
+ */
+export const TENANT_ACCESS_AUDIT_FILTER = `(
+      action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
+      or action like 'identity.lifecycle.%' or action like 'access.scim.%' or action like 'source_connection.%'
+      or action like 'data_issue.%' or action like 'data_export.%'
+      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request')
+    )`;
+
 export async function listTenantAccessAudit(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<TenantAccessAuditEvent[]> {
   requireTenantAdmin(identity);
   const rows = await db.query(`select audit_event_id::text,occurred_at,workspace_id::text,actor_subject,action,target_type,target_id,outcome,metadata
     from corvis_control.audit_event
-    where tenant_id=$1::uuid and (
-      action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
-      or action like 'identity.lifecycle.%' or action like 'access.scim.%' or action like 'source_connection.%'
-      or action like 'data_issue.%'
-      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case')
-    )
+    where tenant_id=$1::uuid and ${TENANT_ACCESS_AUDIT_FILTER}
     order by occurred_at desc,audit_event_id desc limit 2000`, [identity.tenantId]);
   return rows.map((row) => ({
     auditEventId: text(row, "audit_event_id"), occurredAt: text(row, "occurred_at"), workspaceId: text(row, "workspace_id") || undefined,

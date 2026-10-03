@@ -224,9 +224,9 @@ export function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-type ZipEntry = { name: string; bytes: Buffer };
+export type ZipEntry = { name: string; bytes: Buffer };
 
-function zipStored(entries: readonly ZipEntry[]): Buffer {
+export function zipStored(entries: readonly ZipEntry[]): Buffer {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
