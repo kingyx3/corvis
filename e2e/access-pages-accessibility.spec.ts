@@ -54,6 +54,18 @@ const dataExports = [
   { ...exportBase, requestId: "x3", status: "rejected", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decisionNote: "Not authorised.", actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false } },
 ];
 
+const sessionPolicy = {
+  policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
+  bounds: { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } },
+  identityProvider: { protocol: "oidc", issuer: "https://login.example.test" },
+  scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
+  signInMethods: [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }],
+  members: [
+    { userId: "00000000-0000-4000-8000-0000000000d1", label: "admin@example.test", isCurrentUser: true, activeSessions: 1 },
+    { userId: "00000000-0000-4000-8000-0000000000d2", label: "morgan.lee@example.test", isCurrentUser: false, activeSessions: 2 },
+  ],
+};
+
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
   await page.route("**/api/v1/access/**", async (route) => {
     if (mode === "failed") return route.fulfill(json({ error: "temporarily_unavailable" }, 503));
@@ -62,6 +74,7 @@ async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<voi
       return route.fulfill(json({ data: [{ auditEventId: "a1", occurredAt: "2026-09-02T10:00:00.000Z", actorSubject: "admin@example.test", action: "invitation.created", targetType: "invitation", targetId: "inv-1", outcome: "success", metadata: {} }] }));
     }
     if (path.endsWith("/retention")) return route.fulfill(json({ data: retention }));
+    if (path.endsWith("/session-policy")) return route.fulfill(json({ data: sessionPolicy }));
     if (path.endsWith("/data-exports")) return route.fulfill(json({ data: dataExports }));
     if (path.endsWith("/support")) {
       return route.fulfill(json({ data: {
@@ -83,6 +96,10 @@ for (const colorScheme of ["light", "dark"] as const) {
     // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
+    // The sign-in and session policy section (F7): identity provider, session limits and the sign-out confirmation are part of the scan.
+    await expect(page.getByRole("region", { name: "Identity provider and provisioning" })).toContainText("https://login.example.test");
+    await page.getByRole("button", { name: "Sign out morgan.lee@example.test everywhere" }).click();
+    await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
     const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
     await ready.getByText("Contents and checksums").click();
     await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
