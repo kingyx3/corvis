@@ -119,6 +119,20 @@ export const SQL_APPLICATION_ERRORS = [
   "session sign-out needs a stated reason",
   "session sign-out cannot target current user",
   "session sign-out target not found",
+  // corvis_control.create_service_account / issue_service_account_credential / revoke_service_account_credentials / disable_service_account (088)
+  "service account requires an active organization admin",
+  "service account name required",
+  "service account purpose required",
+  "service account role not allowed",
+  "service account expiry invalid",
+  "service account name already in use",
+  "service account limit reached",
+  "service account credential request invalid",
+  "service account not found",
+  "service account is not active",
+  "service account already has a credential",
+  "service account has no active credential",
+  "service account justification required",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -234,6 +248,20 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "session sign-out needs a stated reason": { code: "invalid_reason", status: 400 },
   "session sign-out cannot target current user": { code: "cannot_sign_out_current_user", status: 409 },
   "session sign-out target not found": { code: "member_not_found", status: 404 },
+  // Service accounts (F6): who may manage them, what a request may ask for and what an account's current state can accept.
+  "service account requires an active organization admin": { code: "tenant_admin_required", status: 403 },
+  "service account name required": { code: "invalid_name", status: 400 },
+  "service account purpose required": { code: "invalid_purpose", status: 400 },
+  "service account role not allowed": { code: "invalid_role", status: 400 },
+  "service account expiry invalid": { code: "invalid_expiry", status: 400 },
+  "service account name already in use": { code: "service_account_name_in_use", status: 409 },
+  "service account limit reached": { code: "service_account_limit_reached", status: 409 },
+  "service account credential request invalid": { code: "invalid_request", status: 400 },
+  "service account not found": { code: "service_account_not_found", status: 404 },
+  "service account is not active": { code: "service_account_not_active", status: 409 },
+  "service account already has a credential": { code: "service_account_credential_exists", status: 409 },
+  "service account has no active credential": { code: "service_account_no_active_credential", status: 409 },
+  "service account justification required": { code: "invalid_reason", status: 400 },
 };
 
 /**

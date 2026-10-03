@@ -59,3 +59,7 @@ These are the most conservative readings of an ambiguous story, not settled prod
 - **Provider-side session revocation** and a session-expiry experience for the person whose session ended (#237).
 - **Housekeeping** of old `tenant_session_activity` rows.
 
+
+## Service accounts (F6)
+
+The same page also lets Organization Admins create **service accounts** for their own systems and issue, rotate and revoke their API credentials. A service account is a non-human identity with one ordinary role (Review Analyst, Analyst or Viewer, never an administrator) in one workspace, under the same entitlements and data rights as a person. The list shows each account's role, workspace, creator, last use and expiry, and flags a credential (or account) within 14 days of expiring. The credential is shown once at creation and cannot be retrieved again (only a hash is stored); a rotation leaves the old credential working for a short overlap you choose (up to 24 hours), and revocation stops every credential immediately. **Deactivate account** removes the account everywhere (identity, memberships, entitlements, credentials) and is final. Every action is audited and appears in the access audit trail. Creating an account grants no fund or document access: Corvis operations grant that, as for people, to the account's identity reference. **Credentials are not yet accepted by the API**; the screen says so, and the open decision is in `SERVICE_ACCOUNTS.md`. Demo mode serves the section from an in-memory store seeded per demo tenant.

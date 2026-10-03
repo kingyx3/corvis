@@ -47,6 +47,10 @@ For this boundary, provision the Google token's immutable numeric `sub` value as
 
 Worker session revocation uses a stable application session identifier derived from the immutable Google subject (`processing-worker:<sha256-prefix>`). Operators must use the corresponding subject/session pair when an immediate application-layer cut-off is required in addition to disabling the GCP service account or Cloud Run invocation grant.
 
+### Customer-created service accounts
+
+Organization Admins create service accounts for their own systems from the access self-service page (F6, #262, [`SERVICE_ACCOUNTS.md`](SERVICE_ACCOUNTS.md)). They use exactly the mechanism above: an `identity_subject` with `auth_method = 'service_account'`, an active membership and a `service_identity_grant` that the creating admin reviews and that expires with the account, so the lookup denies them when the grant is missing, expired, overdue or disabled, or the session is revoked. Customer accounts hold only `reviewer`, `analyst` or `viewer`. How their API credentials are accepted at the edge is an open decision and nothing in the request path accepts them yet.
+
 ## Lifecycle operating rule
 
 Each application service identity must have a named purpose, owner and **control reviewer** recorded as `reviewed_by_subject`, a finite `valid_until`, and a finite `next_review_at` no later than expiry. Here, control reviewer is a governance function and must not be confused with the tenant/workspace **Review Analyst** persona defined in [`ROLE_AND_ACTOR_TERMINOLOGY.md`](ROLE_AND_ACTOR_TERMINOLOGY.md). Renewal is an explicit control-plane action; an expired grant or overdue review fails closed on the next authorization lookup.

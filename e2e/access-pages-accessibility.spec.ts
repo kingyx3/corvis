@@ -66,12 +66,41 @@ const sessionPolicy = {
   ],
 };
 
+const credentialFixture = (id: string, overrides: Record<string, unknown> = {}) => ({
+  credentialId: id, status: "active", createdBy: "admin@example.test", createdAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-10-10T00:00:00.000Z",
+  endsAt: null, revokedAt: null, lastUsedAt: "2026-10-02T08:00:00.000Z", expiringSoon: true, ...overrides,
+});
+const serviceAccountFixture = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
+  serviceAccountId: id, userId: "00000000-0000-4000-8000-0000000000aa", name, purpose: "Loads published fund data into the warehouse", workspaceId: "workspace-1", workspaceName: "Primary Workspace",
+  roleName: "analyst", status: "active", createdBy: "admin@example.test", createdAt: "2026-06-01T00:00:00.000Z", expiresAt: "2027-06-01T00:00:00.000Z", disabledAt: null, disabledBy: null, disableReason: null,
+  lastUsedAt: "2026-10-02T08:00:00.000Z", credentialExpiresAt: "2026-10-10T00:00:00.000Z", expiringSoon: true,
+  credentials: [credentialFixture("c1c1c1c1-0000-4000-8000-000000000001"), credentialFixture("c0c0c0c0-0000-4000-8000-000000000002", { status: "rotating_out", endsAt: "2026-10-03T12:00:00.000Z", expiringSoon: false })],
+  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true }, ...overrides,
+});
+const serviceAccounts = {
+  serviceAccounts: [
+    serviceAccountFixture("a1a1a1a1-0000-4000-8000-000000000001", "Nightly reporting sync"),
+    serviceAccountFixture("a2a2a2a2-0000-4000-8000-000000000002", "Retired data bridge", {
+      status: "disabled", expiringSoon: false, credentialExpiresAt: null, disabledAt: "2026-09-01T00:00:00.000Z", disabledBy: "admin@example.test", disableReason: "Integration retired",
+      credentials: [credentialFixture("c3c3c3c3-0000-4000-8000-000000000003", { status: "revoked", revokedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-01T00:00:00.000Z", expiringSoon: false })],
+      actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false },
+    }),
+  ],
+  workspaces: [{ workspaceId: "workspace-1", name: "Primary Workspace" }],
+};
+
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
   await page.route("**/api/v1/access/**", async (route) => {
     if (mode === "failed") return route.fulfill(json({ error: "temporarily_unavailable" }, 503));
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/audit")) {
       return route.fulfill(json({ data: [{ auditEventId: "a1", occurredAt: "2026-09-02T10:00:00.000Z", actorSubject: "admin@example.test", action: "invitation.created", targetType: "invitation", targetId: "inv-1", outcome: "success", metadata: {} }] }));
+    }
+    if (path.endsWith("/service-accounts")) {
+      if (route.request().method() === "POST") {
+        return route.fulfill(json({ data: { serviceAccount: serviceAccountFixture("a3a3a3a3-0000-4000-8000-000000000003", "Warehouse loader", { expiringSoon: false }), credential: { credentialId: "c4c4c4c4-0000-4000-8000-000000000004", secret: `corvis_sa_${"c4".repeat(16)}_${"A".repeat(43)}`, expiresAt: "2026-12-30T00:00:00.000Z" } } }, 201));
+      }
+      return route.fulfill(json({ data: serviceAccounts }));
     }
     if (path.endsWith("/retention")) return route.fulfill(json({ data: retention }));
     if (path.endsWith("/session-policy")) return route.fulfill(json({ data: sessionPolicy }));
@@ -93,6 +122,12 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.goto("/access-self-service");
     await expect(page.getByRole("heading", { name: /tenant access controls/i })).toBeVisible();
     await expect(page.getByText("new.analyst@example.test").first()).toBeVisible();
+    // The service-account list (F6) is part of the scan: a flagged account with a rotating-out credential, and a deactivated one.
+    const nightly = page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Nightly reporting sync" });
+    await expect(nightly).toContainText("Needs attention");
+    await nightly.getByText(/^Credentials \(2\)/).click();
+    await expect(nightly.getByRole("region", { name: /credentials of nightly reporting sync/i })).toContainText("Rotating out");
+    await expect(page.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Retired data bridge" })).toContainText("Integration retired");
     // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
@@ -104,6 +139,34 @@ for (const colorScheme of ["light", "dark"] as const) {
     await ready.getByText("Contents and checksums").click();
     await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
     const violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+  });
+
+  test(`service-account forms and the one-time credential panel pass axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await mockAccessApi(page, "loaded");
+    await page.goto("/access-self-service");
+    const section = page.locator("section[aria-labelledby='service-accounts-heading']");
+    await expect(section.getByRole("list", { name: "Service accounts" })).toBeVisible();
+    // Create form, then the one-time credential panel.
+    await section.getByLabel("Name").fill("Warehouse loader");
+    await section.getByLabel("What it is for").fill("Loads published fund data");
+    await section.getByRole("button", { name: /create service account/i }).click();
+    const reveal = page.getByRole("group", { name: "New API credential" });
+    await expect(reveal.getByLabel("API credential (shown once)")).toHaveValue(/^corvis_sa_/);
+    let violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await reveal.getByRole("button", { name: /i have stored it/i }).click();
+    // The rotate and deactivate confirmations.
+    const nightly = section.getByRole("list", { name: "Service accounts" }).getByRole("listitem").filter({ hasText: "Nightly reporting sync" });
+    await nightly.getByRole("button", { name: "Rotate credential" }).click();
+    await expect(nightly.getByRole("group", { name: /rotate the credential of nightly reporting sync/i })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    await nightly.getByRole("button", { name: "Deactivate account" }).click();
+    await expect(nightly.getByText("Deactivate this account everywhere?")).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
     expect(violations, describe(violations)).toEqual([]);
   });
 

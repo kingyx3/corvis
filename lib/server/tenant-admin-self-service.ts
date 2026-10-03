@@ -41,15 +41,15 @@ export type TenantAccessAuditEvent = {
 
 /**
  * Which audit events a customer's Organization Admins see: access changes, support access, source connections, data
- * issues and full data exports. Shared by the listing below and the access-audit file of a full tenant export, so
+ * issues, full data exports and service accounts. Shared by the listing below and the access-audit file of a full tenant export, so
  * what the export contains is exactly what the admin could already read here.
  */
 export const TENANT_ACCESS_AUDIT_FILTER = `(
       action like 'tenant_invitation.%' or action like 'access.member.%' or action like 'access.support.%'
       or action like 'identity.lifecycle.%' or action like 'access.scim.%' or action like 'source_connection.%'
-      or action like 'data_issue.%' or action like 'data_export.%' or action like 'export_schedule.%'
+      or action like 'data_issue.%' or action like 'data_export.%' or action like 'export_schedule.%' or action like 'service_account.%'
       or action like 'access.session.%' or action like 'access.session_policy.%'
-      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request','export_schedule','session_policy','user_sessions')
+      or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request','export_schedule','service_account','session_policy','user_sessions')
     )`;
 
 export async function listTenantAccessAudit(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<TenantAccessAuditEvent[]> {

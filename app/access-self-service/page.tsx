@@ -10,6 +10,7 @@ import { downloadText } from "@/lib/download";
 import { workspaceContextHeaders } from "@/lib/workspace-context";
 import { DataGovernanceSections } from "@/features/access/data-governance-section";
 import { SessionPolicySection } from "@/features/access/session-policy-section";
+import { ServiceAccountsSection } from "@/features/access/service-accounts-section";
 
 type AuditEvent={auditEventId:string;occurredAt:string;workspaceId?:string;actorSubject:string;action:string;targetType:string;targetId:string;outcome:string;metadata:Record<string,unknown>};
 type Grant={supportGrantId:string;workspaceId:string;roleName:string;purpose:string;validFrom:string;validUntil:string;status:"pending_ack"|"active";requiresTenantAck:boolean;subject:string};
@@ -46,7 +47,7 @@ export default function AccessSelfServicePage(){
   // An empty list is only truthful once the load has succeeded.
   const emptyText=(text:string)=>loading?"Loading…":loadFailed?"Unavailable: this data could not be loaded. Use Refresh to try again.":text;
   return <main id="main-content"><div className="app-content">
-    <section className="page-heading"><div><p className="eyebrow">Organization access</p><h1>Tenant access controls</h1><p className="lede">Review access changes, onboard users in bulk, manage pending invitations, see every Corvis break-glass support session affecting your organization, check data retention and legal holds, and request a full data export.</p></div><div className="dialog-actions"><Link className="secondary-button" href="/">Back to workspace</Link><button className="secondary-button" disabled={loading} onClick={()=>void load()}>Refresh</button></div></section>
+    <section className="page-heading"><div><p className="eyebrow">Organization access</p><h1>Tenant access controls</h1><p className="lede">Review access changes, onboard users in bulk, manage pending invitations, see every Corvis break-glass support session affecting your organization, manage service accounts for your own systems, check data retention and legal holds, and request a full data export.</p></div><div className="dialog-actions"><Link className="secondary-button" href="/">Back to workspace</Link><button className="secondary-button" disabled={loading} onClick={()=>void load()}>Refresh</button></div></section>
     {error&&<div className="lineage-note tone-danger" role="alert"><strong>Access controls need attention</strong><span>{error}</span></div>}
 
     <section className="panel" aria-labelledby="support-heading"><div className="panel-heading"><div><p className="eyebrow">Break-glass visibility</p><h2 id="support-heading">Corvis support access</h2></div><span className="table-muted">{grants.filter((g)=>g.status==="active").length} active · {grants.filter((g)=>g.status==="pending_ack").length} awaiting acknowledgement</span></div>
@@ -71,6 +72,7 @@ export default function AccessSelfServicePage(){
     <section className="panel" aria-labelledby="roles-heading"><div className="panel-heading"><div><p className="eyebrow">Role guidance</p><h2 id="roles-heading">What each role means</h2></div></div><div className="table-card"><table className="data-table"><thead><tr><th>Role</th><th>Plain-language access</th></tr></thead><tbody>{ROLE_GUIDE.map(([role,description])=><tr key={role}><td><strong>{role}</strong></td><td>{description}</td></tr>)}</tbody></table></div></section>
 
     <SessionPolicySection/>
+    <ServiceAccountsSection/>
 
     <DataGovernanceSections/>
 
