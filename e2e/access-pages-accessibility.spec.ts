@@ -83,7 +83,13 @@ const serviceAccountFixture = (id: string, name: string, overrides: Record<strin
   ownerSubject: "admin@example.test", ownerAssignedAt: "2026-06-01T00:00:00.000Z", ownerActive: true, needsOwner: false,
   lastUsedAt: "2026-10-02T08:00:00.000Z", credentialExpiresAt: "2026-10-10T00:00:00.000Z", expiringSoon: true,
   credentials: [credentialFixture("c1c1c1c1-0000-4000-8000-000000000001"), credentialFixture("c0c0c0c0-0000-4000-8000-000000000002", { status: "rotating_out", endsAt: "2026-10-03T12:00:00.000Z", expiringSoon: false })],
-  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true }, ...overrides,
+  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true },
+  // What the account can read (F6c): one fund within the organization's data rights, and one that lapsed with them.
+  entitlements: [
+    { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII", permission: "read", grantedAt: "2026-06-02T00:00:00.000Z", withinDataRights: true },
+    { resourceType: "document", resourceId: "doc-hg-genesis-q2", label: "Hg Genesis 9 - Investor Report Q2.pdf", permission: "read", grantedAt: "2026-06-02T00:00:00.000Z", withinDataRights: false },
+  ],
+  entitlementAccess: { canGrant: true, canRevoke: true }, ...overrides,
 });
 const serviceAccounts = {
   serviceAccounts: [
@@ -92,6 +98,7 @@ const serviceAccounts = {
       status: "disabled", expiringSoon: false, credentialExpiresAt: null, disabledAt: "2026-09-01T00:00:00.000Z", disabledBy: "admin@example.test", disableReason: "Integration retired",
       credentials: [credentialFixture("c3c3c3c3-0000-4000-8000-000000000003", { status: "revoked", revokedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-01T00:00:00.000Z", expiringSoon: false })],
       actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false },
+      entitlements: [], entitlementAccess: { canGrant: false, canRevoke: false },
     }),
     // Owned by an administrator who has since been deactivated: it keeps working and needs a new owner.
     serviceAccountFixture("a4a4a4a4-0000-4000-8000-000000000004", "Partner data feed", {
@@ -101,6 +108,11 @@ const serviceAccounts = {
   ],
   workspaces: [{ workspaceId: "workspace-1", name: "Primary Workspace" }],
   owners: [{ subject: "admin@example.test" }, { subject: "second.admin@example.test" }],
+  grantable: [
+    { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII" },
+    { resourceType: "fund", resourceId: "fund-nordic-v", label: "Nordic Capital Fund V" },
+    { resourceType: "document", resourceId: "doc-adv-viii-q2", label: "Advent International GPE VIII - Q2 2026.pdf" },
+  ],
 };
 
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
@@ -198,6 +210,20 @@ for (const colorScheme of ["light", "dark"] as const) {
     await nightly.getByRole("button", { name: "Back" }).click();
     await nightly.getByRole("button", { name: "Change owner" }).click();
     await expect(nightly.getByRole("group", { name: "Change the owner of Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    // The data-access list, the grant panel and the remove confirmation (F6c).
+    await expect(nightly.getByRole("group", { name: "Data access of Nightly reporting sync" })).toContainText("Not covered by your organization's data rights");
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Grant data access" }).click();
+    await expect(nightly.getByRole("group", { name: "Grant data access to Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    await nightly.getByRole("button", { name: /Remove access to Advent International GPE VIII from Nightly reporting sync/ }).click();
+    await expect(nightly.getByText("Remove access to Advent International GPE VIII?")).toBeVisible();
     violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
     expect(violations, describe(violations)).toEqual([]);
     await nightly.getByRole("button", { name: "Back" }).click();
