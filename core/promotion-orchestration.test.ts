@@ -10,14 +10,16 @@ function read(path: string): string {
   return readFileSync(join(repoRoot, path), "utf8");
 }
 
-test("production-like promotion composes deployment then security acceptance", () => {
+test("production-like promotion composes reviewed deployment then security acceptance", () => {
   const promotion = read(".github/workflows/promote-environment.yml");
   const deploy = read(".github/workflows/terraform-deploy.yml");
   const acceptance = read(".github/workflows/security-acceptance.yml");
 
   assert.match(promotion, /options: \[uat, prod\]/);
   assert.match(promotion, /uses: \.\/\.github\/workflows\/terraform-deploy\.yml/);
+  assert.match(promotion, /action: plan/);
   assert.match(promotion, /action: apply/);
+  assert.match(promotion, /approved_plan_sha256:/);
   assert.match(promotion, /acceptance:\n    needs: deploy\n    uses: \.\/\.github\/workflows\/security-acceptance\.yml/);
   assert.match(promotion, /Promotion requires release_sha or rollback_known_good=true/);
   assert.match(promotion, /Production-like promotion may only run from main/);
@@ -27,7 +29,7 @@ test("production-like promotion composes deployment then security acceptance", (
   assert.match(deploy, /Resolve immutable release set/);
   assert.match(deploy, /TF_VAR_control_loop_image/);
   assert.match(deploy, /Apply versioned Postgres migrations/);
-  assert.match(deploy, /Terraform apply/);
+  assert.match(deploy, /Terraform apply exact reviewed plan/);
 
   assert.match(acceptance, /workflow_call:/);
   assert.match(acceptance, /Security acceptance supports only uat or prod/);
@@ -51,13 +53,14 @@ test("known-good cannot advance before all live acceptance families succeed", ()
   assert.match(acceptance.slice(knownGoodIndex), /controlLoopImage/);
 });
 
-test("release build emits separately attested API and control-loop images", () => {
+test("release build emits separately attested API and control-loop images with SBOM metadata", () => {
   const build = read(".github/workflows/build-release.yml");
   assert.match(build, /Build and push immutable API image/);
   assert.match(build, /Build and push immutable control-loop image/);
   assert.match(build, /Dockerfile\.control-loop/);
   assert.match(build, /Attest API build provenance/);
   assert.match(build, /Attest control-loop build provenance/);
-  assert.match(build, /corvis\.release-image\.v3/);
+  assert.match(build, /corvis\.release-image\.v4/);
+  assert.match(build, /sbom: true/);
   assert.match(build, /controlLoopImage/);
 });

@@ -6,6 +6,9 @@ on:
       environment:
         required: true
         type: string
+      release_sha:
+        required: true
+        type: string
       expected_api_image:
         required: true
         type: string
@@ -35,6 +38,7 @@ jobs:
       GCP_REGION: asia-southeast1
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
       TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', vars.GCP_PROJECT_ID) }}
+      RELEASE_SHA: ${{ inputs.release_sha }}
       EXPECTED_API_IMAGE: ${{ inputs.expected_api_image }}
       EXPECTED_CONTROL_LOOP_IMAGE: ${{ inputs.expected_control_loop_image }}
       EXPECTED_EXTRACTOR_IMAGE: ${{ inputs.expected_extractor_image }}
@@ -45,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ inputs.environment }}" in uat|prod) ;; *) echo "Only uat/prod are supported."; exit 1 ;; esac
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA."; exit 1; }
           [[ "${EXPECTED_API_IMAGE}" =~ /api@sha256:[0-9a-f]{64}$ ]] || { echo "Expected API image is invalid."; exit 1; }
           [[ "${EXPECTED_CONTROL_LOOP_IMAGE}" =~ /control-loop@sha256:[0-9a-f]{64}$ ]] || { echo "Expected control-loop image is invalid."; exit 1; }
           if [[ -n "${EXPECTED_EXTRACTOR_IMAGE}" || -n "${EXPECTED_LITELLM_IMAGE}" ]]; then
@@ -114,14 +119,16 @@ jobs:
           fi
 
           jq \
-            --arg schemaVersion "corvis.known-good-release.v3" \
+            --arg schemaVersion "corvis.known-good-release.v4" \
+            --arg sourceSha "${RELEASE_SHA}" \
             --arg extractorImage "${extractor_live}" \
             --arg litellmImage "${litellm_live}" \
-            '.schemaVersion=$schemaVersion | .extractorImage=$extractorImage | .litellmImage=$litellmImage' \
-            known-good.json > known-good-v3.json
-          gcloud storage cp known-good-v3.json "${manifest}"
+            '.schemaVersion=$schemaVersion | .sourceSha=$sourceSha | .extractorImage=$extractorImage | .litellmImage=$litellmImage' \
+            known-good.json > known-good-v4.json
+          gcloud storage cp known-good-v4.json "${manifest}"
           {
-            echo "### Known-good AI release binding"
+            echo "### Known-good release binding"
+            echo "- Accepted source commit: \`${RELEASE_SHA}\`"
             echo "- Extractor: \`${extractor_live:-disabled}\`"
             echo "- LiteLLM: \`${litellm_live:-disabled}\`"
             [[ -z "${extractor_live}" ]] || echo "- IAM/secret boundary: verified"

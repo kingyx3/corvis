@@ -48,7 +48,7 @@ jobs:
             exit 1
           fi
           if [[ ! "${LITELLM_BASE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-            echo "CORVIS_LITELLM_BASE_IMAGE must be an immutable LiteLLM image reference ending in @sha256:<64 hex>."
+            echo "CORVIS_LITELLM_BASE_IMAGE must be an immutable LiteLLM image reference ending in @sha256:<digest>."
             exit 1
           fi
 
@@ -107,8 +107,8 @@ jobs:
           context: .
           pull: true
           push: true
-          provenance: false
-          sbom: false
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.refs.outputs.api_tagged_ref }}
           cache-from: type=gha,scope=release-api
           cache-to: type=gha,mode=max,scope=release-api
@@ -121,8 +121,8 @@ jobs:
           file: Dockerfile.control-loop
           pull: true
           push: true
-          provenance: false
-          sbom: false
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.refs.outputs.control_loop_tagged_ref }}
           cache-from: type=gha,scope=release-control-loop
           cache-to: type=gha,mode=max,scope=release-control-loop
@@ -135,8 +135,8 @@ jobs:
           file: Dockerfile.extractor
           pull: true
           push: true
-          provenance: false
-          sbom: false
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.refs.outputs.extractor_tagged_ref }}
           cache-from: type=gha,scope=release-extractor
           cache-to: type=gha,mode=max,scope=release-extractor
@@ -149,8 +149,8 @@ jobs:
           file: ops/litellm/Dockerfile
           pull: true
           push: true
-          provenance: false
-          sbom: false
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.refs.outputs.litellm_tagged_ref }}
           build-args: |
             LITELLM_BASE_IMAGE=${{ env.LITELLM_BASE_IMAGE }}
@@ -239,7 +239,7 @@ jobs:
           set -euo pipefail
           built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
-            --arg schemaVersion "corvis.release-image.v3" \
+            --arg schemaVersion "corvis.release-image.v4" \
             --arg environment "${{ inputs.environment }}" \
             --arg sourceSha "${GITHUB_SHA}" \
             --arg image "${API_DIGEST_REF}" \
@@ -256,7 +256,7 @@ jobs:
             --arg litellmDigest "${LITELLM_DIGEST}" \
             --arg builtAt "${built_at}" \
             --arg workflowRunId "${GITHUB_RUN_ID}" \
-            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,controlLoopImage:$controlLoopImage,controlLoopTaggedImage:$controlLoopTaggedImage,controlLoopDigest:$controlLoopDigest,extractorImage:$extractorImage,extractorTaggedImage:$extractorTaggedImage,extractorDigest:$extractorDigest,litellmImage:$litellmImage,litellmTaggedImage:$litellmTaggedImage,litellmDigest:$litellmDigest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions"}' > release-image.json
+            '{schemaVersion:$schemaVersion,environment:$environment,sourceSha:$sourceSha,image:$image,taggedImage:$taggedImage,digest:$digest,controlLoopImage:$controlLoopImage,controlLoopTaggedImage:$controlLoopTaggedImage,controlLoopDigest:$controlLoopDigest,extractorImage:$extractorImage,extractorTaggedImage:$extractorTaggedImage,extractorDigest:$extractorDigest,litellmImage:$litellmImage,litellmTaggedImage:$litellmTaggedImage,litellmDigest:$litellmDigest,builtAt:$builtAt,workflowRunId:$workflowRunId,attestation:"github-actions+buildkit-provenance",sbom:"buildkit-spdx"}' > release-image.json
 
           {
             echo "### Immutable release images"
@@ -266,7 +266,8 @@ jobs:
             echo "- Control loop: \`${CONTROL_LOOP_DIGEST_REF}\`"
             echo "- Extractor: \`${EXTRACTOR_DIGEST_REF}\`"
             echo "- LiteLLM: \`${LITELLM_DIGEST_REF}\`"
-            echo "- Build provenance: GitHub artifact attestations for all four images"
+            echo "- Build provenance: BuildKit max-mode plus GitHub artifact attestations for all four images"
+            echo "- SBOM: BuildKit SPDX attestations embedded with all four OCI images"
             if [[ "${{ inputs.environment }}" == "uat" ]]; then
               echo "- Production promotion: copy these exact OCI digests; do not rebuild"
             fi

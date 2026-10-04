@@ -6,7 +6,7 @@ async function read(path: string): Promise<string> {
   return (await readFile(path, "utf8")).toLowerCase();
 }
 
-test("release build is main-only, keyless, digest-addressed and attested", async () => {
+test("release build is main-only, keyless, digest-addressed, SBOM-backed and attested", async () => {
   const workflow = await read(".github/workflows/build-release.yml");
 
   assert.match(workflow, /refs\/heads\/main/);
@@ -14,10 +14,11 @@ test("release build is main-only, keyless, digest-addressed and attested", async
   assert.match(workflow, /workload_identity_provider/);
   assert.match(workflow, /git-\$\{github_sha\}/);
   assert.match(workflow, /image_summary\.digest/);
+  assert.match(workflow, /provenance:\s*mode=max/);
+  assert.match(workflow, /sbom:\s*true/);
   assert.match(workflow, /actions\/attest@[0-9a-f]{40}\s+# v4/);
   assert.match(workflow, /push-to-registry:\s*true/);
   assert.doesNotMatch(workflow, /service-account.*json|google_application_credentials/);
-  // actions/attest push-to-registry reads only static `auths` entries, not gcloud credHelpers.
   assert.match(workflow, /token_format:\s*access_token/);
   assert.match(workflow, /docker\/login-action@[0-9a-f]{40}\s+# v4/);
   assert.match(workflow, /username:\s*oauth2accesstoken/);
@@ -26,18 +27,22 @@ test("release build is main-only, keyless, digest-addressed and attested", async
   assert.doesNotMatch(workflow, /gcloud auth configure-docker/);
 });
 
-test("release governance reads rulesets with a dedicated admin-visible token", async () => {
+test("release governance uses an app-backed credential and rejects PAT semantics", async () => {
   for (const path of [".github/workflows/build-release.yml", ".github/workflows/terraform-deploy.yml"]) {
     const workflow = await read(path);
-    const step = workflow.slice(workflow.indexOf("verify effective release governance"),
-      workflow.indexOf("release-governance.mjs"));
+    const step = workflow.slice(workflow.indexOf("verify effective release governance"), workflow.indexOf("release-governance.mjs"));
     assert.match(step, /github_token:\s*\$\{\{ secrets\.release_governance_token \}\}/, path);
     assert.doesNotMatch(step, /secrets\.github_token/, path);
     assert.equal(workflow.match(/secrets\.release_governance_token/g)?.length, 1, path);
   }
-  const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
-  assert.match(environments, /`release_governance_token`/);
-  assert.match(environments, /administration: read and write/);
+  const verifier = await read(".github/scripts/release-governance.mjs");
+  assert.match(verifier, /long-lived pats are refused/);
+  assert.match(verifier, /app\/installations/);
+  assert.match(verifier, /administration:\s*'write'/);
+  const governance = await read("docs/RELEASE_GOVERNANCE.md");
+  assert.match(governance, /must not contain a pat/);
+  assert.match(governance, /deployment branches\/tags restricted to `main` only/);
+  assert.match(governance, /required reviewers/);
 });
 
 test("frontend ci runs with a read-only default token", async () => {
@@ -51,19 +56,15 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
   for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo", "frontend"]) {
     assert.match(workflow, new RegExp(`\\n  ${job}:\\n`), job);
   }
-
   const start = workflow.indexOf("\n  frontend:\n");
   const end = workflow.indexOf("\n  container:\n", start);
   assert.ok(start > 0 && end > start);
   const frontend = workflow.slice(start, end);
   assert.match(frontend, /needs:\s*\[quality, dockerfile-lint, terraform, build, e2e, non-demo\]/);
   assert.match(frontend, /if:\s*always\(\)/);
-  // Every job that can fail must feed the aggregate, or it stops being blocking.
   for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo"]) {
     assert.match(frontend, new RegExp(`needs\\.${job}\\.result`), job);
   }
-
-  // The fan-out is a runtime optimization only: every original blocking family remains present.
   assert.match(workflow, /npm run lint/);
   assert.match(workflow, /npm run typecheck/);
   assert.match(workflow, /npm test/);
@@ -75,8 +76,7 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
 
 test("dev deploys never run production-like runtime secret or migration steps", async () => {
   const workflow = await read(".github/workflows/terraform-deploy.yml");
-  for (const name of ["require enabled postgres runtime secret", "install migration runtime",
-    "apply versioned postgres migrations", "upload migration evidence"]) {
+  for (const name of ["require enabled postgres runtime secret", "install migration runtime", "apply versioned postgres migrations", "upload migration evidence"]) {
     const start = workflow.indexOf(`name: ${name}`);
     assert.ok(start > 0, name);
     const guard = workflow.slice(start).match(/\n\s*if: ([^\n]+)/)?.[1] ?? "";
@@ -99,9 +99,21 @@ test("security acceptance control-evidence jobs install the pg runtime before co
   }
 });
 
+test("terraform deploy checks out the exact release and gates apply on the reviewed plan digest", async () => {
+  const workflow = await read(".github/workflows/terraform-deploy.yml");
+  assert.match(workflow, /ref:\s*\$\{\{ inputs\.release_sha != '' && inputs\.release_sha \|\| github\.sha \}\}/);
+  assert.match(workflow, /assert release matches deployment checkout/);
+  assert.match(workflow, /approved_plan_sha256/);
+  assert.match(workflow, /sha256sum .*tfplan\.txt/);
+  assert.match(workflow, /terraform plan changed after review; refusing apply/);
+  assert.match(workflow, /terraform apply exact reviewed plan/);
+  assert.match(workflow, /apply -lock-timeout=5m -auto-approve tfplan/);
+  const migration = workflow.slice(workflow.indexOf("name: apply versioned postgres migrations"), workflow.indexOf("name: upload migration evidence"));
+  assert.match(migration, /inputs\.rollback_known_good != true/);
+});
+
 test("terraform deploy resolves release tags to immutable digests without API_IMAGE variable", async () => {
   const workflow = await read(".github/workflows/terraform-deploy.yml");
-
   assert.doesNotMatch(workflow, /vars\.api_image/);
   assert.match(workflow, /release_sha/);
   assert.match(workflow, /rollback_known_good/);
@@ -112,23 +124,42 @@ test("terraform deploy resolves release tags to immutable digests without API_IM
   assert.match(workflow, /@sha256:\[0-9a-f\]\{64\}/);
 });
 
-test("known-good rollback state advances only after every live acceptance family passes", async () => {
-  const workflow = await read(".github/workflows/security-acceptance.yml");
+test("production registry tags are immutable and deploy never moves prod cleanup pointers", async () => {
+  const foundation = await read("infra/terraform/modules/gcp-foundation/main.tf");
+  const deploy = await read(".github/workflows/terraform-deploy.yml");
+  assert.match(foundation, /docker_config\s*\{[\s\S]*immutable_tags\s*=\s*var\.environment == "prod"/);
+  assert.match(foundation, /for_each\s*=\s*var\.environment == "prod" \? \[\] : \[1\]/);
+  assert.match(deploy, /protect active release images from registry cleanup/);
+  const protect = deploy.slice(deploy.indexOf("protect active release images from registry cleanup"));
+  assert.match(protect, /inputs\.environment != 'prod'/);
+});
 
-  assert.match(workflow, /record-known-good-release/);
-  assert.match(workflow, /needs:\s*\[edge, postgres-rls, control-loop\]/);
-  assert.match(workflow, /if:\s*\$\{\{ success\(\) \}\}/);
-  assert.match(workflow, /spec\.template\.spec\.containers\.image/);
-  assert.match(workflow, /releases\/\$\{\{ inputs\.environment \}\}\/known-good\.json/);
-  assert.match(workflow, /corvis\.known-good-release\.v2/);
-  assert.match(workflow, /control-loop-runtime-acceptance/);
-  assert.match(workflow, /controlloopimage/);
+test("known-good advances after live acceptance, then binds the exact source SHA and AI digests", async () => {
+  const acceptance = await read(".github/workflows/security-acceptance.yml");
+  const augment = await read(".github/workflows/augment-known-good-ai.yml");
+  const promotion = await read(".github/workflows/promote-environment.yml");
+
+  assert.match(acceptance, /record-known-good-release/);
+  assert.match(acceptance, /needs:\s*\[edge, postgres-rls, control-loop\]/);
+  assert.match(acceptance, /if:\s*\$\{\{ success\(\) \}\}/);
+  assert.match(acceptance, /spec\.template\.spec\.containers\.image/);
+  assert.match(acceptance, /releases\/\$\{\{ inputs\.environment \}\}\/known-good\.json/);
+  assert.match(acceptance, /corvis\.known-good-release\.v2/);
+  assert.match(acceptance, /control-loop-runtime-acceptance/);
+  assert.match(acceptance, /controlloopimage/);
+
+  assert.match(augment, /release_sha:/);
+  assert.match(augment, /corvis\.known-good-release\.v4/);
+  assert.match(augment, /\.sourcesha=\$sourcesha/);
+  assert.match(augment, /expected_api_image/);
+  assert.match(augment, /expected_control_loop_image/);
+  assert.match(promotion, /release_sha:\s*\$\{\{ inputs\.release_sha \}\}/);
+  assert.match(promotion, /uses:\s*\.\/\.github\/workflows\/augment-known-good-ai\.yml/);
 });
 
 test("deployment docs keep the release set derived and known-good state acceptance-gated", async () => {
   const environments = await read("docs/GITHUB_ENVIRONMENTS.md");
   const deployment = await read("docs/DEPLOYMENT.md");
-
   assert.match(environments, /`api_image`, `extractor_image`, and `litellm_image` are not human-managed github environment variables/);
   assert.match(environments, /remove or avoid creating/);
   assert.match(environments, /derives runtime images from a reviewed `main` release/);

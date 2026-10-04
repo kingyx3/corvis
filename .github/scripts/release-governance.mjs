@@ -1,16 +1,92 @@
+import { createSign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 export const REQUIRED_CHECKS = ['frontend', 'container', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts'];
 
-export const MISSING_BYPASS_VISIBILITY = 'Release governance token lacks ruleset admin visibility: GitHub omitted bypass_actors ' +
-  'from every applicable ruleset. Configure the RELEASE_GOVERNANCE_TOKEN environment secret with a fine-grained PAT or ' +
-  'GitHub App installation token that has repository Administration: read and write (plus Contents: read and Checks: read) ' +
-  'on this repository; the workflow GITHUB_TOKEN cannot read ruleset bypass actors. See docs/GITHUB_ENVIRONMENTS.md.';
+export const MISSING_BYPASS_VISIBILITY = 'Release governance GitHub App lacks ruleset admin visibility: GitHub omitted bypass_actors ' +
+  'from every applicable ruleset. Configure RELEASE_GOVERNANCE_TOKEN as GitHub App credential JSON for an app installed ' +
+  'only on this repository with Administration: read and write, Contents: read and Checks: read. See docs/RELEASE_GOVERNANCE.md.';
+
+function base64url(value) {
+  return Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
+}
+
+export function createReleaseGovernanceAppJwt(appId, privateKey, now = Math.floor(Date.now() / 1000)) {
+  if (!/^\d+$/.test(String(appId ?? ''))) throw new Error('Release-governance GitHub App id must be numeric');
+  const key = String(privateKey ?? '').replace(/\\n/g, '\n');
+  if (!key.includes('PRIVATE KEY')) throw new Error('Release-governance GitHub App private key must be PEM');
+  const header = base64url({ alg: 'RS256', typ: 'JWT' });
+  const payload = base64url({ iat: now - 60, exp: now + 540, iss: String(appId) });
+  const signingInput = `${header}.${payload}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  return `${signingInput}.${signer.sign(key).toString('base64url')}`;
+}
+
+async function githubJson(path, options, fetchImpl = fetch) {
+  const response = await fetchImpl(`https://api.github.com${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(options?.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(15_000),
+    redirect: 'error',
+  });
+  if (!response.ok) throw new Error(`Release governance GitHub API request failed (${response.status})`);
+  return response.json();
+}
+
+/**
+ * RELEASE_GOVERNANCE_TOKEN intentionally no longer accepts a long-lived PAT.
+ * Store JSON instead: {"appId":"123456","privateKey":"-----BEGIN PRIVATE KEY-----\\n..."}.
+ * The workflow mints a repository-scoped installation token for each invocation.
+ * A pre-minted `ghs_` installation token is accepted only for composition/tests.
+ */
+export async function resolveReleaseGovernanceToken(rawCredential, repository, fetchImpl = fetch) {
+  const raw = String(rawCredential ?? '').trim();
+  if (/^ghs_[A-Za-z0-9_]+$/.test(raw)) return raw;
+  if (!raw.startsWith('{')) {
+    throw new Error('RELEASE_GOVERNANCE_TOKEN must contain GitHub App credential JSON; long-lived PATs are refused');
+  }
+  let credential;
+  try {
+    credential = JSON.parse(raw);
+  } catch {
+    throw new Error('RELEASE_GOVERNANCE_TOKEN contains malformed GitHub App credential JSON');
+  }
+  if (!credential || typeof credential !== 'object' || Array.isArray(credential)) {
+    throw new Error('RELEASE_GOVERNANCE_TOKEN must contain a GitHub App credential object');
+  }
+  const jwt = createReleaseGovernanceAppJwt(credential.appId, credential.privateKey);
+  const installation = await githubJson(`/repos/${repository}/installation`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  }, fetchImpl);
+  if (!Number.isSafeInteger(installation?.id) || installation.id < 1) {
+    throw new Error('Release-governance GitHub App installation id is invalid');
+  }
+  const repo = repository.split('/')[1];
+  const tokenResponse = await githubJson(`/app/installations/${installation.id}/access_tokens`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repositories: [repo],
+      permissions: { administration: 'write', contents: 'read', checks: 'read' },
+    }),
+  }, fetchImpl);
+  const token = tokenResponse?.token;
+  if (typeof token !== 'string' || !token.startsWith('ghs_') || token.length < 20) {
+    throw new Error('Release-governance GitHub App returned an invalid installation token');
+  }
+  return token;
+}
 
 export function evaluateGovernance(rules, rulesets, checks) {
   const failures = [];
   // GitHub only returns bypass_actors to callers with write access to the
-  // ruleset. If no response carries it, the token (not the ruleset) is the
+  // ruleset. If no response carries it, the credential (not the ruleset) is the
   // problem; say so instead of reporting misleading rule failures. Missing
   // bypass data is still never treated as an empty bypass list.
   if (rulesets.length > 0 && rulesets.every((set) => !Object.hasOwn(set ?? {}, 'bypass_actors'))) {
@@ -61,11 +137,12 @@ export function evaluateGovernance(rules, rulesets, checks) {
 }
 
 export async function verifyReleaseGovernance(env = process.env, fetchImpl = fetch) {
-  const { GITHUB_REPOSITORY: repository, GITHUB_TOKEN: token } = env;
+  const { GITHUB_REPOSITORY: repository } = env;
   const sha = env.RELEASE_SHA || env.GITHUB_SHA;
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '') || !/^[a-f0-9]{40}$/.test(sha ?? '') || !token) {
-    throw new Error('Repository, exact release SHA and GitHub token are required (set the RELEASE_GOVERNANCE_TOKEN secret)');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '') || !/^[a-f0-9]{40}$/.test(sha ?? '') || !env.GITHUB_TOKEN) {
+    throw new Error('Repository, exact release SHA and RELEASE_GOVERNANCE_TOKEN credential are required');
   }
+  const token = await resolveReleaseGovernanceToken(env.GITHUB_TOKEN, repository, fetchImpl);
   async function get(path) {
     const response = await fetchImpl(`https://api.github.com/repos/${repository}/${path}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
@@ -102,7 +179,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const result = await verifyReleaseGovernance();
     for (const failure of result.failures) console.error(failure);
     if (!result.passed) process.exitCode = 1;
-    else console.log('Release source checks and non-bypassable main rules verified');
+    else console.log('Release source checks and non-bypassable main rules verified with a short-lived GitHub App token');
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Release governance verification failed');
     process.exitCode = 1;
