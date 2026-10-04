@@ -320,7 +320,7 @@ export async function deliverExportArtifact(
   const rows = scopedPosition
     ? await loadPositionFinancialRows(identity, snapshotIds, scopedPosition, store)
     : scopedScorecard
-      ? await loadScorecardExportRows(identity, snapshotIds, store)
+      ? await loadScorecardExportRows(identity, snapshotIds, store, scopedScorecard)
       : await loadArtifactRows(identity, snapshotIds, store);
   const rendered = renderExport(format, rows, scopedPosition ? POSITION_EXPORT_COLUMNS : scopedScorecard ? SCORECARD_EXPORT_COLUMNS : EXPORT_COLUMNS);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");

@@ -204,6 +204,20 @@ test("a performance scorecard delivery renders the scorecard columns from the pi
   assert.deepEqual([manifest.rowCounts.performanceScorecard, manifest.rowCounts.snapshots, manifest.artifact.fundIds, manifest.artifact.documentIds], [6, 1, ["fund-a"], [DOC]]);
 });
 
+test("a filtered scorecard delivery rebuilds with the filters recorded on the manifest scope", async () => {
+  const store = new Store();
+  const objects = objectStore();
+  let factsParameters: unknown[] = [];
+  store.handler = (sql, parameters) => {
+    if (sql.includes("corvis_identity.fund f")) return [{ fund_id: "fund-a", fund_name: "Alpha" }];
+    factsParameters = parameters;
+    return [{ fact_id: "f1", snapshot_id: "snap-1", published_at: "2026-07-01T00:00:00Z", fund_id: "fund-a", level: "fund", metric_code: "nav", value_number: "100.5000000000", currency: "USD", as_of: "2026-03-31", economic_period: "Q1 2026", actuality: "actual", document_id: DOC, source_reference_id: "ref-1", page_number: 4 }];
+  };
+  await deliverExportArtifact(job({ snapshot_ids: ["snap-1"], manifest: { scope: { performanceScorecard: true, fundId: "fund-a", period: "Q1 2026" }, rowCounts: { snapshots: 1 } } }), store, objects);
+  assert.equal(factsParameters.at(-1), "Q1 2026", "the period filter reaches the query");
+  assert.equal(csv(objects.puts[0]!).length, 8, "header, six rows of the one filtered fund, trailing newline");
+});
+
 test("typed non-text cells pass through, sparse position rows get empty defaults and odd manifests or formats are tolerated", async () => {
   const typed = new Store();
   typed.handler = (sql) => sql.includes("count(distinct s.snapshot_id)") ? [{ snapshot_count: 1 }] : [{ observation_id: "o9", fund_id: "fund-a", metric_code: "nav", value_string: "x", economic_period: 2026, review_state: true }];

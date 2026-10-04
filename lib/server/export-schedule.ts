@@ -87,10 +87,13 @@ export function scheduleSessionId(scheduleId: string): string { return `export-s
 
 /** Key-order independent fingerprint of a schedule, so a reused idempotency key with different content is refused. */
 export function scheduleFingerprint(command: CreateExportScheduleCommand): string {
-  const scope = "snapshotId" in command.scope
-    ? ["snapshot", command.scope.snapshotId]
-    : ["position", command.scope.positionFinancials.fundId, command.scope.positionFinancials.holdingId, command.scope.positionFinancials.companyId,
-      command.scope.positionFinancials.periodicity, command.scope.positionFinancials.portfolioId ?? null];
+  const { scope: saved } = command;
+  const scope = "snapshotId" in saved
+    ? ["snapshot", saved.snapshotId]
+    : "performanceScorecard" in saved
+      ? ["scorecard", saved.fundId ?? null, saved.period ?? null]
+      : ["position", saved.positionFinancials.fundId, saved.positionFinancials.holdingId, saved.positionFinancials.companyId,
+        saved.positionFinancials.periodicity, saved.positionFinancials.portfolioId ?? null];
   return createHash("sha256").update(JSON.stringify([command.label, scope, command.format, command.trigger, command.notifyOnCompletion])).digest("hex");
 }
 
@@ -206,10 +209,17 @@ export const defaultFormatGate: FormatGate = async (identity, format, db) => {
 /**
  * The caller must be entitled to the fund behind the scope. A position scope names its fund; a snapshot scope is
  * resolved to the fund of that published snapshot. A snapshot that does not exist (or is not published) is refused the
- * same way, so the answer never reveals whether another organization's snapshot exists.
+ * same way, so the answer never reveals whether another organization's snapshot exists. A scorecard scope names the
+ * fund of its `fundId` filter, or, unfiltered, means every fund the caller is entitled to *now*: it needs at least one,
+ * and nothing else is checked here because the export request itself reads only the funds the caller is entitled to
+ * when it runs.
  */
 export async function assertScopeEntitled(identity: RequestIdentity, scope: ScheduledExportScope, db: PostgresSqlApi): Promise<void> {
   const entitled = identity.entitlements.fundIds ?? [];
+  if ("performanceScorecard" in scope) {
+    if (scope.fundId === undefined ? entitled.length === 0 : !entitled.includes(scope.fundId)) throw new ExportScheduleRequestError("export_scope_not_entitled", 403);
+    return;
+  }
   if ("positionFinancials" in scope) {
     if (!entitled.includes(scope.positionFinancials.fundId)) throw new ExportScheduleRequestError("export_scope_not_entitled", 403);
     return;
@@ -447,19 +457,33 @@ async function runDueSchedule(
   dependencies: Required<ExportScheduleRunnerDependencies>,
 ): Promise<"none" | "requested" | "failed"> {
   return withTransaction(store, async (tx) => {
-    const claim = (await tx.query(`select * from corvis_control.claim_export_schedule_trigger($1::uuid,$2::uuid)`, [tenantId, scheduleId]))[0];
-    if (!claim) return "none";
-    const triggerKey = str(claim, "trigger_key");
-    const schedule = (await tx.query(`select * from corvis_control.export_schedule where tenant_id=$1::uuid and schedule_id=$2::uuid`, [tenantId, scheduleId]))[0]!;
+    const schedule = (await tx.query(`select * from corvis_control.export_schedule where tenant_id=$1::uuid and schedule_id=$2::uuid`, [tenantId, scheduleId]))[0];
+    if (!schedule) return "none";
     const principal: AuthorizationPrincipal = {
       tenantId, workspaceId: str(schedule, "workspace_id"), subject: str(schedule, "owner_subject"),
       authMethod: oneOf(["oidc", "saml", "service_account"] as const, str(schedule, "owner_auth_method")), sessionId: scheduleSessionId(scheduleId),
     };
+    const savedScope = schedule.scope as ScheduledExportScope;
+
+    // An all-funds scorecard follows "every fund the owner is entitled to now". Its publication trigger is therefore claimed only
+    // for a publication of a fund the owner holds at this moment, so the owner is re-authorized before the claim and their
+    // current funds narrow it; a publication of any other fund is consumed without a run, and never tells the owner it happened.
+    let authorization: MembershipAuthorization | null | undefined;
+    let entitledFunds: string | null = null;
+    if (str(schedule, "trigger_kind") === "on_publish" && "performanceScorecard" in savedScope && savedScope.fundId === undefined) {
+      authorization = await dependencies.authorize(tx, principal);
+      // No funds at all is not narrowed here: the run is claimed and refused below with its stable reason, so the owner sees it.
+      if (authorization && authorization.fundIds.length > 0) entitledFunds = JSON.stringify(authorization.fundIds);
+    }
+    const claim = (await tx.query(`select * from corvis_control.claim_export_schedule_trigger($1::uuid,$2::uuid,$3::jsonb)`, [tenantId, scheduleId, entitledFunds]))[0];
+    if (!claim) return "none";
+    const triggerKey = str(claim, "trigger_key");
     const format = oneOf<ExportFormat>(EXPORT_SCHEDULE_FORMATS, str(schedule, "format"));
     let exportId: string | undefined;
     let failure: ExportScheduleFailureReason | undefined;
 
-    const authorization = await dependencies.authorize(tx, principal);
+    // Every run re-authorizes the owner: membership, entitlements and contractual data rights as they are now, never as saved.
+    authorization = authorization === undefined ? await dependencies.authorize(tx, principal) : authorization;
     if (!authorization) {
       failure = "owner_inactive";
       for (const stopped of await tx.query(`select * from corvis_control.stop_export_schedule($1::uuid,$2::uuid)`, [tenantId, scheduleId])) await auditSystem(tx, stoppedAuditEvent(stopped));
@@ -468,9 +492,8 @@ async function runDueSchedule(
       try {
         assertPermission(identity, "exports:create");
         await dependencies.formatGate(identity, format, tx);
-        const scope = schedule.scope as ScheduledExportScope;
-        await assertScopeEntitled(identity, scope, tx);
-        exportId = (await dependencies.requestExport(identity, format, { scope, source: "delivery" }, tx)).exportId;
+        await assertScopeEntitled(identity, savedScope, tx);
+        exportId = (await dependencies.requestExport(identity, format, { scope: savedScope, source: "delivery" }, tx)).exportId;
       } catch (error) {
         if (error instanceof AuthorizationError) failure = failureReasonForDenial(error.requiredPermission);
         else if (error instanceof ExportScheduleRequestError) failure = "scope_not_entitled";

@@ -144,6 +144,7 @@ test("scheduled-export refusals classify to stable codes, 400 for a scope that c
   const expected: Record<string, [string, number]> = {
     "idempotency key reused with different export schedule": ["idempotency_key_reused", 409],
     "export schedule scope is invalid": ["invalid_scope", 400],
+    "export schedule scorecard filter is invalid": ["invalid_scope", 400],
     "export schedule limit reached": ["export_schedule_limit_reached", 409],
     "export schedule transition not allowed": ["export_schedule_transition_not_allowed", 409],
   };

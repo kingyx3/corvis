@@ -104,6 +104,8 @@ export const SQL_APPLICATION_ERRORS = [
   "export schedule scope is invalid",
   "export schedule limit reached",
   "export schedule transition not allowed",
+  // corvis_control.create_export_schedule, performance scorecard scope (097)
+  "export schedule scorecard filter is invalid",
   // corvis_control.set_review_item_assignee / add_review_item_comment (086)
   "review item not found",
   "review item actor not found",
@@ -242,6 +244,7 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   // Scheduled exports (F4): refusals of a schedule or a status change that its key history, quota or current state cannot accept.
   "idempotency key reused with different export schedule": { code: "idempotency_key_reused", status: 409 },
   "export schedule scope is invalid": { code: "invalid_scope", status: 400 },
+  "export schedule scorecard filter is invalid": { code: "invalid_scope", status: 400 },
   "export schedule limit reached": { code: "export_schedule_limit_reached", status: 409 },
   "export schedule transition not allowed": { code: "export_schedule_transition_not_allowed", status: 409 },
   // Review item discussion (F3): a missing or invisible item, an ineligible person, a stale assignment or a replayed key.

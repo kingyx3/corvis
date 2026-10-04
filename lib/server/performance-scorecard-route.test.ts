@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
-import type { Scorecard } from "../../core/performance-scorecard.ts";
+import type { ScorecardPage } from "../../core/performance-scorecard.ts";
+import { SCORECARD_MAX_FACTS } from "./performance-scorecard.ts";
 
 // Production-mode behaviour of GET /performance-scorecard against a faked SQL gateway
 // (see lib/server/route-authorization.test.ts for the same injection technique).
@@ -34,7 +35,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 
 const { GET } = await import("@/app/api/v1/performance-scorecard/route");
 
-function request(options: { funds?: string[]; documents?: string[]; roles?: string; credentials?: boolean } = {}): Request {
+function request(options: { funds?: string[]; documents?: string[]; roles?: string; credentials?: boolean; query?: string } = {}): Request {
   const headers: Record<string, string> = { "x-correlation-id": "corr-scorecard-prod" };
   if (options.credentials !== false) {
     headers["x-corvis-gateway-secret"] = GATEWAY_SECRET;
@@ -47,7 +48,7 @@ function request(options: { funds?: string[]; documents?: string[]; roles?: stri
     headers["x-corvis-source-access"] = "true";
     headers["x-corvis-redistribution"] = "true";
   }
-  return new Request("https://corvis.test/api/v1/performance-scorecard", { headers });
+  return new Request(`https://corvis.test/api/v1/performance-scorecard${options.query ?? ""}`, { headers });
 }
 
 test("an entitled analyst gets the scorecard built from published facts, scoped to their funds and documents", async () => {
@@ -61,7 +62,7 @@ test("an entitled analyst gets the scorecard built from published facts, scoped 
     }];
   const response = await GET(request({ funds: ["fund-a", "fund-b"], documents: [DOCUMENT] }));
   assert.equal(response.status, 200);
-  const body = await response.json() as { data: Scorecard; nextCursor: null };
+  const body = await response.json() as { data: ScorecardPage; nextCursor: null };
   assert.deepEqual(body.data.funds.map((fund) => fund.fund), ["Alpha Fund", "Beta Fund"]);
   const tvpi = body.data.funds[0]!.cells.find((cell) => cell.metric.code === "tvpi")!.figures[0]!;
   assert.deepEqual([tvpi.valueNumber, tvpi.status, tvpi.asOf, tvpi.source.documentId, tvpi.source.page], ["1.6200000000", "Final", "2026-06-30", DOCUMENT, 7]);
@@ -74,7 +75,7 @@ test("a caller with no fund or document entitlement sees an empty scorecard and 
   queries.length = 0;
   const response = await GET(request());
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json() as { data: Scorecard }).data, { funds: [] });
+  assert.deepEqual((await response.json() as { data: ScorecardPage }).data, { funds: [], filters: {}, fundOptions: [], periodOptions: [] });
   assert.equal(queries.length, 0);
 });
 
@@ -90,4 +91,72 @@ test("a failing database is an error response, not an empty scorecard that reads
   respond = () => { throw new Error("database exploded"); };
   const response = await GET(request({ funds: ["fund-a"], documents: [DOCUMENT] }));
   assert.ok(response.status >= 500);
+});
+
+function pagedResponder(perFund: number, periods: unknown[] = []) {
+  const funds = [{ fund_id: "fund-a", fund_name: "Alpha Fund" }, { fund_id: "fund-b", fund_name: "Beta Fund" }, { fund_id: "fund-c", fund_name: "Gamma Fund" }];
+  return (query: Query): unknown[] => {
+    if (query.sql.includes("corvis_identity.fund f")) return funds;
+    if (query.sql.includes("group by 1")) return periods;
+    const requested = JSON.parse(String(query.parameters[1])) as string[];
+    return requested.flatMap((fundId) => Array.from({ length: perFund }, (_, index) => ({
+      fact_id: `${fundId}-${index}`, snapshot_id: "snap-1", published_at: "2026-07-01T00:00:00.000Z", fund_id: fundId, level: "fund", metric_code: "nav",
+      value_number: "100", currency: "USD", as_of: "2026-06-30", economic_period: "Q2 2026", actuality: "actual", is_restated: false, is_derived: false,
+      document_id: DOCUMENT, source_reference_id: "55555555-eeee-4eee-8eee-555555555555", page_number: 1,
+    })));
+  };
+}
+
+test("the scorecard is served by keyset pages of funds, with the filters echoed and the periods on the first page", async () => {
+  queries.length = 0;
+  respond = pagedResponder(1, [{ period: "Q2 2026", as_of: "2026-06-30" }, { period: "Q1 2026", as_of: "2026-03-31" }]);
+  const entitled = { funds: ["fund-a", "fund-b", "fund-c"], documents: [DOCUMENT] };
+  const first = await GET(request({ ...entitled, query: "?limit=2&period=Q2%202026" }));
+  assert.equal(first.status, 200);
+  const firstBody = await first.json() as { data: ScorecardPage; nextCursor: string | null };
+  assert.deepEqual(firstBody.data.funds.map((fund) => fund.fundId), ["fund-a", "fund-b"]);
+  assert.deepEqual(firstBody.data.filters, { period: "Q2 2026" });
+  assert.deepEqual(firstBody.data.fundOptions.map((fund) => fund.fundId), ["fund-a", "fund-b", "fund-c"]);
+  assert.deepEqual(firstBody.data.periodOptions, ["Q2 2026", "Q1 2026"]);
+  assert.ok(firstBody.nextCursor);
+  const second = await GET(request({ ...entitled, query: `?limit=2&period=Q2%202026&cursor=${encodeURIComponent(firstBody.nextCursor!)}` }));
+  const secondBody = await second.json() as { data: ScorecardPage; nextCursor: string | null };
+  assert.deepEqual(secondBody.data.funds.map((fund) => fund.fundId), ["fund-c"]);
+  assert.equal(secondBody.nextCursor, null);
+  assert.deepEqual(secondBody.data.periodOptions, []);
+  const facts = queries.filter((query) => query.sql.includes("from ranked_fact"));
+  assert.deepEqual(facts.map((query) => JSON.parse(String(query.parameters[1]))), [["fund-a", "fund-b"], ["fund-c"]], "each page reads only its own funds");
+  assert.ok(facts.every((query) => query.parameters[4] === "Q2 2026"));
+});
+
+test("a fund filter outside the entitlement is 403 and a malformed filter or cursor is 400, all before any figure is read", async () => {
+  queries.length = 0;
+  respond = pagedResponder(1);
+  const entitled = { funds: ["fund-a"], documents: [DOCUMENT] };
+  assert.equal((await GET(request({ ...entitled, query: "?fundId=fund-b" }))).status, 403);
+  const malformed = await GET(request({ ...entitled, query: "?period=" }));
+  assert.equal(malformed.status, 400);
+  assert.equal(((await malformed.json()) as { error: string }).error, "invalid_scorecard_filter");
+  assert.equal((await GET(request({ ...entitled, query: "?cursor=bogus" }))).status, 400);
+  assert.equal(queries.some((query) => query.sql.includes("from ranked_fact")), false);
+});
+
+test("a tenant above the figure cap loads page by page, and only one fund above it is a 413 rather than a truncated scorecard", async () => {
+  queries.length = 0;
+  const bigFacts = pagedResponder(1);
+  respond = (query) => {
+    const base = bigFacts(query);
+    if (query.sql.includes("corvis_identity.fund f") || query.sql.includes("group by 1")) return base;
+    // Any read of more than one fund is over the cap; one fund is within it.
+    return (JSON.parse(String(query.parameters[1])) as string[]).length > 1 ? Array.from({ length: SCORECARD_MAX_FACTS + 1 }, (_, index) => ({ fact_id: `x${index}` })) : base;
+  };
+  const response = await GET(request({ funds: ["fund-a", "fund-b", "fund-c"], documents: [DOCUMENT], query: "?limit=3" }));
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: ScorecardPage; nextCursor: string | null };
+  assert.deepEqual(body.data.funds.map((fund) => fund.fundId), ["fund-a"], "the oversized page was halved down to what fits");
+  assert.ok(body.nextCursor, "the other funds are reachable");
+  respond = (query) => query.sql.includes("corvis_identity.fund f") ? [{ fund_id: "fund-a", fund_name: "Alpha Fund" }] : Array.from({ length: SCORECARD_MAX_FACTS + 1 }, (_, index) => ({ fact_id: `x${index}` }));
+  const single = await GET(request({ funds: ["fund-a"], documents: [DOCUMENT] }));
+  assert.equal(single.status, 413);
+  assert.equal(((await single.json()) as { error: string }).error, "performance_scorecard_too_large");
 });
