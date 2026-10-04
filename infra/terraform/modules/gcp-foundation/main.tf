@@ -172,6 +172,14 @@ resource "google_artifact_registry_repository" "containers" {
   labels        = local.labels
   depends_on    = [google_project_service.required]
 
+  # Production release tags are write-once. A git-<sha> tag cannot later be
+  # moved to different bytes, so digest verification remains valid even if a
+  # privileged publisher is compromised after promotion. UAT/dev keep mutable
+  # cleanup pointers because prod promotion consumes accepted digests, not tags.
+  docker_config {
+    immutable_tags = var.environment == "prod"
+  }
+
   # Untagged layers are low-value once no manifest references them. UAT/dev
   # retain three days for debugging; prod retains seven.
   cleanup_policies {
@@ -184,20 +192,26 @@ resource "google_artifact_registry_repository" "containers" {
     }
   }
 
-  # Release builds are tagged git-<sha>. Keep a useful recent window but age
-  # out old tagged build history that otherwise accumulates forever.
-  cleanup_policies {
-    id     = "delete-old-git-builds"
-    action = "DELETE"
+  # UAT/dev release tags age out after the accepted/live digests receive the
+  # cleanup-exempt pointers. Production git-<sha> tags are immutable and are
+  # therefore retained as durable release evidence instead of being moved or
+  # deleted by cleanup.
+  dynamic "cleanup_policies" {
+    for_each = var.environment == "prod" ? [] : [1]
 
-    condition {
-      tag_state    = "TAGGED"
-      tag_prefixes = ["git-"]
-      older_than   = var.environment == "prod" ? "7776000s" : "1209600s"
+    content {
+      id     = "delete-old-git-builds"
+      action = "DELETE"
+
+      condition {
+        tag_state    = "TAGGED"
+        tag_prefixes = ["git-"]
+        older_than   = "1209600s"
+      }
     }
   }
 
-  # The daily hygiene workflow moves these pointers before cleanup runs. Keep
+  # The UAT hygiene workflow moves these pointers before cleanup runs. Keep
   # both active and security-accepted rollback digests regardless of age.
   cleanup_policies {
     id     = "keep-protected-release-tags"

@@ -23,6 +23,10 @@ on:
         required: false
         type: boolean
         default: false
+      approved_plan_sha256:
+        description: SHA-256 of the reviewed Terraform text plan; required for apply
+        required: false
+        type: string
   workflow_call:
     inputs:
       environment:
@@ -43,6 +47,11 @@ on:
         required: false
         type: boolean
         default: false
+      approved_plan_sha256:
+        description: SHA-256 of the reviewed Terraform text plan; required for apply
+        required: false
+        type: string
+        default: ""
     outputs:
       api_image:
         description: Immutable API/worker image reference resolved for this deployment
@@ -56,6 +65,9 @@ on:
       litellm_image:
         description: Immutable LiteLLM gateway image reference resolved for this deployment
         value: ${{ jobs.terraform.outputs.litellm_image }}
+      plan_sha256:
+        description: SHA-256 of the rendered Terraform plan reviewed for this release
+        value: ${{ jobs.terraform.outputs.plan_sha256 }}
 
 permissions:
   contents: read
@@ -74,6 +86,7 @@ jobs:
       control_loop_image: ${{ steps.release.outputs.control_loop_image }}
       extractor_image: ${{ steps.release.outputs.extractor_image }}
       litellm_image: ${{ steps.release.outputs.litellm_image }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
     environment: ${{ inputs.environment }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -113,6 +126,7 @@ jobs:
           GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           ROLLBACK_KNOWN_GOOD: ${{ inputs.rollback_known_good }}
+          APPROVED_PLAN_SHA256: ${{ inputs.approved_plan_sha256 }}
         run: |
           set -euo pipefail
           case "${{ inputs.environment }}" in
@@ -150,6 +164,10 @@ jobs:
             echo "release_sha must be a full 40-character lowercase Git commit SHA."
             exit 1
           fi
+          if [[ "${{ inputs.action }}" == "apply" && ! "${APPROVED_PLAN_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Terraform apply requires approved_plan_sha256 from a successful reviewed plan of the same release."
+            exit 1
+          fi
           if [[ "${{ inputs.action }}" == "apply" && "${{ inputs.environment }}" != "dev" && -z "${RELEASE_SHA}" && "${ROLLBACK_KNOWN_GOOD}" != "true" ]]; then
             echo "Normal UAT/prod apply requires release_sha or rollback_known_good. Use the guarded decommission workflow to idle a runtime."
             exit 1
@@ -173,9 +191,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_sha != '' && inputs.release_sha || github.sha }}
 
       - name: Assert release matches deployment checkout
-        if: inputs.action == 'apply' && inputs.release_sha != ''
+        if: inputs.release_sha != ''
         shell: bash
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -246,9 +265,6 @@ jobs:
               [[ "${extractor_image}" =~ ^${extractor_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid extractor image."; exit 1; }
               [[ "${litellm_image}" =~ ^${litellm_repo}@sha256:[0-9a-f]{64}$ ]] || { echo "Known-good manifest contains an invalid LiteLLM image."; exit 1; }
             elif [[ -n "${TF_VAR_litellm_models_json}" ]]; then
-              # A known-good release accepted before managed AI existed must remain usable
-              # during the first AI rollout. Remove the AI pair and the worker endpoint in
-              # the same Terraform apply so rollback is fail-closed, never half-connected.
               legacy_ai_rollback="true"
               echo "TF_VAR_litellm_models_json=" >> "${GITHUB_ENV}"
               echo "TF_VAR_extraction_endpoint=" >> "${GITHUB_ENV}"
@@ -344,19 +360,52 @@ jobs:
         run: terraform -chdir="${TF_ROOT}" validate
 
       - name: Terraform plan
+        id: plan
         shell: bash
         run: |
           set -euo pipefail
           terraform -chdir="${TF_ROOT}" plan -lock-timeout=5m -out=tfplan
           terraform -chdir="${TF_ROOT}" show -no-color tfplan > "${RUNNER_TEMP}/tfplan.txt"
+          plan_sha256="$(sha256sum "${RUNNER_TEMP}/tfplan.txt" | awk '{print $1}')"
+          echo "plan_sha256=${plan_sha256}" >> "${GITHUB_OUTPUT}"
+          printf '%s\n' "${plan_sha256}" > "${RUNNER_TEMP}/tfplan.sha256"
           {
             echo "### Terraform plan (${{ inputs.environment }}, ${{ inputs.action }})"
+            echo "- Deployment checkout: \`$(git rev-parse HEAD)\`"
+            echo "- Reviewed plan SHA-256: \`${plan_sha256}\`"
             echo '```text'
             head -c 60000 "${RUNNER_TEMP}/tfplan.txt"
             echo
             echo '```'
-            if [[ "$(wc -c < "${RUNNER_TEMP}/tfplan.txt")" -gt 60000 ]]; then echo "_Plan output truncated to 60000 bytes; see the step log for the full plan._"; fi
+            if [[ "$(wc -c < "${RUNNER_TEMP}/tfplan.txt")" -gt 60000 ]]; then echo "_Plan output truncated to 60000 bytes; download the plan artifact for the full render._"; fi
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload reviewed Terraform plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-plan-${{ inputs.environment }}-${{ inputs.release_sha || github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ env.TF_ROOT }}/tfplan
+            ${{ runner.temp }}/tfplan.txt
+            ${{ runner.temp }}/tfplan.sha256
+          if-no-files-found: error
+          retention-days: ${{ inputs.environment == 'prod' && 90 || 30 }}
+
+      - name: Verify reviewed plan digest before apply
+        if: inputs.action == 'apply'
+        shell: bash
+        env:
+          APPROVED_PLAN_SHA256: ${{ inputs.approved_plan_sha256 }}
+          ACTUAL_PLAN_SHA256: ${{ steps.plan.outputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${ACTUAL_PLAN_SHA256}" == "${APPROVED_PLAN_SHA256}" ]] || {
+            echo "Terraform plan changed after review; refusing apply."
+            echo "Approved: ${APPROVED_PLAN_SHA256}"
+            echo "Current:  ${ACTUAL_PLAN_SHA256}"
+            exit 1
+          }
+          echo "Reviewed plan digest matches the exact plan that will be applied."
 
       - name: Require enabled Postgres runtime secret
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != ''
@@ -396,12 +445,12 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ inputs.environment == 'prod' && 90 || 30 }}
 
-      - name: Terraform apply
+      - name: Terraform apply exact reviewed plan
         if: inputs.action == 'apply'
         run: terraform -chdir="${TF_ROOT}" apply -lock-timeout=5m -auto-approve tfplan
 
       - name: Protect active release images from registry cleanup
-        if: inputs.action == 'apply' && env.TF_VAR_api_image != ''
+        if: inputs.action == 'apply' && env.TF_VAR_api_image != '' && inputs.environment != 'prod'
         shell: bash
         run: |
           set -euo pipefail

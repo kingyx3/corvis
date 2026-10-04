@@ -88,10 +88,13 @@ export class PostgresHttpSqlApi implements PostgresSqlApi {
 }
 
 const nativeClients = new Map<string, NativePostgresSqlApi>();
+const NATIVE_POSTGRES_DSN = /^postgres(?:ql)?:\/\//i;
+const HTTPS_SQL_DSN = /^https:\/\//i;
 
 /** Native provider DSNs use the PostgreSQL wire protocol; explicit HTTPS SQL
  * gateway bindings remain supported for compatibility and are never inferred
- * from a failed native connection.
+ * from a failed native connection. URI schemes are case-insensitive by RFC,
+ * so transport selection uses the same normalization as production config.
  */
 export function postgres(dsn?: string): PostgresSqlApi {
   if (!dsn) {
@@ -99,7 +102,7 @@ export function postgres(dsn?: string): PostgresSqlApi {
       "A PostgreSQL database DSN is required for persistence. Set CORVIS_DATABASE_DSN (preferred); CORVIS_POSTGRES_DSN is required only for the legacy binding.",
     );
   }
-  if (/^postgres(?:ql)?:\/\//.test(dsn)) {
+  if (NATIVE_POSTGRES_DSN.test(dsn)) {
     let client = nativeClients.get(dsn);
     if (!client) {
       client = new NativePostgresSqlApi(dsn);
@@ -107,7 +110,7 @@ export function postgres(dsn?: string): PostgresSqlApi {
     }
     return client;
   }
-  if (!dsn.startsWith("https://")) throw new Error("Unsupported PostgreSQL transport");
+  if (!HTTPS_SQL_DSN.test(dsn)) throw new Error("Unsupported PostgreSQL transport");
   return new PostgresHttpSqlApi({ dsn });
 }
 
@@ -127,7 +130,7 @@ export function postgresRuntime(dsn: string, provider: DatabaseProvider = "unkno
       // The legacy HTTPS SQL compatibility transport cannot safely advertise
       // session-scoped PostgreSQL features even if the backend is PostgreSQL.
       advisoryLocks: Boolean(api.transaction),
-      logicalReplication: /^postgres(?:ql)?:\/\//.test(dsn),
+      logicalReplication: NATIVE_POSTGRES_DSN.test(dsn),
     },
   };
 }

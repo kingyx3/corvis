@@ -200,10 +200,13 @@ function stepBody(name: string): string {
 }
 
 test("terraform deploy wires the guards in the right order", () => {
-  assert.match(deployWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v7\n        with:\n(?:          #[^\n]*\n)*          fetch-depth: 0/);
+  const checkout = deployWorkflow.slice(deployWorkflow.indexOf("uses: actions/checkout"), deployWorkflow.indexOf("name: Assert release matches deployment checkout"));
+  assert.match(checkout, /uses: actions\/checkout@[0-9a-f]{40} # v7/);
+  assert.match(checkout, /fetch-depth: 0/);
+  assert.match(checkout, /ref: \$\{\{ inputs\.release_sha != '' && inputs\.release_sha \|\| github\.sha \}\}/);
 
   const releaseGuardStep = stepBody("Assert release matches deployment checkout");
-  assert.match(releaseGuardStep, /if: inputs\.action == 'apply' && inputs\.release_sha != ''/);
+  assert.match(releaseGuardStep, /if: inputs\.release_sha != ''/);
   assert.match(releaseGuardStep, /assert-release-matches-head\.sh "\$\{RELEASE_SHA\}"/);
 
   const order = [
@@ -246,6 +249,6 @@ test("terraform deploy renders the reviewed plan into the job summary before app
   assert.match(plan, /terraform -chdir="\$\{TF_ROOT\}" plan -lock-timeout=5m -out=tfplan/);
   assert.match(plan, /show -no-color tfplan/);
   assert.match(plan, /GITHUB_STEP_SUMMARY/);
-  assert.match(plan, /head -c/);
+  assert.match(plan, /sha256sum/);
   assert.ok(deployWorkflow.indexOf("show -no-color tfplan") < deployWorkflow.indexOf("name: Terraform apply"));
 });

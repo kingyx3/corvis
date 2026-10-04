@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  attestations: read
 
 jobs:
   source-metadata:
@@ -40,8 +41,111 @@ jobs:
           echo "project_id=${{ vars.GCP_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
           echo "deploy_service_account=corvis-deploy@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" >> "$GITHUB_OUTPUT"
 
+  uat-known-good:
+    needs: source-metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: uat
+    outputs:
+      api_image: ${{ steps.accepted.outputs.api_image }}
+      control_loop_image: ${{ steps.accepted.outputs.control_loop_image }}
+      extractor_image: ${{ steps.accepted.outputs.extractor_image }}
+      litellm_image: ${{ steps.accepted.outputs.litellm_image }}
+    env:
+      SOURCE_PROJECT_ID: ${{ needs.source-metadata.outputs.project_id }}
+      SOURCE_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', needs.source-metadata.outputs.project_id) }}
+      GCP_REGION: asia-southeast1
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      TF_STATE_BUCKET: ${{ format('{0}-corvis-tf-state', needs.source-metadata.outputs.project_id) }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate release request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || { echo "Cross-project release promotion is main-only."; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full lowercase commit SHA."; exit 1; }
+
+      - name: Authenticate as UAT deploy identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ needs.source-metadata.outputs.project_id }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.SOURCE_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 416.0.0"
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Require the exact UAT-known-good release set
+        id: accepted
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="gs://${TF_STATE_BUCKET}/releases/uat/known-good.json"
+          gcloud storage cat "${manifest}" > known-good.json || { echo "UAT has no acceptance-approved known-good release manifest."; exit 1; }
+          [[ "$(jq -r '.sourceSha // empty' known-good.json)" == "${RELEASE_SHA}" ]] || {
+            echo "Requested release ${RELEASE_SHA} is not the UAT acceptance-approved source SHA."
+            exit 1
+          }
+
+          validate_ref() {
+            local key="$1" image="$2" required="$3" expected_repo="$4"
+            if [[ -z "${image}" && "${required}" == "false" ]]; then
+              echo "${key}_image=" >> "${GITHUB_OUTPUT}"
+              return
+            fi
+            [[ "${image}" =~ ^${GCP_REGION}-docker\.pkg\.dev/${SOURCE_PROJECT_ID}/corvis/${expected_repo}@sha256:[0-9a-f]{64}$ ]] || {
+              echo "UAT known-good ${key} image is not an immutable digest in the expected source repository."
+              exit 1
+            }
+            gcloud artifacts docker images describe "${image}" --project="${SOURCE_PROJECT_ID}" >/dev/null
+            echo "${key}_image=${image}" >> "${GITHUB_OUTPUT}"
+          }
+
+          api_image="$(jq -r '.image // empty' known-good.json)"
+          control_loop_image="$(jq -r '.controlLoopImage // empty' known-good.json)"
+          extractor_image="$(jq -r '.extractorImage // empty' known-good.json)"
+          litellm_image="$(jq -r '.litellmImage // empty' known-good.json)"
+          validate_ref api "${api_image}" true api
+          validate_ref control_loop "${control_loop_image}" true control-loop
+          if [[ -n "${extractor_image}" || -n "${litellm_image}" ]]; then
+            validate_ref extractor "${extractor_image}" true extractor
+            validate_ref litellm "${litellm_image}" true litellm
+          else
+            echo "extractor_image=" >> "${GITHUB_OUTPUT}"
+            echo "litellm_image=" >> "${GITHUB_OUTPUT}"
+          fi
+
+          {
+            echo "### UAT acceptance gate"
+            echo "- Accepted source commit: \`${RELEASE_SHA}\`"
+            echo "- API/worker: \`${api_image}\`"
+            echo "- Control loop: \`${control_loop_image}\`"
+            [[ -z "${extractor_image}" ]] || echo "- Extractor: \`${extractor_image}\`"
+            [[ -z "${litellm_image}" ]] || echo "- LiteLLM: \`${litellm_image}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Verify GitHub build provenance for accepted images
+        shell: bash
+        env:
+          API_IMAGE: ${{ steps.accepted.outputs.api_image }}
+          CONTROL_LOOP_IMAGE: ${{ steps.accepted.outputs.control_loop_image }}
+          EXTRACTOR_IMAGE: ${{ steps.accepted.outputs.extractor_image }}
+          LITELLM_IMAGE: ${{ steps.accepted.outputs.litellm_image }}
+        run: |
+          set -euo pipefail
+          for image in "${API_IMAGE}" "${CONTROL_LOOP_IMAGE}" "${EXTRACTOR_IMAGE}" "${LITELLM_IMAGE}"; do
+            [[ -z "${image}" ]] && continue
+            gh attestation verify "oci://${image}" --repo "${GITHUB_REPOSITORY}"
+          done
+
   reconcile-source-read-trust:
-    needs: [source-metadata, target-metadata]
+    needs: [source-metadata, target-metadata, uat-known-good]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: uat
@@ -84,7 +188,7 @@ jobs:
           echo "Prod deploy identity has reader-only access to the UAT release repository."
 
   copy:
-    needs: [source-metadata, target-metadata, reconcile-source-read-trust]
+    needs: [source-metadata, target-metadata, uat-known-good, reconcile-source-read-trust]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: prod
@@ -94,9 +198,11 @@ jobs:
       TARGET_PROJECT_ID: ${{ needs.target-metadata.outputs.project_id }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ needs.target-metadata.outputs.deploy_service_account }}
       RELEASE_SHA: ${{ inputs.release_sha }}
+      API_SOURCE: ${{ needs.uat-known-good.outputs.api_image }}
+      CONTROL_LOOP_SOURCE: ${{ needs.uat-known-good.outputs.control_loop_image }}
+      EXTRACTOR_SOURCE: ${{ needs.uat-known-good.outputs.extractor_image }}
+      LITELLM_SOURCE: ${{ needs.uat-known-good.outputs.litellm_image }}
       GCRANE_VERSION: v0.22.1
-      SOURCE_READ_ATTEMPTS: "10"
-      SOURCE_READ_RETRY_SECONDS: "15"
     steps:
       - name: Validate promotion roots
         shell: bash
@@ -131,25 +237,17 @@ jobs:
       - name: Configure Artifact Registry authentication
         run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
-      - name: Copy exact release images and verify digest identity
+      - name: Copy exact accepted digests and verify digest identity
         shell: bash
         run: |
           set -euo pipefail
-          for image in api control-loop extractor litellm; do
-            source_ref="${GCP_REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
-            target_ref="${GCP_REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/corvis/${image}:git-${RELEASE_SHA}"
-            source_digest=""
-            for attempt in $(seq 1 "${SOURCE_READ_ATTEMPTS}"); do
-              if source_digest="$(gcrane digest "${source_ref}")"; then break; fi
-              source_digest=""
-              if (( attempt == SOURCE_READ_ATTEMPTS )); then
-                echo "Unable to read UAT ${image} release after ${SOURCE_READ_ATTEMPTS} attempts."
-                exit 1
-              fi
-              echo "UAT ${image} release not yet readable (attempt ${attempt}/${SOURCE_READ_ATTEMPTS}); retrying in ${SOURCE_READ_RETRY_SECONDS}s."
-              sleep "${SOURCE_READ_RETRY_SECONDS}"
-            done
-            [[ "${source_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid source digest for ${image}."; exit 1; }
+          copy_accepted() {
+            local image="$1" source_ref="$2"
+            [[ -z "${source_ref}" ]] && return
+            local source_digest="${source_ref##*@}"
+            local target_repo="${GCP_REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/corvis/${image}"
+            local target_ref="${target_repo}:git-${RELEASE_SHA}"
+            [[ "${source_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid accepted source digest for ${image}."; exit 1; }
 
             existing_digest="$(gcrane digest "${target_ref}" 2>/dev/null || true)"
             if [[ -n "${existing_digest}" && "${existing_digest}" != "${source_digest}" ]]; then
@@ -161,21 +259,30 @@ jobs:
             target_digest="$(gcrane digest "${target_ref}")"
             [[ "${target_digest}" == "${source_digest}" ]] || { echo "Digest mismatch after copying ${image}."; exit 1; }
             echo "${image}: ${source_digest}"
-          done
+          }
+
+          copy_accepted api "${API_SOURCE}"
+          copy_accepted control-loop "${CONTROL_LOOP_SOURCE}"
+          copy_accepted extractor "${EXTRACTOR_SOURCE}"
+          copy_accepted litellm "${LITELLM_SOURCE}"
 
       - name: Record build-once promotion evidence
         shell: bash
         run: |
           set -euo pipefail
           jq -n \
-            --arg schemaVersion "corvis.release-copy.v2" \
+            --arg schemaVersion "corvis.release-copy.v3" \
             --arg sourceEnvironment "uat" \
             --arg sourceProjectId "${SOURCE_PROJECT_ID}" \
             --arg targetEnvironment "prod" \
             --arg targetProjectId "${TARGET_PROJECT_ID}" \
             --arg sourceSha "${RELEASE_SHA}" \
+            --arg apiImage "${API_SOURCE}" \
+            --arg controlLoopImage "${CONTROL_LOOP_SOURCE}" \
+            --arg extractorImage "${EXTRACTOR_SOURCE}" \
+            --arg litellmImage "${LITELLM_SOURCE}" \
             --arg copiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,copiedAt:$copiedAt,images:["api","control-loop","extractor","litellm"],mechanism:"gcrane-copy-digest-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
+            '{schemaVersion:$schemaVersion,sourceEnvironment:$sourceEnvironment,sourceProjectId:$sourceProjectId,targetEnvironment:$targetEnvironment,targetProjectId:$targetProjectId,sourceSha:$sourceSha,apiImage:$apiImage,controlLoopImage:$controlLoopImage,extractorImage:$extractorImage,litellmImage:$litellmImage,copiedAt:$copiedAt,mechanism:"uat-known-good-digest-copy",provenance:"github-attestation-verified",crossProjectTrust:"uat-repository-reader-only"}' > release-copy-evidence.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

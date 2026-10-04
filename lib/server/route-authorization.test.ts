@@ -239,6 +239,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
 
 // Routes with their own (non-session) authentication, exercised in dedicated tests below.
 const OWN_AUTHENTICATION = new Set([
+  "auth/service-account/token/route.ts", // Corvis-issued service-account credential exchange
   "health/route.ts", // public
   "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership
@@ -440,7 +441,7 @@ test("feature-flag kill-switch, emergency-stop and retire act only within the ca
   response = await killSwitch.POST!(requestFor("/admin/feature-flags/kill-switch", { roles: ["admin"], method: "POST", body: { key: "no.such.flag", engaged: true, reason: "x" } }));
   assert.equal(response.status, 422);
   assert.equal(await errorOf(response), "unregistered_flag");
-  for (const body of [{}, { key: "exports.parquet_delivery" }, { key: "", engaged: true }, { key: 7, engaged: true }]) {
+  for (const body of [{}, { key: "exports.parquet_delivery" }, { key: "", engaged: true }, { key: "k".repeat(129) }, { key: 7, engaged: true }]) {
     assert.equal((await killSwitch.POST!(requestFor("/admin/feature-flags/kill-switch", { roles: ["admin"], method: "POST", body }))).status, 400, JSON.stringify(body));
   }
 
@@ -697,7 +698,6 @@ test("a download whose object cannot be read gives the single-use grant back, so
 test("internal/delivery rejects unauthenticated, wrongly-authenticated and shared-secret-less callers with 403", async () => {
   const handlers = await load("../internal/delivery/route.ts").catch(async () => await import("@/app/api/internal/delivery/route") as Record<string, Handler>);
   const post = (headers: Record<string, string> = {}) => handlers.POST!(new Request("https://corvis.test/api/internal/delivery", { method: "POST", headers }));
-
   seedDatabase();
   for (const headers of [{}, { "x-corvis-worker-secret": "wrong" }, { "x-corvis-worker-secret": "" }, { authorization: "Bearer garbage" }, { "x-corvis-gateway-secret": GATEWAY_SECRET }] as Array<Record<string, string>>) {
     const response = await post(headers);

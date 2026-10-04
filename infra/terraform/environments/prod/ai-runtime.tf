@@ -8,18 +8,16 @@ module "ai_runtime" {
   extractor_image              = var.extractor_image
   litellm_models_json          = var.litellm_models_json
   decommission_mode            = var.decommission_mode
-
-  depends_on = [module.api_runtime]
 }
 
 output "corvis_extraction_endpoint" {
-  description = "Private governed extraction endpoint to set as CORVIS_EXTRACTION_ENDPOINT after first AI-runtime apply."
+  description = "Private governed extraction endpoint wired directly into the worker runtime by Terraform."
   value       = module.ai_runtime.extractor_service_uri
   sensitive   = true
 }
 
 output "corvis_extraction_audience" {
-  description = "Google OIDC audience for the governed extractor; identical to the private Cloud Run endpoint."
+  description = "Google OIDC audience for the governed extractor; wired directly into the worker runtime by Terraform."
   value       = module.ai_runtime.extractor_service_uri
   sensitive   = true
 }
