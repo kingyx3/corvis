@@ -85,9 +85,19 @@ export async function startOAuthAttempt(
   return { authorizationUrl, attemptReference };
 }
 
-/** The tenant id is part of the resource name, so a pointer minted for another tenant is refused before any read. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The tenant id is part of the resource name, so a pointer minted for another tenant is refused before any read.
+ * This must match the *entire* reference, not merely contain the expected suffix: `GcpSecretManagerSecretStore`
+ * passes the reference straight into a URL, where a `#` fragment or `/..` segment lets a pointer that merely
+ * *contains* the caller's own tenant suffix actually resolve to a different (e.g. victim-tenant) secret once the
+ * runtime/URL parser truncates at the fragment. A full match on the exact resource-name shape rules that out.
+ */
 function belongsToTenant(identity: RequestIdentity, reference: string): boolean {
-  return reference.includes(`/secrets/corvis-src-${identity.tenantId}-${OAUTH_ATTEMPT_SECRET_KEY}-`);
+  return new RegExp(`^projects/[a-z0-9][a-z0-9-]{3,28}[a-z0-9]/secrets/corvis-src-${escapeRegExp(identity.tenantId)}-${OAUTH_ATTEMPT_SECRET_KEY}-\\d+$`).test(reference);
 }
 
 /** What a discarded attempt was for: only non-secret facts, so the decline can be audited. */

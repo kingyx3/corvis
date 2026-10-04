@@ -2,6 +2,9 @@ import type { RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean { return UUID.test(value); }
+
 export type ProcessingRetryResult =
   | { ok: true; version: number }
   | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted" | "version_conflict" };
@@ -12,6 +15,9 @@ export async function retryProcessingJobCommand(
   jobId: string,
   db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
 ): Promise<ProcessingRetryResult> {
+  // job_id is a uuid column; a malformed id would otherwise reach Postgres as a cast failure (22P02), which has no
+  // apiError() mapping and surfaces as a 500 instead of the 404 every other malformed-id route returns.
+  if (!isUuid(jobId)) return { ok:false, reason:"not_found" };
   const rows = await db.query(`select state,attempt,max_attempts,version from corvis_control.processing_job
     where tenant_id=$1 and job_id=$2 limit 1`, [identity.tenantId,jobId]);
   const job = rows[0];

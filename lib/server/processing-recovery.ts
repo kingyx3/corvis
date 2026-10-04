@@ -3,6 +3,9 @@ import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 import { sqlApplicationErrorOf } from "./sql-application-errors.ts";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean { return UUID.test(value); }
+
 export type DeadLetterRecoveryResult =
   | { ok: true; version: number; recoveryCount: number; recoveryEventId: string }
   | { ok: false; reason: "not_found_or_version_conflict" | "not_terminal_dead_letter" | "not_exhausted" | "missing_delivery_evidence" | "idempotency_conflict" };
@@ -29,6 +32,9 @@ export async function recoverDeadLetterProcessingJob(input: {
   note?: string;
   db?: PostgresSqlApi;
 }): Promise<DeadLetterRecoveryResult> {
+  // job_id is a uuid column; a malformed id would otherwise reach Postgres as a cast failure (22P02) inside the
+  // function call below, which has no apiError() mapping and surfaces as a 500 instead of a normal not-found 409.
+  if (!isUuid(input.jobId)) return { ok:false, reason:"not_found_or_version_conflict" };
   const db = input.db ?? controlDb();
   try {
     // The database function checks an existing deterministic recovery event before

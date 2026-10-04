@@ -96,6 +96,10 @@ function secretIdFromReference(reference: string): string {
   return reference.slice(reference.indexOf(marker) + marker.length);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * GCP Secret Manager-backed `SecretStore`. Talks to the Secret Manager v1
  * REST API directly with a workload-identity access token fetched from the
@@ -171,7 +175,20 @@ export class GcpSecretManagerSecretStore implements SecretStore {
     return reference;
   }
 
+  /**
+   * Every caller is expected to have already scoped `secretReference` to its own tenant (`belongsToTenant` in
+   * source-oauth.ts, the connection-ownership check in source-connectors.ts); this is defense in depth against a
+   * reference that reaches here unscoped or carrying stray characters (a `#` fragment, a `/..` segment) that would
+   * make the literal string look right while the URL it is spliced into resolves somewhere else.
+   */
+  private assertWellFormedReference(secretReference: string): void {
+    if (!new RegExp(`^projects/${escapeRegExp(this.projectId)}/secrets/[A-Za-z0-9_-]+$`).test(secretReference)) {
+      throw new Error("secret_reference_malformed");
+    }
+  }
+
   async read(secretReference: string): Promise<SecretPayload> {
+    this.assertWellFormedReference(secretReference);
     const response = await this.authorizedFetch(`https://secretmanager.googleapis.com/v1/${secretReference}/versions/latest:access`);
     if (response.status === 404) throw new Error("secret_reference_not_found");
     if (!response.ok) throw new Error(`GCP Secret Manager secret access failed (${response.status}) for ${secretReference}`);
@@ -191,6 +208,7 @@ export class GcpSecretManagerSecretStore implements SecretStore {
   }
 
   private async deleteSecret(secretReference: string): Promise<void> {
+    this.assertWellFormedReference(secretReference);
     const response = await this.authorizedFetch(`https://secretmanager.googleapis.com/v1/${secretReference}`, { method: "DELETE" });
     // A secret that is already gone is exactly the post-revoke state callers
     // want, so a 404 here is success, not an error to surface.

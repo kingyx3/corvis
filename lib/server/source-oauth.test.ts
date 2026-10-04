@@ -125,6 +125,20 @@ test("a missing, foreign-tenant, unreadable or malformed attempt is refused befo
   }
 });
 
+test("a pointer that merely contains the caller's own tenant suffix after a victim's reference is still refused", async () => {
+  // belongsToTenant() must match the *entire* reference, not just contain the expected suffix: `GcpSecretManagerSecretStore`
+  // splices the reference straight into a URL, where a `#` fragment is dropped by URL parsing before the request
+  // reaches the server, so a string like "<victim's real reference>#<attacker's own valid suffix>" would pass a
+  // substring check yet actually resolve to the victim's secret once requested.
+  const secrets = new FakeSecrets();
+  const { started: victim } = await start(secrets, identity({ tenantId: "tenant-victim" }));
+  const smuggled = `${victim.attemptReference}#projects/corvis-local-dev/secrets/corvis-src-tenant-a-oauth-attempt-9`;
+  await assert.rejects(consumeOAuthAttempt(identity(), { attemptReference: smuggled, state: "whatever" }, { secrets }), invalid);
+  assert.equal(secrets.entries.size, 1, "the victim's attempt must survive the attempted smuggling read");
+  assert.equal(await discardOAuthAttempt(identity(), smuggled, { secrets }), undefined);
+  assert.equal(secrets.entries.size, 1, "and the attempted smuggling discard");
+});
+
 test("a declined attempt is destroyed whatever the store does, and only inside the caller's tenant", async () => {
   const secrets = new FakeSecrets();
   const { started } = await start(secrets);

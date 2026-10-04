@@ -39,7 +39,7 @@ test("operator recovery delegates atomically to the idempotent database command"
 
   const result = await recoverDeadLetterProcessingJob({
     identity,
-    jobId: "canonicalized:33333333-3333-4333-8333-333333333333",
+    jobId: "33333333-3333-4333-8333-333333333333",
     expectedVersion: 9,
     recoveryEventId: "44444444-4444-4444-8444-444444444444",
     reasonCode: "operator_verified_dependency_recovered",
@@ -57,7 +57,7 @@ test("operator recovery delegates atomically to the idempotent database command"
   assert.match(db.queries[0]?.sql ?? "", /corvis_control\.recover_dead_letter_processing_job/);
   assert.deepEqual(db.queries[0]?.parameters, [
     identity.tenantId,
-    "canonicalized:33333333-3333-4333-8333-333333333333",
+    "33333333-3333-4333-8333-333333333333",
     9,
     "44444444-4444-4444-8444-444444444444",
     identity.subject,
@@ -77,7 +77,7 @@ test("operator recovery maps governed database refusal states without a weaker a
     db.nextError = new Error(message);
     const result = await recoverDeadLetterProcessingJob({
       identity,
-      jobId: "reviewed:33333333-3333-4333-8333-333333333333",
+      jobId: "33333333-3333-4333-8333-333333333333",
       expectedVersion: 9,
       recoveryEventId: "44444444-4444-4444-8444-444444444444",
       reasonCode: "operator_recovery",
@@ -86,6 +86,20 @@ test("operator recovery maps governed database refusal states without a weaker a
     assert.deepEqual(result, { ok:false, reason });
     assert.equal(db.queries.length, 1);
   }
+});
+
+test("a malformed jobId is a normal not-found result, not a database cast failure", async () => {
+  const db = new FakePostgres();
+  const result = await recoverDeadLetterProcessingJob({
+    identity,
+    jobId: "not-a-uuid",
+    expectedVersion: 9,
+    recoveryEventId: "44444444-4444-4444-8444-444444444444",
+    reasonCode: "operator_recovery",
+    db,
+  });
+  assert.deepEqual(result, { ok:false, reason:"not_found_or_version_conflict" });
+  assert.equal(db.queries.length, 0, "a malformed id must never reach Postgres as an invalid uuid cast");
 });
 
 test("processing recovery migration preserves lineage, evidence and idempotency", async () => {
