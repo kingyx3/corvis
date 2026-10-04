@@ -88,8 +88,8 @@ test("an identity-provider command states every field and the version it is base
     kind: "identity_provider_set", tenantId: TENANT, protocol: "oidc", issuer: "https://idp.acme.com", audience: "corvis",
     status: "active", enforceTokenBinding: true, expectedVersion: 2, reason: "Binding on",
   });
-  assert.equal(parseTenantIdentityCommand({ ...set, protocol: "saml", issuer: "urn:acme", enforceTokenBinding: false }).protocol, "saml");
-  assert.equal(parseTenantIdentityCommand({ ...set, status: "pending", enforceTokenBinding: false, expectedVersion: 0 }).expectedVersion, 0);
+  assert.equal((parseTenantIdentityCommand({ ...set, protocol: "saml", issuer: "urn:acme", enforceTokenBinding: false }) as { protocol: string }).protocol, "saml");
+  assert.equal((parseTenantIdentityCommand({ ...set, status: "pending", enforceTokenBinding: false, expectedVersion: 0 }) as { expectedVersion: number }).expectedVersion, 0);
   refused(() => parseTenantIdentityCommand({ ...set, protocol: "ldap" }), "invalid_protocol");
   refused(() => parseTenantIdentityCommand({ ...set, status: "retired" }), "invalid_status");
   refused(() => parseTenantIdentityCommand({ ...set, enforceTokenBinding: undefined }), "invalid_binding");

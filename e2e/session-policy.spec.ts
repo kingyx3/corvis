@@ -46,7 +46,13 @@ test("an Organization Admin sees the identity provider, SCIM status and sign-in 
   await expect(provider).toContainText("https://login.meridian.example/demo");
   await expect(provider).toContainText("Enabled · 12 active users");
   await expect(provider).toContainText("OpenID Connect: 4");
-  await expect(section(page)).toContainText("Identity-provider and SCIM setup is done with Corvis support, so it is read-only here.");
+  // F7e (#338): the organization's own recorded provider, with its audience, status and whether binding is enforced.
+  await expect(provider).toContainText("corvis-meridian");
+  await expect(provider).toContainText("Active · tokens are not restricted to this issuer and audience");
+  // F7b (#335): the verified email domains, and what they mean for new invitations.
+  await expect(provider).toContainText("meridian.example");
+  await expect(provider).toContainText("new invitations and provisioned users must use one of these");
+  await expect(section(page)).toContainText("Identity-provider, verified-domain and SCIM setup is done with Corvis support, so it is read-only here.");
   // Read-only: nothing inside the provider table can be edited.
   await expect(provider.getByRole("textbox")).toHaveCount(0);
   await expect(provider.getByRole("button")).toHaveCount(0);

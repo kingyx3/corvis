@@ -53,7 +53,9 @@ export class DemoSessionPolicyStore implements SessionPolicyBackend {
     return {
       policy: state.policy,
       bounds: { idleTimeoutMinutes: SESSION_IDLE_TIMEOUT_BOUNDS, maxSessionMinutes: SESSION_MAX_LENGTH_BOUNDS },
-      identityProvider: { protocol: "oidc", issuer: "https://login.meridian.example/demo" },
+      // A fixed illustration of what Corvis operations record: the organization's own provider and one verified domain.
+      identityProvider: { protocol: "oidc", issuer: "https://login.meridian.example/demo", audience: "corvis-meridian", source: "tenant", status: "active", tokenBindingEnforced: false },
+      verifiedDomains: [{ domain: "meridian.example", verificationMethod: "dns_txt", verifiedAt: "2026-08-12T09:00:00.000Z" }],
       scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
       signInMethods: [{ authMethod: "oidc", users: state.members.length }],
       members: state.members.map((member) => ({ userId: member.userId, label: member.label, isCurrentUser: member.subject === identity.subject, activeSessions: member.sessions })),

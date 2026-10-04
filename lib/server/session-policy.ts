@@ -5,6 +5,7 @@ import {
   SESSION_IDLE_TIMEOUT_BOUNDS,
   SESSION_MAX_LENGTH_BOUNDS,
   SessionPolicyValidationError,
+  type IdentityProviderView,
   type ScimView,
   type SessionMemberView,
   type SessionPolicy,
@@ -18,6 +19,7 @@ import { demoSessionPolicyStore } from "../../adapters/demo/session-policy-store
 import { runAuditedMutation } from "./audited-mutation.ts";
 import { getServerConfig } from "./config.ts";
 import { assertOrganizationAdmin, DataGovernanceError } from "./data-governance.ts";
+import { readTenantIdentityRecords, type TenantIdentityRecords } from "./identity-records.ts";
 import { apiError, json } from "./http.ts";
 import { bestEffortNotification, enqueueForRoleAudience } from "./notifications.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
@@ -147,7 +149,7 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
   }
 
   async view(identity: RequestIdentity, db: PostgresSqlApi = this.defaultDb()): Promise<SessionPolicyView> {
-    const [policyRows, scimRows, methodRows, memberRows] = await Promise.all([
+    const [policyRows, scimRows, methodRows, memberRows, records] = await Promise.all([
       db.query(`select ${POLICY_COLUMNS} from corvis_control.tenant_session_policy where tenant_id = $1::uuid`, [identity.tenantId]),
       // The token hash is never selected: the view says whether SCIM is on, never how to call it.
       db.query(`select c.enabled, c.auth_method, c.default_role_name, c.updated_at, w.display_name as workspace_name,
@@ -175,6 +177,8 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
         group by s.tenant_id, s.user_id, p.idle_timeout_minutes, p.max_session_minutes
         order by is_current desc, label
         limit 500`, [identity.tenantId, identity.authMethod, identity.subject]),
+      // The operator-managed records (migration 095): read-only here, with this tenant's predicate.
+      readTenantIdentityRecords(db, identity.tenantId),
     ]);
     const scimRow = scimRows[0];
     const scim: ScimView = scimRow
@@ -198,11 +202,18 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
     return {
       policy: toPolicy(policyRows[0]),
       bounds: SESSION_POLICY_BOUNDS,
-      identityProvider: { protocol: "oidc", issuer: this.issuer() },
+      identityProvider: this.identityProvider(records.identityProvider),
+      verifiedDomains: records.verifiedDomains,
       scim,
       signInMethods,
       members,
     };
+  }
+
+  /** The tenant's own recorded provider when Corvis operations set one up; otherwise the single provider every organization shares. */
+  private identityProvider(record: TenantIdentityRecords["identityProvider"]): IdentityProviderView {
+    if (!record) return { protocol: "oidc", issuer: this.issuer(), audience: null, source: "global", status: null, tokenBindingEnforced: false };
+    return { protocol: record.protocol, issuer: record.issuer, audience: record.audience, source: "tenant", status: record.status, tokenBindingEnforced: record.enforceTokenBinding };
   }
 
   async update(identity: RequestIdentity, command: SessionPolicyUpdate, db: PostgresSqlApi = this.defaultDb()): Promise<SessionPolicyChange> {
