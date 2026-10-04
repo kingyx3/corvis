@@ -60,8 +60,9 @@ export async function runAuditedMutation<T>(options: AuditedMutationOptions<T>):
     }
     const strictTransactions = options.strictTransactions ?? config.environment === "production";
     if (strictTransactions) {
-      // A root transport without native transactions cannot prove mutation/audit atomicity.
-      return requireTransaction(db, (tx) => mutateAndAudit(tx, options));
+      // `db.transaction` was already proven absent above, so there is no
+      // callback to run: fail before the business mutation can execute.
+      throw new Error("Database transport does not provide native transactions");
     }
     // Non-production compatibility transports remain usable by route fakes and
     // local adapters, but are deliberately not accepted as production evidence.
