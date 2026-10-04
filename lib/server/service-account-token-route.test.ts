@@ -12,9 +12,11 @@ const TENANT = "11111111-aaaa-4aaa-8aaa-111111111111";
 const WORKSPACE = "33333333-cccc-4ccc-8ccc-333333333333";
 const ACCOUNT = "44444444-dddd-4ddd-8ddd-444444444444";
 
-process.env.NODE_ENV = "test";
-process.env.CORVIS_DATABASE_DSN = DATABASE_DSN;
-process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = SIGNING_SECRET;
+Object.assign(process.env, {
+  NODE_ENV: "test",
+  CORVIS_DATABASE_DSN: DATABASE_DSN,
+  CORVIS_TRUSTED_AUTH_PROXY_SECRET: SIGNING_SECRET,
+});
 
 const credential = mintCredential();
 const originalFetch = globalThis.fetch;
