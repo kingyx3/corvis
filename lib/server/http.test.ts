@@ -5,7 +5,8 @@ import test from "node:test";
 // http.ts imports route-facing modules through the Next.js "@/..." alias.
 register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
-const { apiError, correlationId } = await import("@/lib/server/http");
+const { apiError, correlationId, SESSION_ENDED_BY_POLICY_ERROR } = await import("@/lib/server/http");
+const { AuthenticationError, SessionEndedByPolicyError } = await import("@/lib/server/request-context");
 const { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } = await import("@/lib/server/idempotency");
 const { TenantInvitationError } = await import("@/lib/server/tenant-invitations");
 const { WebhookSubscriptionError } = await import("@/lib/server/webhook-subscriptions");
@@ -101,4 +102,20 @@ test("admin SQL business errors map to their own 4xx status instead of a 500", a
   }
   // A native driver error with no allowlisted fragment never falls back to message matching.
   assert.equal(apiError(new PostgresDriverError("query", "P0001"), "corr-x").status, 500);
+});
+
+test("F7c: a session the organization's policy ended is a 401 with its own stable code, never the generic one, and never says which limit", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (line: unknown) => { lines.push(String(line)); });
+  for (const reason of ["idle_timeout", "max_session"] as const) {
+    const response = apiError(new SessionEndedByPolicyError(reason), "corr-ended");
+    assert.equal(response.status, 401);
+    assert.equal(SESSION_ENDED_BY_POLICY_ERROR, "session_ended_by_policy");
+    assert.deepEqual(await response.json(), { error: "session_ended_by_policy", correlationId: "corr-ended" });
+  }
+  assert.deepEqual(lines.map((line) => (JSON.parse(line) as { reason: string }).reason), ["idle_timeout", "max_session"], "the reason is logged");
+  // A missing, invalid, revoked or foreign identity keeps the generic code, so the response does not say whether an account exists.
+  const generic = apiError(new AuthenticationError("No active authoritative authorization context"), "corr-generic");
+  assert.equal(generic.status, 401);
+  assert.deepEqual(await generic.json(), { error: "authentication_required", correlationId: "corr-generic" });
 });

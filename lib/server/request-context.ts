@@ -240,6 +240,8 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
       },
       authMethod: "oidc",
       sessionId: verified.sessionId,
+      tokenIssuer: verified.issuer,
+      tokenAudience: verified.audience,
       ...(verified.email ? { authenticatedEmail: verified.email } : {}),
       ...(verified.emailVerified !== undefined ? { emailVerified: verified.emailVerified } : {}),
     };
@@ -293,4 +295,19 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
 
 export class AuthenticationError extends Error {
   constructor(message: string) { super(message); this.name = "AuthenticationError"; }
+}
+
+/**
+ * The organization's session policy ended this session (F7c, #336): its idle timeout or maximum length passed. It is raised
+ * only AFTER the token verified and the person's membership in the tenant resolved, so it is shown to a person who already
+ * proved who they are and that they belong to the organization; an unknown, disabled, revoked or foreign identity still
+ * gets the plain `authentication_required`. It is an AuthenticationError: every caller that refuses on one still does.
+ */
+export class SessionEndedByPolicyError extends AuthenticationError {
+  readonly reason: "idle_timeout" | "max_session";
+  constructor(reason: "idle_timeout" | "max_session") {
+    super("Session ended by organization policy");
+    this.name = "SessionEndedByPolicyError";
+    this.reason = reason;
+  }
 }
