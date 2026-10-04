@@ -1,4 +1,4 @@
--- Acceptance for migrations 085 and 090 (F4 #260, F4b #328): scheduled exports and their notifications.
+-- Acceptance for migrations 085, 090 and 097 (F4 #260, F4b #328, F1c #332): scheduled exports, their notifications and the scorecard scope.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * a schedule is saved idempotently per owner, validated, bounded (50 per owner) and starts from "now": a calendar
@@ -15,6 +15,10 @@
 --   * (090) the owner's notification switch is on by default, chosen at creation and changed by the owner only; a run ends in at
 --     most one webhook event (completed or failed, including fail-closed refusals) whose payload is ids, the label and a closed
 --     reason code; the webhook allow-list and the F2 category checks accept the new names and still refuse unknown ones;
+--   * (097) the performance scorecard is a schedulable scope: validated in SQL (the marker, at most a bounded fund and period
+--     filter, nothing else), unfiltered it names no fund and no snapshot, a fund filter makes it a fund schedule; its publication
+--     trigger can be narrowed to the funds the owner holds when it is claimed, publications of other funds are consumed without a
+--     run, the claim is never widened by a fund filter or across tenants; the earlier functions are replaced, not overloaded;
 --   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
@@ -350,6 +354,138 @@ begin
   update corvis_control.export_schedule set publish_watermark = now() - interval '4 hours' where tenant_id = 'b0850000-0000-4000-8000-00000000000b';
   select * into claimed from corvis_control.claim_export_schedule_trigger('b0850000-0000-4000-8000-00000000000b',(select schedule_id from corvis_control.export_schedule where idempotency_key = 'pub-b'));
   if claimed.trigger_key <> 'publish:b0850000-0000-4000-8000-0000000000c9:v1' then raise exception 'tenant B sees only its own publication: %', row_to_json(claimed); end if;
+end $$;
+
+-- 6b. F1c (migration 097): the performance scorecard is a schedulable scope. Unfiltered it names no fund and no snapshot (every
+-- fund the owner is entitled to when a run is claimed); a fund filter makes it a fund schedule; a publication trigger can be
+-- narrowed to the funds the owner holds now, and publications of any other fund are consumed without a trigger.
+do $$
+declare
+  tenant uuid := 'a0850000-0000-4000-8000-00000000000a';
+  workspace uuid := 'a0850000-0000-4000-8000-0000000000a1';
+  scorecard_all corvis_control.export_schedule%rowtype;
+  scorecard_fund corvis_control.export_schedule%rowtype;
+  scorecard_monthly corvis_control.export_schedule%rowtype;
+  scorecard_replay corvis_control.export_schedule%rowtype;
+  claimed record;
+  newest_all timestamptz;
+begin
+  -- Saving: the marker, the optional filters, and what the row records.
+  select * into scorecard_all from corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','sc-all',repeat('a', 64),
+    'Scorecard on publish','{"performanceScorecard":true}','Performance scorecard · all entitled funds','csv','on_publish');
+  if scorecard_all.scope_fund_id is not null or scorecard_all.scope_snapshot_id is not null then raise exception 'an unfiltered scorecard names no fund and no snapshot: %', row_to_json(scorecard_all); end if;
+  if scorecard_all.status <> 'active' or scorecard_all.publish_watermark is null or scorecard_all.next_run_at is not null then raise exception 'an on-publish scorecard schedule starts from a watermark: %', row_to_json(scorecard_all); end if;
+  if not scorecard_all.notify_on_completion then raise exception 'the scorecard schedule keeps the default notification switch'; end if;
+  select * into scorecard_fund from corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','sc-fund',repeat('b', 64),
+    'Scorecard fund-y on publish','{"performanceScorecard":true,"fundId":"fund-y","period":"Q1 2026"}','Performance scorecard · fund-y · Q1 2026','xlsx','on_publish',false);
+  if scorecard_fund.scope_fund_id <> 'fund-y' or scorecard_fund.scope_snapshot_id is not null or scorecard_fund.notify_on_completion then raise exception 'a fund filter is the fund an on-publish trigger follows: %', row_to_json(scorecard_fund); end if;
+  select * into scorecard_monthly from corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','sc-monthly',repeat('c', 64),
+    'Scorecard monthly','{"performanceScorecard":true,"period":"Q1 2026"}','Performance scorecard · all entitled funds · Q1 2026','parquet','monthly');
+  if scorecard_monthly.next_run_at <> corvis_control.export_schedule_next_run_at('monthly', now()) or scorecard_monthly.scope_fund_id is not null then raise exception 'a calendar scorecard schedule starts at the next month start: %', row_to_json(scorecard_monthly); end if;
+  select * into scorecard_replay from corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','sc-all',repeat('a', 64),'ignored','{"performanceScorecard":true}','ignored','csv','on_publish');
+  if scorecard_replay.schedule_id <> scorecard_all.schedule_id then raise exception 'the scorecard schedule is idempotent per owner'; end if;
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-all',%L,'x','{"performanceScorecard":true,"fundId":"fund-x"}'::jsonb,'x','csv','on_publish')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('d', 64)), 'idempotency key reused with different export schedule');
+
+  -- Validation: the marker must be the boolean true, nothing else may accompany it but the two filters, and each filter is a
+  -- bounded, trimmed string.
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-1',%L,'x','{"performanceScorecard":false}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('1', 64)), 'export schedule scope is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-2',%L,'x','{"performanceScorecard":"true"}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('2', 64)), 'export schedule scope is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-3',%L,'x','{"performanceScorecard":true,"extra":1}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('3', 64)), 'export schedule scope is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-4',%L,'x','{"performanceScorecard":true,"snapshotId":"a0850000-0000-4000-8000-0000000000c3"}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('4', 64)), 'export schedule scope is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-5',%L,'x','{"performanceScorecard":true,"positionFinancials":{"fundId":"fund-x"}}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('5', 64)), 'export schedule scope is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-6',%L,'x','{"performanceScorecard":true,"fundId":""}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('6', 64)), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-7',%L,'x','{"performanceScorecard":true,"fundId":7}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('7', 64)), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-8',%L,'x','{"performanceScorecard":true,"fundId":" fund-x"}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('8', 64)), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-9',%L,'x',%L::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('9', 64), jsonb_build_object('performanceScorecard', true, 'fundId', repeat('f', 513))), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-10',%L,'x','{"performanceScorecard":true,"period":""}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('a', 64)), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-11',%L,'x','{"performanceScorecard":true,"period":null}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('b', 64)), 'export schedule scorecard filter is invalid');
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-bad-12',%L,'x',%L::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('c', 64), jsonb_build_object('performanceScorecard', true, 'period', repeat('p', 65))), 'export schedule scorecard filter is invalid');
+  -- The bounds themselves are accepted.
+  perform corvis_control.create_export_schedule(tenant,gen_random_uuid(),workspace,'oidc','idp|owner','sc-edge',repeat('e', 64),'Edge',
+    jsonb_build_object('performanceScorecard', true, 'fundId', repeat('f', 512), 'period', repeat('p', 64)),'Performance scorecard','csv','monthly');
+  -- The earlier scopes are validated exactly as before (a scorecard marker is not a way around them).
+  perform pg_temp.expect_error(format($f$select * from corvis_control.create_export_schedule(%L,%L,%L,'oidc','idp|owner','sc-old-1',%L,'x','{}'::jsonb,'x','csv','monthly')$f$,
+    tenant,gen_random_uuid(),workspace,repeat('d', 64)), 'export schedule scope is invalid');
+
+  -- The table: a schedule names exactly one of snapshot or fund, or is a scorecard scope that names neither.
+  perform pg_temp.expect_error(format($f$insert into corvis_control.export_schedule (tenant_id,schedule_id,workspace_id,owner_auth_method,owner_subject,idempotency_key,request_hash,label,scope,scope_label,format,trigger_kind,status,next_run_at,status_changed_by)
+    values (%L,gen_random_uuid(),%L,'oidc','idp|owner','direct-1',%L,'x','{"snapshotId":"a0850000-0000-4000-8000-0000000000c3"}','x','csv','monthly','active',now() + interval '1 day','x')$f$,
+    tenant,workspace,repeat('1', 64)), 'export_schedule_scope_target_check');
+  perform pg_temp.expect_error(format($f$insert into corvis_control.export_schedule (tenant_id,schedule_id,workspace_id,owner_auth_method,owner_subject,idempotency_key,request_hash,label,scope,scope_label,scope_snapshot_id,scope_fund_id,format,trigger_kind,status,next_run_at,status_changed_by)
+    values (%L,gen_random_uuid(),%L,'oidc','idp|owner','direct-2',%L,'x','{"performanceScorecard":true}','x','a0850000-0000-4000-8000-0000000000c3','fund-x','csv','monthly','active',now() + interval '1 day','x')$f$,
+    tenant,workspace,repeat('2', 64)), 'export_schedule_scope_target_check');
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'corvis_control' and p.proname in ('create_export_schedule','claim_export_schedule_trigger','export_schedule_latest_publication')) <> 3 then
+    raise exception 'the scorecard functions replace the earlier ones; they are not overloaded beside them';
+  end if;
+
+  -- Publication triggers. Tenant A has published: c1 v3 and c2, c3, c5, c7 (fund-x) and c4 (fund-y), all settled.
+  update corvis_control.export_schedule set publish_watermark = now() - interval '10 hours' where schedule_id in (scorecard_all.schedule_id, scorecard_fund.schedule_id);
+  if not exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_all.schedule_id) then raise exception 'any publication of the tenant makes an all-funds scorecard due (the coarse hint)'; end if;
+  if not exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_fund.schedule_id) then raise exception 'a publication of the filtered fund makes the fund scorecard due'; end if;
+  if exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_monthly.schedule_id) then raise exception 'a calendar scorecard is not due before its period'; end if;
+
+  -- Narrowed to the funds the owner holds now: only those publications are triggers, the newest of them, once.
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id,'["fund-y"]'::jsonb);
+  if claimed.trigger_key <> 'publish:a0850000-0000-4000-8000-0000000000c4:v1' then raise exception 'only a publication of an entitled fund is a trigger: %', row_to_json(claimed); end if;
+  if (select publish_watermark from corvis_control.export_schedule where schedule_id = scorecard_all.schedule_id) <> now() - interval '80 minutes' then raise exception 'the watermark moves to the publication handled'; end if;
+
+  -- The remaining publications are of fund-x, which this owner does not hold: the coarse hint still lists the schedule, but they
+  -- are not triggers, are consumed (the schedule is no longer listed as due for them) and record nothing. An entitled
+  -- publication triggers once: the claim that follows finds nothing further.
+  select max(published_at) into newest_all from corvis_consolidated.fund_period_snapshot where tenant_id = tenant and status = 'published';
+  if not exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_all.schedule_id) then raise exception 'the coarse hint still lists the schedule'; end if;
+  if exists (select 1 from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id,'["fund-y"]'::jsonb)) then raise exception 'a publication of an unentitled fund is never a trigger, and an entitled one triggers once'; end if;
+  if (select publish_watermark from corvis_control.export_schedule where schedule_id = scorecard_all.schedule_id) <> newest_all then raise exception 'unentitled publications are consumed up to the newest one'; end if;
+  if exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_all.schedule_id) then raise exception 'a consumed publication does not keep the schedule due'; end if;
+  if exists (select 1 from corvis_control.export_schedule_run r where r.schedule_id = scorecard_all.schedule_id) then raise exception 'consuming an unentitled publication records no run, so the owner never learns of it'; end if;
+
+  -- A fund the owner holds that publishes later is a trigger again; a fund they hold that did publish earlier is history.
+  insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version,published_at)
+  values (tenant,'a0850000-0000-4000-8000-0000000000c8','fund-y','2026-Q2',1,'published','1','1',now() - interval '70 seconds');
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id,'["fund-x","fund-y"]'::jsonb);
+  if claimed.trigger_key <> 'publish:a0850000-0000-4000-8000-0000000000c8:v1' then raise exception 'a later publication of a held fund is a trigger: %', row_to_json(claimed); end if;
+
+  -- Without the owner's funds (the application could not narrow: no funds held, or the owner could not be authorized) the claim is
+  -- the coarse one, so the run is still claimed and the refusal is recorded for the owner to see.
+  update corvis_control.export_schedule set publish_watermark = now() - interval '10 hours' where schedule_id = scorecard_all.schedule_id;
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id);
+  if claimed.trigger_key <> 'publish:a0850000-0000-4000-8000-0000000000c8:v1' then raise exception 'without funds the claim matches any publication of the tenant: %', row_to_json(claimed); end if;
+  update corvis_control.export_schedule set publish_watermark = now() - interval '10 hours' where schedule_id = scorecard_all.schedule_id;
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id,null);
+  if claimed.trigger_key <> 'publish:a0850000-0000-4000-8000-0000000000c8:v1' then raise exception 'a null fund list is not a narrowing: %', row_to_json(claimed); end if;
+
+  -- An empty list is a narrowing to nothing: nothing triggers and everything is consumed.
+  update corvis_control.export_schedule set publish_watermark = now() - interval '10 hours' where schedule_id = scorecard_all.schedule_id;
+  if exists (select 1 from corvis_control.claim_export_schedule_trigger(tenant,scorecard_all.schedule_id,'[]'::jsonb)) then raise exception 'an empty fund list matches nothing'; end if;
+  if exists (select 1 from corvis_control.list_due_export_schedules(100) d where d.schedule_id = scorecard_all.schedule_id) then raise exception 'and consumes what it skipped'; end if;
+
+  -- A scorecard with a fund filter follows that fund whatever the application passes: it never widens to other funds.
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_fund.schedule_id,'["fund-x"]'::jsonb);
+  if claimed.trigger_key <> 'publish:a0850000-0000-4000-8000-0000000000c8:v1' then raise exception 'a fund-filtered scorecard follows its own fund: %', row_to_json(claimed); end if;
+
+  -- Another tenant's publications never trigger tenant A's all-funds scorecard, and the reverse.
+  perform corvis_control.create_export_schedule('b0850000-0000-4000-8000-00000000000b',gen_random_uuid(),'b0850000-0000-4000-8000-0000000000b1','oidc','idp|b-owner','sc-b',repeat('f', 64),'B scorecard','{"performanceScorecard":true}','Performance scorecard','csv','on_publish');
+  update corvis_control.export_schedule set publish_watermark = now() - interval '10 hours' where idempotency_key = 'sc-b';
+  select * into claimed from corvis_control.claim_export_schedule_trigger('b0850000-0000-4000-8000-00000000000b',(select schedule_id from corvis_control.export_schedule where idempotency_key = 'sc-b'),'["fund-x"]'::jsonb);
+  if claimed.trigger_key <> 'publish:b0850000-0000-4000-8000-0000000000c9:v1' then raise exception 'tenant B sees only its own publication: %', row_to_json(claimed); end if;
+
+  -- A calendar scorecard is claimed like any calendar schedule, whatever funds are passed.
+  update corvis_control.export_schedule set next_run_at = now() - interval '1 minute' where schedule_id = scorecard_monthly.schedule_id;
+  select * into claimed from corvis_control.claim_export_schedule_trigger(tenant,scorecard_monthly.schedule_id,'["fund-y"]'::jsonb);
+  if claimed.trigger_key <> 'monthly:' || to_char(now() at time zone 'UTC', 'YYYY-MM') then raise exception 'a calendar scorecard runs on its period: %', row_to_json(claimed); end if;
 end $$;
 
 -- 7. Runs: unique per trigger, consistent outcomes, append-only.
