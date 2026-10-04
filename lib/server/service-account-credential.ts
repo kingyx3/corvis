@@ -64,11 +64,9 @@ const LAST_USED_GRANULARITY = "1 minute";
  * unexpired. Every refusal is the same `null`, so a caller cannot tell an unknown credential from a wrong secret from
  * a revoked one. A match records the use.
  *
- * Nothing in the request path calls this yet: how a presented credential reaches the API (an exchange for a signed
- * identity assertion, or an IdP client-credentials token) is a pending decision (docs/SERVICE_ACCOUNTS.md). This is
- * the record-side half of either choice, so its semantics (immediate revocation, rotation overlap, expiry) are fixed
- * and tested now. A successful result is an authenticated subject only: roles, entitlements and data rights are still
- * re-resolved from Postgres by the authorization path, which also enforces the lifecycle grant and session revocation.
+ * The service-account token exchange calls this before minting a short-lived signed identity assertion. A successful
+ * result is an authenticated subject only: roles, entitlements and data rights are still re-resolved from Postgres by
+ * the authorization path, which also enforces the lifecycle grant and session revocation.
  */
 export async function verifyServiceAccountCredential(secret: unknown, db: PostgresSqlApi): Promise<VerifiedServiceAccountCredential | null> {
   const credentialId = credentialIdOf(secret);
