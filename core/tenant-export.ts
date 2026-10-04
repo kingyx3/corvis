@@ -3,7 +3,8 @@
  * the export build and the UI.
  *
  * An Organization Admin asks for a complete export of the organization's data (published data, the access audit and
- * the source-document inventory). A second, different Organization Admin must approve it before anything is built.
+ * the source documents: an inventory and the files themselves). A second, different Organization Admin must approve it
+ * before anything is built.
  * The build runs in the governed delivery worker, and the result is a checksum-manifested archive behind an
  * expiring, single-use download link. The archive only ever holds data the organization may redistribute under its
  * contractual data rights; what was left out is reported in the manifest, never silently dropped.
@@ -59,23 +60,43 @@ export function tenantExportActions(status: TenantExportStatus, requestedByMe: b
   };
 }
 
+/** What a file in the archive is: the README, one part of a data set, or a source document's own file. */
+export const TENANT_EXPORT_DATASETS = ["readme", "observations", "access_audit", "source_inventory", "source_document"] as const;
+export type TenantExportDataset = (typeof TENANT_EXPORT_DATASETS)[number];
+
 export type TenantExportFile = {
   path: string;
   description: string;
   sha256: string;
   sizeBytes: number;
+  /** Data rows in a CSV part; 0 for every other file. */
   rowCount: number;
+  /** Which data set the file belongs to (manifest version 2). A data set larger than one part is several files with the same dataset. */
+  dataset?: TenantExportDataset;
+  /** The document a source document file holds (manifest version 2). */
+  documentId?: string;
 };
 
-/** The checksum manifest: every file in the archive with its SHA-256, and exactly what the archive leaves out. */
+/**
+ * The checksum manifest: every file in the archive with its SHA-256, and exactly what the archive leaves out.
+ *
+ * Version 2 (F10b, F10c): data sets are split into numbered CSV parts of a bounded number of rows, so a data set of any
+ * size is exported completely, and the archive carries each source document's file. The complete list is the archive's
+ * own `manifest.json`; the copy the API returns leaves out the individual source document files (there can be many
+ * thousands) and says how many there are in `sourceFiles`.
+ */
 export type TenantExportManifest = {
-  manifestVersion: 1;
+  manifestVersion: 1 | 2;
   requestId: string;
   tenantId: string;
   generatedAt: string;
   requestedBy: string;
   approvedBy: string;
   files: TenantExportFile[];
+  /** Every file in the archive other than manifest.json (version 2). Larger than `files.length` in the API copy. */
+  fileCount?: number;
+  /** Source document files in the archive, and the documents the organization may redistribute whose file is not in it (counts only; version 2). */
+  sourceFiles?: { included: number; excluded: number; totalBytes: number };
   dataRights: {
     basis: string;
     funds: { included: number; excluded: number };
@@ -83,6 +104,32 @@ export type TenantExportManifest = {
   };
   notIncluded: Array<{ item: string; reason: string }>;
 };
+
+/** Where an export is while it is being built: what the worker estimated when it started, and what it has written since. */
+export const TENANT_EXPORT_BUILD_PHASES = ["estimating", "data", "documents", "finalizing"] as const;
+export type TenantExportBuildPhase = (typeof TENANT_EXPORT_BUILD_PHASES)[number];
+
+export type TenantExportProgress = {
+  phase: TenantExportBuildPhase;
+  /** The archive's estimated size: data rows at a typical row size, plus the exact total of the source files. */
+  estimatedBytes: number;
+  bytesWritten: number;
+  estimatedRows: number;
+  rowsWritten: number;
+  estimatedDocuments: number;
+  documentsWritten: number;
+  /** 0 to 99 while building; never 100 until the archive is stored and the request is complete. */
+  percent: number;
+  updatedAt: string;
+};
+
+/** A typical CSV row of the data sets (an observation, an audit event, an inventory line), for the size estimate before anything is written. */
+export const TENANT_EXPORT_ESTIMATED_ROW_BYTES = 256;
+
+export function tenantExportProgressPercent(bytesWritten: number, estimatedBytes: number): number {
+  if (!(estimatedBytes > 0) || !(bytesWritten > 0)) return 0;
+  return Math.min(99, Math.floor((bytesWritten / estimatedBytes) * 100));
+}
 
 export type TenantExportArtifact = {
   checksumSha256: string;
@@ -115,6 +162,8 @@ export type TenantExportRequest = {
   cancelledAt: string | null;
   statusChangedAt: string;
   artifact: TenantExportArtifact | null;
+  /** The running build's size estimate and progress; present only while the export is being built (and the worker has reported). */
+  progress: TenantExportProgress | null;
   actions: TenantExportActions;
   /** Present on the single-request read only. */
   history?: TenantExportEvent[];
