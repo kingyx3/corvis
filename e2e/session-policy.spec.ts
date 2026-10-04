@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { accessibilityBudget } from "./quality-budgets.ts";
 
@@ -60,25 +60,38 @@ test("an Organization Admin sees the identity provider, SCIM status and sign-in 
   expect(violations, describe(violations)).toEqual([]);
 });
 
-test("a session the organization's policy ended says so, a generic 401 does not, and neither shows a code @matrix", async ({ page }) => {
+test("a person whose session the organization's policy ended is told so, not shown a code or a generic failure @matrix", async ({ page }) => {
   await isolate(page);
-  // The first call the shell makes (who am I) is answered with the stable 401 reason for a policy-ended session.
-  await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "session_ended_by_policy", correlationId: "e2e-ended" }) }));
-  await page.goto("/");
-  const banner = page.getByRole("alert", { name: "Session expired" });
-  await expect(banner).toContainText("Your session ended by organization policy");
-  await expect(banner).toContainText("sign-in policy ended this session");
-  await expect(banner).not.toContainText("session_ended_by_policy");
-  await expect(banner.getByRole("button", { name: "Sign in again" })).toBeVisible();
-  const ended = await blockingViolations(page, "[aria-label='Session expired']");
-  expect(ended, describe(ended)).toEqual([]);
+  await page.goto("/access-self-service");
+  const form = section(page);
+  await form.getByRole("checkbox", { name: "No idle limit" }).uncheck();
+  await form.getByLabel("Minutes without activity before a session ends").fill("30");
+  await form.getByLabel("Why are you changing this?").fill("Align with our information security policy");
+  // The save is answered with the stable 401 reason for a policy-ended session (a pre-isolation route continues the demo call; this one answers it).
+  const answer = (error: string) => async (route: Route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error, correlationId: "e2e-401" }) });
+  };
+  const saveRoute = /\/api\/v1\/access\/session-policy$/;
+  await page.route(saveRoute, answer("session_ended_by_policy"));
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  const ended = form.getByRole("alert").filter({ hasText: "Something went wrong" });
+  await expect(ended).toContainText("Your session ended because of your organization's sign-in policy. Sign in again to continue.");
+  await expect(ended).not.toContainText("session_ended_by_policy");
+  const violations = await blockingViolations(page, "section[aria-labelledby='session-policy-heading']");
+  expect(violations, describe(violations)).toEqual([]);
 
-  await page.unroute("**/api/v1/me");
-  await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "authentication_required", correlationId: "e2e-generic" }) }));
-  await page.goto("/");
-  const generic = page.getByRole("alert", { name: "Session expired" });
-  await expect(generic).toContainText("Your session has expired");
-  await expect(generic).not.toContainText("organization policy");
+  // A generic 401 (a missing, invalid or revoked token) keeps the plain expiry copy: it must not look like a policy decision.
+  await page.unroute(saveRoute);
+  await page.route(saveRoute, answer("authentication_required"));
+  // A failed save reloads the server's policy into the form, so the change is entered again.
+  const noIdle = form.getByRole("checkbox", { name: "No idle limit" });
+  if (await noIdle.isChecked()) await noIdle.uncheck();
+  await form.getByLabel("Minutes without activity before a session ends").fill("30");
+  await form.getByLabel("Why are you changing this?").fill("Align with our information security policy");
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  await expect(form.getByRole("alert").filter({ hasText: "Something went wrong" })).toContainText("Your session has expired. Sign in again to continue.");
+  await expect(form.getByRole("alert")).not.toContainText("organization's sign-in policy");
 });
 
 test("limits can be set within the Corvis bounds, need a reason, and are kept @matrix", async ({ page }) => {
