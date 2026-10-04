@@ -91,7 +91,6 @@ export async function processDueSourceSyncs(limit = 25, dependencies: SourceSync
 
   const db = dependencies.db ?? controlDb();
   const drivers = dependencies.drivers ?? sourceConnectorDrivers();
-  const secrets = dependencies.secrets ?? sourceConnectorSecretStore();
   const summary = emptySyncSummary();
   // A provider with no registered driver cannot be collected from, so it is left out of the listing (it is not an error,
   // and it must not crowd out connections that can be collected from).
@@ -100,9 +99,11 @@ export async function processDueSourceSyncs(limit = 25, dependencies: SourceSync
       and provider_key in (select jsonb_array_elements_text($2::jsonb))
     order by coalesce(next_scheduled_at, created_at), source_connection_id
     limit $1::integer`, [limit, JSON.stringify([...drivers.keys()])]);
+  // Selected only once there is something to collect, so a deployment with no connections never needs a secret store.
+  const secrets = rows.length > 0 ? dependencies.secrets ?? sourceConnectorSecretStore() : undefined;
   for (const row of rows) {
     summary.due += 1;
-    await syncDueConnection(db, { tenantId: String(row.tenant_id), sourceConnectionId: String(row.source_connection_id) }, { secrets, drivers, ingest, now }, summary);
+    await syncDueConnection(db, { tenantId: String(row.tenant_id), sourceConnectionId: String(row.source_connection_id) }, { secrets: secrets!, drivers, ingest, now }, summary);
   }
   return summary;
 }
