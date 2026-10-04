@@ -85,6 +85,7 @@ jobs:
     uses: ./.github/workflows/augment-known-good-ai.yml
     with:
       environment: ${{ inputs.environment }}
+      release_sha: ${{ inputs.release_sha }}
       expected_api_image: ${{ needs.deploy.outputs.api_image }}
       expected_control_loop_image: ${{ needs.deploy.outputs.control_loop_image }}
       expected_extractor_image: ${{ needs.deploy.outputs.extractor_image }}
@@ -145,9 +146,9 @@ jobs:
               echo "- Release selection: last acceptance-approved known-good release set"
             else
               echo "- Release source commit: \`${RELEASE_SHA}\`"
-              if [[ "${{ inputs.environment }}" == "prod" ]]; then echo "- Build-once: exact UAT OCI images copied to prod and digest-verified before deploy"; fi
+              if [[ "${{ inputs.environment }}" == "prod" ]]; then echo "- Build-once: exact UAT-known-good OCI digests copied to prod and digest-verified before deploy"; fi
             fi
             echo "- Deployment: migrations + exact Terraform apply succeeded"
             echo "- Acceptance: edge/IAM/worker/control-loop transport + live Postgres RLS succeeded"
-            echo "- Known-good: accepted API/control-loop plus matching AI runtime digests were bound after acceptance"
+            echo "- Known-good: accepted source SHA plus API/control-loop and matching AI runtime digests were bound after acceptance"
           } >> "${GITHUB_STEP_SUMMARY}"
