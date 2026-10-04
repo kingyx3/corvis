@@ -46,6 +46,13 @@ class TransactionDb implements PostgresSqlApi {
   }
 }
 
+class NonTransactionalDb implements PostgresSqlApi {
+  mutated = false;
+  async query(): Promise<PostgresRow[]> { return []; }
+  async execute(): Promise<void> { /* no-op */ }
+  async health(): Promise<boolean> { return true; }
+}
+
 const event: AuditEvent = {
   id: "00000000-0000-4000-8000-000000000001",
   occurredAt: new Date().toISOString(),
@@ -83,6 +90,17 @@ test("business mutation and audit commit together on success", async () => {
   assert.deepEqual(result, { ok: true });
   assert.equal(db.mutated, true);
   assert.equal(db.auditRows, 1);
+});
+
+test("root transports without native transactions fail before mutation", async () => {
+  const db = new NonTransactionalDb();
+  await assert.rejects(runAuditedMutation({
+    db,
+    demoMode: false,
+    mutate: async () => { db.mutated = true; return { ok: true }; },
+    audit: () => event,
+  }), /does not provide native transactions/);
+  assert.equal(db.mutated, false);
 });
 
 // The route shape: withIdempotency owns the transaction and runAuditedMutation joins it via `db: tx`.
