@@ -82,7 +82,7 @@ test("POST service-account token rejects an unknown credential without revealing
   const response = await tokenPost(request(`Bearer ${unknown}`));
   assert.equal(response.status, 401);
   const payload = await response.json() as { error: string };
-  assert.equal(payload.error, "unauthorized");
+  assert.equal(payload.error, "authentication_required");
 });
 
 test("POST service-account token fails closed when the assertion signing boundary is unavailable", async () => {
