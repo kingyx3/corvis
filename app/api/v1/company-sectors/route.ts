@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       // `tx` is withIdempotency's transaction: the idempotency record commits with the mutation and its audit row.
       const outcome = await runAuditedMutation({
         db: tx,
+        joinExistingTransaction: Boolean(tx),
         mutate: (db) => db ? new PostgresCompanySectorRepository(db).assign(identity, command, db) : companySectors().assign(identity, command),
         audit: (result) => ({
           id: randomUUID(),
