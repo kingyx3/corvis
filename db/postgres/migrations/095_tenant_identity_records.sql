@@ -99,9 +99,13 @@ security invoker
 set search_path = pg_catalog, corvis_control
 as $$
   select not exists (select 1 from corvis_control.tenant_verified_domain d where d.tenant_id = p_tenant_id)
-    or exists (
-      select 1 from corvis_control.tenant_verified_domain d
-      where d.tenant_id = p_tenant_id and d.domain = lower(substring(p_email from '[^@]*$'))
+    or (
+      -- An address needs a local part and an @; anything else cannot match a verified domain.
+      position('@' in coalesce(p_email, '')) > 1
+      and exists (
+        select 1 from corvis_control.tenant_verified_domain d
+        where d.tenant_id = p_tenant_id and d.domain = lower(substring(p_email from '[^@]*$'))
+      )
     )
 $$;
 
