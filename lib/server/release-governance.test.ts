@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 // @ts-expect-error Workflow script runs directly in Node; no declaration file needed.
-import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, verifyReleaseGovernance } from '../../.github/scripts/release-governance.mjs';
+import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../.github/scripts/release-governance.mjs';
 
 function fixture(approvals = 1) {
   const checks = REQUIRED_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));
@@ -43,13 +44,13 @@ test('bypassable, disabled, malformed and weak multi-operator governance fails c
   assert.equal(evaluateGovernance(noLastPush, sets, checks).passed, false);
 });
 
-test('rulesets read without admin visibility fail with an actionable token error', () => {
+test('rulesets read without admin visibility fail with an actionable app-permission error', () => {
   const { rules, sets, checks } = fixture();
   const hidden = evaluateGovernance(rules, [{ id: 1, enforcement: 'active' }], checks);
   assert.equal(hidden.passed, false);
   assert.deepEqual(hidden.failures, [MISSING_BYPASS_VISIBILITY]);
   assert.match(MISSING_BYPASS_VISIBILITY, /lacks ruleset admin visibility/);
-  assert.match(MISSING_BYPASS_VISIBILITY, /RELEASE_GOVERNANCE_TOKEN/);
+  assert.match(MISSING_BYPASS_VISIBILITY, /GitHub App/);
   // Partial visibility is still evaluated (and the hidden ruleset stays untrusted).
   const partial = evaluateGovernance([...rules, { ruleset_id: 2, type: 'deletion' }],
     [...sets, { id: 2, enforcement: 'active' }], checks);
@@ -66,7 +67,36 @@ test('missing, failed, spoofed or newer pending checks cannot borrow a successfu
   }
 });
 
+test('release governance refuses long-lived PAT credentials', async () => {
+  for (const credential of ['ghp_' + 'a'.repeat(40), 'github_pat_' + 'a'.repeat(60), 'fixture']) {
+    await assert.rejects(resolveReleaseGovernanceToken(credential, 'example/repo'), /long-lived PATs are refused/);
+  }
+});
+
+test('release governance mints a repository-scoped short-lived GitHub App installation token', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const credential = JSON.stringify({
+    appId: '123456',
+    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  });
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const token = await resolveReleaseGovernanceToken(credential, 'example/repo', async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/repos/example/repo/installation')) {
+      assert.match(String(new Headers(init?.headers).get('authorization')), /^Bearer [^.]+\.[^.]+\.[^.]+$/);
+      return new Response(JSON.stringify({ id: 42 }), { status: 200 });
+    }
+    assert.equal(String(url), 'https://api.github.com/app/installations/42/access_tokens');
+    const body = JSON.parse(String(init?.body)) as { repositories: string[]; permissions: Record<string, string> };
+    assert.deepEqual(body.repositories, ['repo']);
+    assert.deepEqual(body.permissions, { administration: 'write', contents: 'read', checks: 'read' });
+    return new Response(JSON.stringify({ token: 'ghs_' + 'x'.repeat(40) }), { status: 201 });
+  });
+  assert.equal(token, 'ghs_' + 'x'.repeat(40));
+  assert.equal(calls.length, 2);
+});
+
 test('unauthorized API reads fail rather than assuming governance is configured', async () => {
-  await assert.rejects(verifyReleaseGovernance({ GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: 'a'.repeat(40), GITHUB_TOKEN: 'fixture' },
+  await assert.rejects(verifyReleaseGovernance({ GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: 'a'.repeat(40), GITHUB_TOKEN: 'ghs_' + 'x'.repeat(40) },
     async () => new Response('{}', { status: 403 })), /governance read failed/);
 });
