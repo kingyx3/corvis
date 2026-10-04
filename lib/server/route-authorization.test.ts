@@ -355,6 +355,8 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "access/service-accounts/route.ts", method: "GET", role: "admin", expect: 200 },
     { file: "access/service-accounts/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_name" },
     { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },
+    { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: { action: "grant_entitlement" }, expect: 400, error: "invalid_resource_type" },
+    { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: { action: "revoke_entitlement", resourceType: "fund" }, expect: 400, error: "invalid_resource" },
     { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "GET", role: "admin", expect: 404, error: "service_account_not_found" },
     { file: "admin/tenants/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     { file: "exports/route.ts", method: "POST", role: "analyst", body: {}, expect: 400, error: "invalid_export_format" },
