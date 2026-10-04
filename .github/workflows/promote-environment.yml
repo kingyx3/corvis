@@ -58,15 +58,27 @@ jobs:
       release_sha: ${{ inputs.release_sha }}
     secrets: inherit
 
-  deploy:
+  plan:
     needs: [validate, copy-release-to-prod]
     if: ${{ always() && needs.validate.result == 'success' && (needs.copy-release-to-prod.result == 'success' || needs.copy-release-to-prod.result == 'skipped') }}
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      action: plan
+      release_sha: ${{ inputs.release_sha }}
+      rollback_known_good: ${{ inputs.rollback_known_good }}
+    secrets: inherit
+
+  deploy:
+    needs: plan
+    if: ${{ needs.plan.result == 'success' }}
     uses: ./.github/workflows/terraform-deploy.yml
     with:
       environment: ${{ inputs.environment }}
       action: apply
       release_sha: ${{ inputs.release_sha }}
       rollback_known_good: ${{ inputs.rollback_known_good }}
+      approved_plan_sha256: ${{ needs.plan.outputs.plan_sha256 }}
     secrets: inherit
 
   acceptance:
@@ -92,15 +104,27 @@ jobs:
       expected_litellm_image: ${{ needs.deploy.outputs.litellm_image }}
     secrets: inherit
 
-  rollback-on-failed-acceptance:
+  plan-rollback-on-failed-acceptance:
     needs: [deploy, acceptance]
     if: ${{ always() && inputs.environment == 'prod' && inputs.rollback_known_good != true && needs.deploy.result == 'success' && needs.acceptance.result == 'failure' }}
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      environment: prod
+      action: plan
+      release_sha: ""
+      rollback_known_good: true
+    secrets: inherit
+
+  rollback-on-failed-acceptance:
+    needs: plan-rollback-on-failed-acceptance
+    if: ${{ always() && needs.plan-rollback-on-failed-acceptance.result == 'success' }}
     uses: ./.github/workflows/terraform-deploy.yml
     with:
       environment: prod
       action: apply
       release_sha: ""
       rollback_known_good: true
+      approved_plan_sha256: ${{ needs.plan-rollback-on-failed-acceptance.outputs.plan_sha256 }}
     secrets: inherit
 
   report-rollback:
@@ -146,9 +170,10 @@ jobs:
               echo "- Release selection: last acceptance-approved known-good release set"
             else
               echo "- Release source commit: \`${RELEASE_SHA}\`"
-              if [[ "${{ inputs.environment }}" == "prod" ]]; then echo "- Build-once: exact UAT-known-good OCI digests copied to prod and digest-verified before deploy"; fi
+              if [[ "${{ inputs.environment }}" == "prod" ]]; then echo "- Build-once: exact UAT-known-good OCI digests copied to prod and provenance-verified before deploy"; fi
             fi
-            echo "- Deployment: migrations + exact Terraform apply succeeded"
+            echo "- Deployment: exact-release plan was reviewed, digest-pinned, revalidated, then applied"
+            echo "- Database: migrations came from the exact release checkout and are skipped for known-good rollback"
             echo "- Acceptance: edge/IAM/worker/control-loop transport + live Postgres RLS succeeded"
             echo "- Known-good: accepted source SHA plus API/control-loop and matching AI runtime digests were bound after acceptance"
           } >> "${GITHUB_STEP_SUMMARY}"
