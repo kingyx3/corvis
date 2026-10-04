@@ -80,18 +80,20 @@ test('release governance mints a repository-scoped short-lived GitHub App instal
     privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
   });
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const token = await resolveReleaseGovernanceToken(credential, 'example/repo', async (url, init) => {
-    calls.push({ url: String(url), init });
-    if (String(url).endsWith('/repos/example/repo/installation')) {
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith('/repos/example/repo/installation')) {
       assert.match(String(new Headers(init?.headers).get('authorization')), /^Bearer [^.]+\.[^.]+\.[^.]+$/);
       return new Response(JSON.stringify({ id: 42 }), { status: 200 });
     }
-    assert.equal(String(url), 'https://api.github.com/app/installations/42/access_tokens');
+    assert.equal(url, 'https://api.github.com/app/installations/42/access_tokens');
     const body = JSON.parse(String(init?.body)) as { repositories: string[]; permissions: Record<string, string> };
     assert.deepEqual(body.repositories, ['repo']);
     assert.deepEqual(body.permissions, { administration: 'write', contents: 'read', checks: 'read' });
     return new Response(JSON.stringify({ token: 'ghs_' + 'x'.repeat(40) }), { status: 201 });
-  });
+  };
+  const token = await resolveReleaseGovernanceToken(credential, 'example/repo', fakeFetch);
   assert.equal(token, 'ghs_' + 'x'.repeat(40));
   assert.equal(calls.length, 2);
 });
