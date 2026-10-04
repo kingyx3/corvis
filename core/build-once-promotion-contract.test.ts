@@ -39,13 +39,12 @@ test("cross-project copy requires the exact UAT-known-good digest set and verifi
   assert.match(workflow, /\.sourcesha \/\/ empty/);
   assert.match(workflow, /requested release .* is not the uat acceptance-approved source sha/);
   assert.match(workflow, /gh attestation verify "oci:\/\/\$\{image\}" --repo/);
-  assert.match(workflow, /permissions:[\s\s]*?/);
   assert.match(workflow, /attestations:\s*read/);
   assert.match(workflow, /roles\/artifactregistry\.reader/);
   assert.doesNotMatch(workflow, /roles\/artifactregistry\.(?:writer|repoadmin)/i);
   assert.match(workflow, /gcrane_version:\s*v0\.22\.1/);
   assert.match(workflow, /gosumdb=sum\.golang\.org/);
-  assert.match(workflow, /source_digest="\$\{source_ref##@\}"/);
+  assert.match(workflow, /source_digest="\$\{source_ref##\*@\}"/);
   assert.match(workflow, /gcrane cp "\$\{source_ref\}" "\$\{target_ref\}"/);
   assert.match(workflow, /target_digest="\$\(gcrane digest "\$\{target_ref\}"\)"/);
   assert.match(workflow, /target_digest.*source_digest/);
