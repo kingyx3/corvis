@@ -182,7 +182,7 @@ function DataExportSection() {
   const building = items.some((item) => item.status === "approved" || item.status === "building");
   useEffect(() => {
     if (!building) return;
-    const timer = setInterval(() => void refresh(true), 5000);
+    const timer = setInterval(() => void refresh(true), 3000);
     return () => clearInterval(timer);
   }, [building, refresh]);
 

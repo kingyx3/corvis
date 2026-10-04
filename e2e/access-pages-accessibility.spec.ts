@@ -44,12 +44,19 @@ const dataExports = [
     ...exportBase, requestId: "x2", status: "complete", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decidedAt: "2026-09-30T11:00:00.000Z",
     artifact: {
       checksumSha256: "a".repeat(64), sizeBytes: 4694, expiresAt: "2026-10-04T10:00:00.000Z",
-      manifest: { manifestVersion: 1, requestId: "x2", tenantId: "tenant-1", generatedAt: "2026-09-30T11:05:00.000Z", requestedBy: "alex.chen@example.test", approvedBy: "admin@example.test",
-        files: [{ path: "published-data/observations.csv", description: "Approved observations", sha256: "b".repeat(64), sizeBytes: 702, rowCount: 5 }],
-        dataRights: { basis: "Only redistributable data.", funds: { included: 2, excluded: 1 }, documents: { included: 2, excluded: 2 } },
-        notIncluded: [{ item: "Source document files", reason: "Not included in this release." }] },
+      manifest: { manifestVersion: 2, requestId: "x2", tenantId: "tenant-1", generatedAt: "2026-09-30T11:05:00.000Z", requestedBy: "alex.chen@example.test", approvedBy: "admin@example.test",
+        files: [{ path: "published-data/observations-0001.csv", description: "Approved observations", sha256: "b".repeat(64), sizeBytes: 702, rowCount: 5, dataset: "observations" }],
+        fileCount: 6, sourceFiles: { included: 3, excluded: 1, totalBytes: 3_500_000 },
+        dataRights: { basis: "Only redistributable data.", funds: { included: 2, excluded: 1 }, documents: { included: 4, excluded: 2 } },
+        notIncluded: [{ item: "Source document files", reason: "1 document is listed in the inventory without its file." }] },
     },
     actions: { canApprove: false, canReject: false, canCancel: false, canDownload: true },
+  },
+  {
+    // F10c: a build in progress shows its size estimate and how far it has got.
+    ...exportBase, requestId: "x4", status: "building", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decidedAt: "2026-09-30T09:00:00.000Z",
+    progress: { phase: "documents", estimatedBytes: 1_500_000_000, bytesWritten: 600_000_000, estimatedRows: 450_000, rowsWritten: 450_000, estimatedDocuments: 40, documentsWritten: 16, percent: 40, updatedAt: "2026-09-30T09:10:00.000Z" },
+    actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false },
   },
   { ...exportBase, requestId: "x3", status: "rejected", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decisionNote: "Not authorised.", actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false } },
 ];
@@ -150,7 +157,13 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" })).toContainText("Review the request");
     const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
     await ready.getByText("Contents and checksums").click();
-    await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
+    await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations-0001.csv");
+    await expect(ready).toContainText("3 source document files (3.3 MB) are in the archive");
+    // F10c: the running build shows its estimate and progress, and is part of the scan.
+    const building = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Copying source documents" });
+    await expect(building.getByRole("progressbar", { name: "Export build progress, 40%" })).toBeVisible();
+    await expect(building).toContainText("40% of an estimated 1.4 GB");
+    await expect(building).toContainText("450,000 of about 450,000 data rows · 16 of 40 source files");
     const violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });

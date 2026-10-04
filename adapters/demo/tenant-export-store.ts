@@ -57,7 +57,7 @@ const SOURCE_ACCESS_DOCUMENTS = new Set(["doc-adv-viii-q2"]);
 /** The size the demo's one source file claims to have, for the progress estimate (the placeholder inside the archive is a few bytes). */
 const DEMO_SOURCE_FILE_BYTES = 86_400_000;
 /** How long the browser composition shows an export as being built. */
-export const DEMO_BUILD_DURATION_MS = 3000;
+export const DEMO_BUILD_DURATION_MS = 4000;
 
 type Identity = { authMethod: string; subject: string };
 type StoredArtifact = TenantExportArtifact & { bytes: Buffer };
