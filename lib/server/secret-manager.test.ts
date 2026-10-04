@@ -192,6 +192,22 @@ test("revoke deletes the secret and tolerates it already being gone", async () =
   await assert.doesNotReject(new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl: notFoundFetch }).revoke(reference));
 });
 
+test("a reference carrying a URL fragment or other stray characters is refused before any network call", async () => {
+  // A string that is literally `<legitimate reference>#<anything>` would, if spliced unvalidated into a URL and
+  // handed to a real fetch(), have everything after `#` parsed as a fragment and dropped before the request leaves
+  // this process — so the request actually reaches `<legitimate reference>`, not the caller-supplied full string.
+  // That lets a reference which merely *embeds* a well-formed reference (e.g. a caller's own tenant's) actually
+  // resolve to a different, unvalidated resource. assertWellFormedReference() must reject the whole string outright.
+  const { fetchImpl, calls } = fakeSecretManager();
+  const store = new GcpSecretManagerSecretStore(PROJECT_ID, { fetchImpl });
+  const legitimate = sourceConnectorSecretReference(TENANT, "google_drive", 1, PROJECT_ID);
+  const smuggled = `${legitimate}#projects/${PROJECT_ID}/secrets/corvis-src-other-tenant-oauth-attempt-9`;
+
+  await assert.rejects(store.read(smuggled), /secret_reference_malformed/);
+  await assert.rejects(store.revoke(smuggled), /secret_reference_malformed/);
+  assert.equal(calls.length, 0, "no request is ever made for a malformed reference");
+});
+
 test("the secret reference embeds the caller's own GCP project id, not a hardcoded one", () => {
   for (const projectId of ["corvis-dev-11", "corvis-uat-22", "corvis-prod-33"]) {
     const reference = sourceConnectorSecretReference(TENANT, "google_drive", 1, projectId);
