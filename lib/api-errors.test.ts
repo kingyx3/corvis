@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import {
   ApiError,
+  SESSION_ENDED_BY_POLICY_MESSAGE,
   SESSION_EXPIRED_EVENT,
   SESSION_EXPIRED_MESSAGE,
   UnauthenticatedError,
   apiResponseError,
   friendlyErrorMessage,
+  sessionEndedByPolicy,
+  sessionExpiredCopy,
   sessionExpiredError,
   throwIfUnauthenticated,
 } from "./api-errors.ts";
@@ -62,4 +65,29 @@ test("apiResponseError maps 401 to UnauthenticatedError (keeping the server code
   const opaque = await apiResponseError(new Response("<html>bad gateway</html>", { status: 502 }));
   assert.equal(opaque.message, "Corvis API request failed (502)");
   assert.deepEqual(fired, [SESSION_EXPIRED_EVENT], "only the 401 fired the event");
+});
+
+test("F7c: a 401 coded session_ended_by_policy tells the person why, a generic coded 401 resets it, and an uncoded one leaves it", async () => {
+  const fired = recordEvents();
+  await apiResponseError(new Response(JSON.stringify({ error: "authentication_required" }), { status: 401 }));
+  assert.equal(sessionEndedByPolicy(), false);
+  assert.equal(sessionExpiredCopy().title, "Your session has expired");
+
+  const ended = await apiResponseError(new Response(JSON.stringify({ error: "session_ended_by_policy", correlationId: "c-1" }), { status: 401 }));
+  assert.ok(ended instanceof UnauthenticatedError);
+  assert.equal(ended.code, "session_ended_by_policy");
+  assert.equal(sessionEndedByPolicy(), true, "set before the shell is told, so the banner it renders has the right words");
+  assert.deepEqual(fired.slice(-1), [SESSION_EXPIRED_EVENT]);
+  assert.equal(friendlyErrorMessage(ended, "fallback"), SESSION_ENDED_BY_POLICY_MESSAGE);
+  assert.equal(sessionExpiredCopy().title, "Your session ended by organization policy");
+  assert.match(sessionExpiredCopy().detail, /sign-in policy ended this session/);
+
+  // A raw fetch caller that cannot read the body does not erase what was learned.
+  assert.throws(() => throwIfUnauthenticated({ status: 401 }), UnauthenticatedError);
+  assert.equal(sessionEndedByPolicy(), true);
+  assert.equal(friendlyErrorMessage(sessionExpiredError(), "fallback"), SESSION_EXPIRED_MESSAGE);
+
+  await apiResponseError(new Response(JSON.stringify({ error: "authentication_required" }), { status: 401 }));
+  assert.equal(sessionEndedByPolicy(), false);
+  assert.equal(sessionExpiredCopy().title, "Your session has expired");
 });

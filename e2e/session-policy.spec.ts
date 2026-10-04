@@ -60,6 +60,27 @@ test("an Organization Admin sees the identity provider, SCIM status and sign-in 
   expect(violations, describe(violations)).toEqual([]);
 });
 
+test("a session the organization's policy ended says so, a generic 401 does not, and neither shows a code @matrix", async ({ page }) => {
+  await isolate(page);
+  // The first call the shell makes (who am I) is answered with the stable 401 reason for a policy-ended session.
+  await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "session_ended_by_policy", correlationId: "e2e-ended" }) }));
+  await page.goto("/");
+  const banner = page.getByRole("alert", { name: "Session expired" });
+  await expect(banner).toContainText("Your session ended by organization policy");
+  await expect(banner).toContainText("sign-in policy ended this session");
+  await expect(banner).not.toContainText("session_ended_by_policy");
+  await expect(banner.getByRole("button", { name: "Sign in again" })).toBeVisible();
+  const ended = await blockingViolations(page, "[aria-label='Session expired']");
+  expect(ended, describe(ended)).toEqual([]);
+
+  await page.unroute("**/api/v1/me");
+  await page.route("**/api/v1/me", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "authentication_required", correlationId: "e2e-generic" }) }));
+  await page.goto("/");
+  const generic = page.getByRole("alert", { name: "Session expired" });
+  await expect(generic).toContainText("Your session has expired");
+  await expect(generic).not.toContainText("organization policy");
+});
+
 test("limits can be set within the Corvis bounds, need a reason, and are kept @matrix", async ({ page }) => {
   await isolate(page);
   await page.goto("/access-self-service");

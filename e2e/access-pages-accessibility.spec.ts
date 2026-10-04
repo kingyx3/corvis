@@ -64,7 +64,9 @@ const dataExports = [
 const sessionPolicy = {
   policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
   bounds: { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } },
-  identityProvider: { protocol: "oidc", issuer: "https://login.example.test" },
+  // F7e/F7b: the organization's own recorded provider (token binding on) and its verified email domains are part of the scan.
+  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true },
+  verifiedDomains: [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-08-12T09:00:00.000Z" }, { domain: "example.org", verificationMethod: "operator_attested", verifiedAt: "2026-09-01T09:00:00.000Z" }],
   scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
   signInMethods: [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }],
   members: [
@@ -162,7 +164,10 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
     // The sign-in and session policy section (F7): identity provider, session limits and the sign-out confirmation are part of the scan.
-    await expect(page.getByRole("region", { name: "Identity provider and provisioning" })).toContainText("https://login.example.test");
+    const provider = page.getByRole("region", { name: "Identity provider and provisioning" });
+    await expect(provider).toContainText("https://login.example.test");
+    await expect(provider).toContainText("tokens are accepted only from this issuer and audience");
+    await expect(provider).toContainText("example.test, example.org");
     await page.getByRole("button", { name: "Sign out morgan.lee@example.test everywhere" }).click();
     await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
     // F10d: a colleague's request is waiting for this admin, so the approval notice sits at the top of the page and is part of the scan.

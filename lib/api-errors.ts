@@ -39,6 +39,22 @@ export function isUnauthenticatedError(value: unknown): value is Unauthenticated
 
 export const SESSION_EXPIRED_MESSAGE = "Your session has expired. Sign in again to continue.";
 
+/** The stable code of the 401 for a session the organization's sign-in policy ended (F7c, #336); distinct from `authentication_required`. */
+export const SESSION_ENDED_BY_POLICY_CODE = "session_ended_by_policy";
+export const SESSION_ENDED_BY_POLICY_MESSAGE = "Your session ended because of your organization's sign-in policy. Sign in again to continue.";
+
+let endedByPolicy = false;
+
+/** Whether the latest coded 401 said the organization's policy ended the session. Read by the shell banner, which renders after the event. */
+export function sessionEndedByPolicy(): boolean { return endedByPolicy; }
+
+/** The shell banner's words: the generic expiry, or why the organization's policy ended the session. */
+export function sessionExpiredCopy(): { title: string; detail: string } {
+  return endedByPolicy
+    ? { title: "Your session ended by organization policy", detail: "Your organization's sign-in policy ended this session after a period of inactivity or its maximum length. Sign in again to continue. Data that was already saved is not affected." }
+    : { title: "Your session has expired", detail: "Sign in again to continue. Data that was already saved is not affected." };
+}
+
 /** Fired on `window` whenever any API call reports an expired session, so the shell can prompt once. */
 export const SESSION_EXPIRED_EVENT = "corvis:session-expired";
 
@@ -52,6 +68,8 @@ export function notifySessionExpired(): void {
  * `fetch` callers that print `error.message` never show a code.
  */
 export function sessionExpiredError(code?: string, message: string = SESSION_EXPIRED_MESSAGE): UnauthenticatedError {
+  // A call that could not read the response body (no code) leaves what an earlier, coded 401 said; a coded one sets it.
+  if (code !== undefined) endedByPolicy = code === SESSION_ENDED_BY_POLICY_CODE;
   notifySessionExpired();
   return new UnauthenticatedError(message, code);
 }
@@ -75,7 +93,7 @@ export async function apiResponseError(response: Response): Promise<ApiError> {
 
 /** Plain-language text for an unexpected failure; falls back to `fallback` for code-like messages. */
 export function friendlyErrorMessage(reason: unknown, fallback: string): string {
-  if (isUnauthenticatedError(reason)) return SESSION_EXPIRED_MESSAGE;
+  if (isUnauthenticatedError(reason)) return reason.code === SESSION_ENDED_BY_POLICY_CODE ? SESSION_ENDED_BY_POLICY_MESSAGE : SESSION_EXPIRED_MESSAGE;
   if (reason instanceof MalformedStreamError) return "The response was interrupted or unreadable. Try again.";
   if (!(reason instanceof Error) || !reason.message) return fallback;
   // Machine codes such as `pagination_cursor_cycle` or `request_failed: reason` are not user copy.
