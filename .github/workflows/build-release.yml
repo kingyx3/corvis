@@ -54,9 +54,16 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Mint short-lived release-governance token
+        id: release_governance
+        env:
+          RELEASE_GOVERNANCE_APP_ID: ${{ vars.RELEASE_GOVERNANCE_APP_ID }}
+          RELEASE_GOVERNANCE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_GOVERNANCE_APP_PRIVATE_KEY }}
+        run: node .github/scripts/mint-release-governance-token.mjs
+
       - name: Verify effective release governance
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.release_governance.outputs.token }}
         run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
