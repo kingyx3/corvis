@@ -8,6 +8,7 @@ import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
 import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
 import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
+import { sweepServiceAccountExpiry } from "@/lib/server/service-account-expiry-sweep";
 import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
 import { sweepExpiredSourceSecrets } from "@/lib/server/source-connector-runtime";
 import { processDueSourceSyncs } from "@/lib/server/source-sync-scheduler";
@@ -61,6 +62,8 @@ export async function POST(request:Request){
       sourceSecretSweep:()=>sweepExpiredSourceSecrets(),
       // B1c: active source connections that are due are collected from (through the upload pipeline), each under a lease so no two workers run one connection.
       sourceSync:()=>processDueSourceSyncs(),
+      // F6d: Organization Admins are told, once per window, before a service account or its credential expires (queued here, sent by emailOutbox on a following tick).
+      serviceAccountExpirySweep:()=>sweepServiceAccountExpiry(),
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });

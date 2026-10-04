@@ -137,6 +137,13 @@ export const SQL_APPLICATION_ERRORS = [
   "service account needs an owner",
   "service account owner must be an active organization admin",
   "service account owner unchanged",
+  // Service account entitlement self-service (F6c): what an organization does not hold cannot be granted, and one refusal covers every such case.
+  "service account resource type not allowed",
+  "service account resource required",
+  "service account resource outside organization data rights",
+  "service account entitlement already granted",
+  "service account entitlement limit reached",
+  "service account entitlement not found",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -270,6 +277,13 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account needs an owner": { code: "service_account_needs_owner", status: 409 },
   "service account owner must be an active organization admin": { code: "service_account_owner_invalid", status: 422 },
   "service account owner unchanged": { code: "service_account_owner_unchanged", status: 409 },
+  // Entitlement self-service (F6c). Ownership and data-right refusals share one code and status so a caller cannot probe what other organizations hold.
+  "service account resource type not allowed": { code: "invalid_resource_type", status: 400 },
+  "service account resource required": { code: "invalid_resource", status: 400 },
+  "service account resource outside organization data rights": { code: "entitlement_outside_data_rights", status: 422 },
+  "service account entitlement already granted": { code: "service_account_entitlement_exists", status: 409 },
+  "service account entitlement limit reached": { code: "service_account_entitlement_limit_reached", status: 409 },
+  "service account entitlement not found": { code: "service_account_entitlement_not_found", status: 404 },
 };
 
 /**

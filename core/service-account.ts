@@ -51,6 +51,22 @@ export const SERVICE_ACCOUNT_MAX_OVERLAP_MINUTES = 1440;
 export const SERVICE_ACCOUNT_LIMIT = 100;
 /** The most recent credentials listed per account. */
 export const SERVICE_ACCOUNT_CREDENTIAL_HISTORY = 10;
+/** Effective entitlements one account may hold (a product default, enforced in SQL by the grant function). */
+export const SERVICE_ACCOUNT_ENTITLEMENT_LIMIT = 200;
+/** The most grantable funds and documents offered to an Organization Admin at once. */
+export const SERVICE_ACCOUNT_GRANTABLE_LIMIT = 500;
+/** The longest resource identifier the entitlement tables hold. */
+export const SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH = 512;
+
+/**
+ * What an Organization Admin can scope for a machine (F6c, #342): funds and documents, read-only. Review, publish and admin
+ * permissions are never granted to a service account from this screen, and a workspace is the account's own.
+ */
+export const SERVICE_ACCOUNT_RESOURCE_TYPES = ["fund", "document"] as const;
+export type ServiceAccountResourceType = (typeof SERVICE_ACCOUNT_RESOURCE_TYPES)[number];
+export const SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL: Record<ServiceAccountResourceType, string> = { fund: "Fund", document: "Document" };
+/** Product labels for the permission an entitlement carries (an operator may have granted more than `read`). */
+export const SERVICE_ACCOUNT_PERMISSION_LABEL: Record<string, string> = { read: "Can view", review: "Can review", publish: "Can publish", admin: "Administers" };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -91,9 +107,36 @@ export type ServiceAccountActions = {
   canTransfer: boolean;
 };
 
+/** A fund or document the account may read, through the same entitlement rows a person's access comes from. */
+export type ServiceAccountEntitlement = {
+  resourceType: ServiceAccountResourceType;
+  resourceId: string;
+  /** The fund or document name, or its identifier when no name is known. */
+  label: string;
+  /** `read` for everything granted here; an operator may have granted more. */
+  permission: string;
+  grantedAt: string;
+  /**
+   * The organization still holds an effective, client-visible data right for the resource. When false the entitlement is on
+   * record but the authorization lookup ignores it, so the account sees nothing of it until the right is back.
+   */
+  withinDataRights: boolean;
+};
+
+/** A fund or document an Organization Admin may grant: one the organization owns and holds a client-visible data right for. */
+export type ServiceAccountGrantableResource = { resourceType: ServiceAccountResourceType; resourceId: string; label: string };
+
+/** What an Organization Admin can do to the account's data access right now. */
+export type ServiceAccountEntitlementAccess = {
+  /** The account is active (not deactivated or expired). */
+  canGrant: boolean;
+  /** Not deactivated, and it holds at least one entitlement. Access can be removed from an expired account too. */
+  canRevoke: boolean;
+};
+
 export type ServiceAccount = {
   serviceAccountId: string;
-  /** The account's identity reference (its user id): quote it to Corvis operations to grant fund and document entitlements. */
+  /** The account's identity reference (its user id), as it appears in the operator access review. */
   userId: string;
   name: string;
   purpose: string;
@@ -122,6 +165,9 @@ export type ServiceAccount = {
   expiringSoon: boolean;
   credentials: ServiceAccountCredential[];
   actions: ServiceAccountActions;
+  /** The funds and documents the account can read: its effective entitlements. Nothing until an admin or Corvis operations grants some. */
+  entitlements: ServiceAccountEntitlement[];
+  entitlementAccess: ServiceAccountEntitlementAccess;
 };
 
 /** The one response that carries a secret. It is returned once and cannot be read again. */
@@ -152,7 +198,11 @@ export type ServiceAccountCommand =
   | { action: "disable"; reason: string }
   /** Moves the expiry to this many days from now, which must be later than the current expiry. */
   | { action: "extend"; expiresInDays: number }
-  | { action: "transfer"; ownerSubject: string };
+  | { action: "transfer"; ownerSubject: string }
+  /** Gives the account read access to one fund or document the organization owns and holds a data right for. */
+  | { action: "grant_entitlement"; resourceType: ServiceAccountResourceType; resourceId: string; reason: string }
+  /** Ends everything the account holds on one fund or document. */
+  | { action: "revoke_entitlement"; resourceType: ServiceAccountResourceType; resourceId: string; reason: string };
 export type ServiceAccountAction = ServiceAccountCommand["action"];
 
 // ---------------------------------------------------------------------------
@@ -194,10 +244,12 @@ type AccountFacts = {
   expiresAt: string;
   ownerActive: boolean;
   credentials: Array<Pick<ServiceAccountCredential, "status" | "expiresAt" | "lastUsedAt">>;
+  /** How many entitlements the account holds now (0 when not given). */
+  entitlementCount?: number;
 };
 
-/** Everything an account's presentation derives from its facts: status, last use, current expiry, flag, owner state and actions. */
-export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<ServiceAccount, "status" | "lastUsedAt" | "credentialExpiresAt" | "expiringSoon" | "needsOwner" | "actions"> {
+/** Everything an account's presentation derives from its facts: status, last use, current expiry, flag, owner state, actions and data-access actions. */
+export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<ServiceAccount, "status" | "lastUsedAt" | "credentialExpiresAt" | "expiringSoon" | "needsOwner" | "actions" | "entitlementAccess"> {
   const status = serviceAccountStatus(facts.disabled, facts.expiresAt, now);
   const usable = facts.credentials.filter((credential) => credential.status === "active" || credential.status === "rotating_out");
   const current = facts.credentials.filter((credential) => credential.status === "active")
@@ -222,14 +274,23 @@ export function serviceAccountLifecycle(facts: AccountFacts, now: Date): Pick<Se
       canExtend: status !== "disabled" && facts.ownerActive && minimumExtensionDays(facts.expiresAt, now) <= SERVICE_ACCOUNT_MAX_LIFETIME_DAYS,
       canTransfer: status !== "disabled",
     },
+    entitlementAccess: { canGrant: live, canRevoke: status !== "disabled" && (facts.entitlementCount ?? 0) > 0 },
   };
 }
 
 /** An active workspace of the organization an account can be created in. */
 export type ServiceAccountWorkspace = { workspaceId: string; name: string };
 
-/** Everything the list screen needs: the accounts, the workspaces a new account can be created in, and who can own one. */
-export type ServiceAccountList = { serviceAccounts: ServiceAccount[]; workspaces: ServiceAccountWorkspace[]; owners: ServiceAccountOwnerCandidate[] };
+/**
+ * Everything the list screen needs: the accounts, the workspaces a new account can be created in, who can own one, and the
+ * funds and documents an admin may grant (the organization's own, within its data rights; at most 500).
+ */
+export type ServiceAccountList = {
+  serviceAccounts: ServiceAccount[];
+  workspaces: ServiceAccountWorkspace[];
+  owners: ServiceAccountOwnerCandidate[];
+  grantable: ServiceAccountGrantableResource[];
+};
 
 /** One plain sentence saying where a credential stands. */
 export function serviceAccountCredentialSummary(credential: Pick<ServiceAccountCredential, "status" | "endsAt" | "expiresAt" | "expiringSoon">): string {
@@ -280,6 +341,19 @@ function wholeNumber(value: unknown, min: number, max: number, fallback: number,
   return value;
 }
 
+function resourceType(value: unknown): ServiceAccountResourceType {
+  const found = SERVICE_ACCOUNT_RESOURCE_TYPES.find((type) => type === value);
+  return found ?? fail("invalid_resource_type");
+}
+
+/** A fund or document identifier: opaque to this layer (the database decides whether the organization owns it), but bounded and single-line. */
+function resourceId(value: unknown): string {
+  if (typeof value !== "string") return fail("invalid_resource");
+  const clean = value.trim();
+  if (clean.length === 0 || clean.length > SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH || SINGLE_LINE_FORBIDDEN.test(clean)) return fail("invalid_resource");
+  return clean;
+}
+
 export function parseCreateServiceAccount(body: unknown): CreateServiceAccountCommand {
   if (!isRecord(body)) return fail("invalid_request");
   const name = text(body.name, SERVICE_ACCOUNT_MAX_NAME_LENGTH, "invalid_name");
@@ -307,6 +381,13 @@ export function parseServiceAccountCommand(body: unknown): ServiceAccountCommand
     case "disable": return { action: "disable", reason: text(body.reason, SERVICE_ACCOUNT_MAX_REASON_LENGTH, "invalid_reason") };
     case "extend": return { action: "extend", expiresInDays: wholeNumber(body.expiresInDays, 1, SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, SERVICE_ACCOUNT_MAX_LIFETIME_DAYS, "invalid_expiry") };
     case "transfer": return { action: "transfer", ownerSubject: text(body.ownerSubject, SERVICE_ACCOUNT_MAX_SUBJECT_LENGTH, "invalid_owner") };
+    case "grant_entitlement":
+    case "revoke_entitlement": return {
+      action: body.action,
+      resourceType: resourceType(body.resourceType),
+      resourceId: resourceId(body.resourceId),
+      reason: text(body.reason, SERVICE_ACCOUNT_MAX_REASON_LENGTH, "invalid_reason"),
+    };
     default: return fail("invalid_action");
   }
 }

@@ -21,7 +21,7 @@ test("categories are visible only to the audience that can receive them", () => 
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
   assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "role_changed"]);
   assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "support_access", "security_policy", "tenant_export_approval", "tenant_export_outcome", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "support_access", "security_policy", "tenant_export_approval", "tenant_export_outcome", "service_account_expiry", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -100,6 +100,35 @@ test("export notices say what happened in words only, never the reason, a note, 
   assert.match(renderEmail("tenant_export_outcome", { event: "<b>x</b>" }, { appUrl }).subject, /could not be built/);
 });
 
+test("the service account expiry notice is mandatory, for Organization Admins only, and in words only (F6d)", () => {
+  const category = NOTIFICATION_CATEGORIES.find((item) => item.id === "service_account_expiry")!;
+  assert.equal(category.mandatory, true, "an admin cannot opt out of hearing that a credential is about to stop");
+  assert.equal(category.audience, "organization_admins");
+  const code = (viewer: typeof analyst) => {
+    try { normalizePreferenceChanges({ categories: [{ id: "service_account_expiry", enabled: false, delivery: "immediate" }] }, viewer); return "ok"; } catch (error) { return (error as NotificationPreferenceError).code; }
+  };
+  assert.equal(code(orgAdmin), "category_not_configurable");
+  assert.equal(code(workspaceAdmin), "unknown_category");
+  assert.equal(code(analyst), "unknown_category");
+
+  const cases: Array<[Record<string, unknown>, RegExp, RegExp]> = [
+    [{ subject: "account", window: "warning" }, /service account is about to expire/, /service account in your organization expires within the next 14 days\. Its credentials and access stop working with it/],
+    [{ subject: "account", window: "final" }, /service account is about to expire/, /expires within the next 3 days/],
+    [{ subject: "credential", window: "warning" }, /API credential is about to expire/, /API credential for a service account in your organization expires within the next 14 days\. Systems that use it will stop/],
+    [{ subject: "credential", window: "final" }, /API credential is about to expire/, /expires within the next 3 days/],
+    [{ subject: "credential", window: "whenever" }, /API credential is about to expire/, /expires soon\./],
+    [{}, /service account is about to expire/, /expires soon\./],
+  ];
+  for (const [params, subject, line] of cases) {
+    const email = renderEmail("service_account_expiry", { ...params, accountName: "Nightly reporting sync", owner: "morgan@x.test", id: "0123" }, { appUrl, workspaceName: "Growth Workspace" });
+    assert.match(email.subject, subject);
+    assert.match(email.text, line);
+    assert.match(email.text, /https:\/\/app\.corvis\.test\/access-self-service/);
+    assert.match(email.text, /cannot be turned off/);
+    assert.doesNotMatch(email.text + email.html, /Nightly|morgan|0123|Growth Workspace/, "no account name, person, identifier or workspace");
+  }
+});
+
 test("every email links back to the app, and optional ones link to notification settings", () => {
   const cases: Array<[OutboxCategory, Record<string, unknown>, boolean]> = [
     ["export_ready", { format: "csv" }, true],
@@ -112,6 +141,7 @@ test("every email links back to the app, and optional ones link to notification 
     ["security_policy", { event: "user_signed_out" }, false],
     ["tenant_export_approval", {}, false],
     ["tenant_export_outcome", { event: "ready" }, true],
+    ["service_account_expiry", { subject: "account", window: "warning" }, false],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],
     ["invitation", { roleName: "analyst", invitationUrl: `${appUrl}/invite?tenantId=t#token`, expiresOn: "2026-10-07" }, false],
