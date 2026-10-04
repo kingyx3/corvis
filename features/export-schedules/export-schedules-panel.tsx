@@ -101,7 +101,7 @@ export function ExportSchedulesPanel({ canViewAll, refreshKey = 0 }: { canViewAl
         {(["mine", "all"] as const).map((value) => <button type="button" key={value} aria-pressed={scope === value} className={scope === value ? "active" : ""} onClick={() => { setScope(value); setState({ kind: "loading" }); }}>{value === "mine" ? "My schedules" : "Everyone in my organization"}</button>)}
       </fieldset>}
     </div>
-    <p className="field-hint">A schedule requests a governed export of a saved view when a matching snapshot is published, or on the 1st of every month or quarter (UTC). Each run is made as the schedule&apos;s owner, with their access and your organization&apos;s data rights checked again every time. Create one with “Schedule export” beside Export this view in Portfolio analytics or Data review.</p>
+    <p className="field-hint">A schedule requests a governed export of a saved view when a matching snapshot is published, or on the 1st of every month or quarter (UTC). Each run is made as the schedule&apos;s owner, with their access and your organization&apos;s data rights checked again every time. Create one with “Schedule export” beside Export this view in Portfolio analytics (Position financials or the Performance scorecard) or Data review.</p>
     <div className="data-issues-status" role="status" aria-live="polite">{message?.tone === "success" ? message.text : ""}</div>
     {message?.tone === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Something went wrong</strong><span>{message.text}</span></div></div>}
     {state.kind === "loading" && <div className="table-card" role="status" aria-label="Loading schedules"><div className="empty-cell">Loading scheduled exports…</div></div>}

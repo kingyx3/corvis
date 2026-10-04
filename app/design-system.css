@@ -614,6 +614,10 @@ a.text-button { text-decoration: none; }
   .scorecard-investments { padding-left: 8px; }
   .scorecard-definitions dl div { grid-template-columns: 1fr; gap: 2px; }
 }
+/* Filters and fund paging (F1c). */
+.scorecard-filters { justify-content: flex-start; }
+.scorecard-filters select { min-width: 220px; }
+.scorecard-paging { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--text-muted); font-size: 13px; }
 
 /* Connect source wizard (B1). Each step's heading takes focus when the step appears. */
 .connect-source-heading { margin: 0 0 4px; }
