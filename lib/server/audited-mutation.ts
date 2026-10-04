@@ -48,12 +48,14 @@ export async function runAuditedMutation<T>(options: AuditedMutationOptions<T>):
   const config = getServerConfig();
   const demoMode = options.demoMode ?? config.demoMode;
   if (!demoMode) {
+    if (options.joinExistingTransaction && !options.db) {
+      throw new Error("joinExistingTransaction requires a caller-supplied database handle");
+    }
     const db = options.db ?? postgres(config.databaseDsn);
     if (db.transaction) {
       return requireTransaction(db, (tx) => mutateAndAudit(tx, options));
     }
     if (options.joinExistingTransaction) {
-      if (!options.db) throw new Error("joinExistingTransaction requires a caller-supplied database handle");
       return mutateAndAudit(db, options);
     }
     const strictTransactions = options.strictTransactions ?? config.environment === "production";
