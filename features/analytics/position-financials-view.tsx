@@ -1,7 +1,7 @@
 "use client";
 import { displayNumberFormatter, displayValue as formatValue } from "@/lib/display-format";
 import { usePreferences } from "@/features/preferences/preference-provider";
-import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
+import { workspaceContextHeaders } from "@/lib/workspace-context";
 
 import { useEffect, useMemo, useState } from "react";
 import type { PositionFinancialStatementRow, StatementPeriodicity } from "@/core/contracts";

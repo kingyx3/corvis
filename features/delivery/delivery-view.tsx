@@ -2,7 +2,7 @@
 import { displayDate } from "@/lib/display-format";
 import { usePreferences } from "@/features/preferences/preference-provider";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExportDeliveryStatus, ExportFormat } from "@/core/delivery";
 import type { ExportManifest } from "@/core/enterprise";
 import { deliveryPort } from "@/runtime/delivery-services";
@@ -60,34 +60,36 @@ export function DeliveryView({ publishedSnapshots, canViewAllSchedules = false }
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [scheduleRefresh, setScheduleRefresh] = useState(0);
+  const latestHistoryRequest = useRef(0);
 
   const refreshHistory = useCallback(async () => {
+    const requestId = ++latestHistoryRequest.current;
     try {
-      setExports(await deliveryPort.listExports());
+      const items = await deliveryPort.listExports();
+      if (requestId !== latestHistoryRequest.current) return;
+      setExports(items);
       setError(null);
     } catch (caught) {
+      if (requestId !== latestHistoryRequest.current) return;
       setError(caught instanceof Error ? caught.message : "Export history could not be loaded");
     } finally {
-      setHistoryLoading(false);
+      if (requestId === latestHistoryRequest.current) setHistoryLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    let active = true;
+    const requestId = ++latestHistoryRequest.current;
     void deliveryPort.listExports()
       .then((items) => {
-        if (!active) return;
+        if (requestId !== latestHistoryRequest.current) return;
         setExports(items);
         setError(null);
       })
-      .catch((caught) => {
-        if (!active) return;
+      .catch((caught: unknown) => {
+        if (requestId !== latestHistoryRequest.current) return;
         setError(caught instanceof Error ? caught.message : "Export history could not be loaded");
       })
-      .finally(() => {
-        if (active) setHistoryLoading(false);
-      });
-    return () => { active = false; };
+      .finally(() => { if (requestId === latestHistoryRequest.current) setHistoryLoading(false); });
   }, []);
   useEffect(() => {
     if (!exports.some((item) => ["queued", "delivering", "retryable"].includes(item.state))) return;
