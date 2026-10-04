@@ -20,7 +20,7 @@ export type Surface = {
 // own (an empty provider list, a refused save, a request that never finishes) are injected at the network.
 // ---------------------------------------------------------------------------------------------------------
 export type ConnectSurfaceId =
-  | "connect-empty" | "connect-providers" | "connect-review" | "connect-unconfirmed" | "connect-credential"
+  | "connect-empty" | "connect-providers" | "connect-review" | "connect-unconfirmed" | "connect-scope-error" | "connect-credential"
   | "connect-credential-error" | "connect-save-error" | "connect-authorize" | "connect-testing" | "connect-success"
   | "connect-failed" | "connect-oauth-denied" | "connect-oauth-invalid" | "connect-reauthorize" | "connect-reauthorized";
 
@@ -45,6 +45,12 @@ async function chooseProvider(page: Page, provider: RegExp): Promise<void> {
   await openConnectWizard(page);
   await page.getByRole("button", { name: provider }).click();
   await page.getByRole("heading", { name: /^review what corvis will access$/i }).waitFor();
+}
+
+/** The review step lets the administrator leave folders out; this clears every one of them. */
+export async function untickFolders(page: Page): Promise<void> {
+  const folders = page.getByRole("group", { name: /^folders to read$/i }).getByRole("checkbox");
+  for (let index = 0, count = await folders.count(); index < count; index += 1) await folders.nth(index).uncheck();
 }
 
 export async function confirmReview(page: Page): Promise<void> {
@@ -133,6 +139,12 @@ export const surfaces: Surface[] = [
     await chooseProvider(page, DEMO_TOKEN_PROVIDER);
     await page.getByRole("button", { name: /^continue to /i }).click();
     await page.getByRole("alert").filter({ hasText: /confirm that you are authorized/i }).waitFor();
+  } },
+  { id: "connect-scope-error", label: "Connect source: no folder chosen", role: "admin", nav: null, heading: /^review what corvis will access$/i, open: async (page) => {
+    await chooseProvider(page, DEMO_TOKEN_PROVIDER);
+    await untickFolders(page);
+    await page.getByRole("button", { name: /^continue to /i }).click();
+    await page.getByRole("alert").filter({ hasText: /choose at least one folder/i }).waitFor();
   } },
   { id: "connect-credential", label: "Connect source: enter credential", role: "admin", nav: null, heading: /^enter the credential$/i, open: openCredentialStep },
   { id: "connect-credential-error", label: "Connect source: credential missing", role: "admin", nav: null, heading: /^enter the credential$/i, open: async (page) => {

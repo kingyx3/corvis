@@ -38,15 +38,17 @@ export function emptySyncSummary(): SourceSyncSummary {
 
 export type RunOutcome = "succeeded" | "failed";
 
+/** The time after a run of an active connection: the interval after a success, the bounded exponential backoff (one minute doubling to an hour, jittered) for the failure streak after a failure. */
+export function scheduleAfter(outcome: RunOutcome, consecutiveFailures: number, now: number): Date {
+  return new Date(now + (outcome === "succeeded" ? SYNC_INTERVAL_MS : nextAttemptDelayMs(consecutiveFailures)));
+}
+
 /**
- * The next scheduled time after a run: the interval after a success; after a failure the bounded exponential backoff
- * (one minute doubling to an hour, jittered) for the connection's failure streak. A connection that is no longer active
- * has no schedule: it is due the moment it is reauthorized or resumed.
+ * The next scheduled time after a run, for the status the run left the connection in. A connection that is no longer
+ * active has no schedule: it is due the moment it is reauthorized or resumed.
  */
 export function nextRunAt(input: { outcome: RunOutcome; status: ConnectionStatus; consecutiveFailures: number; now: number }): Date | null {
-  if (input.status !== "active") return null;
-  const delay = input.outcome === "succeeded" ? SYNC_INTERVAL_MS : nextAttemptDelayMs(input.consecutiveFailures);
-  return new Date(input.now + delay);
+  return input.status === "active" ? scheduleAfter(input.outcome, input.consecutiveFailures, input.now) : null;
 }
 
 /** The lease a worker takes on a connection it claims at `now`. */

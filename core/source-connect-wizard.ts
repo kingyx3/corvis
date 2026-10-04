@@ -12,9 +12,8 @@
 import {
   CONNECTOR_ERROR_COPY,
   buildCredentialSecret,
-  describeNextSync,
+  describeUntil,
   type SecretBuildResult,
-  type SourceConnectionStatus,
   type SourceConnectorErrorClass,
 } from "./source-connection-health.ts";
 
@@ -136,8 +135,11 @@ export function describeTestFailure(errorClass: string | undefined): TestFailure
  * then enter the normal review process.
  */
 export function describeConnectedCollection(connection: { status: string; nextScheduledAt?: string }, now: Date): string {
-  const status = connection.status as SourceConnectionStatus;
-  return `The connection is active and scheduled collection is on. ${describeNextSync(status, connection.nextScheduledAt, now)}. Documents it collects are checked first, then enter the normal Corvis review process.`;
+  const scheduled = connection.nextScheduledAt === undefined ? Number.NaN : Date.parse(connection.nextScheduledAt);
+  const when = Number.isFinite(scheduled) && scheduled > now.getTime()
+    ? `The next sync is due ${describeUntil(connection.nextScheduledAt, now)}.`
+    : "The first sync starts at the next collection run.";
+  return `The connection is active and scheduled collection is on. ${when} Documents it collects are checked first, then enter the normal Corvis review process.`;
 }
 
 export const TEST_FAILURE_CONSEQUENCE ="Scheduled collection stays off for this connection until a test passes. Nothing is collected in the meantime.";

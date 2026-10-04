@@ -56,7 +56,6 @@ export function plainAcquisitionReason(disposition: SourceActivityAcquisition["d
   if (disposition === "duplicate") return "Already acquired unchanged; no duplicate document was created.";
   if (disposition === "quarantined") return "Held by source-file security or validation controls and not released to processing.";
   const normalized = (rejectionReason ?? "").toLowerCase();
-  if (normalized.includes("scope")) return "The document is outside the folders confirmed for this connection, so it was not read.";
   if (normalized.includes("download")) return "The provider document could not be downloaded.";
   if (normalized.includes("validation")) return "The document did not pass source validation.";
   return "The document was rejected before entering the processing lifecycle.";

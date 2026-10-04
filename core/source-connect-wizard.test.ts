@@ -139,7 +139,8 @@ test("the chosen folders are stated in plain words, exactly as they will be stor
 
 test("the success step says when collection runs from the connection's own schedule", () => {
   const now = new Date("2026-10-02T12:00:00.000Z");
-  assert.match(describeConnectedCollection({ status: "active" }, now), /scheduled collection is on\. Due now: starts at the next collection run\. Documents/);
-  assert.match(describeConnectedCollection({ status: "active", nextScheduledAt: "2026-10-02T18:00:00.000Z" }, now), /Scheduled in 6 hours\./);
+  assert.match(describeConnectedCollection({ status: "active" }, now), /scheduled collection is on\. The first sync starts at the next collection run\. Documents/);
+  assert.match(describeConnectedCollection({ status: "active", nextScheduledAt: "2026-10-02T11:00:00.000Z" }, now), /The first sync starts at the next collection run/, "a schedule already reached is due now");
+  assert.match(describeConnectedCollection({ status: "active", nextScheduledAt: "2026-10-02T18:00:00.000Z" }, now), /The next sync is due in 6 hours\./);
   assert.doesNotMatch(describeConnectedCollection({ status: "active" }, now), /not switched on yet/);
 });

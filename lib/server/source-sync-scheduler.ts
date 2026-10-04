@@ -6,7 +6,7 @@ import { resolveConnectionCredential } from "./source-connector-governance.ts";
 import { runConnectionSync } from "./source-connector-sync.ts";
 import { sourceSyncIdentity, uploadIngestSink } from "./source-ingest-sink.ts";
 import { approvedSourceProvider } from "./source-providers.ts";
-import { emptySyncSummary, leaseExpiry, nextRunAt, type SourceSyncSummary } from "./source-sync-schedule.ts";
+import { emptySyncSummary, leaseExpiry, scheduleAfter, type SourceSyncSummary } from "./source-sync-schedule.ts";
 import type { ConnectorDriver, IngestSink, SecretStore } from "./source-connectors.ts";
 import { logEvent } from "./telemetry.ts";
 
@@ -37,10 +37,10 @@ function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgre
 
 /** Re-queues a connection after a fault the sync itself could not record, but only while this pass still holds its lease. */
 async function releaseAfterFault(db: PostgresSqlApi, tenantId: string, sourceConnectionId: string, lease: string, now: number): Promise<void> {
-  const retryAt = nextRunAt({ outcome: "failed", status: "active", consecutiveFailures: 1, now });
+  const retryAt = scheduleAfter("failed", 1, now);
   await db.execute(`update corvis_source.source_connection set next_scheduled_at=$3::timestamptz, updated_at=now()
     where tenant_id=$1::uuid and source_connection_id=$2::uuid and next_scheduled_at=$4::timestamptz`,
-  [tenantId, sourceConnectionId, retryAt?.toISOString() ?? null, lease]);
+  [tenantId, sourceConnectionId, retryAt.toISOString(), lease]);
 }
 
 async function syncDueConnection(

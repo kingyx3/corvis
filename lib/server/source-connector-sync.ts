@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { getServerConfig } from "./config.ts";
 import { bestEffortNotification, enqueueForRoleAudience, sourceAttentionAudienceRoles } from "./notifications.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
-import { nextRunAt } from "./source-sync-schedule.ts";
+import { nextRunAt, scheduleAfter } from "./source-sync-schedule.ts";
 import {
   acquisitionKey,
   isFailClosedErrorClass,
@@ -305,7 +305,7 @@ export async function runConnectionSync(
         consecutive_failures=0, last_error_class=null, last_success_at=now(), last_attempt_at=now(), updated_at=now(),
         next_scheduled_at=$3::timestamptz
       where tenant_id=$1 and source_connection_id=$2::uuid`,
-    [tenantId, sourceConnectionId, nextRunAt({ outcome: "succeeded", status: "active", consecutiveFailures: 0, now: now() })?.toISOString() ?? null]);
+    [tenantId, sourceConnectionId, scheduleAfter("succeeded", 0, now()).toISOString()]);
 
     return { runId, state: "succeeded", discoveredCount: counts.discovered, acceptedCount: counts.accepted, duplicateCount: counts.duplicate, rejectedCount: counts.rejected };
   } catch (error) {

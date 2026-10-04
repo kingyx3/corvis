@@ -196,5 +196,5 @@ test("a document the driver lists outside the confirmed scope is rejected in the
   await store.runDueSyncs({ ingest: new Sink(), identity: who, now: START, drivers: wandering });
   const [run] = store.activity(who)[0]!.runs;
   assert.deepEqual([run!.acceptedCount, run!.rejectedCount], [0, 1]);
-  assert.match(run!.acquisitions[0]!.reason, /outside the folders confirmed/);
+  assert.equal(run!.acquisitions[0]!.disposition, "rejected");
 });

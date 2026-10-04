@@ -5,7 +5,7 @@ import { DEMO_TOKEN_PROVIDER_KEY, DEMO_TOKENS } from "../../adapters/demo/source
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { demoSourceConnectionService } from "./source-connection-service.ts";
 import { ConnectorError } from "./source-connector-sync.ts";
-import { approvedSourceProvider } from "./source-providers.ts";
+import { approvedSourceProvider, registerApprovedSourceProvider, unregisterApprovedSourceProvider } from "./source-providers.ts";
 import { processDueSourceSyncs } from "./source-sync-scheduler.ts";
 import { SYNC_INTERVAL_MS, SYNC_LEASE_MS } from "./source-sync-schedule.ts";
 import type { ConnectorDriver, IngestInput, IngestResult, IngestSink, RemoteDocumentRef, SecretPayload, SecretStore } from "./source-connectors.ts";
@@ -265,6 +265,29 @@ test("an expired OAuth credential that cannot be renewed fails the run closed an
   assert.equal(summary.refused, 1);
   assert.equal(state.status, "reauthorization_required");
   assert.equal(db.runs[0]!.errorClass, "reauthorization");
+});
+
+test("an OAuth credential about to expire is refreshed through the approved provider before the driver sees it", async () => {
+  const seen: SecretPayload[] = [];
+  const oauthDriver = driver({ discover: async (credential) => { seen.push(credential); return []; } });
+  registerApprovedSourceProvider({
+    providerKey: "acme-portal", displayName: "Acme", summary: "Acme", demo: false, connect: { method: "oauth" },
+    scope: [{ label: "Reports", path: "/Reports" }], disclosure: { reads: [], behaviour: [], limits: [] }, connectorVersion: "1.0.0",
+    oauth: {
+      authorizationUrl: () => "https://provider.test/consent",
+      exchangeCode: async () => ({}),
+      refresh: async ({ refreshToken }) => ({ accessToken: `fresh-for-${refreshToken}`, expiresAt: START + 3_600_000 }),
+    },
+  }, oauthDriver);
+  try {
+    const { db, secrets, pass } = harness(new Map([["acme-portal", oauthDriver]]));
+    db.add({ id: "c1", credentialType: "oauth_authorization_code" });
+    secrets.payload = { accessToken: "old", refreshToken: "r1", expiresAt: START + 1000 };
+    assert.equal((await pass()).succeeded, 1);
+    assert.equal(seen[0]!.accessToken, "fresh-for-r1");
+  } finally {
+    unregisterApprovedSourceProvider("acme-portal");
+  }
 });
 
 test("a connection that stopped being active between the listing and the claim is skipped", async () => {

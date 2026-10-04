@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import { sourceConnectorSecretReference } from "./source-connector-runtime.ts";
-import type { SecretPayload, SecretStore, SecretWriteOptions } from "./source-connectors.ts";
+import type { SecretPayload, SecretStore } from "./source-connectors.ts";
 import { consumeOAuthAttempt, startOAuthAttempt, type SourceOAuthClient } from "./source-oauth.ts";
 
 class FakeSecrets implements SecretStore {
   readonly entries = new Map<string, SecretPayload>();
   private counter = 0;
-  async write(tenantId: string, providerKey: string, secret: SecretPayload, _options?: SecretWriteOptions): Promise<string> {
+  async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
     const reference = sourceConnectorSecretReference(tenantId, providerKey, ++this.counter);
     this.entries.set(reference, structuredClone(secret));
     return reference;
