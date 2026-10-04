@@ -48,22 +48,15 @@ jobs:
             exit 1
           fi
           if [[ ! "${LITELLM_BASE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]; then
-            echo "CORVIS_LITELLM_BASE_IMAGE must be an immutable LiteLLM image reference ending in @sha256:<64 hex>."
+            echo "CORVIS_LITELLM_BASE_IMAGE must be an immutable LiteLLM image reference ending in @sha256:<digest>."
             exit 1
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Mint short-lived release-governance token
-        id: release_governance
-        env:
-          RELEASE_GOVERNANCE_APP_ID: ${{ vars.RELEASE_GOVERNANCE_APP_ID }}
-          RELEASE_GOVERNANCE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_GOVERNANCE_APP_PRIVATE_KEY }}
-        run: node .github/scripts/mint-release-governance-token.mjs
-
       - name: Verify effective release governance
         env:
-          GITHUB_TOKEN: ${{ steps.release_governance.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
         run: node .github/scripts/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
