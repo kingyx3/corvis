@@ -245,7 +245,7 @@ export class PostgresPerformanceScorecardRepository {
   }
 
   private parameters(identity: RequestIdentity, fundIds: readonly string[], query: PerformanceScorecardQuery): { values: PostgresPrimitive[]; snapshotPredicate: string; periodPredicate: string } {
-    const values: PostgresPrimitive[] = [identity.tenantId, jsonList(fundIds), jsonList(identity.entitlements.documentIds ?? []), jsonList(SCORECARD_METRIC_CODES)];
+    const values: PostgresPrimitive[] = [identity.tenantId, jsonList(fundIds), jsonList(identity.entitlements.documentIds!), jsonList(SCORECARD_METRIC_CODES)];
     let snapshotPredicate = "";
     if (query.snapshotIds) {
       values.push(jsonList(query.snapshotIds));
