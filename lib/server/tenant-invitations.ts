@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
+import { emailDomainAllowed } from "./identity-records.ts";
 import { ConflictError } from "./platform.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
@@ -92,6 +93,10 @@ export async function createTenantInvitation(
     if (!isOperationsActor && identity.tenantId !== command.tenantId) throw new AuthorizationError("admin:tenant_manage");
     if (!isOperationsActor && identity.isTenantAdmin !== true) throw new AuthorizationError("admin:tenant_manage");
   }
+
+  // F7b (#335): off unless the tenant has a verified domain. Only a NEW invitation is checked: an accepted or pending
+  // invitation, and every existing sign-in, is untouched, so removing a domain never locks anyone out.
+  if (!await emailDomainAllowed(db, command.tenantId, command.email)) throw new TenantInvitationError("email_domain_not_verified", 422);
 
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");

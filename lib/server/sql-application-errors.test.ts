@@ -140,6 +140,27 @@ test("session-policy refusals classify to stable codes: 400 for input, 403 for w
   }
 });
 
+test("identity-record refusals classify to stable codes: 400 for input, 403 for who may act, 404 for what is missing, 409 for a taken domain or a stale version", () => {
+  const expected: Record<string, [string, number]> = {
+    "identity records require an active operations admin": ["operations_admin_required", 403],
+    "identity record change needs a stated reason": ["invalid_reason", 400],
+    "identity record tenant not found": ["tenant_not_found", 404],
+    "verified domain is invalid": ["invalid_domain", 400],
+    "verified domain belongs to another tenant": ["verified_domain_taken", 409],
+    "verified domain limit reached": ["verified_domain_limit_reached", 409],
+    "verified domain not found": ["verified_domain_not_found", 404],
+    "identity provider record is invalid": ["invalid_request", 400],
+    "identity provider version conflict": ["identity_provider_version_conflict", 409],
+    "identity provider binding requires an active oidc record": ["invalid_binding", 400],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});
+
 test("scheduled-export refusals classify to stable codes, 400 for a scope that cannot be scheduled and 409 for what the schedule cannot accept", () => {
   const expected: Record<string, [string, number]> = {
     "idempotency key reused with different export schedule": ["idempotency_key_reused", 409],

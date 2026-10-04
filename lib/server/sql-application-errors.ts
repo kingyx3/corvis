@@ -146,6 +146,17 @@ export const SQL_APPLICATION_ERRORS = [
   "service account entitlement already granted",
   "service account entitlement limit reached",
   "service account entitlement not found",
+  // corvis_control.set_tenant_verified_domain / remove_tenant_verified_domain / set_tenant_identity_provider (095)
+  "identity records require an active operations admin",
+  "identity record change needs a stated reason",
+  "identity record tenant not found",
+  "verified domain is invalid",
+  "verified domain belongs to another tenant",
+  "verified domain limit reached",
+  "verified domain not found",
+  "identity provider record is invalid",
+  "identity provider version conflict",
+  "identity provider binding requires an active oidc record",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -287,6 +298,17 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account entitlement already granted": { code: "service_account_entitlement_exists", status: 409 },
   "service account entitlement limit reached": { code: "service_account_entitlement_limit_reached", status: 409 },
   "service account entitlement not found": { code: "service_account_entitlement_not_found", status: 404 },
+  // Verified domains and the identity-provider record (F7b/F7e): Corvis operations only, one tenant per domain, a stale version.
+  "identity records require an active operations admin": { code: "operations_admin_required", status: 403 },
+  "identity record change needs a stated reason": { code: "invalid_reason", status: 400 },
+  "identity record tenant not found": { code: "tenant_not_found", status: 404 },
+  "verified domain is invalid": { code: "invalid_domain", status: 400 },
+  "verified domain belongs to another tenant": { code: "verified_domain_taken", status: 409 },
+  "verified domain limit reached": { code: "verified_domain_limit_reached", status: 409 },
+  "verified domain not found": { code: "verified_domain_not_found", status: 404 },
+  "identity provider record is invalid": { code: "invalid_request", status: 400 },
+  "identity provider version conflict": { code: "identity_provider_version_conflict", status: 409 },
+  "identity provider binding requires an active oidc record": { code: "invalid_binding", status: 400 },
 };
 
 /**

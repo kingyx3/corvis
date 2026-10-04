@@ -106,9 +106,10 @@ test("configureScim still rejects non-tenant-admins and unknown workspaces befor
   assert.deepEqual(db.committed.filter((call) => call.sql.includes("insert")), []);
 });
 
-function lifecycleDb(): TransactionalFakeDb {
+function lifecycleDb(domainAllowed = true): TransactionalFakeDb {
   const db = new TransactionalFakeDb();
   db.queryHandler = (sql, parameters) => {
+    if (sql.includes("email_domain_allowed")) return [{ allowed: domainAllowed }];
     if (sql.includes("apply_identity_lifecycle")) return [{ result: { eventKey: String(parameters[1]), operation: parameters[5], subject: String(parameters[7]), userId: String(parameters[8]), activeMemberships: 1, revokedMemberships: 0, expiredEntitlements: 0, disabledSubjects: 0, disabledServiceGrants: 0 } }];
     if (sql.includes("insert into corvis_control.tenant_scim_identity")) return [{ scim_user_id: String(parameters[1]), external_id: String(parameters[2]), user_name: String(parameters[6]), active: parameters[7] }];
     return [];
@@ -124,6 +125,19 @@ test("createScimUser provisions the identity and the SCIM row in one transaction
   assert.equal(created.userName, "new.user@example.com");
   assert.equal(db.committed.filter((call) => call.sql.includes("apply_identity_lifecycle")).length, 1);
   assert.equal(db.committed.filter((call) => call.sql.includes("insert into corvis_control.tenant_scim_identity")).length, 1);
+});
+
+test("F7b: SCIM user creation is refused, before anything is provisioned, when the tenant verifies domains and the userName is not on one", async () => {
+  const db = lifecycleDb(false);
+  const seen: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
+  const answer = db.queryHandler;
+  db.queryHandler = (sql, parameters) => { seen.push({ sql, parameters }); return answer(sql, parameters); };
+  await assert.rejects(createScimUser(config, newUser, "https://x/scim/v2/Users", "corr-1", db),
+    (error) => error instanceof ScimError && error.status === 400 && error.scimType === "invalidValue");
+  const check = seen.find((call) => call.sql.includes("email_domain_allowed"));
+  assert.deepEqual(check?.parameters, [config.tenantId, "new.user@example.com"], "the normalised userName is what is checked, for the SCIM tenant");
+  assert.equal(seen.filter((call) => call.sql.includes("apply_identity_lifecycle") || call.sql.includes("insert into corvis_control.tenant_scim_identity")).length, 0);
+  assert.deepEqual(db.committed, [], "nothing is committed");
 });
 
 test("an inactive SCIM user is provisioned and disabled inside the same transaction", async () => {
