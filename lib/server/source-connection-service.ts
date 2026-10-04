@@ -5,6 +5,7 @@ import { demoTestOutcome } from "../../adapters/demo/source-providers.ts";
 import { getServerConfig } from "./config.ts";
 import { auditSourceConnectionEvent, createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
+import { uploadIngestSink } from "./source-ingest-sink.ts";
 import { approvedSourceProvider, credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
 import { ConflictError, platform } from "./platform.ts";
 import { listSourceActivity, type SourceActivityConnection } from "./source-lifecycle.ts";
@@ -145,12 +146,20 @@ export const postgresSourceConnectionService: SourceConnectionService = {
   },
 };
 
+/**
+ * Demo mode has no scheduler process, so a workspace's due demo connections are collected when its connections or run
+ * history are read: the same loop the delivery tick runs in production, over the in-memory store (demo mode only).
+ */
+async function collectDemoDue(identity: RequestIdentity): Promise<void> {
+  await demoSourceConnectionStore().runDueSyncs({ ingest: uploadIngestSink(), identity });
+}
+
 export const demoSourceConnectionService: SourceConnectionService = {
-  async list(identity) { return demoSourceConnectionStore().list(identity); },
+  async list(identity) { await collectDemoDue(identity); return demoSourceConnectionStore().list(identity); },
   async get(identity, sourceConnectionId) { return demoSourceConnectionStore().get(identity, sourceConnectionId); },
   async transition(identity, sourceConnectionId, action) { return demoSourceConnectionStore().transition(identity, sourceConnectionId, action); },
   async reauthorize(identity, sourceConnectionId) { return demoSourceConnectionStore().reauthorize(identity, sourceConnectionId); },
-  async activity(identity) { return demoSourceConnectionStore().activity(identity); },
+  async activity(identity) { await collectDemoDue(identity); return demoSourceConnectionStore().activity(identity); },
   async connect(identity, { provider, connectionLabel, secret }) {
     await demoSourceConnectionService.assertNotConnected(identity, provider.providerKey);
     const store = demoSourceConnectionStore();
