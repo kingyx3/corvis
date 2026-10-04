@@ -624,3 +624,9 @@ a.text-button { text-decoration: none; }
 .connect-source-provider-name { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-strong); }
 .connect-source-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-sunken); color: var(--text-body); }
 .connect-source-confirm input { flex: none; margin-top: 3px; }
+.connect-source-scope { margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); display: grid; gap: 8px; }
+.connect-source-scope legend { padding: 0 6px; font-weight: 600; color: var(--text-strong); }
+.connect-source-scope-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.connect-source-scope-option { display: flex; align-items: flex-start; gap: 10px; color: var(--text-body); }
+.connect-source-scope-option input { flex: none; margin-top: 3px; }
+.connect-source-scope-summary { margin: 0; color: var(--text-strong); }

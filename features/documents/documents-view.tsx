@@ -79,6 +79,7 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload, canManageSo
   const applyView = (v: ViewConfiguration) => { setQuery(String(v.query ?? "")); setPeriod(String(v.period ?? "all")); setStatus(String(v.status ?? "all")); setSortMode(String(v.sortMode ?? "name")); setVisibleColumns(v.columns as string[] ?? VIEW_COLUMNS.documents); };
   const attention = sourceActivity.filter((connection) => connection.needsAttention);
   const runHistoryIds = useMemo(() => new Set(sourceActivity.map((connection) => connection.sourceConnectionId)), [sourceActivity]);
+  const lastRuns = useMemo(() => new Map(sourceActivity.flatMap((connection) => connection.runs[0] ? [[connection.sourceConnectionId, connection.runs[0]] as const] : [])), [sourceActivity]);
   // Lets a connection card jump to its row in the run history below; the row takes focus so the move is announced.
   const openRunHistory = (sourceConnectionId: string) => {
     const row = document.getElementById(`source-run-history-${sourceConnectionId}`);
@@ -110,7 +111,7 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload, canManageSo
       })}
     </tbody></table></div>
 
-    {canManageSources && <SourceConnectionsSection runHistoryAvailable={runHistoryIds} onOpenRunHistory={openRunHistory} onChanged={refreshSourceActivity}/>}
+    {canManageSources && <SourceConnectionsSection runHistoryAvailable={runHistoryIds} lastRuns={lastRuns} onOpenRunHistory={openRunHistory} onChanged={refreshSourceActivity}/>}
 
     {sourceActivity.length > 0 && <section aria-labelledby="source-activity-heading"><section className="page-heading"><div><p className="eyebrow">Connector audit</p><h2 id="source-activity-heading">Source run history</h2><p className="lede">Discovery outcomes use the same document lifecycle as uploads; rejected and duplicate acquisitions remain visible as audit evidence.</p></div></section>
       <div className="table-card" role="region" aria-label="Source connector run history"><table className="data-table"><thead><tr><th>Connection</th><th>Status</th><th>Runs</th><th>Latest run</th></tr></thead><tbody>{sourceActivity.map((connection) => {

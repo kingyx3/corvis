@@ -72,3 +72,22 @@ test("an OAuth start is either a new connection (the connect body) or the renewa
   assert.throws(() => parseOAuthStartRequest({ sourceConnectionId: "not-a-uuid" }), refused("connection_not_found"), "an id that cannot name a connection is a not-found, never a database error");
   assert.throws(() => parseOAuthStartRequest({ providerKey: DEMO_TOKEN_PROVIDER_KEY, connectionLabel: "X", scopeConfirmed: true }), refused("unregistered_provider"));
 });
+
+test("a connect request may narrow the provider's folders, checked against the registry, and the choice is carried for an OAuth redirect", () => {
+  process.env.CORVIS_DEMO_MODE = "true";
+  const body = (overrides: Record<string, unknown> = {}) => ({ providerKey: DEMO_TOKEN_PROVIDER_KEY, connectionLabel: "Our portal", scopeConfirmed: true, ...overrides });
+
+  const whole = parseConnectRequest(body(), "credential").parsed;
+  assert.deepEqual(whole.scope, [{ label: "Quarterly reports", path: "/Fund III/Quarterly" }, { label: "Capital account statements", path: "/Fund III/Capital accounts" }]);
+  assert.equal(whole.scopeIds, undefined);
+
+  const narrowed = parseConnectRequest(body({ selectedScopeIds: ["capital-accounts"] }), "credential").parsed;
+  assert.deepEqual(narrowed.scope, [{ label: "Capital account statements", path: "/Fund III/Capital accounts" }]);
+  assert.deepEqual(narrowed.scopeIds, ["capital-accounts"]);
+
+  for (const bad of [[], ["nope"], ["capital-accounts", "capital-accounts"], "capital-accounts", [3]]) {
+    assert.throws(() => parseConnectRequest(body({ selectedScopeIds: bad }), "credential"), refused("invalid_scope_selection"));
+  }
+  const started = parseOAuthStartRequest({ providerKey: DEMO_OAUTH_PROVIDER_KEY, connectionLabel: "Room", scopeConfirmed: true, selectedScopeIds: ["side-letters"] });
+  assert.deepEqual(started.kind === "connect" && started.parsed.scopeIds, ["side-letters"]);
+});

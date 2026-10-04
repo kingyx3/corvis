@@ -19,6 +19,9 @@ import {
   credentialTypeLabel,
   describeAge,
   describeConnection,
+  describeNextSync,
+  describeRun,
+  describeUntil,
   isOAuthCredential,
   isStale,
   reauthorizeOutcome,
@@ -117,7 +120,9 @@ test("a healthy connection is collecting, not stale, with an honest next-sync st
   assert.deepEqual(health.pills, ["Healthy"]);
   assert.equal(health.stale, false);
   assert.equal(health.headline, "Collecting normally.");
-  assert.equal(health.nextSync, "Scheduled sync is not enabled yet");
+  assert.equal(health.nextSync, "Due now: starts at the next collection run", "no schedule yet means due at the next collection run");
+  assert.equal(health.nextSyncAt, undefined);
+  assert.equal(health.lastRun, undefined);
   assert.deepEqual(health.lastSuccess, { at: hoursAgo(3), relative: "3 hours ago" });
   assert.deepEqual(health.lastAttempt, { at: hoursAgo(3), relative: "3 hours ago", failed: false });
   assert.equal(health.action.kind, "none");
@@ -365,4 +370,53 @@ test("run-history vocabulary covers the stored values and flags unknown ones", (
   assert.equal(acquisitionDispositionLabel("mystery"), "Unrecognised outcome");
   assert.equal(runErrorSummary("rate_limit"), CONNECTOR_ERROR_COPY.rate_limit.summary);
   assert.match(runErrorSummary("mystery"), /does not recognise/);
+});
+
+test("time until the next sync is stated in plain units and never in the past", () => {
+  const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
+  assert.equal(describeUntil(undefined, NOW), "unknown");
+  assert.equal(describeUntil("not a date", NOW), "unknown");
+  assert.equal(describeUntil(at(-5_000), NOW), "now");
+  assert.equal(describeUntil(at(30_000), NOW), "in less than a minute");
+  assert.equal(describeUntil(at(5 * 60_000), NOW), "in 5 minutes");
+  assert.equal(describeUntil(at(3_600_000), NOW), "in 1 hour");
+  assert.equal(describeUntil(at(6 * 3_600_000), NOW), "in 6 hours");
+  assert.equal(describeUntil(at(72 * 3_600_000), NOW), "in 3 days");
+});
+
+test("an active connection's next sync comes from its stored schedule; other statuses say why nothing is scheduled", () => {
+  const future = new Date(NOW.getTime() + 6 * 3_600_000).toISOString();
+  const healthy = describeConnection(record({ nextScheduledAt: future }), NOW);
+  assert.equal(healthy.nextSync, "Scheduled in 6 hours");
+  assert.equal(healthy.nextSyncAt, future);
+  assert.equal(describeConnection(record({ nextScheduledAt: hoursAgo(1) }), NOW).nextSync, "Due now: starts at the next collection run");
+  assert.equal(describeConnection(record({ nextScheduledAt: hoursAgo(1) }), NOW).nextSyncAt, undefined);
+  assert.equal(describeConnection(record({ nextScheduledAt: "garbage" }), NOW).nextSync, "Due now: starts at the next collection run");
+  assert.equal(describeNextSync("active", future, NOW, true), "Syncing now");
+  const syncing = describeConnection(record({ nextScheduledAt: future, lastRun: { state: "running", startedAt: hoursAgo(0.1), discoveredCount: 0, acceptedCount: 0, duplicateCount: 0, rejectedCount: 0 } }), NOW);
+  assert.equal(syncing.nextSync, "Syncing now");
+  assert.equal(syncing.nextSyncAt, undefined, "a lease is not a schedule");
+  assert.match(describeNextSync("paused", future, NOW), /resume/);
+  assert.equal(describeNextSync(undefined, future, NOW), "Not scheduled");
+  assert.equal(describeConnection(record({ status: "paused", nextScheduledAt: future }), NOW).nextSyncAt, undefined);
+});
+
+test("the last run is described by its outcome, counts or plain-language reason", () => {
+  const base = { startedAt: hoursAgo(2), finishedAt: hoursAgo(1.9), discoveredCount: 0, acceptedCount: 0, duplicateCount: 0, rejectedCount: 0 };
+  const ok = describeRun({ ...base, state: "succeeded", discoveredCount: 4, acceptedCount: 2, duplicateCount: 1, rejectedCount: 1 }, NOW);
+  assert.deepEqual(ok, { at: base.finishedAt, relative: "1 hour ago", label: "Succeeded", tone: "success", detail: "4 found: 2 new, 1 already collected, 1 not accepted." });
+  assert.equal(describeRun({ ...base, state: "succeeded" }, NOW).detail, "No documents were found in the confirmed scope.");
+  const running = describeRun({ startedAt: hoursAgo(0.01), discoveredCount: 0, acceptedCount: 0, duplicateCount: 0, rejectedCount: 0, state: "running" }, NOW);
+  assert.equal(running.at, hoursAgo(0.01), "a run that has not finished is dated by its start");
+  assert.deepEqual([running.label, running.tone, running.detail], ["Running", "neutral", "Collecting now."]);
+  const refused = describeRun({ ...base, state: "refused", errorClass: "auth" }, NOW);
+  assert.deepEqual([refused.label, refused.tone, refused.detail], ["Stopped before collecting", "error", CONNECTOR_ERROR_COPY.auth.summary]);
+  assert.equal(describeRun({ ...base, state: "refused" }, NOW).detail, "Nothing was collected because the connection was not active.");
+  assert.equal(describeRun({ ...base, state: "failed" }, NOW).detail, "The run ended before it finished.");
+  assert.equal(describeRun({ ...base, state: "retryable", errorClass: "network" }, NOW).detail, CONNECTOR_ERROR_COPY.network.summary);
+  assert.equal(describeRun({ ...base, state: "dead_letter", errorClass: "mystery" }, NOW).detail, "The run failed for a reason this page does not recognise.");
+  const unknown = describeRun({ ...base, state: "weird" }, NOW);
+  assert.deepEqual([unknown.label, unknown.tone, unknown.detail], ["Unrecognised state", "neutral", "This run's outcome is not recognised."]);
+  const card = describeConnection(record({ lastRun: { ...base, state: "succeeded", discoveredCount: 1, acceptedCount: 1 } }), NOW);
+  assert.equal(card.lastRun?.label, "Succeeded");
 });

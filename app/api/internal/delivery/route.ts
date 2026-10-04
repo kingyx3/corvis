@@ -10,6 +10,7 @@ import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processin
 import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
 import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
 import { sweepExpiredSourceSecrets } from "@/lib/server/source-connector-runtime";
+import { processDueSourceSyncs } from "@/lib/server/source-sync-scheduler";
 import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
 import { logEvent } from "@/lib/server/telemetry";
 import { releaseScannedUploads } from "@/lib/server/upload-release";
@@ -58,6 +59,8 @@ export async function POST(request:Request){
       sessionActivitySweep:()=>sweepTenantSessionActivity(),
       // B1d: pending OAuth attempts are short-lived secrets; a secret store with no native expiry is swept here (Secret Manager expires its own).
       sourceSecretSweep:()=>sweepExpiredSourceSecrets(),
+      // B1c: active source connections that are due are collected from (through the upload pipeline), each under a lease so no two workers run one connection.
+      sourceSync:()=>processDueSourceSyncs(),
       emailDigests:()=>processEmailDigests(),
       emailOutbox:()=>processEmailOutbox(),
     });
@@ -68,6 +71,9 @@ export async function POST(request:Request){
     // Likewise an artifact the sweep could not delete: the tick answers 500 so it is retried and alerted rather than silently kept.
     const exportSweep=results.tenantExportSweep as {errors?:unknown}|null|undefined;
     if(typeof exportSweep?.errors==="number"&&exportSweep.errors>0&&!failed.includes("tenantExportSweep")) failed.push("tenantExportSweep");
+    // A connection whose pass hit an unexpected fault was queued for a retry with a backoff; the tick still answers 500 so it is alerted. A run the provider failed is a recorded outcome, not a tick failure.
+    const sourceSync=results.sourceSync as {errors?:unknown}|null|undefined;
+    if(typeof sourceSync?.errors==="number"&&sourceSync.errors>0&&!failed.includes("sourceSync")) failed.push("sourceSync");
     for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
     // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
     return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});

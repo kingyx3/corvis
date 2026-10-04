@@ -1,8 +1,8 @@
-import type { SourceProviderDescriptor } from "../../core/source-connect-wizard.ts";
+import { selectableScope, type SourceProviderDescriptor } from "../../core/source-connect-wizard.ts";
 import { DEMO_OAUTH_RENEWAL_ALIASES, DEMO_SOURCE_PROVIDERS } from "../../adapters/demo/source-providers.ts";
 import { getServerConfig } from "./config.ts";
 import { sourceConnectorDrivers } from "./source-connector-runtime.ts";
-import type { ConnectorDriver, CredentialType } from "./source-connectors.ts";
+import { ConnectorGovernanceError, type ConnectorDriver, type CredentialType, type SourceScope } from "./source-connectors.ts";
 import type { SourceOAuthClient } from "./source-oauth.ts";
 
 /**
@@ -71,10 +71,35 @@ export function providerDescriptor(provider: ApprovedSourceProvider): SourceProv
     summary: provider.summary,
     demo: provider.demo,
     connect: provider.connect.method === "oauth" ? { method: "oauth" } : { method: "credential", credentialType: provider.connect.credentialType },
-    scope: provider.scope.map((item) => item.path ? { label: item.label, path: item.path } : { label: item.label }),
+    scope: provider.scope.map((item) => ({ label: item.label, ...(item.path ? { path: item.path } : {}), ...(item.id ? { id: item.id } : {}) })),
     disclosure: { reads: [...provider.disclosure.reads], behaviour: [...provider.disclosure.behaviour], limits: [...provider.disclosure.limits] },
     ...(provider.credentialHint ? { credentialHint: provider.credentialHint } : {}),
   };
+}
+
+/** A scope item as it is stored with a connection: what is read, never the provider's internal id. */
+function storedScope(item: { label: string; path?: string }): SourceScope {
+  return item.path ? { label: item.label, path: item.path } : { label: item.label };
+}
+
+/**
+ * The scope a new connection is created with, from what the browser asked for, checked against the provider's own
+ * declaration (never trusted as sent). No selection means everything the provider declares. A selection must be a
+ * non-empty list of distinct ids the provider declared as selectable, so a provider that offers no choice refuses any
+ * selection, and an id the provider never declared cannot widen (or invent) the scope. The result keeps the provider's
+ * order and is what is stored with the connection and what every later sync is limited to.
+ */
+export function resolveScopeSelection(provider: ApprovedSourceProvider, selection: unknown): SourceScope[] {
+  if (selection === undefined) return provider.scope.map(storedScope);
+  const selectable = selectableScope(provider.scope);
+  if (!selectable || !Array.isArray(selection) || selection.length === 0 || selection.some((id) => typeof id !== "string")) {
+    throw new ConnectorGovernanceError("invalid_scope_selection");
+  }
+  const chosen = new Set<string>(selection);
+  if (chosen.size !== selection.length || [...chosen].some((id) => !selectable.some((item) => item.id === id))) {
+    throw new ConnectorGovernanceError("invalid_scope_selection");
+  }
+  return selectable.filter((item) => chosen.has(item.id!)).map(storedScope);
 }
 
 export function credentialTypeOf(provider: ApprovedSourceProvider): CredentialType {

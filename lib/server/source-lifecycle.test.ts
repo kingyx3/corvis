@@ -101,6 +101,7 @@ test("plain acquisition reasons never echo arbitrary provider errors", () => {
   assert.equal(plainAcquisitionReason("duplicate", "token=super-secret"), "Already acquired unchanged; no duplicate document was created.");
   assert.equal(plainAcquisitionReason("rejected", "token=super-secret"), "The document was rejected before entering the processing lifecycle.");
   assert.equal(plainAcquisitionReason("rejected", "download timeout: token=super-secret"), "The provider document could not be downloaded.");
+  assert.equal(plainAcquisitionReason("rejected", "outside_confirmed_scope"), "The document is outside the folders confirmed for this connection, so it was not read.");
 });
 
 test("migration 060 preserves run-level duplicate audit evidence without weakening ingestion idempotency", async () => {
