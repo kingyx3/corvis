@@ -99,6 +99,15 @@ test("database factory fails closed for missing and unsupported bindings", () =>
   assert.throws(() => postgres("http://postgres.example.test/sql"), /Unsupported PostgreSQL transport/);
 });
 
+test("database transport selection treats URI schemes case-insensitively", () => {
+  const native = postgresRuntime("PostgreSQL://corvis:secret@localhost:5432/postgres?sslmode=disable");
+  assert.equal(native.capabilities.nativeTransactions, true);
+  assert.equal(native.capabilities.logicalReplication, true);
+
+  const compatibility = postgres("HTTPS://postgres.example.test/sql");
+  assert.ok(compatibility instanceof PostgresHttpSqlApi);
+});
+
 test("compatibility HTTP runtime advertises only capabilities it can safely provide", () => {
   const runtime = postgresRuntime("https://postgres.example.test/sql", "supabase");
   assert.equal(runtime.provider, "supabase");
