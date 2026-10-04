@@ -2,18 +2,21 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../core/enterprise.ts";
 import {
   TENANT_EXPORT_APPROVAL_WINDOW_HOURS,
+  TENANT_EXPORT_ESTIMATED_ROW_BYTES,
   tenantExportActions,
+  tenantExportProgressPercent,
   tenantExportStatus,
   type TenantExportArtifact,
   type TenantExportDownload,
   type TenantExportEvent,
   type TenantExportPage,
+  type TenantExportProgress,
   type TenantExportRequest,
   type TenantExportState,
 } from "../../core/tenant-export.ts";
 import { toCsv } from "../../lib/csv.ts";
 import { DataGovernanceError } from "../../lib/server/data-governance.ts";
-import { assembleTenantExportBundle } from "../../lib/server/tenant-export-bundle.ts";
+import { assembleTenantExportBundle, publicTenantExportManifest } from "../../lib/server/tenant-export-bundle.ts";
 import {
   TENANT_EXPORT_LINK_MINUTES,
   decodeKeysetCursor,
@@ -33,8 +36,10 @@ import { documents, observations } from "./catalog.ts";
  * export that was built and can be downloaded, and a rejected one), so a test that approves or rejects under its own
  * demo tenant header never disturbs another. The rules are the Postgres rules: only a different Organization Admin may
  * approve or reject, only the requester may withdraw, one request is open at a time, and an approval window lapses.
- * The one difference is the build: demo mode builds the archive at the moment of approval, from the demo catalog,
- * with the same assembler (and so the same manifest and checksums) as the production worker.
+ * The one difference is the build: demo mode builds the archive from the demo catalog, with the same manifest and
+ * checksums as the production worker. It takes `buildDurationMs` to finish (none by default, so a unit test sees an
+ * approved export ready at once; the browser composition gives it a few seconds), and while it runs the request shows the
+ * same size estimate and progress the worker reports.
  */
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -47,6 +52,12 @@ const DEMO_FUNDS = ["fund-advent-viii", "fund-eqt-ix", "fund-hg-genesis-9"];
 const OBSERVATION_COLUMNS = ["observation_id", "fund_id", "company_id", "holding_id", "metric_code", "value", "period", "review_state", "source"];
 const AUDIT_COLUMNS = ["occurred_at", "actor", "action", "target_type", "target_id", "outcome"];
 const INVENTORY_COLUMNS = ["document_id", "display_name", "document_type", "status", "uploaded"];
+/** The demo organization holds source-file access for this one redistributable document, so the other is listed without its file (and counted). */
+const SOURCE_ACCESS_DOCUMENTS = new Set(["doc-adv-viii-q2"]);
+/** The size the demo's one source file claims to have, for the progress estimate (the placeholder inside the archive is a few bytes). */
+const DEMO_SOURCE_FILE_BYTES = 86_400_000;
+/** How long the browser composition shows an export as being built. */
+export const DEMO_BUILD_DURATION_MS = 3000;
 
 type Identity = { authMethod: string; subject: string };
 type StoredArtifact = TenantExportArtifact & { bytes: Buffer };
@@ -63,6 +74,8 @@ type Entry = {
   cancelledAt: string | null;
   statusChangedAt: string;
   artifact: StoredArtifact | null;
+  /** While the export is building: when it started and when it will be done. */
+  build: { startedAt: number; endsAt: number } | null;
   history: TenantExportEvent[];
 };
 type Grant = { requestId: string; subject: string; expiresAt: number; consumed: boolean };
@@ -74,8 +87,9 @@ export class DemoTenantExportStore implements TenantExportBackend {
   readonly demo = true;
   private readonly tenants = new Map<string, Tenant>();
   private readonly now: () => Date;
+  private readonly buildDurationMs: number;
 
-  constructor(now: () => Date = () => new Date()) { this.now = now; }
+  constructor(now: () => Date = () => new Date(), buildDurationMs = 0) { this.now = now; this.buildDurationMs = buildDurationMs; }
 
   private at(offsetHours = 0): string { return new Date(this.now().getTime() + offsetHours * HOUR_MS).toISOString(); }
 
@@ -86,7 +100,16 @@ export class DemoTenantExportStore implements TenantExportBackend {
       this.tenants.set(identity.tenantId, tenant);
       this.seed(tenant, identity.tenantId);
     }
+    this.settle(identity.tenantId, tenant);
     return tenant;
+  }
+
+  /** A build whose time has come is finished the next time anyone looks (the demo has no worker). */
+  private settle(tenantId: string, tenant: Tenant): void {
+    const now = this.now().getTime();
+    for (const entry of tenant.entries) {
+      if (entry.state === "building" && entry.build && entry.build.endsAt <= now) this.finishBuild(tenantId, entry, entry.decidedBy!, 0);
+    }
   }
 
   private entry(requestedBy: string, hoursAgo: number, reason: string): Entry {
@@ -94,7 +117,7 @@ export class DemoTenantExportStore implements TenantExportBackend {
     return {
       requestId: randomUUID(), state: "pending_approval", reason, requestedBy: { authMethod: "demo", subject: requestedBy }, requestedAt,
       approvalExpiresAt: this.at(TENANT_EXPORT_APPROVAL_WINDOW_HOURS - hoursAgo), decidedBy: null, decidedAt: null, decisionNote: null,
-      cancelledAt: null, statusChangedAt: requestedAt, artifact: null,
+      cancelledAt: null, statusChangedAt: requestedAt, artifact: null, build: null,
       history: [{ eventType: "requested", fromState: null, toState: "pending_approval", actor: requestedBy, note: null, at: requestedAt }],
     };
   }
@@ -113,24 +136,51 @@ export class DemoTenantExportStore implements TenantExportBackend {
     rejected.decidedBy = COLLEAGUE; rejected.decidedAt = rejected.statusChangedAt; rejected.decisionNote = "Please scope this to the audit team's own request first.";
 
     const built = this.entry(EARLIER_REQUESTER, 6, "Quarterly records review with our compliance team.");
-    this.approveAndBuild(tenantId, built, COLLEAGUE, null, -5);
+    this.approveAndBuild(tenantId, built, COLLEAGUE, null, -5, 0);
 
     const pending = this.entry(COLLEAGUE, 2, "Contract renewal due diligence: we need a full copy of our records.");
     tenant.entries.push(rejected, built, pending);
   }
 
-  private approveAndBuild(tenantId: string, entry: Entry, approver: string, note: string | null, offsetHours = 0): void {
+  private approveAndBuild(tenantId: string, entry: Entry, approver: string, note: string | null, offsetHours = 0, durationMs = this.buildDurationMs): void {
     this.move(entry, "approved", "approved", approver, note, offsetHours);
     entry.decidedBy = approver; entry.decidedAt = entry.statusChangedAt; entry.decisionNote = note;
     this.move(entry, "build_started", "building", SYSTEM, null, offsetHours);
+    const startedAt = this.now().getTime() + offsetHours * HOUR_MS;
+    entry.build = { startedAt, endsAt: startedAt + durationMs };
+    if (durationMs === 0) this.finishBuild(tenantId, entry, approver, offsetHours);
+  }
+
+  private finishBuild(tenantId: string, entry: Entry, approver: string, offsetHours: number): void {
+    entry.build = null;
     this.move(entry, "build_completed", "complete", SYSTEM, null, offsetHours);
     entry.artifact = this.buildArtifact(tenantId, entry, approver, offsetHours);
   }
 
+  /** What the worker would report mid-build, from how far through its time the build is. */
+  private progress(entry: Entry): TenantExportProgress | null {
+    if (entry.state !== "building" || !entry.build) return null;
+    const { startedAt, endsAt } = entry.build;
+    const fraction = Math.min(1, Math.max(0, (this.now().getTime() - startedAt) / (endsAt - startedAt)));
+    const included = observations.filter((observation) => observation.fundId !== undefined && REDISTRIBUTABLE_FUNDS.has(observation.fundId)).length;
+    const estimatedRows = included + entry.history.length + this.includedDocuments().length;
+    const estimatedBytes = estimatedRows * TENANT_EXPORT_ESTIMATED_ROW_BYTES + DEMO_SOURCE_FILE_BYTES;
+    const bytesWritten = Math.floor(estimatedBytes * fraction);
+    return {
+      phase: fraction < 0.3 ? "data" : fraction < 0.95 ? "documents" : "finalizing",
+      estimatedBytes, bytesWritten, estimatedRows, rowsWritten: Math.min(estimatedRows, Math.floor(estimatedRows * fraction * 3)),
+      estimatedDocuments: SOURCE_ACCESS_DOCUMENTS.size, documentsWritten: fraction >= 0.9 ? SOURCE_ACCESS_DOCUMENTS.size : 0,
+      percent: tenantExportProgressPercent(bytesWritten, estimatedBytes), updatedAt: this.now().toISOString(),
+    };
+  }
+
+  private includedDocuments() { return documents.filter((document) => document.fund === "Advent International GPE VIII" || document.fund === "EQT IX"); }
+
   /** Builds the archive exactly as the production worker does, from the demo catalog and this tenant's own history. */
   private buildArtifact(tenantId: string, entry: Entry, approver: string, completedOffsetHours: number): StoredArtifact {
     const included = observations.filter((observation) => observation.fundId !== undefined && REDISTRIBUTABLE_FUNDS.has(observation.fundId));
-    const includedDocuments = documents.filter((document) => document.fund === "Advent International GPE VIII" || document.fund === "EQT IX");
+    const includedDocuments = this.includedDocuments();
+    const sourceFiles = includedDocuments.filter((document) => SOURCE_ACCESS_DOCUMENTS.has(document.id));
     const known = this.tenants.get(tenantId)?.entries ?? [];
     const auditEvents = (known.includes(entry) ? known : [...known, entry]).flatMap((candidate) => candidate.history.map((event) => ({ event, requestId: candidate.requestId })));
     const generatedAt = this.at(completedOffsetHours);
@@ -143,30 +193,36 @@ export class DemoTenantExportStore implements TenantExportBackend {
       approvedBy: approver,
       files: [
         {
-          path: "published-data/observations.csv", description: "Approved observations in published snapshots", rowCount: included.length,
+          path: "published-data/observations-0001.csv", description: "Approved observations in published snapshots", rowCount: included.length, dataset: "observations",
           bytes: csv(OBSERVATION_COLUMNS, included.map((o) => [o.id, o.fundId, o.companyId, o.holdingId, o.metric, o.value, o.period, o.state, o.source])),
         },
         {
-          path: "access-audit/access-audit.csv", description: "Access and data-export audit trail", rowCount: auditEvents.length,
+          path: "access-audit/access-audit-0001.csv", description: "Access and data-export audit trail", rowCount: auditEvents.length, dataset: "access_audit",
           bytes: csv(AUDIT_COLUMNS, auditEvents.map(({ event, requestId }) => [event.at, event.actor, `data_export.${event.eventType}`, "tenant_export_request", requestId, "success"])),
         },
         {
-          path: "source-documents/inventory.csv", description: "Source documents with the data you may redistribute (files are not included)", rowCount: includedDocuments.length,
+          path: "source-documents/inventory-0001.csv", description: "Source documents you may redistribute", rowCount: includedDocuments.length, dataset: "source_inventory",
           bytes: csv(INVENTORY_COLUMNS, includedDocuments.map((d) => [d.id, d.name, d.type, d.status, d.uploaded])),
         },
+        // The demo has no stored files: each document the organization holds source-file access for gets a placeholder that says so.
+        ...sourceFiles.map((document) => ({
+          path: `source-documents/files/${document.id}/${document.name.replace(/[^A-Za-z0-9._ -]+/g, "_")}.txt`, description: "Source document file", rowCount: 0, dataset: "source_document" as const, documentId: document.id,
+          bytes: Buffer.from(`Demo placeholder for ${document.name}. Demo mode stores no source files; a production export carries the stored file here.\n`, "utf8"),
+        })),
       ],
       dataRights: {
         basis: "Funds and documents are included only while every effective contractual data right for them allows client visibility and redistribution.",
         funds: { included: REDISTRIBUTABLE_FUNDS.size, excluded: DEMO_FUNDS.length - REDISTRIBUTABLE_FUNDS.size },
         documents: { included: includedDocuments.length, excluded: documents.length - includedDocuments.length },
       },
-      notIncluded: [{ item: "Source document files", reason: "Not included in this release of the export; the inventory lists each document with its identifiers so files can be matched when delivered separately." }],
+      sourceFilesExcluded: includedDocuments.length - sourceFiles.length,
+      notIncluded: [{ item: "Source document files", reason: `${includedDocuments.length - sourceFiles.length} document is listed in the inventory without its file: source-file access is not granted for it, or the stored file was not released or could not be read.` }],
     });
     return {
       checksumSha256: bundle.checksumSha256,
       sizeBytes: bundle.bytes.length,
       expiresAt: this.at(completedOffsetHours + 24),
-      manifest: bundle.manifest,
+      manifest: publicTenantExportManifest(bundle.manifest),
       bytes: bundle.bytes,
     };
   }
@@ -181,6 +237,7 @@ export class DemoTenantExportStore implements TenantExportBackend {
       requestedAt: entry.requestedAt, approvalExpiresAt: entry.approvalExpiresAt, decidedBy: entry.decidedBy, decidedAt: entry.decidedAt,
       decisionNote: entry.decisionNote, cancelledAt: entry.cancelledAt, statusChangedAt: entry.statusChangedAt,
       artifact: entry.artifact === null ? null : { checksumSha256: entry.artifact.checksumSha256, sizeBytes: entry.artifact.sizeBytes, expiresAt: entry.artifact.expiresAt, manifest: entry.artifact.manifest },
+      progress: this.progress(entry),
       actions: tenantExportActions(status, requestedByMe, downloadAvailable),
     };
     if (withHistory) item.history = entry.history.map((event) => ({ ...event }));
@@ -288,6 +345,6 @@ export class DemoTenantExportStore implements TenantExportBackend {
 
 let singleton: DemoTenantExportStore | undefined;
 export function demoTenantExportStore(): DemoTenantExportStore {
-  if (!singleton) singleton = new DemoTenantExportStore();
+  if (!singleton) singleton = new DemoTenantExportStore(undefined, DEMO_BUILD_DURATION_MS);
   return singleton;
 }
