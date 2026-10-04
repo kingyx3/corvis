@@ -51,6 +51,22 @@ test("a job outside a retryable state is refused", async () => {
   assert.deepEqual(result, { ok:false, reason:"not_retryable" });
 });
 
+test("a row with missing fields defaults rather than crashing, and still refuses a non-retryable state", async () => {
+  const db = new FakePostgres();
+  db.queue.push([{}]);
+  const result = await retryProcessingJobCommand(identity, JOB_ID, db);
+  assert.deepEqual(result, { ok:false, reason:"not_retryable" });
+  assert.equal(db.queries.length, 1, "a defaulted, non-retryable state never issues the retry command");
+});
+
+test("a lost compare-and-set race where the database reports no rows at all is a version conflict", async () => {
+  const db = new FakePostgres();
+  db.queue.push([{ state: "retryable", attempt: 1, max_attempts: 3, version: 1 }]);
+  db.queue.push([]);
+  const result = await retryProcessingJobCommand(identity, JOB_ID, db);
+  assert.deepEqual(result, { ok:false, reason:"version_conflict" });
+});
+
 test("a job with no attempts left is refused before retrying", async () => {
   const db = new FakePostgres();
   db.queue.push([{ state: "failed", attempt: 3, max_attempts: 3, version: 1 }]);

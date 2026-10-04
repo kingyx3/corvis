@@ -88,6 +88,47 @@ test("operator recovery maps governed database refusal states without a weaker a
   }
 });
 
+test("a successful query that returns no row (lost race, no error raised) is a version conflict", async () => {
+  const db = new FakePostgres();
+  db.queue.push([]);
+  const result = await recoverDeadLetterProcessingJob({
+    identity,
+    jobId: "33333333-3333-4333-8333-333333333333",
+    expectedVersion: 9,
+    recoveryEventId: "44444444-4444-4444-8444-444444444444",
+    reasonCode: "operator_recovery",
+    db,
+  });
+  assert.deepEqual(result, { ok:false, reason:"not_found_or_version_conflict" });
+});
+
+test("an unrecognized database refusal is never silently downgraded to a known reason", async () => {
+  const db = new FakePostgres();
+  db.nextError = new Error("something genuinely unexpected");
+  await assert.rejects(recoverDeadLetterProcessingJob({
+    identity,
+    jobId: "33333333-3333-4333-8333-333333333333",
+    expectedVersion: 9,
+    recoveryEventId: "44444444-4444-4444-8444-444444444444",
+    reasonCode: "operator_recovery",
+    db,
+  }), /something genuinely unexpected/);
+});
+
+test("a null recovery event id in the row reads as empty, not the literal string null", async () => {
+  const db = new FakePostgres();
+  db.queue.push([{ new_version: 10, recovery_count: undefined, recovery_event_id: null }]);
+  const result = await recoverDeadLetterProcessingJob({
+    identity,
+    jobId: "33333333-3333-4333-8333-333333333333",
+    expectedVersion: 9,
+    recoveryEventId: "44444444-4444-4444-8444-444444444444",
+    reasonCode: "operator_recovery",
+    db,
+  });
+  assert.deepEqual(result, { ok:true, version:10, recoveryCount:0, recoveryEventId:"" });
+});
+
 test("a malformed jobId is a normal not-found result, not a database cast failure", async () => {
   const db = new FakePostgres();
   const result = await recoverDeadLetterProcessingJob({

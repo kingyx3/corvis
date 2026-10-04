@@ -10,10 +10,6 @@ export type DeadLetterRecoveryResult =
   | { ok: true; version: number; recoveryCount: number; recoveryEventId: string }
   | { ok: false; reason: "not_found_or_version_conflict" | "not_terminal_dead_letter" | "not_exhausted" | "missing_delivery_evidence" | "idempotency_conflict" };
 
-function controlDb(): PostgresSqlApi {
-  return postgres(getServerConfig().postgresDsn);
-}
-
 function text(row: PostgresRow, key: string): string {
   return row[key] == null ? "" : String(row[key]);
 }
@@ -23,7 +19,7 @@ function number(row: PostgresRow, key: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export async function recoverDeadLetterProcessingJob(input: {
+export async function recoverDeadLetterProcessingJob({ db = postgres(getServerConfig().postgresDsn), ...input }: {
   identity: RequestIdentity;
   jobId: string;
   expectedVersion: number;
@@ -35,7 +31,6 @@ export async function recoverDeadLetterProcessingJob(input: {
   // job_id is a uuid column; a malformed id would otherwise reach Postgres as a cast failure (22P02) inside the
   // function call below, which has no apiError() mapping and surfaces as a 500 instead of a normal not-found 409.
   if (!isUuid(input.jobId)) return { ok:false, reason:"not_found_or_version_conflict" };
-  const db = input.db ?? controlDb();
   try {
     // The database function checks an existing deterministic recovery event before
     // locking the expected job version. That ordering is deliberate: an exact repeat
