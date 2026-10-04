@@ -145,7 +145,7 @@ export class ZipStreamWriter {
     if (needs64) {
       const end64 = Buffer.alloc(56);
       end64.writeUInt32LE(0x06064b50, 0);
-      end64.writeBigUInt64LE(44n, 4);
+      end64.writeBigUInt64LE(BigInt(44), 4);
       end64.writeUInt16LE(45, 12);
       end64.writeUInt16LE(45, 14);
       end64.writeBigUInt64LE(BigInt(count), 24);

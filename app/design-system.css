@@ -488,6 +488,9 @@
 .data-issues-more { display: flex; justify-content: center; }
 .data-issue-form textarea { width: 100%; resize: vertical; }
 .data-issue-scope dd { overflow-wrap: anywhere; }
+/* Full data export at scale (F10b, F10c): the running build's size estimate and progress. */
+.data-export-progress { display: grid; gap: 6px; }
+.data-export-progress progress { width: 100%; height: 10px; accent-color: var(--accent); }
 /* Service accounts (F6): the facts of an account in a compact grid, and the one-time credential panel. */
 .service-account-facts { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 20px; }
 .service-account-facts dd { overflow-wrap: anywhere; }

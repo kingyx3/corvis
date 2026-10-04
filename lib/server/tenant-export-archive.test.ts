@@ -299,7 +299,7 @@ test("memory stays bounded however large the source files are: the archive is pu
   objects.getObjectStream = async () => {
     const chunk = Buffer.alloc(chunkBytes, 7);
     let sent = 0;
-    return { body: new ReadableStream<Uint8Array>({
+    return { contentType: "application/pdf", body: new ReadableStream<Uint8Array>({
       pull(controller) {
         if (sent === chunks) { controller.close(); return; }
         sent += 1;

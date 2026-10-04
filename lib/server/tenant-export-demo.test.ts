@@ -418,9 +418,9 @@ async function flow(finishBuild: () => void): Promise<void> {
 
   const approved = await itemPost(request(`/access/data-exports/${mine.requestId}`, { method: "POST", tenant, subject: "second-admin", body: { action: "approve", expectedStatus: "pending_approval" } }), params(mine.requestId));
   assert.equal(approved.status, 200);
-  const building = (await body(approved)).data;
+  const building = (await body(approved)).data as TenantExportRequest;
   assert.equal(building.status, "building");
-  assert.equal(building.progress.phase, "data", "the response shows the estimate and progress while the export is built");
+  assert.equal(building.progress!.phase, "data", "the response shows the estimate and progress while the export is built");
   assert.equal((await itemPost(request(`/access/data-exports/${mine.requestId}`, { method: "POST", tenant, body: { action: "prepare_download" } }), params(mine.requestId))).status, 409);
   finishBuild();
   assert.equal((await body(await itemGet(request(`/access/data-exports/${mine.requestId}`, { tenant }), params(mine.requestId)))).data.status, "complete");

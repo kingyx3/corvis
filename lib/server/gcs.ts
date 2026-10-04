@@ -295,7 +295,7 @@ export class GcsControlClient implements UploadObjectStore {
       const range = remaining.length === 0 ? `bytes */${total}` : `bytes ${start}-${start + remaining.length - 1}/${total ?? "*"}`;
       // The session URI is self-authorizing (no bearer token). A 308 is the normal answer to a non-final chunk and carries no Location, so redirects are not followed.
       const response = await fetch(session, {
-        method: "PUT", headers: { "content-range": range }, body: remaining.length === 0 ? undefined : remaining,
+        method: "PUT", headers: { "content-range": range }, body: remaining.length === 0 ? undefined : remaining as unknown as BodyInit,
         redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(this.requestTimeoutMs),
       });
       await response.body?.cancel().catch(() => undefined);

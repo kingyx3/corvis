@@ -20,7 +20,11 @@
 --     the lease reclaim) to the requester only, in words-only parameters, once per step, never blocking the step if the
 --     outbox refuses it; the approval notice cannot be a stored preference;
 --   * migration 089 (F10f): expired artifacts are listed, marked deleted once (history, audit, grants removed) and a live
---     one is never touched; expired download grants are swept past their retention, bounded and audited.
+--     one is never touched; expired download grants are swept past their retention, bounded and audited;
+--   * migration 093 (F10b, F10c): a build's progress report is stored and extends its lease only for the claiming attempt (a
+--     build that keeps reporting is not reclaimed, one that stops is, and a reclaimed attempt is told it lost the lease), and
+--     the rights re-check runs in SQL against the scope recorded with the archive, including the source document files
+--     (redistribution for every fund and document, source-file access for each file in it, the workspace gate, tenant scope).
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
 
@@ -617,6 +621,97 @@ begin
     raise exception 'each sweep that deleted something is audited with its count; one that deleted nothing is not';
   end if;
   if corvis_control.sweep_tenant_export_grants(0, null) <> 0 then raise exception 'a nonsense retention is floored to an hour, a missing limit has a default'; end if;
+end $$;
+
+-- 11f. Migration 093 (F10b, F10c): the build's progress report is also its heartbeat, bound to the claiming attempt; and the rights
+-- re-check runs in SQL against the scope recorded with the archive, including its source document files.
+do $$
+declare
+  tenant uuid := 'c0890000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0890000-0000-4000-8000-0000000000c1';
+  req corvis_control.tenant_export_request%rowtype;
+  claimed corvis_control.tenant_export_request%rowtype;
+  progress_id uuid := 'c0930000-0000-4000-8000-0000000000d1';
+  report jsonb := '{"phase":"documents","percent":40,"bytesWritten":400,"estimatedBytes":1000}'::jsonb;
+  lease timestamptz;
+begin
+  select * into req from corvis_control.request_tenant_export(tenant,progress_id,workspace,'oidc','idp|c-one','Large export',168);
+  perform corvis_control.decide_tenant_export(tenant,progress_id,'approve','oidc','idp|c-two',null,null);
+  if corvis_control.record_tenant_export_build_progress(tenant,progress_id,1,report,10) then raise exception 'an approved request that is not building takes no report'; end if;
+  select * into claimed from corvis_control.claim_next_tenant_export_build(10,5);
+  if claimed.request_id is distinct from progress_id then raise exception 'the request is claimed'; end if;
+  if (select build_progress from corvis_control.tenant_export_request where request_id = progress_id) is not null then raise exception 'a claimed build starts with no progress'; end if;
+
+  -- A report from the claiming attempt is stored and extends the lease to ten minutes from now.
+  update corvis_control.tenant_export_request set build_lease_expires_at = now() + interval '1 minute' where request_id = progress_id;
+  if not corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts,report,10) then raise exception 'the owning attempt may report'; end if;
+  select build_lease_expires_at into lease from corvis_control.tenant_export_request where request_id = progress_id;
+  if lease < now() + interval '9 minutes' or lease > now() + interval '11 minutes' then raise exception 'a report extends the lease to the lease length, got %', lease; end if;
+  if (select build_progress from corvis_control.tenant_export_request where request_id = progress_id) is distinct from report then raise exception 'the report is stored as given'; end if;
+  -- A report never shortens a lease that runs further out, and a nonsense lease length is floored to a minute.
+  update corvis_control.tenant_export_request set build_lease_expires_at = now() + interval '1 hour' where request_id = progress_id;
+  perform corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts,report,0);
+  select build_lease_expires_at into lease from corvis_control.tenant_export_request where request_id = progress_id;
+  if lease < now() + interval '59 minutes' then raise exception 'a report does not shorten the lease'; end if;
+
+  -- Another attempt, another tenant and a malformed report are refused or change nothing.
+  if corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts + 1,'{"phase":"data"}'::jsonb,10) then raise exception 'a stale attempt cannot report'; end if;
+  if corvis_control.record_tenant_export_build_progress('a0860000-0000-4000-8000-00000000000a',progress_id,claimed.build_attempts,'{"phase":"data"}'::jsonb,10) then raise exception 'another tenant cannot report'; end if;
+  if (select build_progress from corvis_control.tenant_export_request where request_id = progress_id) is distinct from report then raise exception 'refused reports change nothing'; end if;
+  perform pg_temp.expect_error(format($f$update corvis_control.tenant_export_request set build_progress = '[1]'::jsonb where request_id = %L$f$, progress_id), 'violates check constraint');
+
+  -- Reporting is the heartbeat: a build that keeps reporting is not reclaimed, one that stops is.
+  update corvis_control.tenant_export_request set build_lease_expires_at = now() - interval '1 minute' where request_id = progress_id;
+  perform corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts,report,10);
+  if exists (select 1 from corvis_control.claim_next_tenant_export_build(10,5)) then raise exception 'a build whose lease was just extended is not claimed by anyone else'; end if;
+  if (select state from corvis_control.tenant_export_request where request_id = progress_id) <> 'building' then raise exception 'still building'; end if;
+  update corvis_control.tenant_export_request set build_lease_expires_at = now() - interval '1 minute' where request_id = progress_id;
+  if exists (select 1 from corvis_control.claim_next_tenant_export_build(10,5) where request_id <> progress_id) then raise exception 'only this request is up for reclaim'; end if;
+  if (select build_attempts from corvis_control.tenant_export_request where request_id = progress_id) <> claimed.build_attempts + 1 then raise exception 'a build that stopped reporting is reclaimed as an attempt of its own'; end if;
+  -- The reclaimed attempt owns the request now: the old attempt's reports are refused (it stops), and so is its completion.
+  if corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts,report,10) then raise exception 'the abandoned attempt is told it lost the lease'; end if;
+  if not corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts + 1,report,10) then raise exception 'the new attempt owns the request'; end if;
+  -- Finished builds take no more reports.
+  perform corvis_control.complete_tenant_export_build(tenant,progress_id,claimed.build_attempts + 1,'gs://bucket/exports/c/progress.zip',now()+interval '1 day',repeat('9',64),10,
+    '{"manifestVersion":2,"artifact":{"fundIds":["fund-93"],"documentIds":["doc-93","doc-93b"],"sourceDocumentIds":["doc-93"]}}'::jsonb);
+  if corvis_control.record_tenant_export_build_progress(tenant,progress_id,claimed.build_attempts + 1,report,10) then raise exception 'a completed build takes no report'; end if;
+
+  -- The rights re-check: every fund, document and source file the archive holds must still be redistributable, and a source
+  -- file also needs source-file access. Nothing is held until rights are granted (the archive cannot be downloaded).
+  if not corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'with no rights at all the archive no longer holds'; end if;
+  insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible,redistribution_allowed,source_document_access_allowed)
+  values (tenant,'workspace',workspace::text,true,true,false),
+         (tenant,'fund','fund-93',true,true,false),
+         (tenant,'document','doc-93',true,true,true),
+         (tenant,'document','doc-93b',true,true,false);
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'rights still cover the archive: funds, documents, and source access for the one source file'; end if;
+  update corvis_control.data_rights set source_document_access_allowed = false where tenant_id = tenant and resource_id = 'doc-93';
+  if not corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'withdrawing source-file access for a document whose file is in the archive blocks it'; end if;
+  update corvis_control.data_rights set source_document_access_allowed = true where tenant_id = tenant and resource_id = 'doc-93';
+  update corvis_control.data_rights set source_document_access_allowed = true where tenant_id = tenant and resource_id = 'doc-93b';
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'source-file access for a document whose file is not in the archive changes nothing'; end if;
+  update corvis_control.data_rights set redistribution_allowed = false where tenant_id = tenant and resource_id = 'doc-93b';
+  if not corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'a document without a redistribution right blocks it, even with no file in the archive'; end if;
+  update corvis_control.data_rights set redistribution_allowed = true where tenant_id = tenant and resource_id = 'doc-93b';
+  update corvis_control.data_rights set client_visible = false where tenant_id = tenant and resource_type = 'fund' and resource_id = 'fund-93';
+  if not corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'a fund that is no longer client-visible blocks it'; end if;
+  update corvis_control.data_rights set client_visible = true where tenant_id = tenant and resource_type = 'fund' and resource_id = 'fund-93';
+  update corvis_control.data_rights set redistribution_allowed = false where tenant_id = tenant and resource_type = 'workspace';
+  if not corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'withdrawing the workspace-level redistribution right blocks everything'; end if;
+  update corvis_control.data_rights set redistribution_allowed = true where tenant_id = tenant and resource_type = 'workspace';
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'rights restored: covered again'; end if;
+  -- The check is scoped to the tenant: another tenant's id finds no such request (the application only ever asks about its own), and an unknown request holds nothing.
+  if corvis_control.tenant_export_scope_changed('a0860000-0000-4000-8000-00000000000a', progress_id) then raise exception 'a request of another tenant is not visible here'; end if;
+  if corvis_control.tenant_export_scope_changed(tenant, 'c0930000-0000-4000-8000-0000000000ff') then raise exception 'an unknown request holds nothing, so nothing changed'; end if;
+  -- Archives built before migration 093 have no source files in their scope and are checked on funds and documents alone; a malformed scope holds nothing.
+  update corvis_control.tenant_export_request set manifest = '{"artifact":{"fundIds":["fund-93"],"documentIds":["doc-93"]}}'::jsonb where request_id = progress_id;
+  update corvis_control.data_rights set source_document_access_allowed = false where tenant_id = tenant and resource_id = 'doc-93';
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'an archive without source files does not need source-file access'; end if;
+  update corvis_control.tenant_export_request set manifest = '{"artifact":{"fundIds":null,"documentIds":"x","sourceDocumentIds":{"a":1}}}'::jsonb where request_id = progress_id;
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'a malformed scope holds nothing'; end if;
+  update corvis_control.tenant_export_request set manifest = '{}'::jsonb where request_id = progress_id;
+  if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'a manifest with no scope holds nothing'; end if;
+  delete from corvis_control.data_rights where tenant_id = tenant;
 end $$;
 
 -- 12. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.

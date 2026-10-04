@@ -117,7 +117,11 @@ export class FakeTenantDb implements PostgresSqlApi {
       .filter((document) => (cursor === null || document.document_id > cursor) && (!files || (document.sourceAccess && document.released)))
       .sort((a, b) => (a.document_id < b.document_id ? -1 : 1))
       .slice(0, Number(parameters[2]))
-      .map(({ sourceAccess: _a, released: _r, bytes: _b, ...row }) => row);
+      .map((document) => {
+        const row: Record<string, unknown> = { ...document };
+        for (const internal of ["sourceAccess", "released", "bytes"]) delete row[internal];
+        return row;
+      });
   }
 
   private estimate(): PostgresRow {
@@ -165,7 +169,7 @@ export class FakeObjects {
     return { sizeBytes: size };
   }
 
-  async getObjectStream(key: string, generation?: string) {
+  async getObjectStream(key: string, generation?: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string } | null> {
     this.reads.push({ key, ...(generation ? { generation } : {}) });
     const bytes = this.files.get(key);
     return bytes ? { body: new Response(new Uint8Array(bytes)).body!, contentType: "application/pdf" } : null;

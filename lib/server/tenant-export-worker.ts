@@ -3,7 +3,7 @@ import { TENANT_EXPORT_ARCHIVE_NAME, TENANT_EXPORT_MAX_BUILD_ATTEMPTS, type Tena
 import { computeExportRetryDelayMs, type RandomSource } from "./delivery.ts";
 import { getServerConfig } from "./config.ts";
 import { gcs, type GcsControlClient } from "./gcs.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { safeErrorText } from "./processing-error-text.ts";
 import { TENANT_EXPORT_CONTENT_TYPE } from "./tenant-export-bundle.ts";
 import { createTenantExportArchive, type TenantExportArchiveOptions } from "./tenant-export-archive.ts";
