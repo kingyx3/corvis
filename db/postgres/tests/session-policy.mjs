@@ -10,7 +10,14 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
 import { PostgresMembershipAuthorizationRepository } from '../../../lib/server/authorization.ts';
+import { SessionEndedByPolicyError } from '../../../lib/server/request-context.ts';
 import { sweepTenantSessionActivity } from '../../../lib/server/session-activity-sweep.ts';
+
+// A session the policy ended is told apart from a refused one (F7c): the lookup raises SessionEndedByPolicyError with the reason.
+async function ended(lookup, reason, message) {
+  const error = await lookup.then(() => undefined, (failure) => failure);
+  assert.ok(error instanceof SessionEndedByPolicyError && error.reason === reason, message);
+}
 
 // lib/server/session-policy.ts reaches the Next.js "@/..." alias through http.ts.
 register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
@@ -104,12 +111,12 @@ try {
     // Within the limits: allowed and refreshed. Past the idle timeout: refused, and staying refused.
     assert.ok(await authorization.resolve(principal(member, 'sid-member-1')));
     await tx.execute(`update corvis_control.tenant_session_activity set last_seen_at = now() - interval '16 minutes', first_seen_at = now() - interval '20 minutes' where tenant_id=$1 and session_id='sid-member-1'`, [tenantId]);
-    assert.equal(await authorization.resolve(principal(member, 'sid-member-1')), null, 'idle past 15 minutes: refused');
-    assert.equal(await authorization.resolve(principal(member, 'sid-member-1')), null, 'and it stays refused');
+    await ended(authorization.resolve(principal(member, 'sid-member-1')), 'idle_timeout', 'idle past 15 minutes: refused, and told apart (F7c)');
+    await ended(authorization.resolve(principal(member, 'sid-member-1')), 'idle_timeout', 'and it stays refused');
     assert.ok(await authorization.resolve(principal(member, 'sid-member-2')), 'another session of the same person is unaffected');
     // Past the maximum length, however active.
     await tx.execute(`update corvis_control.tenant_session_activity set first_seen_at = now() - interval '61 minutes', last_seen_at = now() where tenant_id=$1 and session_id='sid-member-2'`, [tenantId]);
-    assert.equal(await authorization.resolve(principal(member, 'sid-member-2')), null, 'longer than 60 minutes in total: refused');
+    await ended(authorization.resolve(principal(member, 'sid-member-2')), 'max_session', 'longer than 60 minutes in total: refused');
     // A session whose id cannot be measured fails closed under a limit; background re-authorization is exempt.
     assert.equal(await authorization.resolve(principal(member, 'token-abc123')), null, 'no stable session id, no session');
     assert.ok(await authorization.resolve(principal(member, 'token-abc123'), { applySessionPolicy: false }), 'a queued export is re-authorized without touching the session');
@@ -169,7 +176,7 @@ try {
     assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1 and session_id='sid-member-1'`), 1, 'earlier sign-outs still hold');
     await tx.execute(`update corvis_control.tenant_session_activity set first_seen_at = now() - interval '8 days' where tenant_id=$1 and session_id='sid-hk-live'`, [tenantId]);
     await sweepTenantSessionActivity(tx);
-    assert.equal(await authorization.resolve(principal(member, 'sid-hk-live')), null, 'a session past the maximum is still refused after a sweep: only a quiet record is ever purged');
+    await ended(authorization.resolve(principal(member, 'sid-hk-live')), 'max_session', 'a session past the maximum is still refused after a sweep: only a quiet record is ever purged');
     assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id='sid-hk-live'`), 1);
     assert.equal(await sweepTenantSessionActivity(tx, { retentionMinutes: 60 }), 0, 'a retention below the floor is raised to it, never obeyed');
     assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id='sid-hk-quiet'`), 1);
