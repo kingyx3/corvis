@@ -3,7 +3,7 @@
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
-// rights change after the build blocks the download. Migration 093 (F10b, F10c) adds: the source document files in the
+// rights change after the build blocks the download. Migration 094 (F10b, F10c) adds: the source document files in the
 // archive (only for documents the tenant may redistribute AND holds source-file access for, copied through a fake object
 // store, their checksums matching the manifest, a document without access counted and never listed), data sets split into
 // parts read by keyset (with rows that share one timestamp), the archive streamed rather than buffered, the progress report

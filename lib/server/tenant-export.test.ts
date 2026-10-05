@@ -69,7 +69,7 @@ class FakeDb implements PostgresSqlApi {
 
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof DataGovernanceError && error.code === code && error.status === status;
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
-// The comparison of what an archive holds against current rights is made in SQL (migration 093); these are its two answers.
+// The comparison of what an archive holds against current rights is made in SQL (migration 094); these are its two answers.
 const covered = [{ changed: false }];
 const rightsChanged = [{ changed: true }];
 const isRights = (sql: string) => /tenant_export_scope_changed/.test(sql);

@@ -126,7 +126,7 @@ function publicManifest(manifest: unknown): TenantExportManifest {
   return copy as TenantExportManifest;
 }
 
-/** What a running build last reported (migration 093), or null when there is nothing usable to show. */
+/** What a running build last reported (migration 094), or null when there is nothing usable to show. */
 function buildProgress(value: unknown): TenantExportProgress | null {
   const progress = jsonObject(value);
   const counters = ["estimatedBytes", "bytesWritten", "estimatedRows", "rowsWritten", "estimatedDocuments", "documentsWritten", "percent"] as const;
@@ -321,7 +321,7 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
   /**
    * Every fund and document the archive holds data for must still be redistributable, and every source document file in it
    * must still have source-file access granted (F10b). The comparison is made by the database (`tenant_export_scope_changed`,
-   * migration 093) against the scope recorded when the archive was built, so what the archive holds never travels here.
+   * migration 094) against the scope recorded when the archive was built, so what the archive holds never travels here.
    */
   private async assertRightsStillCover(db: PostgresSqlApi, tenantId: string, requestId: string): Promise<void> {
     const row = (await db.query(`select corvis_control.tenant_export_scope_changed($1::uuid,$2::uuid) as changed`, [tenantId, requestId]))[0];
