@@ -89,53 +89,29 @@ begin
     raise exception 'the runtime role must be neither superuser nor BYPASSRLS';
   end if;
   if exists (select 1 from pg_class where relowner = (select oid from pg_roles where rolname = current_user)) then
-    raise exception 'the runtime role must own no relation (the owner is the one role RLS is not forced on by default)';
+    raise exception 'the runtime role must own no relation (an owner could ALTER it, and RLS binds an owner only where FORCEd)';
   end if;
 end $$;
 
--- Helpers live in the temp schema, owned by the runtime role itself (a temp function needs only the TEMP privilege).
-create function pg_temp.expect_sqlstate(p_label text, p_statement text, p_expected text) returns void language plpgsql as $$
-declare v_got text := 'no error';
-begin
-  begin
-    execute p_statement;
-  exception when others then
-    v_got := sqlstate;
-  end;
-  if v_got is distinct from p_expected then
-    raise exception '%: expected SQLSTATE % but got % for: %', p_label, p_expected, v_got, p_statement;
-  end if;
-end $$;
+\ir runtime-role-helpers.sql
 
--- A subject-bound session sees exactly its own tenant in every table and view, and none of the other's.
-create function pg_temp.assert_scoped(p_label text, p_subject uuid, p_own uuid, p_other uuid, p_expect_own boolean) returns void language plpgsql as $$
-declare
-  v_rel text;
-  v_own bigint;
-  v_other bigint;
+-- Relations a subject-bound session must see only its own tenant in: base tables and the security-invoker serving views
+-- (the ten older ones were owner-evaluated before migration 100).
+select set_config('corvis.rt.scoped_relations', array_to_string(array[
+  'corvis_control.tenant', 'corvis_control.workspace', 'corvis_control.membership', 'corvis_control.feature_flag',
+  'corvis_control.control_evidence', 'corvis_source.document', 'corvis_serving.export_job', 'corvis_facts.holding',
+  'corvis_consolidated.fund_period_snapshot', 'corvis_facts.client_portfolio', 'corvis_facts.client_portfolio_fund_position',
+  'corvis_serving.documents', 'corvis_serving.holdings', 'corvis_serving.fund_period_snapshots',
+  'corvis_serving.client_portfolios', 'corvis_serving.client_portfolio_fund_positions'
+], ','), false);
+
+-- Server-only tables (RLS forced, no end-user policy) and the tenant-private sector classification stay invisible across
+-- tenants to a subject-bound session, even connected as the runtime role.
+create function pg_temp.assert_server_only_hidden(p_label text, p_other uuid) returns void language plpgsql as $$
 begin
-  perform set_config('request.jwt.claim.sub', coalesce(p_subject::text, ''), true);
-  foreach v_rel in array array[
-    'corvis_control.tenant', 'corvis_control.workspace', 'corvis_control.membership', 'corvis_control.feature_flag',
-    'corvis_control.control_evidence', 'corvis_source.document', 'corvis_serving.export_job', 'corvis_facts.holding',
-    'corvis_consolidated.fund_period_snapshot', 'corvis_facts.client_portfolio', 'corvis_facts.client_portfolio_fund_position',
-    -- security-invoker serving views (the ten older ones were owner-evaluated before migration 100)
-    'corvis_serving.documents', 'corvis_serving.holdings', 'corvis_serving.fund_period_snapshots',
-    'corvis_serving.client_portfolios', 'corvis_serving.client_portfolio_fund_positions'
-  ] loop
-    execute format('select count(*) filter (where tenant_id = %L), count(*) filter (where tenant_id = %L) from %s',
-      p_own, p_other, v_rel) into v_own, v_other;
-    if v_other <> 0 then raise exception '%: % leaks % row(s) of another tenant', p_label, v_rel, v_other; end if;
-    if p_expect_own and v_own < 1 then raise exception '%: % hides the subject''s own tenant', p_label, v_rel; end if;
-    if not p_expect_own and v_own <> 0 then raise exception '%: % shows rows to a subject without membership', p_label, v_rel; end if;
-    -- No other tenant may appear at all (not merely the one under test).
-    execute format('select count(*) from %s where tenant_id <> %L', v_rel, p_own) into v_other;
-    if v_other <> 0 and p_expect_own then raise exception '%: % shows % row(s) of tenants other than the subject''s', p_label, v_rel, v_other; end if;
-  end loop;
-  -- Server-only tables stay invisible to a subject-bound session, even connected as the runtime role.
-  select count(*) into v_other from corvis_control.idempotency_key;
-  if v_other <> 0 then raise exception '%: server-only corvis_control.idempotency_key is visible to a subject-bound session', p_label; end if;
-  -- Company sector classifications (global company, tenant-private view) and their serving view.
+  if (select count(*) from corvis_control.idempotency_key) <> 0 then
+    raise exception '%: server-only corvis_control.idempotency_key is visible to a subject-bound session', p_label;
+  end if;
   if (select count(*) from corvis_facts.company_sector_classification where tenant_id = p_other) <> 0
      or (select count(*) from corvis_serving.company_sectors where tenant_id = p_other) <> 0 then
     raise exception '%: sector classification leaks another tenant', p_label;
@@ -204,17 +180,20 @@ select pg_temp.expect_sqlstate('ungranted function', 'select corvis_control.curr
 select pg_temp.expect_sqlstate('ungranted view', 'select count(*) from corvis_serving.entity_relationships', '42501');
 do $$
 begin
-  if to_regclass('corvis_migration.schema_migration') is not null then
+  if to_regnamespace('corvis_migration') is not null then
     perform pg_temp.expect_sqlstate('migration ledger', 'select count(*) from corvis_migration.schema_migration', '42501');
   end if;
 end $$;
 -- ------------------------------------------------------------------ 2. subject-bound context: tenant isolation as the runtime role
 select pg_temp.assert_scoped('tenant A member', current_setting('corvis.rt.user_a')::uuid,
-  current_setting('corvis.rt.tenant_a')::uuid, current_setting('corvis.rt.tenant_b')::uuid, true);
+  current_setting('corvis.rt.tenant_a')::uuid, current_setting('corvis.rt.tenant_b')::uuid, true, string_to_array(current_setting('corvis.rt.scoped_relations'), ','));
+select pg_temp.assert_server_only_hidden('tenant A member', current_setting('corvis.rt.tenant_b')::uuid);
 select pg_temp.assert_scoped('tenant B member', current_setting('corvis.rt.user_b')::uuid,
-  current_setting('corvis.rt.tenant_b')::uuid, current_setting('corvis.rt.tenant_a')::uuid, true);
+  current_setting('corvis.rt.tenant_b')::uuid, current_setting('corvis.rt.tenant_a')::uuid, true, string_to_array(current_setting('corvis.rt.scoped_relations'), ','));
+select pg_temp.assert_server_only_hidden('tenant B member', current_setting('corvis.rt.tenant_a')::uuid);
 select pg_temp.assert_scoped('unrelated subject', current_setting('corvis.rt.user_x')::uuid,
-  current_setting('corvis.rt.tenant_a')::uuid, current_setting('corvis.rt.tenant_b')::uuid, false);
+  current_setting('corvis.rt.tenant_a')::uuid, current_setting('corvis.rt.tenant_b')::uuid, false, string_to_array(current_setting('corvis.rt.scoped_relations'), ','));
+select pg_temp.assert_server_only_hidden('unrelated subject', current_setting('corvis.rt.tenant_a')::uuid);
 
 -- A bound subject cannot write: the service-context policy no longer applies and no mutation policy exists for anyone else.
 do $$

@@ -9,7 +9,8 @@
 # Layers, each failing the run on the first error:
 #   1. owner      runtime-role-privileges.sql   the grant manifest (no PUBLIC execute, no DDL/ownership/BYPASSRLS, ...)
 #   2. owner      runtime-role-acceptance.sql   tenant-isolation negatives with `set local role corvis_runtime`
-#   3. strict     existing suites, connected as a login role that is a member of corvis_runtime ONLY
+#   3. strict     security_acceptance.sql (it hands over to runtime_security_acceptance.sql for a runtime login) and the
+#                 existing suites, connected as a login role that is a member of corvis_runtime ONLY
 #   4. fixture    existing suites that also need test-only seeding/cleanup privileges (runtime-role-ci-fixture.sql);
 #                 their application code paths still run on the runtime role's privileges
 #
@@ -17,8 +18,8 @@
 # counterparts above do run): processing-retry-exhaustion.sql (CREATE SCHEMA/ALTER EXTENSION), tenant-data-export.sql and
 # export-schedules.sql (ALTER TABLE ... DISABLE TRIGGER), data-issue-reports.sql / review-item-discussion.sql /
 # service-accounts.sql / session-policy.sql / tenant-identity-records.sql / tenant-isolation-negative.sql
-# (CREATE/DROP ROLE for their own negative-role probes), security_acceptance.sql (grants to and SET ROLE of
-# `authenticated`; runtime-role-acceptance.sql carries the same probes as the runtime role).
+# (CREATE/DROP ROLE for their own negative-role probes; runtime-role-acceptance.sql carries the same tenant-isolation
+# negatives as the runtime role).
 set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
@@ -64,6 +65,10 @@ grep -q POSTGRES_RUNTIME_ROLE_PRIVILEGES_PASS /tmp/runtime-role-privileges.out
 echo "[runtime-role] owner (set role corvis_runtime): runtime-role-acceptance.sql"
 psql -X -q -v ON_ERROR_STOP=1 -f "$tests/runtime-role-acceptance.sql" | tee /tmp/runtime-role-acceptance.out
 grep -q POSTGRES_RUNTIME_ROLE_ACCEPTANCE_PASS /tmp/runtime-role-acceptance.out
+
+echo "[runtime-role] corvis_runtime_ci_strict: security_acceptance.sql (hands over to runtime_security_acceptance.sql)"
+as_login corvis_runtime_ci_strict psql -X -q -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql | tee /tmp/runtime-role-security-acceptance.out
+grep -q POSTGRES_RLS_SECURITY_ACCEPTANCE_PASS /tmp/runtime-role-security-acceptance.out
 
 for suite in "${strict_sql[@]}"; do run_sql corvis_runtime_ci_strict "$suite"; done
 for suite in "${strict_mjs[@]}"; do run_mjs corvis_runtime_ci_strict "$suite"; done

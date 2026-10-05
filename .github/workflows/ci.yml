@@ -480,6 +480,21 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if; end \$\$;"
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql | tee security-acceptance.out
           grep -q POSTGRES_RLS_SECURITY_ACCEPTANCE_PASS security-acceptance.out
+      # Least-privilege runtime role (#227, migration 100). A clean database is rebuilt because several suites above
+      # commit scratch data. The harness (see its header) runs the grant manifest and the tenant-isolation negatives as
+      # corvis_runtime (no owner bypass), then the existing SQL and application suites connected as login roles that are
+      # members of corvis_runtime. The owner-role runs above stay unchanged.
+      - name: Postgres runtime-role acceptance (corvis_runtime, no owner bypass)
+        shell: bash
+        run: |
+          set -euo pipefail
+          createdb corvis_runtime_smoke
+          PGDATABASE=corvis_runtime_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
+          for migration in db/postgres/migrations/*.sql; do
+            PGDATABASE=corvis_runtime_smoke psql -X -q -v ON_ERROR_STOP=1 -f "${migration}" > /dev/null
+          done
+          PGDATABASE=corvis_runtime_smoke db/postgres/tests/run-as-runtime.sh | tee runtime-role-acceptance.log
+          grep -q RUNTIME_ROLE_ACCEPTANCE_PASS runtime-role-acceptance.log
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql
