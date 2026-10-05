@@ -1,6 +1,6 @@
 # Service accounts (F6, #262)
 
-Organization Admins create service accounts and issue, rotate and revoke their API credentials from **Access administration** (`/access-self-service`, "Service accounts"), so their own systems can call Corvis without borrowing a person's login. This page records what ships, the design, every assumption made, and the one decision that is still open: **how a presented credential is accepted at the API edge**. Contract: `API_CONVENTIONS.md`, "Service accounts (F6)". Schema: migration `088_service_accounts.sql`.
+Organization Admins create service accounts and issue, rotate and revoke their API credentials from **Access administration** (`/access-self-service`, "Service accounts"), so their own systems can call Corvis without borrowing a person's login. This page records what ships, the design, every assumption made, and how a presented credential is accepted at the API edge (decided and shipped in #350, #340 — see below). Contract: `API_CONVENTIONS.md`, "Service accounts (F6)". Schema: migration `088_service_accounts.sql`.
 
 ## What ships, and what does not
 
@@ -13,8 +13,8 @@ Organization Admins create service accounts and issue, rotate and revoke their A
 | Every action audited, visible in the tenant access audit and its CSV, and in a full data export's access-audit file | Shipped |
 | The account appears in the operator access review (`GET /api/v1/admin/access-review`) | Shipped (no change needed: it already lists every `identity_subject`, membership and `service_identity_grant`) |
 | `axe-core` coverage of the screens | Shipped (`e2e/access-pages-accessibility.spec.ts`, light and dark) |
-| Record-side credential check (`verifyServiceAccountCredential`: constant-time compare, immediate revocation, rotation overlap, expiry, last-used) | Shipped and tested, **not called by any request path** |
-| **Accepting a credential on an API request** | **Not shipped. Decision needed (below).** |
+| Record-side credential check (`verifyServiceAccountCredential`: constant-time compare, immediate revocation, rotation overlap, expiry, last-used) | Shipped and tested, called by `POST /api/v1/auth/service-account/token` |
+| **Accepting a credential on an API request** | **Shipped (#350): `POST /api/v1/auth/service-account/token`.** |
 | Extend an account's expiry (audited; advances the 009 `next_review_at` with it, within the 365-day maximum) | Shipped (F6b, migration 092) |
 | An owner on every account, transfer to another active Organization Admin, and a rule for an owner who is deactivated | Shipped (F6b) |
 | Notify Organization Admins before an account or its credential expires: one mandatory email per admin per window (14 days, then 3), never repeated, never after renewal or deactivation | Shipped (F6d, #341, migration 096) |
@@ -98,7 +98,7 @@ Every state change writes an `audit_event` in the same transaction (target type 
 
 `src/modules/identity-access/adapters/service-account-store.ts` enforces the same rules in memory, seeded per demo tenant with an account whose credential expires soon, one in regular use, one owned by an administrator who was deactivated (so it needs a new owner) and one deactivated. Secrets are minted and hashed exactly as in production. It is not production evidence.
 
-## Decision needed: how a credential is accepted at the API edge
+## Decision: how a credential is accepted at the API edge
 
 The issue says to confirm the mechanism (IdP client credentials versus a Corvis-issued token) against the Confluence page "Data Sharing, APIs & Permissioning", which was not reachable while this was built. What the repository already does for non-human identities:
 
