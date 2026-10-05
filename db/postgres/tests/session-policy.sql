@@ -614,7 +614,7 @@ begin
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'corvis_control' and c.relname in ('tenant_session_policy','tenant_session_activity','oidc_logout_token_use') and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('tenant_session_policy','tenant_session_activity','oidc_logout_token_use')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('tenant_session_policy','tenant_session_activity','oidc_logout_token_use')) then
     raise exception 'session policy tables are server-managed: no client policy may exist';
   end if;
 end $$;

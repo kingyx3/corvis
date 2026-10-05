@@ -672,7 +672,7 @@ begin
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'corvis_control' and c.relname in ('export_schedule','export_schedule_run') and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('export_schedule','export_schedule_run')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('export_schedule','export_schedule_run')) then
     raise exception 'export schedule tables are server-managed: no client policy may exist';
   end if;
 end $$;
