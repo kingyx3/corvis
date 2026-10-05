@@ -17,6 +17,7 @@ When the same subject appears in both systems:
 
 - [`REVIEW_2026_09_30.md`](REVIEW_2026_09_30.md) — repository/Confluence review findings, fixes, validation scope and outstanding risks.
 
+- [`REPO_STRUCTURE_REVIEW.md`](REPO_STRUCTURE_REVIEW.md) — repository directory-structure review: current layout, best-practice gaps, recommended target tree and staged migration plan.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — high-level map of how the repository layers, runtime dependencies, Terraform modules and GitHub Actions control plane fit together.
 - [`MODULARITY.md`](MODULARITY.md) — module boundaries, dependency direction, failure isolation and the canonical customer-journey E2E contract.
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md) — Cloudflare + GCP + Supabase topology, IaC ownership, lifecycle and cost controls.
