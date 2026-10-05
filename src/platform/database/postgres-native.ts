@@ -1,5 +1,5 @@
 import { Pool, types, type PoolConfig } from "pg";
-import { isProductionEnvironment } from "../config.ts";
+import { isProductionEnvironment } from "../config/config.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { matchSqlApplicationError, type SqlApplicationError } from "./sql-application-errors.ts";
 

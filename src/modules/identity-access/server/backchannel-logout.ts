@@ -1,10 +1,10 @@
 import { apiError, json } from "../../../platform/http/http.ts";
-import { getServerConfig, type ServerConfig } from "../../../platform/config.ts";
+import { getServerConfig, type ServerConfig } from "../../../platform/config/config.ts";
 import { normalizeOidcIssuer, OidcVerifier, unverifiedLogoutTokenIssuer, type OidcLogoutToken } from "./oidc.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { RateLimiter, RATE_LIMIT_WINDOW_MS } from "../../../platform/http/rate-limit.ts";
 import { classifyOidcFailure } from "../../../platform/http/request-context.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * OpenID Connect Back-Channel Logout 1.0 receiver (F7c, #336), behind `POST /api/v1/auth/oidc/backchannel-logout`.

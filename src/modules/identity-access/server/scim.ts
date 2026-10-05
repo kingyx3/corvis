@@ -2,14 +2,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuditEvent, RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { emailDomainAllowed } from "./identity-records.ts";
 import { PostgresIdentityLifecycleRepository, type HumanAuthMethod, type IdentityLifecycleRole } from "./identity-lifecycle.ts";
-import { getServerConfig } from "../../../platform/config.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { isTransientPostgresError } from "../../../platform/database/postgres-native.ts";
 import { RATE_LIMIT_WINDOW_MS, RateLimitError, RateLimiter } from "../../../platform/http/rate-limit.ts";
 import { userBearerAuthorization } from "../../../platform/http/request-context.ts";
 import { sqlApplicationErrorOf } from "../../../platform/database/sql-application-errors.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 import { TenantInvitationError } from "./tenant-invitations.ts";
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

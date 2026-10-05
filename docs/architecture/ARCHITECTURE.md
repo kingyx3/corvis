@@ -67,7 +67,7 @@ src/                      application code (Next.js `src` folder; the `@/` alias
     adapters/             provider- or demo-specific implementations of the module's ports
     ui/                   React views and client state for the module
     application/          client-side use cases, where a module has one
-  platform/               cross-cutting server infrastructure: http/, database/, gcp/, config, telemetry, demo/
+  platform/               cross-cutting server infrastructure: config/, http/, database/, data/, gcp/, observability/, runtime/, demo/
   shared/                 shared kernel: domain/ (enterprise, contracts, workspace), lib/ (client-safe helpers), ui/ (design system)
   composition/            the one place that selects and wires concrete adapters for the ports
   test-support/           helpers shared by unit tests (alias loader, OpenAPI support, fixtures)
@@ -93,7 +93,7 @@ docs/                     technical documentation, grouped by kind (see docs/REA
 | `src/modules/*/server/` | Server-side use cases, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
 | `src/modules/*/adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
 | `src/modules/*/ui/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
-| `src/platform/` | Cross-cutting server infrastructure: HTTP helpers, authorization context, Postgres access, GCP clients, configuration and telemetry. |
+| `src/platform/` | Cross-cutting server infrastructure: configuration, HTTP helpers and request context, Postgres access, the demo/Postgres data platform, GCP clients, telemetry and readiness, and runtime-surface selection. |
 | `src/shared/` | Shared domain vocabulary, client-safe helpers and reusable presentation components. |
 | `src/composition/` | Runtime composition: selects/wires concrete implementations for domain ports. |
 | `services/` | Deployable units that run outside the web app: the control loop, the extractor and the LiteLLM gateway. |
@@ -110,6 +110,7 @@ docs/                     technical documentation, grouped by kind (see docs/REA
 
 - A new capability belongs in the module that owns its data and rules. Add `domain/` first (types, ports, validation), then `server/`, `adapters/` and `ui/` as needed. Create a new module only for a new bounded context.
 - Code needed by several modules and unrelated to any one capability goes in `src/platform/` (server) or `src/shared/` (client-safe). If only two modules need it, keep it in the owning module and import it through that module's public files.
+- Each module and area has a README (`src/modules/README.md`, `services/README.md`, `tools/README.md`); `tools/repo-checks/repository-layout.test.ts` fails if the layout drifts from this document.
 - Tests sit next to the code they test as `*.test.ts`. Tests that read workflows, Terraform, docs or the source tree to assert repository policy go in `tools/repo-checks/`.
 - Route handlers in `src/app/api/` stay thin: authenticate, validate, call a module's `server/` function, shape the response.
 - Database migrations in `db/postgres/migrations/` are never edited once merged; the runner refuses checksum drift.

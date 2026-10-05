@@ -19,7 +19,7 @@ register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url),
 const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../src/modules/identity-access/server/service-account.ts');
 const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../src/modules/identity-access/server/service-account-credential.ts');
 const { PostgresMembershipAuthorizationRepository } = await import('../../../src/modules/identity-access/server/authorization.ts');
-const { PostgresOperationsRepository } = await import('../../../src/platform/platform-repositories.ts');
+const { PostgresOperationsRepository } = await import('../../../src/platform/data/platform-repositories.ts');
 const { listTenantAccessAudit } = await import('../../../src/modules/identity-access/server/tenant-admin-self-service.ts');
 const { listTenantAccessMembers } = await import('../../../src/modules/identity-access/server/tenant-access.ts');
 const { sweepServiceAccountExpiry } = await import('../../../src/modules/identity-access/server/service-account-expiry-sweep.ts');

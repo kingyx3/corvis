@@ -15,7 +15,7 @@ import {
   type BulkInviteRow,
   type TenantAccessAuditEvent,
 } from "./tenant-admin-self-service.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import { TenantInvitationError } from "./tenant-invitations.ts";
 
 // No outbound email: the invitation sender must resolve to the "not configured" path.

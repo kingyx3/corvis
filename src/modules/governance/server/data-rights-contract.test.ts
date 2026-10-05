@@ -26,10 +26,10 @@ test("data rights are server-managed, current, deny-by-default and resolved at t
 });
 
 test("serving, review, research and export paths retain explicit resource/data-right predicates", async () => {
-  const repositories = await source("src/platform/platform-repositories.ts");
+  const repositories = await source("src/platform/data/platform-repositories.ts");
   const research = await source("src/modules/research/server/research.ts");
   const semanticQuery = await source("src/modules/research/server/semantic-query.ts");
-  const platform = await source("src/platform/platform.ts");
+  const platform = await source("src/platform/data/platform.ts");
   const enterprise = await source("src/shared/domain/enterprise.ts");
 
   assert.match(repositories, /document_id in \(select entitled\.id::uuid from jsonb_array_elements_text\(\$2::jsonb\)/);

@@ -12,7 +12,7 @@ import type {
 import { bestEffortNotification, enqueueForUser } from "../../notifications/server/notifications.ts";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * Customer data-issue reports (F5, #261), Postgres side. A report only ever writes `corvis_control.data_issue_case`

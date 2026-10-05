@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
 import type { ExportScope } from "../domain/delivery.ts";
 import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { scorecardScopeLabel } from "../../analytics/domain/performance-scorecard.ts";
 import { resolveScorecardExport } from "../../analytics/server/performance-scorecard-export.ts";
 import { PostgresPositionFinancialStatementRepository } from "../../analytics/server/position-financial-statements.ts";

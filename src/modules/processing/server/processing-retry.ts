@@ -1,5 +1,5 @@
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

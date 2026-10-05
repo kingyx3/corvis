@@ -1,5 +1,5 @@
 import type { RequestIdentity, ResearchAnswer, ResearchPin } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import {
   assessNumericGrounding,

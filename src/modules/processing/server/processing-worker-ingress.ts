@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import type { ProcessingStage, RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { GoogleOidcVerifier, type GoogleServiceAccountIdentity } from "../../../platform/gcp/gcp-oidc.ts";
 import {
   PostgresProcessingStageRepository,

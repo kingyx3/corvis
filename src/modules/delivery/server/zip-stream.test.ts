@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { crc32 } from "node:zlib";
-import { readStoredZip } from "../test-support/zip-reader.ts";
+import { readStoredZip } from "../../../test-support/zip-reader.ts";
 import { ZipStreamWriter, assertSafeZipEntryName, zipStream, type ZipEntryResult, type ZipSource } from "./zip-stream.ts";
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");

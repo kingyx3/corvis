@@ -6,7 +6,7 @@ import type {
   TenantAccessMember,
   TenantAccessMembership,
 } from "../../../shared/domain/workspace.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import {
   guardIdentityLifecycleCommand,
   PostgresIdentityLifecycleRepository,

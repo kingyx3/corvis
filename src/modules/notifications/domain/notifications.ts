@@ -415,7 +415,7 @@ export type EmailSendResult =
   | { status: "not_configured" }
   | { status: "failed"; retryable: boolean; errorClass: string };
 
-/** Provider boundary. Implementations live under src/adapters/email. */
+/** Provider boundary. Implementations live under src/modules/notifications/adapters. */
 export interface EmailSender {
   readonly configured: boolean;
   send(email: OutboundEmail): Promise<EmailSendResult>;

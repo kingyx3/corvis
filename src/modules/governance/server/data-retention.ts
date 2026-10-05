@@ -8,7 +8,7 @@ import {
   type RetentionView,
 } from "../domain/data-retention.ts";
 import { demoRetentionStore } from "../adapters/data-retention-store.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertOrganizationAdmin } from "./data-governance.ts";
 import { DELETION_REQUEST_COLUMNS, toDeletionRequestView } from "./deletion-request-view.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";

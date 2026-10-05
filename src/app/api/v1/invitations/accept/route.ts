@@ -2,10 +2,10 @@ import { resolveRequestIdentity } from "@/platform/http/request-context";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { acceptTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenant-invitations";
 import { postgres } from "@/platform/database/postgres";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { enforceRequestRateLimit } from "@/platform/http/distributed-rate-limit";
 import { recordAcceptedInvitationRecipient } from "@/modules/notifications/server/notifications";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 /**
  * Acceptance is authenticated but intentionally precedes membership

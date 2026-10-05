@@ -3,7 +3,7 @@ import { assertPermission } from "@/shared/domain/enterprise";
 import { uploadIdempotencyKey, uploads } from "@/modules/sources/server/uploads";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { durationMetric } from "@/platform/telemetry";
+import { durationMetric } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

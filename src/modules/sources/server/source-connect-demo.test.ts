@@ -31,7 +31,7 @@ const { GET: listGet } = await import("@/app/api/v1/source-connections/route");
 const { POST: testPost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/test/route");
 const { POST: reauthorizePost } = await import("@/app/api/v1/source-connections/[sourceConnectionId]/reauthorize/route");
 const { overrideSourceConnectLimiter } = await import("./source-connect-limits.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 // Most cases make many attempts as one administrator; the budget itself is exercised by its own test below.
 const GENEROUS = new RateLimiter(1_000_000);

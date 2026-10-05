@@ -1,4 +1,4 @@
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /** Upper bound on one call to {@link sweepExpiredExportDownloadGrants}. */

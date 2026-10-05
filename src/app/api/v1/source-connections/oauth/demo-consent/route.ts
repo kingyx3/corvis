@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 
 /**
  * The in-product stand-in for a real provider's OAuth consent page, used only by the demo provider in demo mode

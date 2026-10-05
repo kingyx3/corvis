@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import {

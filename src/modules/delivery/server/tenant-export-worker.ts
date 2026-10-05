@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { TENANT_EXPORT_ARCHIVE_NAME, TENANT_EXPORT_MAX_BUILD_ATTEMPTS, type TenantExportProgress } from "../domain/tenant-export.ts";
 import { computeExportRetryDelayMs, type RandomSource } from "./delivery.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs, type GcsControlClient } from "../../../platform/gcp/gcs.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { safeErrorText } from "../../processing/server/processing-error-text.ts";
 import { TENANT_EXPORT_CONTENT_TYPE } from "./tenant-export-bundle.ts";
 import { createTenantExportArchive, type TenantExportArchiveOptions } from "./tenant-export-archive.ts";
-import { countMetric } from "../../../platform/telemetry.ts";
+import { countMetric } from "../../../platform/observability/telemetry.ts";
 
 /**
  * The build of a full tenant export (F10, #266; at scale F10b #322 and F10c #323), run by the delivery worker tick

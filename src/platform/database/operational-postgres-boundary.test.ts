@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const operationalFiles = [
-  "src/platform/platform.ts",
-  "src/platform/operations.ts",
+  "src/platform/data/platform.ts",
+  "src/platform/data/operations.ts",
   "src/modules/research/server/research.ts",
   "src/modules/sources/server/uploads.ts",
   "src/modules/delivery/server/delivery.ts",

@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
 import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { generateControlEvidence, listControlEvidence } from "@/platform/operations";
-import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { generateControlEvidence, listControlEvidence } from "@/platform/data/operations";
+import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 
 export async function GET(request: Request) {

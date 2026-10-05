@@ -9,7 +9,7 @@ import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-req
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { MAX_VERSION } from "@/platform/http/request-validation";
 import { withIdempotency } from "@/platform/http/idempotency";
-import { PostgresProductionPlatform, platform } from "@/platform/platform";
+import { PostgresProductionPlatform, platform } from "@/platform/data/platform";
 
 const actions: ReconciliationResolutionAction[] = ["select_source", "mark_immaterial", "accept_reconciliation"];
 

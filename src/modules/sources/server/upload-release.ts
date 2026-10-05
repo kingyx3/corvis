@@ -1,4 +1,4 @@
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs, type UploadObjectStore } from "../../../platform/gcp/gcs.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { sealArtifactIntegrity } from "./upload-integrity.ts";

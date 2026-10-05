@@ -2,7 +2,7 @@ import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import type { DataIssueCase, DataIssueTransitionCommand, ReportDataIssueCommand } from "../domain/data-issue.ts";
 import { demoDataIssueStore } from "../adapters/data-issue-store.ts";
 import { runAuditedMutation } from "./audited-mutation.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import {
   PostgresDataIssueBackend,
   assertCanReport,

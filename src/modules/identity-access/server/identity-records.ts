@@ -7,7 +7,7 @@ import type {
   TenantIdentityCommand,
   VerifiedDomainView,
 } from "../domain/identity-records.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**

@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
 import { setFeatureFlagKillSwitch } from "@/modules/admin/server/feature-flags";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 
 /**

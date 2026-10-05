@@ -1,0 +1,4 @@
+# The extractor image needs one file. Naming it here (rather than relying on the root .dockerignore,
+# which excludes services/) keeps this build context to that file only.
+*
+!services/extractor/server.mjs

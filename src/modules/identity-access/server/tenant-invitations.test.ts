@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { AuthorizationError } from "../../../shared/domain/enterprise.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { BULK_ROLES } from "../domain/bulk-invite-csv.ts";
 import { acceptTenantInvitation, assertInvitationIssuer, createTenantInvitation, INVITABLE_ROLES, normalizeTenantInvitation, TenantInvitationError } from "./tenant-invitations.ts";

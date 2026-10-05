@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/modules/delivery/server/delivery";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { sweepExpiredExportDownloadGrants } from "@/modules/delivery/server/export-grant-sweep";
 import { processDueExportSchedules } from "@/modules/delivery/server/export-schedule";
 import { apiError, correlationId, json } from "@/platform/http/http";
@@ -13,7 +13,7 @@ import { sweepTenantExports } from "@/modules/delivery/server/tenant-export-swee
 import { sweepExpiredSourceSecrets } from "@/modules/sources/server/source-connector-runtime";
 import { processDueSourceSyncs } from "@/modules/sources/server/source-sync-scheduler";
 import { processApprovedTenantExports } from "@/modules/delivery/server/tenant-export-worker";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 import { releaseScannedUploads } from "@/modules/sources/server/upload-release";
 import { sweepTenantSessionActivity } from "@/modules/identity-access/server/session-activity-sweep";
 import { sweepUploadSessions } from "@/modules/sources/server/upload-sweep";

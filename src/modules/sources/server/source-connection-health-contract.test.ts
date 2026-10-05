@@ -13,7 +13,7 @@ import {
 import { isFailClosedErrorClass, isRetryableErrorClass, statusAfterError, type ConnectionStatus, type ConnectorErrorClass, type CredentialType } from "./source-connectors.ts";
 
 // Compile-time lock: if either side gains or loses a member, one of these assignments stops type-checking
-// (`npm run typecheck`), so the customer-facing copy in src/core/ can never silently lag the server's enums.
+// (`npm run typecheck`), so the customer-facing copy in the domain layer can never silently lag the server's enums.
 type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const statusesMatch: Mutual<SourceConnectionStatus, ConnectionStatus> = true;
 const errorClassesMatch: Mutual<SourceConnectorErrorClass, ConnectorErrorClass> = true;

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RequestIdentity } from "../shared/domain/enterprise.ts";
+import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import {
   FEATURE_FLAG_REGISTRY,
   PORTFOLIO_ATTRIBUTION_FLAG,
   evaluateFeatureFlag,
   setFeatureFlag,
   type FeatureFlagSnapshot,
-} from "../modules/admin/server/feature-flags.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./database/postgres.ts";
+} from "../../modules/admin/server/feature-flags.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";
 const WORKSPACE = "00000000-0000-0000-0000-0000000000b1";

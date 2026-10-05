@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { bestEffortNotification, enqueueForRoleAudience, sourceAttentionAudienceRoles } from "../../notifications/server/notifications.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { nextRunAt, scheduleAfter } from "./source-sync-schedule.ts";

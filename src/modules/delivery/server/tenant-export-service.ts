@@ -7,7 +7,7 @@ import {
 } from "../domain/tenant-export.ts";
 import { demoTenantExportStore } from "../adapters/tenant-export-store.ts";
 import { runAuditedMutation } from "../../governance/server/audited-mutation.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertOrganizationAdmin } from "../../governance/server/data-governance.ts";
 import { gcs } from "../../../platform/gcp/gcs.ts";
 import { postgres } from "../../../platform/database/postgres.ts";

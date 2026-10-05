@@ -17,7 +17,7 @@ import {
 } from "../domain/session-policy.ts";
 import { demoSessionPolicyStore } from "../adapters/session-policy-store.ts";
 import { runAuditedMutation } from "../../governance/server/audited-mutation.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertOrganizationAdmin, DataGovernanceError } from "../../governance/server/data-governance.ts";
 import { readTenantIdentityRecords, type TenantIdentityRecords } from "./identity-records.ts";
 import { apiError, json } from "../../../platform/http/http.ts";

@@ -20,7 +20,7 @@ import {
   tenantExportReadme,
 } from "./tenant-export-bundle.ts";
 import { keysetTimestampSql } from "../../../platform/http/keyset-sql.ts";
-import { zipStream, type ZipEntryResult, type ZipSource } from "../../../platform/zip-stream.ts";
+import { zipStream, type ZipEntryResult, type ZipSource } from "./zip-stream.ts";
 
 /**
  * The archive of a full tenant export, built as a stream (F10b #322, F10c #323). Nothing here holds the data set, or even

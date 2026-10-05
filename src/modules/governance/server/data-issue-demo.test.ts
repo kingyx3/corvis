@@ -24,7 +24,7 @@ const { GET: itemGet, PATCH: itemPatch } = await import("@/app/api/v1/data-issue
 const { GET: queueGet } = await import("@/app/api/v1/admin/data-issues/route");
 const { GET: adminItemGet, PATCH: adminItemPatch } = await import("@/app/api/v1/admin/data-issues/[caseId]/route");
 const { dataIssueService, demoDataIssueService, postgresDataIssueService, overrideDataIssueService, createDataIssueService, MAX_EXPORT_PAGES } = await import("./data-issue-service.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof DataIssueRequestError && error.code === code && error.status === status;

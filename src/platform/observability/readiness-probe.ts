@@ -1,5 +1,5 @@
-import { getServerConfig } from "./config.ts";
-import { postgres, type PostgresSqlApi } from "./database/postgres.ts";
+import { getServerConfig } from "../config/config.ts";
+import { postgres, type PostgresSqlApi } from "../database/postgres.ts";
 import { logEvent } from "./telemetry.ts";
 
 /**

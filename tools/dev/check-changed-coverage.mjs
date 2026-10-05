@@ -85,7 +85,8 @@ function ensureCommit(base) {
 //      their new location in the old text before comparing.
 // A file counts as unchanged only when the two normalised versions are identical.
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\(\s*|\bnew URL\(\s*|\bregister\(\s*)(["'])[^"'\n]+\2/g;
-const PATH_START = "(?<![\\w./@-])";
+// A path starts at a boundary, or directly after an interpolated prefix such as `${root}/`.
+const PATH_START = "(?:(?<![\\w./@-])|(?<=\\}/))";
 
 function normalizeSpecifiers(source) {
   return source.replace(SPECIFIER, "$1$2<specifier>$2");

@@ -1,6 +1,6 @@
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 /** Notices queued per call, so one tick never holds a long scan. A larger backlog drains over the next ticks. */
 export const SERVICE_ACCOUNT_EXPIRY_NOTICE_BATCH = 500;

@@ -6,10 +6,10 @@ import type {
   SemanticComputedResult,
   SourceCitation,
 } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { isFeatureEnabled } from "../../admin/server/feature-flags.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 import { GovernedSemanticQueryService, type GovernedSemanticQueryShape } from "./semantic-query.ts";
 import {
   assessNumericGrounding,

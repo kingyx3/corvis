@@ -24,7 +24,7 @@ const { GET: listGet, POST: createPost } = await import("@/app/api/v1/export-sch
 const { GET: itemGet, PATCH: itemPatch, DELETE: itemDelete } = await import("@/app/api/v1/export-schedules/[scheduleId]/route");
 const { GET: runsGet } = await import("@/app/api/v1/export-schedules/runs/route");
 const { exportScheduleService, demoExportScheduleService, postgresExportScheduleService, overrideExportScheduleService, createExportScheduleService } = await import("./export-schedule-service.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof ExportScheduleRequestError && error.code === code && error.status === status;

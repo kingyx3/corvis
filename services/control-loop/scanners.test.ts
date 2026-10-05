@@ -70,7 +70,7 @@ test("a line that asserts GitHub owns technical truth is not treated as deferral
 });
 
 test("non-documentation files are never scanned for authority findings", () => {
-  assert.deepEqual(scanDocumentationAuthority([file("src/platform/config.ts", "pricing pricing pricing")]), []);
+  assert.deepEqual(scanDocumentationAuthority([file("src/platform/config/config.ts", "pricing pricing pricing")]), []);
 });
 
 // ---- internal-links ----
@@ -136,7 +136,7 @@ test("a module's domain layer importing its server layer is a critical finding",
 });
 
 test("the shared domain kernel importing platform infrastructure is flagged, importing another domain module is not", () => {
-  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { x } from "@/platform/config";\nimport { y } from "@/modules/review/domain/decision";`)]);
+  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { x } from "@/platform/config/config";\nimport { y } from "@/modules/review/domain/decision";`)]);
   assert.equal(findings.length, 1);
   assert.equal(findings[0]?.ruleId, "CL-ARCH-001");
 });
@@ -158,11 +158,11 @@ test("boundary prefixes treat * as exactly one path segment", () => {
 });
 
 test("a .test.ts file is never scanned for architecture drift", () => {
-  assert.deepEqual(scanArchitectureDrift([file("src/modules/review/domain/decision.test.ts", `import { x } from "@/platform/config";`)]), []);
+  assert.deepEqual(scanArchitectureDrift([file("src/modules/review/domain/decision.test.ts", `import { x } from "@/platform/config/config";`)]), []);
 });
 
 test("a boundary violation is reported once per forbidden prefix even with multiple offending imports", () => {
-  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { a } from "@/platform/config";\nimport { b } from "@/platform/platform";`)]);
+  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { a } from "@/platform/config/config";\nimport { b } from "@/platform/data/platform";`)]);
   assert.equal(findings.length, 1);
 });
 

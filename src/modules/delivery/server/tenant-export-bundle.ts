@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { TenantExportDataset, TenantExportFile, TenantExportManifest } from "../domain/tenant-export.ts";
-import { ZipStreamWriter } from "../../../platform/zip-stream.ts";
+import { ZipStreamWriter } from "./zip-stream.ts";
 
 /**
  * The pieces of the archive of a full tenant export (F10, #266; at scale F10b #322 and F10c #323) that do not depend on

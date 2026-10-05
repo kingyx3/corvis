@@ -8,7 +8,7 @@ import {
 } from "../domain/data-retention.ts";
 import { demoCustomerDeletionStore } from "../adapters/customer-deletion-store.ts";
 import { runAuditedMutation } from "./audited-mutation.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertOrganizationAdmin, DataGovernanceError } from "./data-governance.ts";
 import { DELETION_REQUEST_COLUMNS, toDeletionRequestView } from "./deletion-request-view.ts";
 import type { PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";

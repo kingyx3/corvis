@@ -1,6 +1,6 @@
 import type { DocumentFactLink, DocumentLifecycle, DocumentOrigin, DocumentVersion } from "../../../shared/domain/contracts.ts";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 export type SourceActivityAcquisition = {

@@ -1,10 +1,10 @@
 import { createHash } from "crypto";
 import type { ProcessingStage } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import type { ProcessingStageDelivery } from "./orchestration-stage.ts";
 import { safeErrorText } from "./processing-error-text.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 type TransportEvent = {
   tenantId: string;

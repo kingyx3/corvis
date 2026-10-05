@@ -1,13 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import type { BulkInviteRow } from "../domain/bulk-invite-csv.ts";
 import { neutraliseSpreadsheetFormula } from "../../../shared/lib/csv.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 import { deliverInvitationEmail } from "../../notifications/server/notifications.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import { createTenantInvitation, INVITATION_TTL_DAYS, normalizeTenantInvitation, TenantInvitationError, type TenantInvitation } from "./tenant-invitations.ts";
 
 export const SUPPORT_ACK_THRESHOLD_HOURS = 4;

@@ -1,8 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import type { Entitlements, RequestIdentity, Role } from "../../shared/domain/enterprise.ts";
-import { getServerConfig, type ServerConfig } from "../config.ts";
+import { getServerConfig, type ServerConfig } from "../config/config.ts";
 import { OidcVerifier } from "../../modules/identity-access/server/oidc.ts";
-import { logEvent } from "../telemetry.ts";
+import { logEvent } from "../observability/telemetry.ts";
 
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;

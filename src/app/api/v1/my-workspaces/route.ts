@@ -1,5 +1,5 @@
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { postgres } from "@/platform/database/postgres";
 

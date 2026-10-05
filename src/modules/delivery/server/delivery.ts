@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
 import { deleteExportAttemptArtifacts, deliverExportArtifact } from "./export-delivery.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import type { GcsControlClient } from "../../../platform/gcp/gcs.ts";
 import { notifyScheduledExportOutcome } from "./export-schedule-notifications.ts";
 import { bestEffortNotification, enqueueExportReady } from "../../notifications/server/notifications.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { errorClassOf, safeErrorText } from "../../processing/server/processing-error-text.ts";
-import { countMetric, durationValueMetric } from "../../../platform/telemetry.ts";
+import { countMetric, durationValueMetric } from "../../../platform/observability/telemetry.ts";
 import {
   assertWebhookEndpointAllowed,
   defaultWebhookHostLookup,

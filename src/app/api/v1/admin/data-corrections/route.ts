@@ -1,11 +1,11 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "@/shared/domain/enterprise";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { closeDataIssuesForCorrection } from "@/modules/governance/server/data-issue";
 import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/modules/governance/server/data-correction";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, type PostgresSqlApi, withTransaction } from "@/platform/database/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

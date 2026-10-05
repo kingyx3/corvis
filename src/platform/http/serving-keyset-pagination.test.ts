@@ -4,7 +4,7 @@ import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import { PostgresHoldingInstrumentServingRepository } from "../../modules/analytics/server/holding-instrument-serving.ts";
 import { keysetPage, paginate, type KeysetPage, type Page } from "./pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
-import { PostgresPublicServingResourceRepository } from "../public-serving-resources.ts";
+import { PostgresPublicServingResourceRepository } from "../data/public-serving-resources.ts";
 import { PostgresReconciliationServingRepository } from "../../modules/analytics/server/reconciliation-serving.ts";
 
 // The public serving list routes used to load the whole entitled set on every

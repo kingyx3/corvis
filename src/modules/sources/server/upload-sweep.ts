@@ -1,7 +1,7 @@
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs, type UploadObjectStore } from "../../../platform/gcp/gcs.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 import { uploads, type UploadLifecycleSweep, type UploadSessionPort } from "./uploads.ts";
 
 export type ScheduledUploadSweepSummary = Omit<UploadLifecycleSweep, "nextCursor"> & { tenants: number; errors: number };

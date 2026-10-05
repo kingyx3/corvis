@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { register } from "node:module";
 import test from "node:test";
-import type { ServerConfig } from "../../../platform/config.ts";
+import type { ServerConfig } from "../../../platform/config/config.ts";
 import type { OidcLogoutToken } from "./oidc.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 

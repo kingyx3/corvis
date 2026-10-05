@@ -1,4 +1,4 @@
-import { getServerConfig } from "../config.ts";
+import { getServerConfig } from "../config/config.ts";
 import { postgres, type PostgresSqlApi } from "../database/postgres.ts";
 import { PostgresDriverError } from "../database/postgres-native.ts";
 import { RateLimitError, enforceRateLimit, type RateLimiter } from "./rate-limit.ts";

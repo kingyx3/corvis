@@ -4,8 +4,6 @@ import { createHttpDeliveryPort } from "./http-delivery.ts";
 import { SESSION_EXPIRED_EVENT, UnauthenticatedError } from "../../../shared/lib/api-errors.ts";
 import { latestRequestCorrelationId } from "../../../shared/lib/request-correlation.ts";
 
-// Lives in src/lib/ so `npm test` (which globs src/lib/*.test.ts) runs it.
-
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
 

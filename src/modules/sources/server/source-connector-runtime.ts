@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import type { ConnectorDriver, SecretPayload, SecretStore, SecretWriteOptions } from "./source-connectors.ts";
 
 /**
@@ -229,7 +229,7 @@ const sharedStores = globalThis as typeof globalThis & { secretStore?: SecretSto
  * The `SecretStore` wired for the `/api/v1/source-connections` routes.
  *
  * Selects `GcpSecretManagerSecretStore` when `CORVIS_GCP_PROJECT_ID` is
- * configured (mirroring how `platform()` in src/platform/platform.ts picks a
+ * configured (mirroring how `platform()` in src/platform/data/platform.ts picks a
  * real vs. demo adapter from config rather than from `NODE_ENV`), and falls
  * back to the in-memory placeholder otherwise. In `production`, a missing
  * project id fails closed instead of silently keeping customer credentials

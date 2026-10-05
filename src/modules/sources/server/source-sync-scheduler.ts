@@ -1,5 +1,5 @@
 import { demoSourceConnectionStore } from "../adapters/source-connection-store.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
 import { resolveConnectionCredential } from "./source-connector-governance.ts";
@@ -8,7 +8,7 @@ import { sourceSyncIdentity, uploadIngestSink } from "./source-ingest-sink.ts";
 import { approvedSourceProvider } from "./source-providers.ts";
 import { emptySyncSummary, leaseExpiry, scheduleAfter, type SourceSyncSummary } from "./source-sync-schedule.ts";
 import type { ConnectorDriver, IngestSink, SecretStore } from "./source-connectors.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * Scheduled collection for active source connections, run from the private delivery tick (task `sourceSync`).

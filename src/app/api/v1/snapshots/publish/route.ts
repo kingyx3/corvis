@@ -1,11 +1,11 @@
 import { randomUUID } from "crypto";
 import { assertPermission, type SnapshotPublication } from "@/shared/domain/enterprise";
 import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { PostgresProductionPlatform, platform } from "@/platform/platform";
+import { PostgresProductionPlatform, platform } from "@/platform/data/platform";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { MAX_VERSION } from "@/platform/http/request-validation";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 import { bestEffortNotification, enqueuePinnedFundPublished } from "@/modules/notifications/server/notifications";
 
 export async function POST(request: Request) {

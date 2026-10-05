@@ -1,5 +1,5 @@
 import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { dataGovernanceErrorResponse } from "@/modules/governance/server/data-governance";
 import { correlationId, json } from "@/platform/http/http";
 import { parseLimit } from "@/platform/http/pagination";

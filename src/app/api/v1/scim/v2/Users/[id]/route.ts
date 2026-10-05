@@ -1,5 +1,5 @@
 import { correlationId } from "@/platform/http/http";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 import { authenticateScim, getScimUser, scimErrorResponse, ScimError, setScimUserActive } from "@/modules/identity-access/server/scim";
 

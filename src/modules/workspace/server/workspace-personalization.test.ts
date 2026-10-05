@@ -8,7 +8,7 @@ import { getWorkspacePersonalization, markWorkspaceVisited, normalizePinnedFundI
 // which would otherwise short-circuit every function under test to its
 // demo-mode branch before it ever touches the FakeDb below. This suite is
 // exercising the real Postgres-backed path, so it opts back out for its own
-// scope (same pattern as src/platform/platform-postgres.test.ts).
+// scope (same pattern as src/platform/data/platform-postgres.test.ts).
 process.env.CORVIS_DEMO_MODE = "false";
 
 const identity: RequestIdentity = {

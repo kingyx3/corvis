@@ -2,8 +2,8 @@ import { randomUUID } from "crypto";
 import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
 import { executeDeletionRequest } from "@/modules/governance/server/data-lifecycle";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { platform } from "@/platform/platform";
-import { logEvent } from "@/platform/telemetry";
+import { platform } from "@/platform/data/platform";
+import { logEvent } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request, context: {params: Promise<{requestId:string}>}) {
   const id=correlationId(request);

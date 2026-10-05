@@ -214,7 +214,7 @@ test("export job state is constrained to the delivery lifecycle without a blocki
   const writers = [
     await readFile("src/modules/delivery/server/delivery.ts", "utf8"),
     await readFile("src/modules/delivery/server/physical-exports.ts", "utf8"),
-    await readFile("src/platform/platform-repositories.ts", "utf8"),
+    await readFile("src/platform/data/platform-repositories.ts", "utf8"),
   ].join("\n");
   for (const state of writers.matchAll(/export_job[\s\S]{0,200}?set state='([a-z_]+)'/g)) {
     assert.ok(["queued", "delivering", "retryable", "complete", "failed"].includes(state[1]!), `unexpected export state ${state[1]}`);

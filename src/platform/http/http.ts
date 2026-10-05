@@ -3,7 +3,7 @@ import { DeletionExecutionError, LegalHoldError } from "@/modules/governance/ser
 import { FeatureFlagDeniedError, FeatureFlagGovernanceError } from "@/modules/admin/server/feature-flags";
 import { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } from "@/platform/http/idempotency";
 import { InvalidCursorError, InvalidLimitError } from "@/platform/http/pagination";
-import { ConflictError, PublicationGateError } from "@/platform/platform";
+import { ConflictError, PublicationGateError } from "@/platform/data/platform";
 import { isTransientPostgresError } from "@/platform/database/postgres-native";
 import { RateLimitError } from "@/platform/http/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/modules/research/server/research";
@@ -12,7 +12,7 @@ import { ConnectorGovernanceError } from "@/modules/sources/server/source-connec
 import { TenantInvitationError } from "@/modules/identity-access/server/tenant-invitations";
 import { adminSqlErrorClassification } from "@/platform/database/sql-application-errors";
 import { UploadRequestError } from "@/modules/sources/server/uploads";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 import { rfc3339Replacer } from "@/platform/database/timestamps";
 import { WebhookSubscriptionError } from "@/modules/delivery/server/webhook-subscriptions";
 

@@ -6,7 +6,7 @@
 -- triggers so the fixtures stay minimal). Everything is rolled back.
 --
 -- The three statements marked "keep in sync" are the exact SQL the application
--- issues (src/platform/platform-repositories.ts, data-lifecycle.ts,
+-- issues (src/platform/data/platform-repositories.ts, data-lifecycle.ts,
 -- physical-exports.ts); the TypeScript tests pin their text, this file pins
 -- their behaviour against real Postgres.
 

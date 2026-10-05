@@ -1,6 +1,6 @@
 import { selectableScope, type SourceProviderDescriptor } from "../domain/source-connect-wizard.ts";
 import { DEMO_OAUTH_RENEWAL_ALIASES, DEMO_SOURCE_PROVIDERS } from "../adapters/source-providers.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { sourceConnectorDrivers } from "./source-connector-runtime.ts";
 import { ConnectorGovernanceError, type ConnectorDriver, type CredentialType, type SourceScope } from "./source-connectors.ts";
 import type { SourceOAuthClient } from "./source-oauth.ts";

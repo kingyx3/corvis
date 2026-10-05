@@ -29,7 +29,7 @@ const { values } = parseArgs({
 
 function createStateStore(): { store: StateStore; durable: boolean } {
   const bucket = process.env.CONTROL_LOOP_STATE_BUCKET?.trim();
-  if (!bucket) return { store: new FileStateStore(`${values.root}/control-loop/state`), durable: false };
+  if (!bucket) return { store: new FileStateStore(`${values.root}/services/control-loop/state`), durable: false };
   return {
     store: new GcsStateStore({
       bucket,

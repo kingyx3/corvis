@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "crypto";
-import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "./demo/catalog.ts";
-import { demoCompanySectorStore } from "../modules/workspace/adapters/company-sector-store.ts";
-import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../shared/domain/contracts.ts";
-import { fundSnapshotStatus } from "../modules/analytics/domain/current-snapshots.ts";
-import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT, type AttentionAggregates, type ExposureDimension, type ExposureDimensionFact, type NeedsReviewAggregate, type PortfolioValueFact } from "../modules/workspace/domain/workspace-summary.ts";
+import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "../demo/catalog.ts";
+import { demoCompanySectorStore } from "../../modules/workspace/adapters/company-sector-store.ts";
+import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../shared/domain/contracts.ts";
+import { fundSnapshotStatus } from "../../modules/analytics/domain/current-snapshots.ts";
+import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT, type AttentionAggregates, type ExposureDimension, type ExposureDimensionFact, type NeedsReviewAggregate, type PortfolioValueFact } from "../../modules/workspace/domain/workspace-summary.ts";
 import {
   assertRedistributionAllowed,
   type AuditEvent,
@@ -20,18 +20,18 @@ import {
   type ReviewDecision,
   type ReviewOutcome,
   type SnapshotPublication,
-} from "../shared/domain/enterprise.ts";
-import { getServerConfig } from "./config.ts";
-import type { KeysetPage } from "./http/pagination.ts";
+} from "../../shared/domain/enterprise.ts";
+import { getServerConfig } from "../config/config.ts";
+import type { KeysetPage } from "../http/pagination.ts";
 import {
   PostgresOperationsRepository,
   PostgresReviewPublicationRepository,
   PostgresWorkspaceRepository,
   SNAPSHOT_VERSION_KEY_WIDTH,
 } from "./platform-repositories.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./database/postgres.ts";
-import { evaluatePublicationGate } from "../modules/review/server/publication-policy.ts";
-import { researchService, type ResearchExecutionOptions } from "../modules/research/server/research.ts";
+import { postgres, type PostgresRow, type PostgresSqlApi } from "../database/postgres.ts";
+import { evaluatePublicationGate } from "../../modules/review/server/publication-policy.ts";
+import { researchService, type ResearchExecutionOptions } from "../../modules/research/server/research.ts";
 
 /**
  * The list methods take an optional keyset `page`. Without it they return the

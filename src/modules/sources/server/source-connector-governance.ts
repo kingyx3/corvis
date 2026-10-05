@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { OAuthCredentialExpiredError, freshOAuthCredential, type SourceOAuthClient } from "./source-oauth.ts";
 import { isOAuthCredential } from "../domain/source-connection-health.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";

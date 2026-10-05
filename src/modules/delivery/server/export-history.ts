@@ -1,6 +1,6 @@
 import { AuthorizationError, assertRedistributionAllowed, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import type { ScheduledExportMarker } from "../domain/export-schedule.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { EXPORT_STATUS_COLUMNS, exportStatusFromJob, type ExportStatus } from "./physical-exports.ts";
 

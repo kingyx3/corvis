@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { platform } from "@/platform/platform";
+import { platform } from "@/platform/data/platform";
 import { parseResearchQuestion } from "@/modules/research/server/research";
 
 export async function POST(request: Request) {

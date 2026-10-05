@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documents, fundSnapshots, observations } from "./demo/catalog.ts";
-import type { RequestIdentity } from "../shared/domain/enterprise.ts";
+import { documents, fundSnapshots, observations } from "../demo/catalog.ts";
+import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import { platform, PostgresProductionPlatform } from "./platform.ts";
 
 process.env.CORVIS_DEMO_MODE = "true";

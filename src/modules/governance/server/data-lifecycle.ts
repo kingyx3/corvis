@@ -1,9 +1,9 @@
 import { createHash } from "crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { safeErrorText } from "../../processing/server/processing-error-text.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * Retention and deletion execution.

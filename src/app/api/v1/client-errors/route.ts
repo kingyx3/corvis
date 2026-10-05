@@ -2,7 +2,7 @@ import { parseClientErrorEvent } from "@/shared/lib/client-error-report";
 import { readBoundedRequestText, RequestBodyTooLargeError } from "@/platform/http/bounded-body";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 const MAX_BODY_BYTES = 2048;
 

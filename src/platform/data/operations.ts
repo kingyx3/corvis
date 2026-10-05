@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import type { RequestIdentity } from "../shared/domain/enterprise.ts";
-import { getServerConfig } from "./config.ts";
-import { parseDeletionScope } from "../modules/governance/server/data-lifecycle.ts";
+import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
+import { getServerConfig } from "../config/config.ts";
+import { parseDeletionScope } from "../../modules/governance/server/data-lifecycle.ts";
 import { platform } from "./platform.ts";
-import { postgres, type PostgresSqlApi } from "./database/postgres.ts";
+import { postgres, type PostgresSqlApi } from "../database/postgres.ts";
 
 function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
 

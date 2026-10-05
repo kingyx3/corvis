@@ -9,7 +9,7 @@
  *
  * The id lists below mirror `ConnectionStatus`, `ConnectorErrorClass` and
  * `CredentialType` in `src/modules/sources/server/source-connectors.ts`. That module cannot be
- * imported from `src/core/` (it reaches Postgres), so
+ * imported from the domain layer (it reaches Postgres), so
  * `src/modules/sources/server/source-connection-health-contract.test.ts` pins the two sets
  * together at compile time and at run time: adding a class on either side
  * without the matching copy here fails typecheck and the test suite.

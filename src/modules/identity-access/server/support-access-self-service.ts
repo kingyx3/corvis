@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import type { PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { SUPPORT_ACK_THRESHOLD_HOURS } from "./tenant-admin-self-service.ts";
 import { bestEffortNotification, enqueueForRoleAudience, supportAccessAudienceRoles } from "../../notifications/server/notifications.ts";

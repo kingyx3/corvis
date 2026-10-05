@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../config.ts";
+import { getServerConfig } from "../config/config.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../database/postgres.ts";
 
 /**

@@ -6,7 +6,7 @@ import test from "node:test";
 register(new URL("../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 const { apiError } = await import("@/platform/http/http");
-const { PublicationGateError } = await import("@/platform/platform");
+const { PublicationGateError } = await import("@/platform/data/platform");
 const { DeletionExecutionError, LegalHoldError } = await import("@/modules/governance/server/data-lifecycle");
 const { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } = await import("@/modules/research/server/research");
 

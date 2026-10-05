@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { demoSourceConnectionStore } from "../adapters/source-connection-store.ts";
 import { demoTestOutcome } from "../adapters/source-providers.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { auditSourceConnectionEvent, createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
 import { uploadIngestSink } from "./source-ingest-sink.ts";
 import { approvedSourceProvider, credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
-import { ConflictError, platform } from "../../../platform/platform.ts";
+import { ConflictError, platform } from "../../../platform/data/platform.ts";
 import { listSourceActivity, type SourceActivityConnection } from "./source-lifecycle.ts";
 import {
   ConnectorGovernanceError,
@@ -18,7 +18,7 @@ import {
   type SourceConnection,
   type SourceScope,
 } from "./source-connectors.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 /** What a connectivity test tells the browser: pass or fail and a class for plain-language copy. Driver detail text never leaves the server. */
 export type ConnectionTestOutcome = { ok: boolean; errorClass?: ConnectorErrorClass };

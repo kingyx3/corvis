@@ -1,4 +1,4 @@
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { postgres } from "@/platform/database/postgres";
 import { AuthenticationError } from "@/platform/http/request-context";

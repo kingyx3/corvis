@@ -1,6 +1,6 @@
 import type { Entitlements, Permission, RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { hasPermission } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**

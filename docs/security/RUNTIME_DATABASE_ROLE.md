@@ -110,7 +110,7 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_control.api_rate_limit` | SELECT, INSERT, UPDATE | function corvis_control.consume_api_rate_limit |
 | `corvis_control.audit_event` | SELECT, INSERT | src/modules/governance/server/audit-query.ts+5 |
 | `corvis_control.control_definition` | SELECT, UPDATE | function corvis_control.promote_control_implementation |
-| `corvis_control.control_evidence` | SELECT, INSERT | src/platform/operations.ts |
+| `corvis_control.control_evidence` | SELECT, INSERT | src/platform/data/operations.ts |
 | `corvis_control.control_evidence_record` | SELECT, INSERT | src/modules/governance/server/control-evidence-collector.ts |
 | `corvis_control.control_evidence_requirement` | SELECT | function corvis_control.promote_control_implementation |
 | `corvis_control.data_correction_incident` | SELECT, INSERT, UPDATE | src/modules/governance/server/data-correction.ts |
@@ -120,7 +120,7 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_control.deletion_execution_evidence` | SELECT, INSERT | src/modules/governance/server/data-lifecycle.ts |
 | `corvis_control.deletion_request` | SELECT, INSERT, UPDATE | src/modules/governance/server/data-lifecycle.ts+1 |
 | `corvis_control.email_outbox` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-schedule-notifications.ts+1 |
-| `corvis_control.event_inbox` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts |
+| `corvis_control.event_inbox` | SELECT, INSERT, UPDATE | src/platform/data/platform-repositories.ts |
 | `corvis_control.export_schedule` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-history.ts+2 |
 | `corvis_control.export_schedule_run` | SELECT, INSERT | src/modules/delivery/server/export-history.ts+2 |
 | `corvis_control.feature_flag` | SELECT, INSERT, UPDATE | src/modules/admin/server/feature-flags.ts+1 |
@@ -133,8 +133,8 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_control.notification_preference` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
 | `corvis_control.notification_recipient` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
 | `corvis_control.outbox_event` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+4 |
-| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/platform/operations.ts+4 |
-| `corvis_control.processing_recovery_event` | SELECT, INSERT | src/platform/platform-repositories.ts |
+| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/platform/data/operations.ts+4 |
+| `corvis_control.processing_recovery_event` | SELECT, INSERT | src/platform/data/platform-repositories.ts |
 | `corvis_control.processing_stage_effect` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-reviewed-stage.ts |
 | `corvis_control.research_answer_pin` | SELECT, INSERT, DELETE | src/modules/research/server/research-pins.ts |
 | `corvis_control.resource_entitlement` | SELECT, INSERT, UPDATE, DELETE | src/app/api/v1/admin/access-review/route.ts+4 |
@@ -169,24 +169,24 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_facts.client_portfolio` | SELECT | view corvis_serving.client_portfolios |
 | `corvis_facts.client_portfolio_fund_position` | SELECT | view corvis_serving.client_portfolio_fund_positions |
 | `corvis_facts.company_sector_classification` | SELECT, INSERT, UPDATE | view corvis_serving.company_sectors |
-| `corvis_facts.holding` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts |
+| `corvis_facts.holding` | SELECT, INSERT, UPDATE | src/platform/data/platform-repositories.ts |
 | `corvis_facts.holding_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v2 |
 | `corvis_facts.instrument` | SELECT, INSERT, UPDATE | view corvis_serving.instruments |
 | `corvis_facts.instrument_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v2 |
-| `corvis_facts.observation` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts+2 |
+| `corvis_facts.observation` | SELECT, INSERT, UPDATE | src/platform/data/platform-repositories.ts+2 |
 | `corvis_facts.observation_correction` | SELECT, INSERT | function corvis_facts.apply_review_decision |
 | `corvis_facts.observation_source_reference` | SELECT, INSERT | src/modules/analytics/server/performance-scorecard.ts+1 |
 | `corvis_facts.position_financial_statement` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
 | `corvis_facts.position_financial_statement_line` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
 | `corvis_facts.position_financial_statement_value` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
-| `corvis_facts.review_event` | SELECT, INSERT | src/platform/platform-repositories.ts |
+| `corvis_facts.review_event` | SELECT, INSERT | src/platform/data/platform-repositories.ts |
 | `corvis_identity.company` | SELECT, INSERT | src/modules/workspace/server/company-sectors.ts+1 |
 | `corvis_identity.entity_external_identifier` | SELECT | view corvis_serving.entity_directory |
-| `corvis_identity.entity_lifecycle_event` | SELECT, INSERT | src/platform/public-serving-resources.ts |
-| `corvis_identity.entity_lifecycle_participant` | SELECT, INSERT | src/platform/public-serving-resources.ts |
+| `corvis_identity.entity_lifecycle_event` | SELECT, INSERT | src/platform/data/public-serving-resources.ts |
+| `corvis_identity.entity_lifecycle_participant` | SELECT, INSERT | src/platform/data/public-serving-resources.ts |
 | `corvis_identity.entity_name` | SELECT, INSERT, UPDATE | view corvis_serving.entity_directory |
 | `corvis_identity.fund` | SELECT, INSERT | src/modules/analytics/server/performance-scorecard.ts+2 |
-| `corvis_identity.tenant_entity_lifecycle_evidence` | SELECT, INSERT, UPDATE | src/platform/public-serving-resources.ts |
+| `corvis_identity.tenant_entity_lifecycle_evidence` | SELECT, INSERT, UPDATE | src/platform/data/public-serving-resources.ts |
 | `corvis_identity.tenant_entity_name` | SELECT, INSERT | function corvis_control.access_policy_resource_belongs_to_tenant |
 | `corvis_identity.tenant_entity_revision` | INSERT | function corvis_identity.record_reviewed_entity_candidate_lineage |
 | `corvis_identity.tenant_lifecycle_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v3 |

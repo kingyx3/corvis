@@ -5,9 +5,9 @@ import {
   type CompanySectorAssignmentOutcome,
   type CompanySectorRecord,
 } from "../domain/sector-taxonomy.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { demoCompanySectorStore } from "../adapters/company-sector-store.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**

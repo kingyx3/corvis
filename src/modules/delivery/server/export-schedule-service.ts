@@ -2,7 +2,7 @@ import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import type { CreateExportScheduleCommand, ExportSchedule, ExportScheduleAction } from "../domain/export-schedule.ts";
 import { demoExportScheduleStore } from "../adapters/export-schedule-store.ts";
 import { runAuditedMutation } from "../../governance/server/audited-mutation.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import {
   PostgresExportScheduleBackend,
   assertCanViewAll,

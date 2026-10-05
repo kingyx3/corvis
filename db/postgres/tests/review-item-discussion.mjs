@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
 import { PostgresReviewDiscussionBackend, commentFingerprint, reviewDiscussionAuditEvent } from '../../../src/modules/review/server/review-discussion.ts';
-import { PostgresOperationsRepository } from '../../../src/platform/platform-repositories.ts';
+import { PostgresOperationsRepository } from '../../../src/platform/data/platform-repositories.ts';
 import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../src/modules/notifications/server/notifications.ts';
 import { mentionedUserIds } from '../../../src/modules/review/domain/review-discussion.ts';
 

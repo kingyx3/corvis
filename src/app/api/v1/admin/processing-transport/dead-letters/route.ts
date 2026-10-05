@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
 import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { postgres } from "@/platform/database/postgres";
 import { listTransportDeadLetters, requeueTransportDeadLetter, type TransportRequeueResult } from "@/modules/processing/server/processing-transport-recovery";

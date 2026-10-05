@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { PostgresProductionPlatform } from "../../../platform/platform.ts";
+import { PostgresProductionPlatform } from "../../../platform/data/platform.ts";
 
 class RejectedObservationDb implements PostgresSqlApi {
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {

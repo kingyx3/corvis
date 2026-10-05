@@ -28,7 +28,7 @@ const { PUT: assigneePut } = await import("@/app/api/v1/review-items/[subjectKin
 const { POST: commentPost } = await import("@/app/api/v1/review-items/[subjectKind]/[subjectId]/comments/route");
 const { POST: reviewPost } = await import("@/app/api/v1/review/route");
 const { reviewDiscussionService, demoReviewDiscussionService, postgresReviewDiscussionService, overrideReviewDiscussionService, createReviewDiscussionService } = await import("./review-discussion-service.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 const { demoCustomerJourneyStore } = await import("../../../platform/demo/customer-journey-store.ts");
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");

@@ -3,7 +3,7 @@ import {
   BudgetGuardRequestError,
   executeConfiguredBudgetGuardRequest,
 } from "@/platform/gcp/gcp-cost-guard";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request): Promise<Response> {
   const id = correlationId(request);

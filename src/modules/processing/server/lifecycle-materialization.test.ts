@@ -39,7 +39,7 @@ test("tenant-private lifecycle evidence stays attributable and replay-safe", asy
 });
 
 test("customer lifecycle serving requires own approved evidence for tenant-derived events", async () => {
-  const serving = (await readFile("src/platform/public-serving-resources.ts", "utf8")).toLowerCase();
+  const serving = (await readFile("src/platform/data/public-serving-resources.ts", "utf8")).toLowerCase();
   assert.match(serving, /e\.source_kind in \('governed','public_registry'\)/);
   assert.match(serving, /tenant_entity_lifecycle_evidence te/);
   assert.match(serving, /te\.tenant_id=\$1::uuid/);

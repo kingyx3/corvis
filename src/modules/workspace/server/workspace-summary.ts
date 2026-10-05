@@ -8,8 +8,8 @@ import {
   type WorkspaceDashboardSummary,
 } from "../domain/workspace-dashboard.ts";
 import { buildWorkspaceSummary, type SourceHealthInput } from "../domain/workspace-summary.ts";
-import { getServerConfig } from "../../../platform/config.ts";
-import { platform as defaultPlatform, type PlatformPort } from "../../../platform/platform.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
+import { platform as defaultPlatform, type PlatformPort } from "../../../platform/data/platform.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { getWorkspacePersonalization, type WorkspacePersonalization } from "./workspace-personalization.ts";
 

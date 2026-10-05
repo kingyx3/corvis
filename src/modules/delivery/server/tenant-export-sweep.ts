@@ -1,8 +1,8 @@
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs, type GcsControlClient } from "../../../platform/gcp/gcs.ts";
 import { exportObjectKey } from "./physical-exports.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * Hygiene for the full tenant export (F10f, #326), run on the private delivery tick (`/api/internal/delivery`, task

@@ -4,7 +4,7 @@ import type { ExportScope, PositionFinancialsExportScope } from "../domain/deliv
 import { assertRedistributionAllowed, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { SCORECARD_EXPORT_COLUMNS } from "../../analytics/domain/performance-scorecard.ts";
 import { PostgresMembershipAuthorizationRepository } from "../../identity-access/server/authorization.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertExportRowLimit, EXPORT_COLUMNS, EXPORT_MAX_ROWS, POSITION_EXPORT_COLUMNS, renderExport, type ExportRow } from "./export-renderer.ts";
 import { gcs, type GcsControlClient } from "../../../platform/gcp/gcs.ts";
 import { loadScorecardExportRows, performanceScorecardScope } from "../../analytics/server/performance-scorecard-export.ts";

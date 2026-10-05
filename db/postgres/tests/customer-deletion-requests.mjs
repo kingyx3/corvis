@@ -15,7 +15,7 @@ register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url),
 const { PostgresCustomerDeletionBackend, createCustomerDeletionService } = await import('../../../src/modules/governance/server/customer-deletion.ts');
 const { PostgresRetentionBackend } = await import('../../../src/modules/governance/server/data-retention.ts');
 const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await import('../../../src/modules/governance/server/data-lifecycle.ts');
-const { createDeletionRequest } = await import('../../../src/platform/operations.ts');
+const { createDeletionRequest } = await import('../../../src/platform/data/operations.ts');
 const { adminSqlErrorClassification } = await import('../../../src/platform/database/sql-application-errors.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;

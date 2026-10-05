@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { beforeEach, mock } from "node:test";
-import type { PostgresSqlApi } from "./database/postgres.ts";
+import type { PostgresSqlApi } from "../database/postgres.ts";
 import { checkReadiness, resetReadinessCache } from "./readiness-probe.ts";
 
 console.error = () => undefined;

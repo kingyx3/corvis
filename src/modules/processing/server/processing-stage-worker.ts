@@ -7,7 +7,7 @@ import type {
 import type { PostgresProcessingStageEffectRepository } from "./orchestration-stage-effect.ts";
 import { safeErrorText } from "./processing-error-text.ts";
 import { sqlApplicationErrorOf } from "../../../platform/database/sql-application-errors.ts";
-import { countMetric } from "../../../platform/telemetry.ts";
+import { countMetric } from "../../../platform/observability/telemetry.ts";
 
 export type ProcessingStageEffectInput = {
   tenantId: string;

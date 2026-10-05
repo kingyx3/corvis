@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 export type OpenDataCorrectionCommand = {

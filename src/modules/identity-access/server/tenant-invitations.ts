@@ -1,9 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { emailDomainAllowed } from "./identity-records.ts";
-import { ConflictError } from "../../../platform/platform.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { sqlApplicationErrorOf } from "../../../platform/database/sql-application-errors.ts";
 

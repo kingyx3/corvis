@@ -4,8 +4,6 @@ import { createHttpWorkspacePort } from "./http-workspace.ts";
 import { ApiError, MalformedStreamError, SESSION_EXPIRED_EVENT, UnauthenticatedError, friendlyErrorMessage, SESSION_EXPIRED_MESSAGE } from "../../../shared/lib/api-errors.ts";
 import { latestRequestCorrelationId } from "../../../shared/lib/request-correlation.ts";
 
-// Lives in src/lib/ so `npm test` (which globs src/lib/*.test.ts) runs it without touching package.json.
-
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
 

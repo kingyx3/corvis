@@ -7,7 +7,7 @@ import { sourceConnectorSecretStore } from "@/modules/sources/server/source-conn
 import { ConnectorGovernanceError } from "@/modules/sources/server/source-connectors";
 import { clearedAttemptCookie, consumeOAuthAttempt, discardOAuthAttempt, readAttemptCookie } from "@/modules/sources/server/source-oauth";
 import { approvedSourceProvider, oauthProviderForConnection, resolveScopeSelection } from "@/modules/sources/server/source-providers";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 /**
  * Finishes the OAuth leg after the provider redirected the administrator back to the app. The browser passes the

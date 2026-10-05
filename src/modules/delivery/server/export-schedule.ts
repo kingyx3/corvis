@@ -17,14 +17,14 @@ import {
   type ScheduledExportScope,
 } from "../domain/export-schedule.ts";
 import { PostgresMembershipAuthorizationRepository, type AuthorizationPrincipal, type MembershipAuthorization } from "../../identity-access/server/authorization.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { assertFeatureEnabled, FeatureFlagDeniedError } from "../../admin/server/feature-flags.ts";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/pagination.ts";
 import { createPhysicalExport } from "./physical-exports.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { notifyScheduledRunFailed } from "./export-schedule-notifications.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 /**
  * Scheduled exports (F4, #260), Postgres side. A schedule only ever writes `corvis_control.export_schedule` and its run

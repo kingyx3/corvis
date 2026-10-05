@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { DataCorrectionRequestError, PostgresDataCorrectionRepository } from "./data-correction.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 const identity: RequestIdentity = {

@@ -1,5 +1,5 @@
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import type { IngestInput, IngestResult, IngestSink } from "./source-connectors.ts";
 import { UploadRequestError, uploadIdempotencyKey, uploads, type UploadSessionPort } from "./uploads.ts";
 

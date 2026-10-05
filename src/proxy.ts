@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server.js";
 import type { NextRequest } from "next/server.js";
-import { isProductionEnvironment } from "./platform/config.ts";
+import { isProductionEnvironment } from "./platform/config/config.ts";
 import { buildContentSecurityPolicy, generateNonce } from "./platform/http/content-security-policy.ts";
 import { checkBrowserRequest } from "./platform/http/request-security.ts";
-import { resolveRuntimeSurface, runtimeSurfaceAllows } from "./platform/runtime-surface.ts";
+import { resolveRuntimeSurface, runtimeSurfaceAllows } from "./platform/runtime/runtime-surface.ts";
 
 export function proxy(request: NextRequest) {
   // Fail closed like getServerConfig(): "Production"/"staging"/a typo is production, never the open "combined" surface.

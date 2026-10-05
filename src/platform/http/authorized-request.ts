@@ -1,6 +1,6 @@
 import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import { AuthorizationError } from "../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../config.ts";
+import { getServerConfig } from "../config/config.ts";
 import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "../../modules/identity-access/server/authorization.ts";
 import type { RateLimiter } from "./rate-limit.ts";
 import { enforceRequestRateLimit } from "./distributed-rate-limit.ts";

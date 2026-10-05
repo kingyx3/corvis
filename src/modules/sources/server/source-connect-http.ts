@@ -1,5 +1,5 @@
 import { MAX_CONNECTION_NAME_LENGTH, OAUTH_RETURN_MARKER } from "../domain/source-connect-wizard.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { approvedSourceProvider, resolveScopeSelection, type ApprovedSourceProvider } from "./source-providers.ts";
 import { ConnectorGovernanceError, assertSourceConnectionId, type SecretPayload, type SourceConnection, type SourceScope } from "./source-connectors.ts";
 

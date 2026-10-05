@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { assertPermission, type ReviewDecision } from "@/shared/domain/enterprise";
 import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { PostgresProductionPlatform, platform } from "@/platform/platform";
+import { PostgresProductionPlatform, platform } from "@/platform/data/platform";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { isNonEmptyString, MAX_VERSION } from "@/platform/http/request-validation";

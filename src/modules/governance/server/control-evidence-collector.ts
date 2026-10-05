@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { evidenceSource } from "./control-evidence-registry.ts";
 

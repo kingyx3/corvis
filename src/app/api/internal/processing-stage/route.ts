@@ -3,7 +3,7 @@ import {
   executeConfiguredProcessingWorkerRequest,
   ProcessingWorkerRequestError,
 } from "@/modules/processing/server/processing-worker-ingress";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request): Promise<Response> {
   const id = correlationId(request);

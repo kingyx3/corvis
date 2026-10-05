@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { AuthorizationError, type RequestIdentity } from "../shared/domain/enterprise.ts";
-import { scopeObservationsToSnapshot } from "../modules/review/domain/review-scope.ts";
-import { currentSnapshots } from "../modules/analytics/domain/current-snapshots.ts";
-import { buildWorkspaceSummary, STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT } from "../modules/workspace/domain/workspace-summary.ts";
+import { AuthorizationError, type RequestIdentity } from "../../shared/domain/enterprise.ts";
+import { scopeObservationsToSnapshot } from "../../modules/review/domain/review-scope.ts";
+import { currentSnapshots } from "../../modules/analytics/domain/current-snapshots.ts";
+import { buildWorkspaceSummary, STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT } from "../../modules/workspace/domain/workspace-summary.ts";
 import { ConflictError, platform, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
-import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "./http/pagination.ts";
-import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./database/postgres.ts";
-import { ResearchProviderError } from "../modules/research/server/research.ts";
+import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "../http/pagination.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
+import { ResearchProviderError } from "../../modules/research/server/research.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -103,7 +103,7 @@ async function withReadinessEnv<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 test("production platform source contains no direct Snowflake persistence", async () => {
-  const source = await readFile("src/platform/platform.ts", "utf8");
+  const source = await readFile("src/platform/data/platform.ts", "utf8");
   assert.equal(source.includes("@/lib/server/snowflake"), false);
   assert.equal(source.includes("./snowflake"), false);
   assert.equal(source.includes("SnowflakeProductionPlatform"), false);

@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { platform, snapshotPaginationKey } from "@/platform/platform";
+import { platform, snapshotPaginationKey } from "@/platform/data/platform";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { keysetPage, paginate, paginationRequested, parseLimit } from "@/platform/http/pagination";

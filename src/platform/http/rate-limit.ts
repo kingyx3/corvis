@@ -1,4 +1,4 @@
-import { getServerConfig } from "../config.ts";
+import { getServerConfig } from "../config/config.ts";
 
 /**
  * Development/test process-local request budget for

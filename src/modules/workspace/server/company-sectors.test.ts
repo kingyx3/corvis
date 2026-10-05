@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { PostgresCompanySectorRepository } from "./company-sectors.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 const identity: RequestIdentity = {

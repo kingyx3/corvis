@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor, InvalidCursorError, MAX_PAGE_LIMIT } from "../../../platform/http/pagination.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { isWebhookEventType, webhookEndpointBlockReason } from "./webhook-endpoint-policy.ts";

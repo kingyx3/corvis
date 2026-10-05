@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { type ServerConfig, getServerConfig } from "../../../platform/config.ts";
-import { ConflictError } from "../../../platform/platform.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { type ServerConfig, getServerConfig } from "../../../platform/config/config.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /** Matches src/modules/governance/server/customer-implementation.ts's CUSTOMER_KEY: a stable lowercase slug. */

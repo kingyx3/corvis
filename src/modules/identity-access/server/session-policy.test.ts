@@ -19,7 +19,7 @@ const {
   postgresSessionPolicyService, sessionPolicyErrorResponse, sessionPolicyService,
 } = await import("./session-policy.ts");
 const { SessionPolicyValidationError } = await import("../domain/session-policy.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const TENANT = "11111111-aaaa-4aaa-8aaa-111111111111";
 const WORKSPACE = "33333333-cccc-4ccc-8ccc-333333333333";

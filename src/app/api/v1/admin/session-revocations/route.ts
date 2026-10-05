@@ -2,9 +2,9 @@ import { randomUUID } from "crypto";
 import type { RequestIdentity } from "@/shared/domain/enterprise";
 import { PostgresSessionRevocationRepository } from "@/modules/identity-access/server/authorization";
 import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 
 function revocableAuthMethod(value: unknown): Exclude<RequestIdentity["authMethod"], "demo"> | undefined {

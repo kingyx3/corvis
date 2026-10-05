@@ -1,7 +1,7 @@
 import type { ProcessingStageHandler } from "./processing-stage-effects.ts";
 import type { ProcessingStageEffectInput } from "./processing-stage-worker.ts";
 import type { PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { durationValueMetric, logEvent } from "../../../platform/telemetry.ts";
+import { durationValueMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 export type ConsolidatedPredecessorResult = {
   consolidationRunId: string;

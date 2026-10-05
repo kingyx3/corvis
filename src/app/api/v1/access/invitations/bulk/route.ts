@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { readBoundedRequestText, RequestBodyTooLargeError } from "@/platform/http/bounded-body";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { postgres } from "@/platform/database/postgres";
 import { createBulkInvitations, parseBulkInviteCsv } from "@/modules/identity-access/server/tenant-admin-self-service";

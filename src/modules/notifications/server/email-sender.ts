@@ -1,7 +1,7 @@
 import type { EmailSender } from "../domain/notifications.ts";
 import { DisabledEmailSender } from "../adapters/disabled-email-sender.ts";
-import { getServerConfig, type ServerConfig } from "../../../platform/config.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { getServerConfig, type ServerConfig } from "../../../platform/config/config.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 /** Providers with a reviewed adapter. Activation also needs a vendor/subprocessor approval (see docs/features/NOTIFICATIONS.md). */
 export const SUPPORTED_EMAIL_PROVIDERS = ["disabled"] as const;

@@ -1,4 +1,4 @@
-import { getServerConfig } from "./config.ts";
+import { getServerConfig } from "../config/config.ts";
 
 export type LogLevel = "info" | "warn" | "error";
 export type TelemetryContext = { correlationId: string; tenantId?: string; workspaceId?: string; actorSubject?: string; jobId?: string; documentId?: string };

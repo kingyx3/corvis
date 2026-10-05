@@ -1,4 +1,4 @@
-import { isProductionEnvironment } from "../config.ts";
+import { isProductionEnvironment } from "../config/config.ts";
 
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
 

@@ -1,14 +1,14 @@
 import { assertPermission, type ResearchStreamEvent } from "@/shared/domain/enterprise";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { platform } from "@/platform/platform";
+import { platform } from "@/platform/data/platform";
 import {
   parseResearchQuestion,
   ResearchCancelledError,
   ResearchProviderError,
   ResearchTimeoutError,
 } from "@/modules/research/server/research";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 function errorEvent(error: unknown): ResearchStreamEvent {
   if (error instanceof ResearchTimeoutError) return { type: "error", code: "research_timeout" };

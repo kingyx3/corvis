@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs, type GcsObject, type UploadObjectStore } from "../../../platform/gcp/gcs.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 import { canAccessUpload } from "./upload-access.ts";
 import { sealArtifactIntegrity } from "./upload-integrity.ts";
 

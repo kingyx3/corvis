@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
-import { PostgresPublicServingResourceRepository } from "../public-serving-resources.ts";
+import { PostgresPublicServingResourceRepository } from "../data/public-serving-resources.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
 
 const identity: RequestIdentity = {
@@ -121,6 +121,6 @@ test("new public resources are part of the versioned OpenAPI contract", async ()
 test("resource tranche intentionally does not fake holdings or instruments", async () => {
   const contract = (await readFile("docs/architecture/API_CONVENTIONS.md", "utf8")).toLowerCase();
   assert.ok(contract.includes("/api/v1"));
-  const repository = (await readFile("src/platform/public-serving-resources.ts", "utf8")).toLowerCase();
+  const repository = (await readFile("src/platform/data/public-serving-resources.ts", "utf8")).toLowerCase();
   assert.doesNotMatch(repository, /targettype:\s*company_id\s*\?/);
 });

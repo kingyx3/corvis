@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { getUserPreferences, mutateSavedView, saveDisplayPreferences } from '../../../src/modules/workspace/server/user-preferences.ts';
-import { PostgresProductionPlatform } from '../../../src/platform/platform.ts';
+import { PostgresProductionPlatform } from '../../../src/platform/data/platform.ts';
 process.env.CORVIS_DEMO_MODE='false';
 const db=new NativePostgresSqlApi(process.env.CORVIS_POSTGRES_DSN);
 const rollback=new Error('ROLLBACK_PREFERENCE_FIXTURES');

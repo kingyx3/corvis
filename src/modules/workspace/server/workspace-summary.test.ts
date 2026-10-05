@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { PostgresProductionPlatform, type PlatformPort } from "../../../platform/platform.ts";
+import { PostgresProductionPlatform, type PlatformPort } from "../../../platform/data/platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { workspaceSummary } from "./workspace-summary.ts";
 

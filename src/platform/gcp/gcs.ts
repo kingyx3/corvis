@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { request as httpsRequest } from "node:https";
-import { getServerConfig } from "../config.ts";
+import { getServerConfig } from "../config/config.ts";
 
 type TokenResponse = { access_token?: string; expires_in?: number };
 export type GcsObject = {

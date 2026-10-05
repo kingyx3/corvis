@@ -9,7 +9,7 @@ process.env.CORVIS_DEMO_MODE = "";
 delete process.env.CORVIS_EMAIL_PROVIDER;
 delete process.env.CORVIS_PUBLIC_APP_URL;
 
-const { getServerConfig } = await import("../../../platform/config.ts");
+const { getServerConfig } = await import("../../../platform/config/config.ts");
 const { configuredEmailSender } = await import("./email-sender.ts");
 const {
   bestEffortNotification, captureVerifiedRecipient, computeEmailRetryDelayMs, deliverInvitationEmail,

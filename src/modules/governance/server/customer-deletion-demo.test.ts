@@ -25,7 +25,7 @@ const { GET: retentionGet } = await import("@/app/api/v1/access/retention/route"
 const { POST: requestPost } = await import("@/app/api/v1/access/deletion-requests/route");
 const { POST: decidePost } = await import("@/app/api/v1/access/deletion-requests/[requestId]/route");
 const { createCustomerDeletionService, customerDeletionService, demoCustomerDeletionService, overrideCustomerDeletionService, postgresCustomerDeletionService } = await import("./customer-deletion.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const HOUR = 60 * 60 * 1000;
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof DataGovernanceError && error.code === code && error.status === status;

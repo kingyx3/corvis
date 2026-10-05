@@ -1,7 +1,7 @@
 import { SESSION_ACTIVITY_PURGE_LIMIT, sessionActivityRetentionMinutes } from "../domain/session-policy.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { countMetric, logEvent } from "../../../platform/telemetry.ts";
+import { countMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 export type SessionActivitySweepOptions = {
   /** Keep records this many minutes after the session was last seen. Never below the floor in `src/modules/identity-access/domain/session-policy.ts`. */

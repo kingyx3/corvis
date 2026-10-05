@@ -123,7 +123,7 @@ Demo mode never sends.
 Nothing is emailed until a provider is activated. Activation needs:
 
 1. A vendor decision and an entry in the Confluence *Critical Vendor, Subprocessor, Data Location & AI System Register*: recipient addresses and event types leave Corvis.
-2. An adapter under `src/adapters/email/` implementing `EmailSender`, selected in `src/modules/notifications/server/email-sender.ts`, with its API key in Secret Manager (see `RUNTIME_SECRETS.md`).
+2. An adapter under `src/modules/notifications/adapters/` implementing `EmailSender`, selected in `src/modules/notifications/server/email-sender.ts`, with its API key in Secret Manager (see `RUNTIME_SECRETS.md`).
 3. Sending-domain DNS (SPF, DKIM, DMARC) on the Cloudflare zone.
 4. `CORVIS_EMAIL_PROVIDER` / `CORVIS_EMAIL_FROM` set per environment.
 

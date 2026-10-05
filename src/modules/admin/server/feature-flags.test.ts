@@ -16,7 +16,7 @@ import {
   setFeatureFlagKillSwitch,
   type FeatureFlagSnapshot,
 } from "./feature-flags.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";

@@ -75,7 +75,7 @@ Technical target rules are in [`DATA_PLATFORM.md`](../architecture/DATA_PLATFORM
 - The demo/E2E harness is stateful across the product seams: an uploaded source creates a review-scoped snapshot and structured observations, review decisions unlock publication, and published snapshots can be requested through the delivery module.
 - Playwright covers the representative seam `upload → structured observations → review → publish → structured delivery` and an injected Observations-module outage that leaves unrelated customer surfaces available.
 - These tests prove product contracts and blast-radius behavior in CI; they are **not** production/provider activation evidence. Production-equivalent `uat` must repeat the journey against real Postgres/GCS/processing/delivery bindings and fault-inject representative module/dependency failures.
-- `src/platform/platform.ts` remains a broad service composition boundary. Further decomposition should be driven by concrete failure/scaling/security boundaries; its production persistence paths are already Postgres-backed.
+- `src/platform/data/platform.ts` remains a broad service composition boundary. Further decomposition should be driven by concrete failure/scaling/security boundaries; its production persistence paths are already Postgres-backed.
 
 See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 
@@ -99,7 +99,7 @@ See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 - The `reviewed` production handler consumes only finalized `ready` extraction runs and exact predecessor candidate-set lineage. It records immutable policy requirements and evaluates append-only attributable review decisions. Pending human review is a durable `blocked` state, not a technical retry; a ready review gate re-queues the same deterministic reviewed-stage effect. A persistence trigger prevents the next canonicalization job until the exact candidate set has a zero-blocker ready gate.
 - Canonicalization/reconciliation/consolidation/publication handlers, operator dead-letter/replay/status controls and governed correction replay are implemented. Issue #79 now owns production-like execution and retained provider/recovery evidence rather than implementation of those paths.
 - Merging authenticated ingress, representation, extraction or review-stage code does **not** prove real Pub/Sub/Cloud Tasks IAM, representation/extraction providers, UAT GCS/Postgres bindings, Data Operations Reviewer operations or production-like recovery behavior. Those remain activation/evidence work.
-- `src/platform/telemetry.ts` provides structured telemetry hooks.
+- `src/platform/observability/telemetry.ts` provides structured telemetry hooks.
 - Export job/manifest/checksum and webhook-signing/replay foundations exist.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
 - Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.

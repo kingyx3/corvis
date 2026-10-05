@@ -24,7 +24,7 @@ test.after(() => { globalThis.fetch = originalFetch; });
 const { GET: listGet, POST: createPost } = await import("@/app/api/v1/access/service-accounts/route");
 const { GET: itemGet, POST: itemPost } = await import("@/app/api/v1/access/service-accounts/[serviceAccountId]/route");
 const { createServiceAccountService, demoServiceAccountService, overrideServiceAccountService, postgresServiceAccountService, serviceAccountService } = await import("./service-account-service.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof ServiceAccountError && error.code === code && error.status === status;
 const DAY = 86_400_000;

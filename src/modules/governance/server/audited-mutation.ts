@@ -1,8 +1,8 @@
 import type { AuditEvent } from "../../../shared/domain/enterprise.ts";
 import { requireTransaction } from "../../../platform/database/database.ts";
-import { getServerConfig } from "../../../platform/config.ts";
-import { platform } from "../../../platform/platform.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
+import { platform } from "../../../platform/data/platform.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 export type AuditedMutationOptions<T> = {

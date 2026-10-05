@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AuthenticationError, SessionEndedByPolicyError } from "../../../platform/http/request-context.ts";
 import { membershipAuthorizationRepository, PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository, sessionRevocationRepository } from "./authorization.ts";
-import { PostgresOperationsRepository } from "../../../platform/platform-repositories.ts";
+import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 class FakeDb implements PostgresSqlApi {

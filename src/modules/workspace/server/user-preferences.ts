@@ -3,7 +3,7 @@ import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { normalizeDisplayPreferences, type DisplayPreferences } from "../domain/display-preferences.ts";
 import { normalizeViewConfiguration, type SavedScreen, type SavedView } from "../domain/saved-views.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 export class PreferenceError extends Error { readonly status: number; constructor(message: string, status = 400) { super(message); this.status = status; } }
 const params = (i: RequestIdentity) => [i.tenantId, i.workspaceId, i.authMethod, i.subject];
 const owner = "tenant_id=$1::uuid and workspace_id=$2::uuid and auth_method=$3 and subject=$4";

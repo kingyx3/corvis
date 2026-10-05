@@ -5,7 +5,7 @@ import { apiError, correlationId, json } from "@/platform/http/http";
 import { createTenantInvitation, listTenantInvitations, normalizeTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenant-invitations";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 import { deliverInvitationEmail } from "@/modules/notifications/server/notifications";
-import { getServerConfig } from "@/platform/config";
+import { getServerConfig } from "@/platform/config/config";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

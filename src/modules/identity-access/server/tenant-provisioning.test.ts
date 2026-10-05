@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import type { ServerConfig } from "../../../platform/config.ts";
-import { ConflictError } from "../../../platform/platform.ts";
+import type { ServerConfig } from "../../../platform/config/config.ts";
+import { ConflictError } from "../../../platform/data/platform.ts";
 import {
   assertOperationsTenant,
   normalizeProvisionTenantCommand,

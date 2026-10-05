@@ -32,7 +32,7 @@ const { GET: itemGet, POST: itemPost } = await import("@/app/api/v1/access/data-
 const { GET: downloadGet, HEAD: downloadHead } = await import("@/app/api/v1/access/data-exports/[exportId]/download/route");
 const { createTenantExportService, demoTenantExportService, overrideTenantExportService, postgresTenantExportService, tenantExportService } = await import("./tenant-export-service.ts");
 const { createRetentionService, demoRetentionService, overrideRetentionService, postgresRetentionService, retentionService } = await import("../../governance/server/data-retention.ts");
-const { platform } = await import("../../../platform/platform.ts");
+const { platform } = await import("../../../platform/data/platform.ts");
 
 const HOUR = 60 * 60 * 1000;
 const EVERYTHING = { limit: 200 };

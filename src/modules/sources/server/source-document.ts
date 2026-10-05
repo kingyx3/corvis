@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { assertDocumentAccess, assertPermission, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { gcs } from "../../../platform/gcp/gcs.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { platform } from "../../../platform/platform.ts";
+import { platform } from "../../../platform/data/platform.ts";
 export async function originalSourceDocument(identity: RequestIdentity, referenceId: string, dependencies: { correlationId?: string; db?: PostgresSqlApi; store?: Pick<ReturnType<typeof gcs>, "bucket" | "getObjectStream">; audit?: ReturnType<typeof platform>["audit"] } = {}) {
   assertPermission(identity, "sources:read");
   const db = dependencies.db ?? postgres(getServerConfig().postgresDsn);

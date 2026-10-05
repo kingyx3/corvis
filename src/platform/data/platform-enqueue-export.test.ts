@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RequestIdentity } from "../shared/domain/enterprise.ts";
+import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
-import type { PostgresRow, PostgresSqlApi } from "./database/postgres.ts";
+import type { PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
 
 const tenantId = "00000000-0000-0000-0000-000000000001";
 const identity = { subject: "user-1", tenantId, workspaceId: "ws", roles: ["admin"], entitlements: { workspaceIds: ["ws"] }, authMethod: "oidc", sessionId: "s" } as unknown as RequestIdentity;

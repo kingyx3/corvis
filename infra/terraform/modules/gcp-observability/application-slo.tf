@@ -1,6 +1,6 @@
 # Application-emitted SLO signals. These resources are intentionally separate
 # from main.tf so every log metric has a corresponding application event before
-# it becomes an alert. See src/platform/telemetry.ts and ops/slos.yaml.
+# it becomes an alert. See src/platform/observability/telemetry.ts and ops/slos.yaml.
 
 resource "google_logging_metric" "upload_initiation_duration" {
   project = var.project_id

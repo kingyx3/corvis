@@ -1,7 +1,7 @@
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/http";
 import { captureVerifiedRecipient } from "@/modules/notifications/server/notifications";
-import { logEvent } from "@/platform/telemetry";
+import { logEvent } from "@/platform/observability/telemetry";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

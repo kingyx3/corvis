@@ -16,10 +16,10 @@ import {
   type OutboxCategory,
   type StoredPreference,
 } from "../domain/notifications.ts";
-import { getServerConfig } from "../../../platform/config.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
 import { configuredEmailSender } from "./email-sender.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { logEvent } from "../../../platform/telemetry.ts";
+import { logEvent } from "../../../platform/observability/telemetry.ts";
 
 export { NotificationPreferenceError };
 

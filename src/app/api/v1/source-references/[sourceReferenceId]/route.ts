@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { assertDocumentAccess, assertPermission } from "@/shared/domain/enterprise";
 import { apiError, correlationId, json } from "@/platform/http/http";
-import { getSourceReference } from "@/platform/operations";
-import { platform } from "@/platform/platform";
+import { getSourceReference } from "@/platform/data/operations";
+import { platform } from "@/platform/data/platform";
 import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
 
 // Source reference ids are uuids; anything else can never match and must not reach the
