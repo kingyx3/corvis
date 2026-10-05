@@ -49,7 +49,7 @@ Worker session revocation uses a stable application session identifier derived f
 
 ### Customer-created service accounts
 
-Organization Admins create service accounts for their own systems from the access self-service page (F6, #262, [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md)). They use exactly the mechanism above: an `identity_subject` with `auth_method = 'service_account'`, an active membership and a `service_identity_grant` that the creating admin reviews and that expires with the account, so the lookup denies them when the grant is missing, expired, overdue or disabled, or the session is revoked. Customer accounts hold only `reviewer`, `analyst` or `viewer`. How their API credentials are accepted at the edge is an open decision and nothing in the request path accepts them yet.
+Organization Admins create service accounts for their own systems from the access self-service page (F6, #262, [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md)). They use exactly the mechanism above: an `identity_subject` with `auth_method = 'service_account'`, an active membership and a `service_identity_grant` that the creating admin reviews and that expires with the account, so the lookup denies them when the grant is missing, expired, overdue or disabled, or the session is revoked. Customer accounts hold only `reviewer`, `analyst` or `viewer`. Their API credentials are accepted at the edge via `POST /api/v1/auth/service-account/token` (#350), which exchanges a Corvis-issued credential for a five-minute signed identity assertion that the mechanism above accepts.
 
 ## Lifecycle operating rule
 
