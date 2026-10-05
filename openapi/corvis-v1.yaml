@@ -812,7 +812,7 @@ components:
       description: Opaque continuation token from a previous page's `nextCursor`. Presence of this parameter (or `limit`) activates pagination.
   responses:
     Unauthorized:
-      description: The request has no valid authenticated identity, or its tenant/workspace membership is no longer active.
+      description: The request has no valid authenticated identity, or its tenant/workspace membership is no longer active. `session_ended_by_policy` means the organization's session policy (idle timeout or maximum length) ended the session; it is returned only to a person whose token verified and whose membership resolved.
       content:
         application/json:
           schema:
@@ -820,7 +820,7 @@ components:
               - $ref: '#/components/schemas/ErrorResponse'
               - type: object
                 properties:
-                  error: { enum: [authentication_required] }
+                  error: { enum: [authentication_required, session_ended_by_policy] }
     Forbidden:
       description: The caller's role lacks the required permission, the resource is outside its entitlements, or a tenant-administrator-only action was attempted.
       content:

@@ -218,12 +218,13 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
   if (!UUID_PATTERN.test(tenantId) || !UUID_PATTERN.test(workspaceId)) {
     throw new AuthenticationError("Tenant and workspace context must be UUIDs");
   }
-  if (!config.authIssuer || !config.authAudience) throw new AuthenticationError("OIDC authentication is not configured");
   try {
+    // getServerConfig() refuses to start production without an issuer and audience, so both are present here; were they
+    // ever missing the verifier would reject the token (an unusable issuer throws) and the request fails closed.
     const verified = await productionOidcVerifier().verify({
       authorization: userBearerAuthorization(request),
-      issuer: config.authIssuer,
-      audience: config.authAudience,
+      issuer: config.authIssuer as string,
+      audience: config.authAudience as string,
       jwksUrl: config.authJwksUrl,
     });
     // Tenant/workspace are untrusted context selectors only. Production routes
