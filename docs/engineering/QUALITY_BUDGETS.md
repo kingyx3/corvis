@@ -7,10 +7,10 @@ Human-facing role terminology follows [`ROLE_AND_ACTOR_TERMINOLOGY.md`](../archi
 
 ## Accessibility
 
-`e2e/accessibility.spec.ts` runs [axe-core](https://github.com/dequelabs/axe-core)
+`e2e/quality/accessibility.spec.ts` runs [axe-core](https://github.com/dequelabs/axe-core)
 against every critical customer surface (Overview, Documents, Data review,
 Data delivery, Ask Corvis), the Help menu, the Schedule this export dialog and every step and error state of the Connect source wizard (`e2e/support/surfaces.ts`, `connect-*` surfaces: no approved providers, choose a source, review access, confirmation required, enter credential, credential missing, save failed, authorize with provider, testing, verified, test failed, provider declined, sign-in attempt unusable; light and dark), the upload dialog, and the production admin console,
-tagged against WCAG 2.1 A/AA (`e2e/quality-budgets.ts` →
+tagged against WCAG 2.1 A/AA (`e2e/quality/quality-budgets.ts` →
 `accessibilityBudget.tags`). A `serious` or `critical` finding fails the run;
 `moderate`/`minor` findings do not, since the contractual bar is WCAG 2.1 AA,
 not a zero-finding ideal.
@@ -62,7 +62,7 @@ provider-backed multi-browser execution remains part of production-like UAT.
 
 ## Presentation workflow regressions
 
-`e2e/workspace.spec.ts` covers the production presentation seams in demo-mode CI,
+`e2e/journeys/workspace.spec.ts` covers the production presentation seams in demo-mode CI,
 including:
 - navigation across every entitled customer module;
 - actionable global workspace search;
@@ -81,7 +81,7 @@ failure fails closed for mutating actions.
 
 ## Performance budgets
 
-`e2e/quality-budgets.ts` defines version-controlled ceilings separately for
+`e2e/quality/quality-budgets.ts` defines version-controlled ceilings separately for
 `development` (demo-mode Next dev server) and `production`
 (`CORVIS_E2E_TARGET=production`, a built-and-started app). The budgets catch
 hangs/order-of-magnitude regressions rather than normal runner jitter:
@@ -96,7 +96,7 @@ hangs/order-of-magnitude regressions rather than normal runner jitter:
 | Script transfer bytes | 48 MiB | 3 MiB |
 | Horizontal overflow | 1 px | 1 px |
 
-`e2e/performance.spec.ts` asserts these against the running app. Workspace API
+`e2e/quality/performance.spec.ts` asserts these against the running app. Workspace API
 timing is meaningful only against the production HTTP composition; default
 demo composition serves the workspace adapter client-side.
 

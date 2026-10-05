@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { activeBudget } from "./quality-budgets.ts";
-import { openSurface, surfaces } from "./support/surfaces.ts";
+import { openSurface, surfaces } from "../support/surfaces.ts";
 
 // Deliberately generous, version-controlled ceilings (see docs/engineering/QUALITY_BUDGETS.md). These exist to
 // catch a hang or an order-of-magnitude regression, not to police day-to-day runner jitter.

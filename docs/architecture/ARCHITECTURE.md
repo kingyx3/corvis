@@ -110,7 +110,7 @@ docs/                     technical documentation, grouped by kind (see docs/REA
 
 - A new capability belongs in the module that owns its data and rules. Add `domain/` first (types, ports, validation), then `server/`, `adapters/` and `ui/` as needed. Create a new module only for a new bounded context.
 - Code needed by several modules and unrelated to any one capability goes in `src/platform/` (server) or `src/shared/` (client-safe). If only two modules need it, keep it in the owning module and import it through that module's public files.
-- Each module and area has a README (`src/modules/README.md`, `services/README.md`, `tools/README.md`); `tools/repo-checks/repository-layout.test.ts` fails if the layout drifts from this document.
+- Each module and area has a README (`src/modules/README.md`, `services/README.md`, `tools/README.md`); `tools/repo-checks/architecture/repository-layout.test.ts` fails if the layout drifts from this document.
 - Tests sit next to the code they test as `*.test.ts`. Tests that read workflows, Terraform, docs or the source tree to assert repository policy go in `tools/repo-checks/`.
 - Route handlers in `src/app/api/` stay thin: authenticate, validate, call a module's `server/` function, shape the response.
 - Database migrations in `db/postgres/migrations/` are never edited once merged; the runner refuses checksum drift.
@@ -185,7 +185,7 @@ The sidebar lists only the workspaces returned by the authenticated `my-workspac
 
 `src/proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `src/proxy.ts` (`src/platform/http/security/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
 
-- `script-src 'self' 'nonce-<random>' 'strict-dynamic'` — no `unsafe-inline`; the framework runtime, page bundles and RSC flight-data scripts all receive the matching `nonce` attribute automatically (verified in production output — see `e2e/content-security-policy.spec.ts`, run via `npm run test:e2e:csp` against a real `npm run build`/`npm run start`, and required in CI's `e2e` job). This closes the constraint tracked in issue #159: production Next.js 16.3.5 App Router output supports hydration-safe nonces.
+- `script-src 'self' 'nonce-<random>' 'strict-dynamic'` — no `unsafe-inline`; the framework runtime, page bundles and RSC flight-data scripts all receive the matching `nonce` attribute automatically (verified in production output — see `e2e/quality/content-security-policy.spec.ts`, run via `npm run test:e2e:csp` against a real `npm run build`/`npm run start`, and required in CI's `e2e` job). This closes the constraint tracked in issue #159: production Next.js 16.3.5 App Router output supports hydration-safe nonces.
 - `style-src 'self' 'unsafe-inline'` stays as-is: inline `style="..."` attributes (used throughout for computed widths/colors) cannot carry a nonce, so this is an accepted, unrelated tradeoff — only `script-src` dropped `unsafe-inline`.
 - the nonce requires dynamic rendering; `src/app/layout.tsx` calls `connection()` so every route renders per-request (consistent with `src/proxy.ts` already sending `cache-control: no-store` on every response — nothing here was cacheable before this change either).
 

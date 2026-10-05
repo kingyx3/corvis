@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 test("drill-through from Data review to Position Financials pre-scopes the position, and Review's filters/sort/search survive the round trip", async ({ page }) => {
   await page.goto("/");

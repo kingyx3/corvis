@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // Sign-in and session policy (F7, #263), on the Organization Admin's access self-service page. The demo composition
 // serves /api/v1/access/session-policy from an in-memory store seeded per demo tenant, so every test pins its own

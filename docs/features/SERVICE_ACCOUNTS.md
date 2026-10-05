@@ -12,7 +12,7 @@ Organization Admins create service accounts and issue, rotate and revoke their A
 | Deactivate an account everywhere (identity, lifecycle grant, memberships, entitlements, credentials) | Shipped |
 | Every action audited, visible in the tenant access audit and its CSV, and in a full data export's access-audit file | Shipped |
 | The account appears in the operator access review (`GET /api/v1/admin/access-review`) | Shipped (no change needed: it already lists every `identity_subject`, membership and `service_identity_grant`) |
-| `axe-core` coverage of the screens | Shipped (`e2e/access-pages-accessibility.spec.ts`, light and dark) |
+| `axe-core` coverage of the screens | Shipped (`e2e/quality/access-pages-accessibility.spec.ts`, light and dark) |
 | Record-side credential check (`verifyServiceAccountCredential`: constant-time compare, immediate revocation, rotation overlap, expiry, last-used) | Shipped and tested, **not called by any request path** |
 | **Accepting a credential on an API request** | **Not shipped. Decision needed (below).** |
 | Extend an account's expiry (audited; advances the 009 `next_review_at` with it, within the 365-day maximum) | Shipped (F6b, migration 092) |
@@ -134,7 +134,7 @@ The options, none of which this slice picks:
 - `src/modules/identity-access/server/service-account*.test.ts`, `src/modules/identity-access/domain/service-account.test.ts`, `src/platform/http/security/route-authorization.test.ts`, `src/platform/database/sql-application-errors.test.ts`: behaviour at 100% line/branch/function coverage.
 - `db/postgres/tests/service-accounts.sql` and `.mjs` also cover F6c and F6d: the data-right and ownership tests, the one refusal message, the 200 bound, revocation after a right lapses, resolution through the real authorization lookup, once-per-window notices with exact counts, renewal, deactivation, suspended tenants, mandatory-ness, words-only sent emails and send-time suppression.
 - `src/modules/identity-access/server/service-accounts/service-account-expiry-sweep.test.ts`, `src/modules/notifications/domain/notifications.test.ts`: the sweep's bound and silence, and the template (no names, mandatory footer).
-- `e2e/service-accounts.spec.ts`, `e2e/access-pages-accessibility.spec.ts`: the screens end to end in demo mode (create, shown once, rotate, revoke, deactivate, expiry flag) and axe in both colour schemes.
+- `e2e/admin/service-accounts.spec.ts`, `e2e/quality/access-pages-accessibility.spec.ts`: the screens end to end in demo mode (create, shown once, rotate, revoke, deactivate, expiry flag) and axe in both colour schemes.
 
 ## Remaining work (proposed follow-up issues)
 

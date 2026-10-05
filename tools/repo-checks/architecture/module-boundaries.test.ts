@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MODULE_BOUNDARIES, importSpecifiers, scanArchitectureDrift } from "../../services/control-loop/scanners/architecture-drift.ts";
-import { loadRepoSnapshot } from "../../services/control-loop/scanners/repo-snapshot.ts";
+import { MODULE_BOUNDARIES, importSpecifiers, scanArchitectureDrift } from "../../../services/control-loop/scanners/architecture-drift.ts";
+import { loadRepoSnapshot } from "../../../services/control-loop/scanners/repo-snapshot.ts";
 
 // The control loop runs the same scan on a schedule; running it here makes a boundary violation fail the
 // pull request that introduces it instead of opening an issue days later.

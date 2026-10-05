@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // Data retention view, deletion requests (F10e, #325) and full tenant data export (F10, #266), on the Organization Admin's access self-service page.
 // The demo composition serves /api/v1/access/retention and /api/v1/access/data-exports from in-memory stores seeded per

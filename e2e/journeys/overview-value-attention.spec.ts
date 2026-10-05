@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // Issue #175 A3/A4/A5/A6/A7/A9: the Overview leads with one unified, ranked
 // attention count, charts published value and exposure, flags freshness, and

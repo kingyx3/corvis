@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { accessibilityBudget } from "./quality-budgets.ts";
-import { openSurface, surfaces } from "./support/surfaces.ts";
+import { openSurface, surfaces } from "../support/surfaces.ts";
 
 type Violation = { id: string; impact?: string | null; help: string; nodes: Array<{ target: unknown[] }> };
 

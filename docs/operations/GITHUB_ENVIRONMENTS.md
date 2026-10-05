@@ -4,7 +4,7 @@ This is the canonical deployment-configuration contract. Corvis uses GitHub Envi
 
 ## Complete reference
 
-Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow reads. `tools/repo-checks/github-configuration-docs.test.ts` fails CI when a workflow reads one that is not listed here. Environment scope means the value is set on that GitHub Environment; repository scope means it is set once for the repository.
+Every GitHub Actions variable (`vars.*`) and secret (`secrets.*`) any workflow reads. `tools/repo-checks/workflows/github-configuration-docs.test.ts` fails CI when a workflow reads one that is not listed here. Environment scope means the value is set on that GitHub Environment; repository scope means it is set once for the repository.
 
 | Name | Kind | Scope | Required | Read by | Purpose |
 | --- | --- | --- | --- | --- | --- |

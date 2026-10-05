@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // Assign and discuss review items (F3, #259). The demo composition serves /api/v1/review-items from an in-memory store
 // scoped to the demo tenant and workspace, so every test pins its own tenant: an assignment or a comment in one test can

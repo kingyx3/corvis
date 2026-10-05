@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const repoRoot = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 
 function read(path: string): string {
   return readFileSync(join(repoRoot, path), "utf8");

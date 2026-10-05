@@ -1,8 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { accessibilityBudget } from "./quality-budgets.ts";
-import { openSurface, surfaces } from "./support/surfaces.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
+import { openSurface, surfaces } from "../support/surfaces.ts";
 
 // Scheduled exports (F4, #260). The demo composition serves /api/v1/export-schedules from an in-memory store seeded per demo
 // tenant and subject, so every test pins its own tenant: a schedule created or changed in one test can never leak into another.

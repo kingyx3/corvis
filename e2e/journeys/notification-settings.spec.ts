@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // Email notification settings (#258): reachable from the sidebar, the command palette and the
 // ?notifications=settings link every optional email carries; accessible in both themes; mandatory

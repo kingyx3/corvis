@@ -27,7 +27,7 @@ type AssuranceMap = {
   controlObjectives?: AssuranceEntry[];
 };
 
-const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const repoRoot = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 
 function load(path: string): AssuranceMap {
   return JSON.parse(readFileSync(join(repoRoot, path), "utf8")) as AssuranceMap;

@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { accessibilityBudget } from "./quality-budgets.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
 
 // In-app help and support (F9): the Help menu, its Contact support pre-fill, the command-palette
 // commands and the mobile route to the same entry point. The support context must stay limited to

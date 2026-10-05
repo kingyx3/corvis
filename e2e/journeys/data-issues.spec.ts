@@ -2,8 +2,8 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { accessibilityBudget } from "./quality-budgets.ts";
-import { openSurface, surfaces } from "./support/surfaces.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
+import { openSurface, surfaces } from "../support/surfaces.ts";
 
 // Data issues (F5, #261). The demo composition serves /api/v1/data-issues from an in-memory store seeded per demo tenant
 // and subject, so every test pins its own tenant: a report or a status change in one test can never leak into another.

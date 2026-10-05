@@ -1,9 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { accessibilityBudget } from "./quality-budgets.ts";
-import { openSurface, surfaces } from "./support/surfaces.ts";
-import { warmApiRoutes } from "./support/warm.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
+import { openSurface, surfaces } from "../support/surfaces.ts";
+import { warmApiRoutes } from "../support/warm.ts";
 
 // Source connections (B5 #252, B8 #253). The demo composition serves /api/v1/source-connections from an
 // in-memory store seeded per demo tenant, so every test below pins its own tenant: a pause, revoke or

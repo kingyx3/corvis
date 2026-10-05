@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 // @ts-expect-error Workflow script runs directly in Node; no declaration file needed.
-import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../ci/release-governance.mjs';
+import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../ci/release-governance.mjs';
 
 function fixture(approvals = 1) {
   const checks = REQUIRED_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));

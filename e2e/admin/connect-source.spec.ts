@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { accessibilityBudget } from "./quality-budgets.ts";
-import { confirmReview, goToConsent, goToReauthorizeConsent, isolateSourceConnections, openConnectWizard, submitToken, untickFolders, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER, REAUTHORIZE_SUMMIT } from "./support/surfaces.ts";
+import { accessibilityBudget } from "../quality/quality-budgets.ts";
+import { confirmReview, goToConsent, goToReauthorizeConsent, isolateSourceConnections, openConnectWizard, submitToken, untickFolders, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER, REAUTHORIZE_SUMMIT } from "../support/surfaces.ts";
 
 // Connect source (B1). The demo composition serves /api/v1/source-connections from an in-memory store and offers
 // two clearly labelled demo providers, so the whole flow, including the OAuth redirect through a consent page

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const readiness = JSON.parse(readFileSync(new URL("../../ops/soc1-controls.json", import.meta.url), "utf8")) as {
+const readiness = JSON.parse(readFileSync(new URL("../../../ops/soc1-controls.json", import.meta.url), "utf8")) as {
   schemaVersion: string;
   target: { report: string; scopeBasis: string; claimState: string };
   controlObjectives: Array<{ id: string; name: string; status: string; owners: string[]; evidence: string[] }>;

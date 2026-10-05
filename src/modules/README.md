@@ -1,6 +1,6 @@
 # Modules
 
-One directory per bounded module (see `docs/architecture/MODULARITY.md`). Each module is made of up to five layers and nothing else; `tools/repo-checks/repository-layout.test.ts` enforces that.
+One directory per bounded module (see `docs/architecture/MODULARITY.md`). Each module is made of up to five layers and nothing else; `tools/repo-checks/architecture/repository-layout.test.ts` enforces that.
 
 | Layer | Holds | May import |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ One directory per bounded module (see `docs/architecture/MODULARITY.md`). Each m
 | `ui/` | React views and client state. | `domain/`, `src/shared/`, `src/composition/`; never `server/`, `adapters/` or `src/platform/`. |
 | `application/` | Client-side use cases, where a module has one. | `domain/`. |
 
-The `domain/` and `ui/` rules are checked on every pull request by `tools/repo-checks/module-boundaries.test.ts` and on a schedule by the control loop (`CL-ARCH-001`, `CL-ARCH-002`).
+The `domain/` and `ui/` rules are checked on every pull request by `tools/repo-checks/architecture/module-boundaries.test.ts` and on a schedule by the control loop (`CL-ARCH-001`, `CL-ARCH-002`).
 
 Server and domain code use relative imports so `node --test` can run it without the `@/` alias loader; `src/app/` and `ui/` code may use `@/`.
 

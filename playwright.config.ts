@@ -16,7 +16,7 @@ function webkitInstalled(): boolean {
 const runWebkit = !!process.env.CI || webkitInstalled();
 const target = process.env.CORVIS_E2E_TARGET === "production" ? "production" : "development";
 // Every workflow spec runs against the in-memory demo port; CORVIS_E2E_DEMO=false serves the real
-// (non-demo) app for e2e/non-demo-smoke.spec.ts, which must be built the same way.
+// (non-demo) app for e2e/smoke/non-demo-smoke.spec.ts, which must be built the same way.
 const demo = process.env.CORVIS_E2E_DEMO === "false" ? "false" : "true";
 
 export default defineConfig({
