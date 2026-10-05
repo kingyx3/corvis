@@ -11,7 +11,7 @@ import { runAuditedMutation } from "./audited-mutation.ts";
 import { getServerConfig } from "./config.ts";
 import { assertOrganizationAdmin, DataGovernanceError } from "./data-governance.ts";
 import { DELETION_REQUEST_COLUMNS, toDeletionRequestView } from "./deletion-request-view.ts";
-import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
+import type { PostgresRow, PostgresSqlApi } from "./postgres.ts";
 
 /**
  * An Organization Admin's own deletion request (F10e, #325), over either backend (Postgres, or the in-memory demo store in
@@ -49,13 +49,17 @@ export function customerDeletionAuditEvent(
   };
 }
 
+/** A command only ever runs inside the audited transaction that `runAuditedMutation` opens, so it always has its own handle. */
+function transactionHandle(db: PostgresSqlApi | undefined): PostgresSqlApi {
+  if (!db) throw new Error("a customer deletion command must run inside its audited transaction");
+  return db;
+}
+
 export class PostgresCustomerDeletionBackend implements CustomerDeletionBackend {
   readonly demo = false;
-  private readonly defaultDb: () => PostgresSqlApi;
 
-  constructor(defaultDb: () => PostgresSqlApi) { this.defaultDb = defaultDb; }
-
-  async request(identity: RequestIdentity, command: DeletionRequestCommand, db: PostgresSqlApi = this.defaultDb()): Promise<DeletionRequestView> {
+  async request(identity: RequestIdentity, command: DeletionRequestCommand, handle?: PostgresSqlApi): Promise<DeletionRequestView> {
+    const db = transactionHandle(handle);
     if (!UUID.test(identity.workspaceId)) throw new DataGovernanceError("invalid_request", 400);
     let rows: PostgresRow[];
     try {
@@ -71,7 +75,8 @@ export class PostgresCustomerDeletionBackend implements CustomerDeletionBackend 
     return toDeletionRequestView(rows[0]!, identity);
   }
 
-  async decide(identity: RequestIdentity, requestId: string, command: DeletionDecisionCommand, db: PostgresSqlApi = this.defaultDb()): Promise<DeletionRequestView> {
+  async decide(identity: RequestIdentity, requestId: string, command: DeletionDecisionCommand, handle?: PostgresSqlApi): Promise<DeletionRequestView> {
+    const db = transactionHandle(handle);
     if (!UUID.test(requestId)) throw new DataGovernanceError("deletion_request_not_found", 404);
     const row = (await db.query(`select ${DELETION_REQUEST_COLUMNS} from corvis_control.decide_customer_deletion($1::uuid,$2::uuid,$3,$4,$5,$6,$7) r`, [
       identity.tenantId, requestId, command.action, identity.authMethod, identity.subject, command.note ?? null,
@@ -110,8 +115,7 @@ export function createCustomerDeletionService(backend: CustomerDeletionBackend):
   };
 }
 
-export const postgresCustomerDeletionBackend = new PostgresCustomerDeletionBackend(() => postgres(getServerConfig().postgresDsn));
-export const postgresCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(postgresCustomerDeletionBackend);
+export const postgresCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(new PostgresCustomerDeletionBackend());
 export const demoCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(demoCustomerDeletionStore());
 
 let override: CustomerDeletionService | undefined;

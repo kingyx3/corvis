@@ -62,7 +62,7 @@ const ROLLBACK = Symbol('rollback');
 const db = new NativePostgresSqlApi(dsn);
 try {
   await assert.rejects(db.transaction(async (tx) => {
-    const backend = new PostgresCustomerDeletionBackend(() => tx);
+    const backend = new PostgresCustomerDeletionBackend();
     const retention = new PostgresRetentionBackend(() => tx);
     const service = createCustomerDeletionService(backend);
     const view = async (who) => (await retention.view(who, tx)).deletionRequests;
@@ -113,7 +113,7 @@ try {
     throw ROLLBACK;
   }), (error) => error === ROLLBACK);
   await assert.rejects(db.transaction(async (tx) => {
-    const backend = new PostgresCustomerDeletionBackend(() => tx);
+    const backend = new PostgresCustomerDeletionBackend();
     const retention = new PostgresRetentionBackend(() => tx);
     const view = async (who) => (await retention.view(who, tx)).deletionRequests;
     await tx.execute(`insert into corvis_control.tenant (tenant_id,slug,display_name) values ($1,'f10e-ci','F10e CI')`, [tenantId]);

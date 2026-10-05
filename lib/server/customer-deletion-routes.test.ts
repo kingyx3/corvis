@@ -213,10 +213,17 @@ test("an unknown id (or one Corvis operations made) is a 404 and a malformed one
 });
 
 test("a request needs a workspace the caller really has", async () => {
-  const backend = new PostgresCustomerDeletionBackend(() => { throw new Error("no database"); });
+  const backend = new PostgresCustomerDeletionBackend();
   const untouched = { query: async () => { throw new Error("a malformed workspace never reaches SQL"); }, execute: async () => 0 } as unknown as PostgresSqlApi;
   const identity = { subject: "idp|alex", tenantId: TENANT, workspaceId: "not-a-uuid", roles: ["admin"], isTenantAdmin: true, authMethod: "oidc", sessionId: "s", entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } } as RequestIdentity;
   await assert.rejects(() => backend.request(identity, { dataClasses: ["audit"], reason: "Closing the account" }, untouched), (error: unknown) => error instanceof DataGovernanceError && error.code === "invalid_request" && error.status === 400);
+});
+
+test("a command never runs outside the audited transaction it is given", async () => {
+  const backend = new PostgresCustomerDeletionBackend();
+  const identity = { subject: "idp|alex", tenantId: TENANT, workspaceId: WORKSPACE, roles: ["admin"], isTenantAdmin: true, authMethod: "oidc", sessionId: "s", entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } } as RequestIdentity;
+  await assert.rejects(() => backend.request(identity, { dataClasses: ["audit"], reason: "Closing the account" }), /inside its audited transaction/);
+  await assert.rejects(() => backend.decide(identity, REQUEST, { action: "approve" }), /inside its audited transaction/);
 });
 
 test("SQL refusals reach the client as stable codes, and the loser of a race for the one pending slot is a 409, not a 500", async () => {
@@ -244,10 +251,10 @@ test("SQL refusals reach the client as stable codes, and the loser of a race for
   const failing = (error: Error): PostgresSqlApi => ({ query: async (): Promise<PostgresRow[]> => { throw error; }, execute: async () => 0, health: async () => true }) as unknown as PostgresSqlApi;
   const raced = failing(Object.assign(new Error("duplicate key"), { code: "23505" }));
   const identity = { subject: "idp|alex", tenantId: TENANT, workspaceId: WORKSPACE, roles: ["admin"], isTenantAdmin: true, authMethod: "oidc", sessionId: "s", entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } } as RequestIdentity;
-  await assert.rejects(() => new PostgresCustomerDeletionBackend(() => raced).request(identity, { dataClasses: ["audit"], reason: "Closing the account" }),
+  await assert.rejects(() => new PostgresCustomerDeletionBackend().request(identity, { dataClasses: ["audit"], reason: "Closing the account" }, raced),
     (error: unknown) => error instanceof DataGovernanceError && error.code === "deletion_request_already_pending" && error.status === 409);
   const broken = failing(new Error("connection lost"));
-  await assert.rejects(() => new PostgresCustomerDeletionBackend(() => broken).request(identity, { dataClasses: ["audit"], reason: "Closing the account" }), /connection lost/, "any other failure is not hidden");
+  await assert.rejects(() => new PostgresCustomerDeletionBackend().request(identity, { dataClasses: ["audit"], reason: "Closing the account" }, broken), /connection lost/, "any other failure is not hidden");
 });
 
 test("the production backend opens its own connection when no transaction is handed in", async () => {
