@@ -29,18 +29,18 @@ Dark mode is automatic through `prefers-color-scheme: dark`; the token names do 
 
 | Primitive | File | Use |
 | --- | --- | --- |
-| `PageHeading` | `src/components/ui/page-heading.tsx` | Every customer surface H1, eyebrow, lede and heading actions |
-| `MetricCard` | `src/components/ui/metric-card.tsx` | Dashboard/analytics KPI; renders a native button only when actionable and accepts a trend node |
-| `SidebarNavItem` | `src/components/ui/sidebar-nav-item.tsx` | Workspace primary navigation with active/current state and optional badge |
-| `StatusPill` | `src/components/ui/status-pill.tsx` | Governed state labels; use the exported vocabulary when a status is known. Unknown strings render neutral, never a fabricated semantic color |
-| `SortableDataTable` | `src/components/ui/sortable-data-table.tsx` | Dense tabular data. Sorting is a native header button and `aria-sort` is announced on the column header |
-| `TableDensityToggle` | `src/components/ui/table-density-toggle.tsx` | Compact/comfortable density control for dense financial tables |
-| `Modal` | `src/components/ui/modal.tsx` | Dialogs; includes focus trapping/restoration |
-| `Icon` | `src/components/ui/icon.tsx` | Shared icon vocabulary |
-| `TimeSeriesChart` | `src/components/ui/charts/time-series-chart.tsx` | Time trends with explicit status semantics and table fallback |
-| `CompositionChart` | `src/components/ui/charts/composition-chart.tsx` | Allocation/composition views with fixed palette and table fallback |
-| `Sparkline` | `src/components/ui/charts/sparkline.tsx` | Inline KPI trend; includes textual delta and full value disclosure |
-| `ChartFigure` | `src/components/ui/charts/chart-figure.tsx` | Required chart wrapper with caption and native table-view disclosure |
+| `PageHeading` | `src/shared/ui/page-heading.tsx` | Every customer surface H1, eyebrow, lede and heading actions |
+| `MetricCard` | `src/shared/ui/metric-card.tsx` | Dashboard/analytics KPI; renders a native button only when actionable and accepts a trend node |
+| `SidebarNavItem` | `src/shared/ui/sidebar-nav-item.tsx` | Workspace primary navigation with active/current state and optional badge |
+| `StatusPill` | `src/shared/ui/status-pill.tsx` | Governed state labels; use the exported vocabulary when a status is known. Unknown strings render neutral, never a fabricated semantic color |
+| `SortableDataTable` | `src/shared/ui/sortable-data-table.tsx` | Dense tabular data. Sorting is a native header button and `aria-sort` is announced on the column header |
+| `TableDensityToggle` | `src/shared/ui/table-density-toggle.tsx` | Compact/comfortable density control for dense financial tables |
+| `Modal` | `src/shared/ui/modal.tsx` | Dialogs; includes focus trapping/restoration |
+| `Icon` | `src/shared/ui/icon.tsx` | Shared icon vocabulary |
+| `TimeSeriesChart` | `src/shared/ui/charts/time-series-chart.tsx` | Time trends with explicit status semantics and table fallback |
+| `CompositionChart` | `src/shared/ui/charts/composition-chart.tsx` | Allocation/composition views with fixed palette and table fallback |
+| `Sparkline` | `src/shared/ui/charts/sparkline.tsx` | Inline KPI trend; includes textual delta and full value disclosure |
+| `ChartFigure` | `src/shared/ui/charts/chart-figure.tsx` | Required chart wrapper with caption and native table-view disclosure |
 
 ## Reusable global classes
 
@@ -71,9 +71,9 @@ Filters and paging (F1c): a `scorecard-filters` row (reusing `position-financial
 
 ## Help and support
 
-`HelpDialog` (`src/components/help/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
+`HelpDialog` (`src/modules/support/ui/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
 
-Error states use `ContactSupportLink` (`src/components/help/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `src/app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](../features/SUPPORT.md).
+Error states use `ContactSupportLink` (`src/modules/support/ui/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `src/app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](../features/SUPPORT.md).
 
 ## Status vocabulary
 

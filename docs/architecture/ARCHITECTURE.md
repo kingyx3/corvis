@@ -11,28 +11,27 @@ ________________________________________________________________________________
 |                                      CORVIS REPOSITORY                                             |
 |__________________________________________________________________________________________________|
 |                                                                                                    |
-|  PRODUCT / HTTP ENTRY                                                                              |
+|  PRODUCT / HTTP ENTRY                  src/                                                        |
 |  ________________________________________________________________________________________________  |
-|  | src/app/                 | src/components/           | src/features/                 | src/proxy.ts          |  |
-|  | Next.js pages + APIs | shared UI components | product feature UI/state | request boundary  |  |
-|  |______________________|_______________________|___________________________|___________________|  |
+|  | app/                     | proxy.ts                  | modules/<module>/ui/   | shared/ui/    |  |
+|  | Next.js pages + APIs     | request boundary          | feature views + state  | design system |  |
+|  |__________________________|___________________________|________________________|_______________|  |
 |                                      |                                                             |
 |                                      v                                                             |
-|  APPLICATION + SERVER COMPOSITION                                                                  |
+|  SERVER + COMPOSITION                                                                              |
 |  ________________________________________________________________________________________________  |
-|  | application/         | src/runtime/              | src/lib/server/                                   |  |
-|  | use cases            | dependency wiring     | auth, config, repositories, processing,       |  |
-|  |                      | + adapter selection   | evidence, flags, persistence helpers          |  |
-|  |______________________|_______________________|_______________________________________________|  |
+|  | modules/<module>/server/ | composition/              | platform/                           |  |
+|  | use cases, repositories, | dependency wiring         | http, database, gcp, config,        |  |
+|  | HTTP helpers, workers    | + adapter selection       | telemetry (cross-cutting)           |  |
+|  |__________________________|___________________________|_____________________________________|  |
 |                       |                         |                          |                       |
 |             __________|_________________________|__________________________|________               |
 |            v                           v                         v                    v              |
 |  DOMAIN CONTRACTS             PROVIDER ADAPTERS           ASYNC / CONTROL       DATA CONTRACTS     |
 |  _______________________       _______________________     __________________    __________________  |
-|  | src/core/                |       | src/adapters/            |     | services/control-loop/  |    | db/           |  |
-|  | typed domain ports,  |       | HTTP/GCS/demo/etc.   |     | scanners,      |    | migrations,   |  |
-|  | workspace/delivery   |       | provider boundaries  |     | fingerprints,  |    | RLS, DB       |  |
-|  | contracts            |       |                     |     | health checks  |    | contracts     |  |
+|  | modules/*/domain/    |       | modules/*/adapters/  |     | services/      |    | db/postgres/  |  |
+|  | shared/domain/       |       | HTTP/GCS/demo/etc.   |     | control-loop/  |    | migrations,   |  |
+|  | typed ports + rules  |       | provider boundaries  |     | scanners, health|   | RLS, DB tests |  |
 |  |______________________|       |_____________________|     |_______________|    |_______________|  |
 |            |                           |                         |                    |              |
 |            |___________________________|_________________________|____________________|              |
@@ -46,9 +45,9 @@ ________________________________________________________________________________
 |                                                                                                    |
 |  DELIVERY / OPERATIONS / CONTRACTS                                                                 |
 |  ________________________________________________________________________________________________  |
-|  | infra/terraform/ | .github/workflows/ | openapi/ | ops/ | e2e/ | tools/dev/ | docs/          |  |
-|  | IaC              | CI/CD + governance | API spec | SRE  | E2E  | tooling  | technical docs |  |
-|  |__________________|_____________________|__________|______|______|__________|________________|  |
+|  | infra/terraform/ | .github/workflows/ | openapi/ | ops/ | services/ | tools/ | e2e/ | docs/   |  |
+|  | IaC              | CI/CD + governance | API spec | SRE  | deployables | tooling | E2E | docs   |  |
+|  |__________________|____________________|__________|______|_____________|_________|_____|________|  |
 |__________________________________________________________________________________________________|
 ```
 
@@ -56,27 +55,64 @@ ________________________________________________________________________________
 
 The intended dependency direction is inward: UI and API routes call application/server services; those services depend on domain contracts; concrete provider behavior lives behind adapters. Provider SDKs, SQL details, and cloud-specific behavior should not become product/domain contracts.
 
-## 2. Main directory responsibilities
+## 2. Repository layout and directory responsibilities
+
+```text
+src/                      application code (Next.js `src` folder; the `@/` alias resolves here)
+  app/                    routing only: pages and route handlers, kept thin
+  proxy.ts                per-request security boundary (CSP nonce); instrumentation-client.ts
+  modules/<module>/       one directory per bounded module (see MODULARITY.md)
+    domain/               pure contracts, ports and rules; no I/O, no React
+    server/               use cases, repositories, HTTP helpers, workers and sweeps (server only)
+    adapters/             provider- or demo-specific implementations of the module's ports
+    ui/                   React views and client state for the module
+    application/          client-side use cases, where a module has one
+  platform/               cross-cutting server infrastructure: http/, database/, gcp/, config, telemetry, demo/
+  shared/                 shared kernel: domain/ (enterprise, contracts, workspace), lib/ (client-safe helpers), ui/ (design system)
+  composition/            the one place that selects and wires concrete adapters for the ports
+  test-support/           helpers shared by unit tests (alias loader, OpenAPI support, fixtures)
+services/                 code that runs outside the web app, each with its own Dockerfile
+  control-loop/  extractor/  litellm-gateway/
+tools/                    repository tooling
+  ci/                     scripts called from GitHub Actions workflows
+  dev/                    developer and operator utilities
+  repo-checks/            tests that assert repository-wide policy (workflows, Terraform, docs, boundaries)
+  convex-conformance/     isolated upstream database-semantics oracle
+db/postgres/              migrations (immutable once applied), RLS/security acceptance SQL and DB tests
+infra/terraform/          modules, environments and the shared Cloudflare root
+openapi/                  the public API contract, compatibility baseline and route classification
+ops/                      runbooks, SLOs, control catalogues and UAT/security assessment plans
+e2e/                      Playwright customer-journey, accessibility and performance suites
+docs/                     technical documentation, grouped by kind (see docs/README.md)
+```
 
 | Path | Responsibility |
 | --- | --- |
 | `src/app/` | Next.js application shell, customer-facing pages, and HTTP/API route handlers. |
-| `src/components/` | Reusable presentation components shared across product surfaces. |
-| `src/features/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
-| `application/` | Application use cases that coordinate domain ports without owning provider-specific implementation. |
-| `src/core/` | Stable domain contracts and typed ports for workspace, delivery, enterprise rules, and module boundaries. |
-| `src/runtime/` | Runtime composition: selects/wires concrete implementations for domain ports. |
-| `src/adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
-| `src/lib/server/` | Server-side authorization, configuration, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
-| `services/control-loop/` | Automated repository/business-control scanning, fingerprints, watermarks, and health/control-loop logic. |
+| `src/modules/*/domain/` | Stable domain contracts and typed ports for each module. |
+| `src/modules/*/server/` | Server-side use cases, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
+| `src/modules/*/adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
+| `src/modules/*/ui/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
+| `src/platform/` | Cross-cutting server infrastructure: HTTP helpers, authorization context, Postgres access, GCP clients, configuration and telemetry. |
+| `src/shared/` | Shared domain vocabulary, client-safe helpers and reusable presentation components. |
+| `src/composition/` | Runtime composition: selects/wires concrete implementations for domain ports. |
+| `services/` | Deployable units that run outside the web app: the control loop, the extractor and the LiteLLM gateway. |
+| `tools/` | CI scripts, developer utilities and repository-policy tests. |
 | `db/` | Reviewed database migrations and Postgres-side security/data contracts, including RLS-related implementation. |
 | `openapi/` | Public/controlled API contracts. |
 | `infra/terraform/` | Executable infrastructure code for provider resources and environment roots. |
 | `.github/workflows/` | CI, build/release, Terraform deployment, GCP bootstrap, runtime-secret propagation, security acceptance, and governance automation. |
 | `ops/` | Runtime operations, SLOs, recovery and incident runbooks. |
 | `e2e/` | Cross-module browser/customer-journey acceptance and quality tests. |
-| `tools/dev/` | Operator/developer utilities and implementation checks. |
 | `docs/` | Technical architecture, deployment, security, data-platform and production-activation documentation. |
+
+### Where new code goes
+
+- A new capability belongs in the module that owns its data and rules. Add `domain/` first (types, ports, validation), then `server/`, `adapters/` and `ui/` as needed. Create a new module only for a new bounded context.
+- Code needed by several modules and unrelated to any one capability goes in `src/platform/` (server) or `src/shared/` (client-safe). If only two modules need it, keep it in the owning module and import it through that module's public files.
+- Tests sit next to the code they test as `*.test.ts`. Tests that read workflows, Terraform, docs or the source tree to assert repository policy go in `tools/repo-checks/`.
+- Route handlers in `src/app/api/` stay thin: authenticate, validate, call a module's `server/` function, shape the response.
+- Database migrations in `db/postgres/migrations/` are never edited once merged; the runner refuses checksum drift.
 
 ## 3. Customer request and data flow
 
@@ -99,9 +135,9 @@ ________________________________________________________________________________
 | Cloud Run: API runtime                                                                             |
 | IAM: gateway service account only | no allUsers invoker | scale-to-zero                           |
 |        |                                                                                           |
-|        |----> signed application identity + authorization       [src/app/api + src/lib/server]             |
-|        |----> application/domain service composition            [application + runtime + core]      |
-|        |----> provider adapter                                  [adapters + src/lib/server]             |
+|        |----> signed application identity + authorization       [src/app/api + modules/*/server]             |
+|        |----> application/domain service composition            [modules/*/server + composition + domain] |
+|        |----> provider adapter                                  [modules/*/adapters + platform]             |
 |        |                                                                                           |
 |        |______________________________     ______________________________                           |
 |                                       |   |                                                         |
@@ -146,7 +182,7 @@ The sidebar lists only the workspaces returned by the authenticated `my-workspac
 
 ### Browser response security headers and CSP
 
-`src/proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `src/proxy.ts` (`src/lib/server/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
+`src/proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `src/proxy.ts` (`src/platform/http/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
 
 - `script-src 'self' 'nonce-<random>' 'strict-dynamic'` — no `unsafe-inline`; the framework runtime, page bundles and RSC flight-data scripts all receive the matching `nonce` attribute automatically (verified in production output — see `e2e/content-security-policy.spec.ts`, run via `npm run test:e2e:csp` against a real `npm run build`/`npm run start`, and required in CI's `e2e` job). This closes the constraint tracked in issue #159: production Next.js 16.3.5 App Router output supports hydration-safe nonces.
 - `style-src 'self' 'unsafe-inline'` stays as-is: inline `style="..."` attributes (used throughout for computed widths/colors) cannot carry a nonce, so this is an accepted, unrelated tradeoff — only `script-src` dropped `unsafe-inline`.

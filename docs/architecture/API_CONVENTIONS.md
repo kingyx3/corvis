@@ -2,7 +2,7 @@
 
 Implementation tracker: GitHub issue #11. This documents the conventions
 `src/app/api/v1/**` routes actually follow today, backed by `openapi/corvis-v1.yaml`
-and `src/lib/server/http.ts`/`src/lib/server/pagination.ts`.
+and `src/platform/http/http.ts`/`src/platform/http/pagination.ts`.
 
 ## Envelope and errors
 
@@ -14,7 +14,7 @@ and server log can be correlated even across a failure.
 
 Errors are always `{ error: "<stable_code>", correlationId }` with an
 appropriate HTTP status, produced by the single `apiError()` mapper in
-`src/lib/server/http.ts` rather than by each route improvising its own shape.
+`src/platform/http/http.ts` rather than by each route improvising its own shape.
 The stable error codes today include `authentication_required` (401),
 `forbidden` (403), a per-domain conflict/governance code (409 or 422 —
 `publication_blocked`, `deletion_blocked_by_legal_hold`, a
@@ -32,7 +32,7 @@ envelope in the route.
 
 ## Pagination and collection queries
 
-`src/lib/server/pagination.ts` implements opaque cursor pagination:
+`src/platform/http/pagination.ts` implements opaque cursor pagination:
 `GET` collection endpoints accept `?limit=` (1–200, default 50) and
 `?cursor=` (an opaque, tamper-checked continuation token from a previous
 page's `nextCursor`). A response always includes `nextCursor`, which is
@@ -42,7 +42,7 @@ page's `nextCursor`). A response always includes `nextCursor`, which is
 pagination keeps returning its full, unpaginated list when the caller
 passes neither `limit` nor `cursor` — pagination only activates once a
 caller explicitly asks for it (`paginationRequested()`). This matters
-because production callers like `src/adapters/workspace/http-workspace.ts`
+because production callers like `src/modules/workspace/adapters/http-workspace.ts`
 already call `/documents`, `/observations` and `/snapshots` with no query
 parameters and expect the complete list back; changing that default would
 have silently truncated their data. New endpoints without an existing
@@ -114,14 +114,14 @@ security description plus normalized instrument attributes and lineage.
 ## Idempotency
 
 Write operations that a client may need to safely retry take an explicit
-`idempotencyKey` field in the request body (see `src/lib/server/uploads.ts`'s
+`idempotencyKey` field in the request body (see `src/modules/sources/server/uploads.ts`'s
 upload-session `initiate`/`complete` flow), not an `Idempotency-Key` HTTP
 header. A repeated call with the same key and tenant returns the original
 result rather than creating a duplicate resource or repeating a destructive
 action. Upload keys are additionally bound to the caller's subject and
 workspace (`uploadIdempotencyKey`); replaying one from another uploader or
 workspace is a 409 `upload_idempotency_mismatch`.
-`src/lib/server/data-lifecycle.ts`'s deletion execution follows the same
+`src/modules/governance/server/data-lifecycle.ts`'s deletion execution follows the same
 principle for its per-attempt evidence ledger. New mutating endpoints that
 can be safely retried should follow this same body-field convention rather
 than introducing a second one.
@@ -135,7 +135,7 @@ idempotency namespace for header versus body representations of the same key.
 
 `corvis_control.webhook_subscription` and `corvis_control.webhook_delivery`
 (migration `006_upload_delivery_operations.sql`) hold the durable outbound
-delivery ledger: `src/lib/server/delivery.ts`'s `processWebhookDeliveries` claims
+delivery ledger: `src/modules/delivery/server/delivery.ts`'s `processWebhookDeliveries` claims
 outbox events for each active subscription with an idempotent
 `on conflict (tenant_id,webhook_id,event_id,attempt) do nothing` insert,
 bounded to 5 attempts, and marks the fifth failure terminal
@@ -160,12 +160,12 @@ change; do not expose internal outbox events merely because they exist.
 
 Subscription administration and per-subscription signing-key rotation
 (migration `019_webhook_subscription_management.sql`,
-`src/lib/server/webhook-subscriptions.ts`) are exposed under
+`src/modules/delivery/server/webhook-subscriptions.ts`) are exposed under
 `/admin/webhooks/subscriptions`, gated by `admin:manage`:
 
 - `POST /admin/webhooks/subscriptions` — create (`endpointUrl` must be
   `https://`, `eventTypes` a non-empty array of customer-facing event types
-  from `WEBHOOK_EVENT_TYPES` in `src/lib/server/webhook-endpoint-policy.ts`;
+  from `WEBHOOK_EVENT_TYPES` in `src/modules/delivery/server/webhook-endpoint-policy.ts`;
   internal processing-transport signals such as `DocumentRegistered` are
   rejected with `event_type_not_supported`). Endpoints naming `localhost`,
   `*.internal`/metadata hosts or a loopback/private/link-local/reserved IP
@@ -175,7 +175,7 @@ Subscription administration and per-subscription signing-key rotation
   (active or paused) subscriptions — the 26th create is rejected with
   `webhook_subscription_limit_reached` (409) until one is revoked (the cap is
   checked under a per-tenant advisory lock, so racing creates cannot exceed it;
-  limits live in `src/lib/server/webhook-subscriptions.ts`). At send time the
+  limits live in `src/modules/delivery/server/webhook-subscriptions.ts`). At send time the
   host is re-checked and its DNS answers must all be public, redirects are
   never followed (a 3xx is a failed attempt) and each POST has a 10s timeout.
   The response includes the signing secret exactly once; it is never
@@ -214,14 +214,14 @@ bounded test/local primitive, not the production distributed authority.
 
 Every non-public `/api/v1` route calls `resolveAuthorizedRequestIdentity()`
 and `assertPermission()`/`assertRole()` before doing anything else; this
-repository-wide contract is enforced by `src/lib/server/security-contract.test.ts`,
+repository-wide contract is enforced by `src/platform/http/security-contract.test.ts`,
 not by convention alone.
 
 Database lifecycle roles and application permissions are separate layers.
 `tenant_admin` and `accountadmin` (a workspace/product administrator; renamed
 from the earlier `workspace_admin`) both map to the application `admin` Role
 for ordinary permission checks, but they are not interchangeable scopes:
-`assertTenantAdminRequestScope()` (`src/lib/server/authorized-request.ts`) requires
+`assertTenantAdminRequestScope()` (`src/platform/http/authorized-request.ts`) requires
 the authoritative, tenant-wide `isTenantAdmin` signal — never just the `admin`
 Role — for every `/api/v1/admin/**` route and the tenant-scoped processing
 recovery commands (`/jobs/{jobId}/retry`, `/jobs/{jobId}/recover`); granting
@@ -229,7 +229,7 @@ the `tenant_admin` role itself carries the same requirement, enforced both in
 the route and authoritatively in SQL (migration 048). Workspace/product
 routes such as `/api/v1/source-connections/**` remain available to
 `accountadmin`, but are scoped to the caller's own workspace
-(`src/lib/server/source-connector-governance.ts`), never tenant-wide.
+(`src/modules/sources/server/source-connector-governance.ts`), never tenant-wide.
 
 ## Data retention and full data export (F10)
 
@@ -244,7 +244,7 @@ Implementation tracker: GitHub issue #266. Organization Admins (`tenant_admin`; 
 | `POST /api/v1/access/data-exports/{exportId}` | Organization Admin | `{ action: "approve" or "reject" or "cancel", note?, expectedStatus? }` decides the request. `approve` and `reject` need an Organization Admin who is **not** the requester (`403 data_export_independent_approver_required`, enforced in SQL, see below); `reject` needs a `note`; only the requester may `cancel`, and only before the build starts. `{ action: "prepare_download" }` returns `{ downloadUrl, downloadExpiresAt }` for a completed export. |
 | `GET /api/v1/access/data-exports/{exportId}/download?grant=` | Organization Admin | Redeems a link and streams the archive (`application/zip`, `x-corvis-checksum-sha256`). The link is single-use, bound to the admin it was issued to, valid for ten minutes at most and never beyond the artifact's expiry. `HEAD` is `405` so a probe cannot consume it. A used, expired or foreign link is `404 not_found`. |
 
-**Deletion requests (F10e, #325, migration 098).** The retention view also lists the deletion requests that affect the caller's tenant, newest first (at most 100), and an Organization Admin may ask for a deletion of their own. Both ride on the operator deletion lifecycle (#10, `src/lib/server/data-lifecycle.ts`, migrations 003, 017, 066), which they do not change.
+**Deletion requests (F10e, #325, migration 098).** The retention view also lists the deletion requests that affect the caller's tenant, newest first (at most 100), and an Organization Admin may ask for a deletion of their own. Both ride on the operator deletion lifecycle (#10, `src/modules/governance/server/data-lifecycle.ts`, migrations 003, 017, 066), which they do not change.
 
 | Route | Who | Purpose |
 | --- | --- | --- |
@@ -272,11 +272,11 @@ Implementation tracker: GitHub issue #266. Organization Admins (`tenant_admin`; 
 
 **Contents and contractual data rights.** The archive (a stored zip, written as a stream; ZIP64 only where an entry or the archive passes 4 GiB or holds 65,535 or more entries) holds, in this order, `README.txt`, `published-data/observations-0001.csv` (`-0002`, ...), `access-audit/access-audit-0001.csv` (...), `source-documents/inventory-0001.csv` (...), `source-documents/files/{documentId}/{name}` for each source document file, and `manifest.json` **last**, because it lists every other file with its size, row count and SHA-256 as measured while the file was written. Each data set is split into numbered CSV parts of at most 100,000 rows, each starting with the same header row, read with keyset pages of 5,000 rows (observations by `observation_id`, the audit trail by `(occurred_at, audit_event_id)`, the inventory by `document_id`), so a tenant of any size is exported completely across as many parts as it needs and every part is listed in the manifest (`dataset` names which data set a file belongs to; a source file also has its `documentId`). The archive's own SHA-256 is recorded and sent with the download, and the manifest reports how many funds, documents and source files were left out and what the export does not include. The copy of the manifest the API returns leaves out the individual source document files (there can be many thousands; they are all in `manifest.json` inside the archive) and says how many there are: `fileCount`, and `sourceFiles: { included, excluded, totalBytes }`. Only funds and documents for which `corvis_control.tenant_export_rights` returns them are exported: every effective `data_rights` row for the resource must be client-visible **and** redistribution-allowed, a resource with no effective row is excluded, and the organization must also hold a workspace-level redistribution right (the same gate `assertRedistributionAllowed` applies to every other export). The data rights are checked again when a link is issued and redeemed (`409 data_export_rights_changed`), because an archive outlives the terms it was built under. **Source document files (F10b).** A document's file is copied into the archive only when the document is exportable as above **and** `tenant_export_rights` reports `source_document_access_allowed` for it (every effective right for the document grants source-file access), and a released, clean file is on record (`malware_scan_status = 'clean'`, `quarantine_status = 'released'`, a pinned storage generation, an object under the tenant's own `tenant=.../document=.../` prefix). Rights are read again inside every page of documents, so a right withdrawn during a long build is honoured for the files not yet written. The bytes are copied object by object from the object store into the archive as they are read; their SHA-256 and size are measured on the way and must equal what was recorded at upload, or the build fails permanently instead of delivering a file that does not match. A document the organization may redistribute whose file is not in the archive (no source-file access, no released file, or the stored object has gone) stays in the inventory, and is reported only as a count (`sourceFiles.excluded`, and a `notIncluded` entry): never named, never listed. The access check is repeated when a link is issued and when it is redeemed: `tenant_export_scope_changed` (migration 094) compares the funds, documents and source files recorded in the archive's internal scope with the rights as they are now, in SQL, so withdrawing redistribution **or** source-file access after the build blocks the download (`409 data_export_rights_changed`) and the list of what the archive holds never leaves the database.
 
-**Memory.** The archive is never held in memory and no transaction is held open across a build: every query is its own statement, the zip is written as a stream (`src/lib/server/zip-stream.ts`) and uploaded with a resumable GCS write (`putObjectStream`, one 8 MiB chunk in flight; a failed build cancels the upload session), so what a build holds is a page of rows, a stream chunk and a few hundred bytes of manifest entry per file, whatever the tenant's size (#231). Time is the remaining bound: a build runs inside one delivery request (the private worker's 600-second request timeout, which is also the length of the build lease), so an archive too large to copy in that time is cut off, reclaimed and retried until its attempts run out; the progress report is what shows how far an attempt got. Splitting a build across ticks would need a checkpoint per part and is not part of this release.
+**Memory.** The archive is never held in memory and no transaction is held open across a build: every query is its own statement, the zip is written as a stream (`src/platform/zip-stream.ts`) and uploaded with a resumable GCS write (`putObjectStream`, one 8 MiB chunk in flight; a failed build cancels the upload session), so what a build holds is a page of rows, a stream chunk and a few hundred bytes of manifest entry per file, whatever the tenant's size (#231). Time is the remaining bound: a build runs inside one delivery request (the private worker's 600-second request timeout, which is also the length of the build lease), so an archive too large to copy in that time is cut off, reclaimed and retried until its attempts run out; the progress report is what shows how far an attempt got. Splitting a build across ticks would need a checkpoint per part and is not part of this release.
 
 **Audit.** Every step writes an `audit_event` (target `tenant_export_request`): the application writes `data_export.requested`, `.approved`, `.rejected`, `.cancelled`, `.link_issued` and `.download_started` in the same transaction as the change (identifiers, status and the stated reason or note; never data), and the SQL functions write the system steps (`data_export.expired`, `.build_started`, `.build_completed`, `.build_failed`, `.build_retry_scheduled`, and from migration 089 `.artifact_deleted` and `.grants_swept`) in the transaction that makes them. All appear in the tenant access audit listing, its CSV, and the export's own `access-audit.csv`. The per-request history (`GET .../{exportId}`) is append-only in `corvis_control.tenant_export_request_event`.
 
-**Errors** follow the usual `{ error, correlationId }` shape: `invalid_request`, `invalid_reason`, `invalid_action`, `invalid_status`, `invalid_note`, `invalid_cursor`, `invalid_limit`, `operations_admin_required` (403, the operator build view only), `tenant_admin_required` (403), `data_export_independent_approver_required` (403), `data_export_cancel_requester_only` (403), `data_export_not_found` (404), and 409s `data_export_already_active`, `data_export_approval_expired`, `data_export_status_changed`, `data_export_transition_not_allowed`, `data_export_not_available`, `data_export_rights_changed`. The SQL refusals behind them are allow-listed in `src/lib/server/sql-application-errors.ts`.
+**Errors** follow the usual `{ error, correlationId }` shape: `invalid_request`, `invalid_reason`, `invalid_action`, `invalid_status`, `invalid_note`, `invalid_cursor`, `invalid_limit`, `operations_admin_required` (403, the operator build view only), `tenant_admin_required` (403), `data_export_independent_approver_required` (403), `data_export_cancel_requester_only` (403), `data_export_not_found` (404), and 409s `data_export_already_active`, `data_export_approval_expired`, `data_export_status_changed`, `data_export_transition_not_allowed`, `data_export_not_available`, `data_export_rights_changed`. The SQL refusals behind them are allow-listed in `src/platform/database/sql-application-errors.ts`.
 
 ## Sign-in and session policy (F7)
 
@@ -362,13 +362,13 @@ Implementation tracker: GitHub issue #261. A customer who doubts a **published**
 
 **Idempotency.** `idempotencyKey` (body) or the `Idempotency-Key` header (one namespace; both present and different is `400 invalid_idempotency_key`; neither is `400 idempotency_key_required`) is scoped to the reporter. The same key and content returns the original case; the same key with different content is `409 idempotency_key_reused`; two concurrent first submissions are `409 data_issue_report_conflict` (retry).
 
-**Errors** follow the usual `{ error, correlationId }` shape: `invalid_request`, `invalid_figure`, `invalid_scope`, `invalid_comment`, `invalid_action`, `invalid_status`, `invalid_correction`, `invalid_note`, `invalid_format`, `fund_not_entitled` (403), `tenant_admin_required` (403), `data_issue_not_found` (404), `data_issue_snapshot_not_found` (404), `data_issue_correction_not_found` (404), and 409s `data_issue_status_changed`, `data_issue_transition_not_allowed`, `data_issue_correction_required`, `data_issue_correction_not_resolved`, `data_issue_correction_scope_mismatch`, `data_issue_correction_cancelled`. The SQL refusals behind them are allow-listed in `src/lib/server/sql-application-errors.ts`.
+**Errors** follow the usual `{ error, correlationId }` shape: `invalid_request`, `invalid_figure`, `invalid_scope`, `invalid_comment`, `invalid_action`, `invalid_status`, `invalid_correction`, `invalid_note`, `invalid_format`, `fund_not_entitled` (403), `tenant_admin_required` (403), `data_issue_not_found` (404), `data_issue_snapshot_not_found` (404), `data_issue_correction_not_found` (404), and 409s `data_issue_status_changed`, `data_issue_transition_not_allowed`, `data_issue_correction_required`, `data_issue_correction_not_resolved`, `data_issue_correction_scope_mismatch`, `data_issue_correction_cancelled`. The SQL refusals behind them are allow-listed in `src/platform/database/sql-application-errors.ts`.
 
 **Audit.** Report and every status move write an `audit_event` (`data_issue.report`, `data_issue.investigate`, `data_issue.correct`, `data_issue.no_change`; target `data_issue_case`) in the same transaction as the change. Events carry identifiers and the status only, never the comment or a note, and appear in the tenant access audit listing and its CSV.
 
-**Export.** `GET /api/v1/data-issues?format=csv` (or `json`) reuses the list endpoint instead of the asynchronous physical-export pipeline: cases are small, tenant-owned records, so the file is rendered synchronously, with spreadsheet formulas neutralised in CSV (`src/lib/csv.ts`), a `Content-Disposition: attachment` and an `x-corvis-export-truncated` header (true only past 10,000 cases). Columns: `case_id, status, figure, fund, fund_id, company, company_id, metric, metric_code, report_period, snapshot_id, snapshot_version, comment, reported_by, reported_at, status_changed_at, resolution_note, replacement_snapshot_id, replacement_snapshot_version, correction_incident_id` (the last only for Organization Admins).
+**Export.** `GET /api/v1/data-issues?format=csv` (or `json`) reuses the list endpoint instead of the asynchronous physical-export pipeline: cases are small, tenant-owned records, so the file is rendered synchronously, with spreadsheet formulas neutralised in CSV (`src/shared/lib/csv.ts`), a `Content-Disposition: attachment` and an `x-corvis-export-truncated` header (true only past 10,000 cases). Columns: `case_id, status, figure, fund, fund_id, company, company_id, metric, metric_code, report_period, snapshot_id, snapshot_version, comment, reported_by, reported_at, status_changed_at, resolution_note, replacement_snapshot_id, replacement_snapshot_version, correction_incident_id` (the last only for Organization Admins).
 
-**Demo mode** serves the same routes from an in-memory per-tenant store (`src/adapters/demo/data-issue-store.ts`, selected in `src/lib/server/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
+**Demo mode** serves the same routes from an in-memory per-tenant store (`src/modules/governance/adapters/data-issue-store.ts`, selected in `src/modules/governance/server/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
 
 ## Scheduled exports (F4)
 
@@ -404,23 +404,23 @@ Two **webhook events** end every scheduled run, once per run, whatever the owner
 | `ExportScheduleRunCompleted` | The governed export a run requested reached `complete` | `{ scheduleId, scheduleLabel, runId, exportId }` |
 | `ExportScheduleRunFailed` | The run was refused (fail-closed), or its export ran out of delivery attempts | `{ scheduleId, scheduleLabel, runId, failureReason, exportId? }` |
 
-`failureReason` is one of the run reasons above (`owner_inactive`, `export_permission_revoked`, `redistribution_not_permitted`, `scope_not_entitled`, `scope_unavailable`, `format_unavailable`) or `export_failed` (accepted, then not deliverable; `exportId` is then present). The payload carries the schedule id and the label its owner chose, and nothing else: no figure, fund, company, scope or person. They ride the ordinary outbox (`corvis_control.outbox_event`, aggregate `export_schedule_run`, written by `emit_export_schedule_run_event`), so signing, retries and fan-out are the existing ones; the refusal is announced in the same transaction as its run record, the completion and delivery failure by the export worker (`src/lib/server/export-schedule-notifications.ts`, best effort: a notification fault is logged and never undoes a run or an export).
+`failureReason` is one of the run reasons above (`owner_inactive`, `export_permission_revoked`, `redistribution_not_permitted`, `scope_not_entitled`, `scope_unavailable`, `format_unavailable`) or `export_failed` (accepted, then not deliverable; `exportId` is then present). The payload carries the schedule id and the label its owner chose, and nothing else: no figure, fund, company, scope or person. They ride the ordinary outbox (`corvis_control.outbox_event`, aggregate `export_schedule_run`, written by `emit_export_schedule_run_event`), so signing, retries and fan-out are the existing ones; the refusal is announced in the same transaction as its run record, the completion and delivery failure by the export worker (`src/modules/delivery/server/export-schedule-notifications.ts`, best effort: a notification fault is logged and never undoes a run or an export).
 
-**Errors:** `invalid_request`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_label`, `invalid_scope`, `invalid_export_format`, `invalid_trigger`, `invalid_action`, `invalid_notify_on_completion`, `invalid_scope` on the list parameter, `tenant_admin_required` (403), `export_scope_not_entitled` (403), `feature_disabled` (403), `forbidden` (403, no redistribution rights), `export_schedule_not_found` (404), and 409s `idempotency_key_reused`, `export_schedule_limit_reached`, `export_schedule_transition_not_allowed`. The SQL refusals behind them are allow-listed in `src/lib/server/sql-application-errors.ts`.
+**Errors:** `invalid_request`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_label`, `invalid_scope`, `invalid_export_format`, `invalid_trigger`, `invalid_action`, `invalid_notify_on_completion`, `invalid_scope` on the list parameter, `tenant_admin_required` (403), `export_scope_not_entitled` (403), `feature_disabled` (403), `forbidden` (403, no redistribution rights), `export_schedule_not_found` (404), and 409s `idempotency_key_reused`, `export_schedule_limit_reached`, `export_schedule_transition_not_allowed`. The SQL refusals behind them are allow-listed in `src/platform/database/sql-application-errors.ts`.
 
 **Audit.** `export_schedule.create`, `.pause`, `.resume`, `.notify` (metadata includes the new `notifyOnCompletion`) and `.delete` (actor: the owner, in the same transaction as the change), `export_schedule.run` (actor: the owner, outcome `success` or `failure` with the reason) and `export_schedule.stop` (actor `system:export-scheduler`); target `export_schedule`. Events carry identifiers, the label, the trigger, the format and the status, never data, and appear in the tenant access audit listing.
 
-**Demo mode** serves the same routes from an in-memory per-tenant store (`src/adapters/demo/export-schedule-store.ts`, selected in `src/lib/server/export-schedule-service.ts`), seeded per owning subject with an active monthly schedule that delivered and a paused on-publish schedule whose last run was refused. Demo mode has no worker, so a schedule created there never runs and its next run only shows; the seeded runs are illustrative.
+**Demo mode** serves the same routes from an in-memory per-tenant store (`src/modules/delivery/adapters/export-schedule-store.ts`, selected in `src/modules/delivery/server/export-schedule-service.ts`), seeded per owning subject with an active monthly schedule that delivered and a paused on-publish schedule whose last run was refused. Demo mode has no worker, so a schedule created there never runs and its next run only shows; the seeded runs are illustrative.
 
 ## Performance scorecard (F1)
 
-Implementation tracker: GitHub issue #257. `GET /api/v1/performance-scorecard` (`observations:read`, classified `workspace_control` like the other product-composed reads) serves the GP-reported performance of every entitled fund and of its underlying investments as the Analytics **Performance scorecard** lens renders it. Logic lives in `src/core/performance-scorecard.ts` (selection, trust flags, formatting, export rows), the Postgres read in `src/lib/server/performance-scorecard.ts`, the demo dataset in `src/lib/server/performance-scorecard-demo.ts`.
+Implementation tracker: GitHub issue #257. `GET /api/v1/performance-scorecard` (`observations:read`, classified `workspace_control` like the other product-composed reads) serves the GP-reported performance of every entitled fund and of its underlying investments as the Analytics **Performance scorecard** lens renders it. Logic lives in `src/modules/analytics/domain/performance-scorecard.ts` (selection, trust flags, formatting, export rows), the Postgres read in `src/modules/analytics/server/performance-scorecard.ts`, the demo dataset in `src/modules/analytics/server/performance-scorecard-demo.ts`.
 
 Query parameters (F1c, #332): `fundId` narrows to one entitled fund (a fund the caller is not entitled to is `403`, never ignored); `period` keeps, per metric, the latest figure the GP stated for that reporting period (a figure's `period` label such as `Q1 2026`; the filter is applied before the latest figure is chosen, so an older period shows what was reported for it and only a metric with no figure for that period is Not reported); `limit` (funds per page, default 25, at most 100) and `cursor` (the previous `nextCursor`). Both filters are single-line, at most 512 / 64 characters, and an empty value is `400 invalid_scorecard_filter`, never "no filter". A bad `limit` or `cursor` is `400 invalid_limit` / `invalid_cursor`.
 
 Response `data` is `{ funds, filters, fundOptions: [{ fundId, fund }], periodOptions: [period] }` with `funds: [{ fundId, fund, cells, investments: [{ key, investment, holdingId, companyId, cells }] }]`; `nextCursor` is the keyset of the last fund of the page (funds are paged by name then id, each fund whole: its figures are never split across pages), null on the last page. `filters` echoes the canonical filters, `fundOptions` lists every entitled fund whatever the filters, and `periodOptions` (every period with a published figure, latest first) is sent with the first page only (no `cursor`) and is empty afterwards. Each cell is `{ metric: { code, label, kind, definition }, figures }`; `figures` is empty when the GP did not report the metric (the UI shows "Not reported", never 0). A figure carries the value exactly as stored (`valueNumber` is exact decimal text, `valueString`, `valueRaw`, `currency`, `unit`), `asOf` (ISO date, or null, then the reporting `period` stands in), `status`, `derived`, `derivationFormula` and its `source` (`documentId`, `sourceReferenceId`, `page`, `sheetName`, `cellRange`), which is what the one-click drill-through opens. Nothing is recomputed, summed across funds or currencies or FX-converted: when one fund reports the latest as-of date in two currencies, both figures are returned.
 
-**Metric dictionary (assumptions).** The Confluence dictionary is not reachable from the repository and `corvis_semantic.metric_definition` is tenant-managed data, not seeded by migrations, so the subject level of each metric is an assumption documented here and pinned by `src/core/performance-scorecard.test.ts`. Fund level (subject level `fund`): `nav`, `tvpi`, `dpi`, `rvpi`, `net_irr`, `net_moic`. Investment level (subject level `holding` or `company`, shown under the fund that holds it): `cost`, `fair_value`, `gross_moic`, `gross_irr`, `ownership_pct`. An `instrument`-level fact, a breakdown row (for example fair value by sector), a look-through row and a conflicting alternative are never an investment's or fund's headline figure. All eleven codes are already in the dual-review critical set (`src/lib/server/processing-reviewed-stage.ts`).
+**Metric dictionary (assumptions).** The Confluence dictionary is not reachable from the repository and `corvis_semantic.metric_definition` is tenant-managed data, not seeded by migrations, so the subject level of each metric is an assumption documented here and pinned by `src/modules/analytics/domain/performance-scorecard.test.ts`. Fund level (subject level `fund`): `nav`, `tvpi`, `dpi`, `rvpi`, `net_irr`, `net_moic`. Investment level (subject level `holding` or `company`, shown under the fund that holds it): `cost`, `fair_value`, `gross_moic`, `gross_irr`, `ownership_pct`. An `instrument`-level fact, a breakdown row (for example fair value by sector), a look-through row and a conflicting alternative are never an investment's or fund's headline figure. All eleven codes are already in the dual-review critical set (`src/modules/processing/server/processing-reviewed-stage.ts`).
 
 **What is served.** Facts of every entitled fund snapshot whose *current* version is `published` (a draft, blocked, withdrawn or superseded version contributes nothing), whose source document the caller is entitled to (a figure with no entitled source is not served). Per fund, subject, metric, currency and unit the query returns the latest fact, ordered by as-of date, then publication time, then snapshot and fact id, undated and unpublished last (`compareLatestFirst`); the final choice is made in core. A forecast, budget, plan, projection or target (`actuality` / `scenarioType`) is not a reported result and is never shown. **Large tenants.** The 50,000-figure cap applies to one page of funds, not to the tenant: a page whose figures would exceed it is halved and retried (the response simply carries fewer funds and a `nextCursor`), so a tenant above the cap still loads, and no figure is ever dropped, because truncating would turn published figures into false "Not reported" cells. Only a single fund with more than 50,000 reported figures cannot be split and fails with `413 performance_scorecard_too_large` (narrow it with `period`). The governed export reads the same pages (100 funds at a time) and so is not limited by the cap either.
 
@@ -436,9 +436,9 @@ contract conventions: additive operations are allowed, but a baseline operation
 cannot silently disappear from `openapi/corvis-v1.yaml`. The check also runs the
 other way: every operation in the spec must be recorded in the baseline, so a new
 published path is protected from the day it is added.
-`src/lib/server/openapi-response-schemas.test.ts` holds real route responses to the
+`src/platform/http/openapi-response-schemas.test.ts` holds real route responses to the
 schemas in the spec (using the dependency-free validator in
-`src/lib/server/test-support/openapi-support.ts`), so documented shapes cannot drift
+`src/test-support/openapi-support.ts`), so documented shapes cannot drift
 from what the handlers return.
 
 Breaking changes use a new version prefix rather than changing v1 in place.
@@ -469,6 +469,6 @@ Implementation tracker: GitHub issue #259. A Review Analyst assigns an observati
 
 **Comments.** 1 to 2,000 characters of free text, at most 10 distinct mentions. Mentioned people are notified through F2 (`review_discussion`, see `NOTIFICATIONS.md`) without any comment text. Comment text is rendered as text only and is never copied into an email, a notification or an audit event.
 
-**Errors**: `invalid_request`, `invalid_subject_kind`, `invalid_subject_id`, `invalid_assignee`, `invalid_expected_version`, `invalid_comment`, `invalid_mentions`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_limit`, `invalid_cursor`, `human_identity_required` (403), `review_item_not_found` (404), `assignee_not_eligible` and `mention_not_eligible` (422), and 409s `assignment_changed`, `idempotency_key_reused`, `review_comment_conflict` (two concurrent first comments with one key; retry) and `review_comment_limit_reached`. The SQL refusals behind them are allow-listed in `src/lib/server/sql-application-errors.ts`.
+**Errors**: `invalid_request`, `invalid_subject_kind`, `invalid_subject_id`, `invalid_assignee`, `invalid_expected_version`, `invalid_comment`, `invalid_mentions`, `idempotency_key_required`, `invalid_idempotency_key`, `invalid_limit`, `invalid_cursor`, `human_identity_required` (403), `review_item_not_found` (404), `assignee_not_eligible` and `mention_not_eligible` (422), and 409s `assignment_changed`, `idempotency_key_reused`, `review_comment_conflict` (two concurrent first comments with one key; retry) and `review_comment_limit_reached`. The SQL refusals behind them are allow-listed in `src/platform/database/sql-application-errors.ts`.
 
 **Audit.** Every change of assignee and every comment writes an `audit_event` (`review_item.assign`, `review_item.reassign`, `review_item.unassign`, `review_item.comment`; target type `review_item`, target id `<kind>:<id>`) in the same transaction as the change. Events carry identifiers and counts only (fund, assignee and previous assignee ids, comment id, mentioned ids, comment length). They are queryable through `GET /admin/audit?targetType=review_item`; they are deliberately not part of the access-administration audit listing, which would otherwise drown in day-to-day discussion.

@@ -35,10 +35,12 @@ Corvis therefore follows a **bounded modular-monolith first, independently deplo
 
 ## Dependency rules
 
-1. Domain contracts in `src/core/` must not import provider adapters.
-2. Feature/UI code in `src/features/` depends on typed ports/runtime composition, not direct provider SDKs or SQL.
+1. Domain contracts (`src/modules/*/domain/`, `src/shared/domain/`) must not import adapters, server code, UI, `src/platform/` or `src/composition/`.
+2. Feature/UI code (`src/modules/*/ui/`, `src/shared/ui/`) depends on typed ports/runtime composition, not on server code, adapters, `src/platform/`, provider SDKs or SQL.
 3. Application use cases depend on ports, not concrete adapters.
-4. Provider adapters may depend inward on contracts; src/core/application code must not depend outward on provider implementations.
+4. Provider adapters may depend inward on contracts; domain/application code must not depend outward on provider implementations.
+
+Rules 1 and 2 are enforced by the `architecture-drift` scanner of the control loop (`CL-ARCH-001`, `CL-ARCH-002` in `services/control-loop/scanners/architecture-drift.ts`). Each module's code lives in `src/modules/<module>/{domain,server,adapters,ui}`; the directory map is in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 5. Cross-module writes are never hidden side effects. Use an explicit use case or durable event/job.
 6. No application dual writes between Postgres and optional Snowflake.
 7. Customer-visible reads use serving/read contracts; they do not query provider-specific canonical tables directly from UI code.
@@ -110,7 +112,7 @@ Each module must define:
 
 ### Scope of kill switches and the emergency stop
 
-Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/feature-flags/kill-switch` and `/emergency-stop`) are **module switches, not a tenant-wide stop**. They deny only the code paths that call `assertFeatureEnabled` / `isFeatureEnabled` in `src/lib/server/feature-flags.ts`, which today are:
+Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/feature-flags/kill-switch` and `/emergency-stop`) are **module switches, not a tenant-wide stop**. They deny only the code paths that call `assertFeatureEnabled` / `isFeatureEnabled` in `src/modules/admin/server/feature-flags.ts`, which today are:
 
 | Flag | Gated paths |
 | --- | --- |

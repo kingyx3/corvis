@@ -34,7 +34,7 @@ Before a production-like release can operate, the environment still needs:
 2. **Cloudflare ownership** — authoritative zone and scoped Terraform token for environments where the public API edge is enabled.
 3. **Identity provider** — approved OIDC issuer/audience (or a reviewed SAML/identity-broker path). Production OIDC is verified directly; no Corvis assertion proxy is required for the default path.
 4. **Supabase/Postgres** — isolated Singapore environment project, TLS-verified runtime DSN written directly into `corvis-postgres-dsn-${environment}`, approved backup posture and provider ownership.
-5. **Customer/admin browser surfaces and SSO session integration** — publish only after their distinct src/runtime/security boundary and approved browser identity flow are implemented; do not manufacture a provider choice in Terraform.
+5. **Customer/admin browser surfaces and SSO session integration** — publish only after their distinct runtime/security boundary and approved browser identity flow are implemented; do not manufacture a provider choice in Terraform.
 6. **Malware/representation/extraction/retrieval/AI/delivery providers** — only the integrations actually enabled for the UAT/customer journey, with credentials kept out of source control and normal logs.
 7. **Monitoring ownership** — real notification recipients/budget ownership where alerts/budgets are enabled.
 

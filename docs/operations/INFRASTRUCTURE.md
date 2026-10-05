@@ -172,7 +172,7 @@ Cloudflare owns authoritative public DNS/TLS/DDoS/WAF/rate/cache controls throug
 - the single zone rate-limit entry ruleset;
 - authenticated-surface shared-cache bypass scoped to the six Corvis hostnames.
 
-The shared state is held in `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state` under `corvis/cloudflare-zone-policy`, not the ordinary UAT environment state bucket. This keeps zone policy alive if UAT src/runtime/state is idled or fully decommissioned.
+The shared state is held in `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state` under `corvis/cloudflare-zone-policy`, not the ordinary UAT environment state bucket. This keeps zone policy alive if UAT runtime/state is idled or fully decommissioned.
 
 Shared zone mutation uses the dedicated `CLOUDFLARE_ZONE_POLICY_TOKEN`; environment edge tokens do not need zone-policy authority.
 
@@ -209,7 +209,7 @@ Cost guardrails:
 - bounded Artifact Registry retention;
 - lifecycle cleanup for transient GCS data;
 - Snowflake cost = zero until activation;
-- idle UAT removes src/runtime/public edge while retaining durable foundation/data/state;
+- idle UAT removes runtime/public edge while retaining durable foundation/data/state;
 - one Cloudflare root zone avoids a second domain/zone solely for UAT.
 
 Supabase is outside GCP teardown; an idle paid UAT Postgres project must be deliberately paused/down-sized/decommissioned according to provider capabilities and data-retention policy rather than assumed to disappear with Terraform.

@@ -9,7 +9,7 @@ Every workspace user can reach help from the **Help** button in the top bar, fro
 | Service status | Opens the service status page in a new tab. |
 | Release notes | Opens the release notes in a new tab. |
 
-The same **Contact support** entry point (`buildSupportRequest` in `src/lib/support.ts`) is used by the error states: `src/app/error.tsx`, `src/app/global-error.tsx` (which renders its own document and has no CSS, so it only borrows the helper), the per-view error fallback (`src/components/ui/view-error-boundary.tsx`), the "module unavailable" and "workspace degraded" notices in `src/app/page.tsx`, and source connections that need support. Where an error digest exists it is passed as the **Error reference**.
+The same **Contact support** entry point (`buildSupportRequest` in `src/modules/support/domain/support.ts`) is used by the error states: `src/app/error.tsx`, `src/app/global-error.tsx` (which renders its own document and has no CSS, so it only borrows the helper), the per-view error fallback (`src/shared/ui/view-error-boundary.tsx`), the "module unavailable" and "workspace degraded" notices in `src/app/page.tsx`, and source connections that need support. Where an error digest exists it is passed as the **Error reference**.
 
 ## What a support request contains
 
@@ -17,14 +17,14 @@ Only identifiers, from a fixed allow-list. Nothing else is read, and a value tha
 
 | Line | Source |
 | --- | --- |
-| Workspace ID, Organization ID | The identity the shell loaded (`src/lib/support-scope.ts`), else the stored workspace selection (`src/lib/workspace-context.ts`). |
+| Workspace ID, Organization ID | The identity the shell loaded (`src/modules/support/domain/support-scope.ts`), else the stored workspace selection (`src/shared/lib/workspace-context.ts`). |
 | Current view | The view in the URL hash (`#/documents`), else the route path. Never a query string. |
-| Latest request ID | The `correlationId` of the most recent `/api/v1` response (`src/lib/request-correlation.ts`), the same id that appears in server logs. |
+| Latest request ID | The `correlationId` of the most recent `/api/v1` response (`src/shared/lib/request-correlation.ts`), the same id that appears in server logs. |
 | Error reference | The Next.js error digest of the failure on screen, when there is one. |
 
-**No financial data or documents are attached automatically.** Fund, document and metric names and values, user input and free text are never part of the context. The Help menu shows the exact lines under "Included when you contact support" before anything is sent, and the email body tells the user not to paste financial data. The allow-list and the "smuggled field" case are covered by `src/lib/support.test.ts`.
+**No financial data or documents are attached automatically.** Fund, document and metric names and values, user input and free text are never part of the context. The Help menu shows the exact lines under "Included when you contact support" before anything is sent, and the email body tells the user not to paste financial data. The allow-list and the "smuggled field" case are covered by `src/modules/support/domain/support.test.ts`.
 
-The latest request ID is recorded by the HTTP adapters (`src/adapters/workspace/http-workspace.ts`, `src/adapters/delivery/http-delivery.ts`) and by `apiResponseError`. Requests that components make with a bare `fetch` do not update it. In demo mode there are no HTTP responses, so no request ID is shown.
+The latest request ID is recorded by the HTTP adapters (`src/modules/workspace/adapters/http-workspace.ts`, `src/modules/delivery/adapters/http-delivery.ts`) and by `apiResponseError`. Requests that components make with a bare `fetch` do not update it. In demo mode there are no HTTP responses, so no request ID is shown.
 
 ## Configuration
 
@@ -46,6 +46,6 @@ There is no Terraform or GitHub Environment wiring for these variables: browser-
 
 ## Testing
 
-- `src/lib/support.test.ts`, `src/lib/support-scope.test.ts` and `src/lib/request-correlation.test.ts` cover the pure helpers at 100% (the changed-code coverage gate applies to `src/lib/`).
+- `src/modules/support/domain/support.test.ts`, `src/modules/support/domain/support-scope.test.ts` and `src/shared/lib/request-correlation.test.ts` cover the pure helpers at 100% (the changed-code coverage gate applies to `src/lib/`).
 - `e2e/help-support.spec.ts` covers the Help menu, the pre-filled context, the palette commands, the phone route and a view error. The Help menu is also a surface in `e2e/support/surfaces.ts`, so it runs through the axe matrix in both themes.
 - `e2e/non-demo-smoke.spec.ts` checks, against the real HTTP adapter, that Contact support quotes the correlation id of a failed API call.

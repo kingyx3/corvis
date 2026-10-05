@@ -18,7 +18,7 @@ not a zero-finding ideal.
 The customer shell additionally asserts semantic landmarks, exactly one
 primary heading, keyboard-operable primary navigation, accessible names for
 focusable controls, and focus containment/restoration for modal workflows.
-The shared `src/components/ui/modal.tsx` uses the same focus-trap primitive as the
+The shared `src/shared/ui/modal.tsx` uses the same focus-trap primitive as the
 upload dialog, so global search, Review Analyst correction/reconciliation dialogs,
 and privileged admin confirmations all close on Escape, contain Tab focus and
 restore focus on close. The document-details drawer is also an accessible,

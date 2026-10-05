@@ -8,10 +8,14 @@ A pull request is not merge-ready until the repository's required quality, build
 
 The unit-test coverage scope is the executable TypeScript under:
 
-- `src/core/`
-- `src/lib/`
+- `src/modules/*/domain/` and `src/shared/domain/`
+- `src/modules/*/server/`
+- `src/platform/` (excluding `src/platform/demo/` fixtures)
+- `src/shared/lib/`
+- `src/modules/sources/adapters/upload/`
 - `services/control-loop/`
-- `src/adapters/upload/`
+
+The globs live in the `test` script of `package.json` and in `COVERAGE_SCOPES` of `tools/dev/check-changed-coverage.mjs`; keep the two in step. Unit tests are discovered with `**/*.test.ts`, so a new directory of tests is picked up without editing either list. Tests sit next to the code they cover; tests that assert repository-wide policy (workflows, Terraform, docs, import boundaries) live in `tools/repo-checks/`.
 
 Test files and `test-support` infrastructure are excluded from numerical production coverage. Production exclusions must not be added merely to make a percentage pass.
 
@@ -20,6 +24,8 @@ Test files and `test-support` infrastructure are excluded from numerical product
 Coverage has two complementary gates:
 
 1. **100% changed-code coverage.** Every changed executable production `.ts` file in the unit scope must have 100% line, branch and function coverage. `tools/dev/check-changed-coverage.mjs` reads Node's LCOV output and compares it with the pull-request base. A changed production file that is absent from LCOV fails the gate, so new code cannot disappear from the coverage denominator simply because no test loaded it.
+
+   A pure move is not a code change. A file counts as unchanged when, after replacing module specifiers and rewriting references to files or directories that the same diff moved, it is identical to its base version. Any other edit, including to a moved file, is held to 100%. This lets a restructuring PR move legacy code without re-litigating its coverage debt, while keeping the bar on every real change.
 2. **Whole-repository ratchet.** The existing unit-testable codebase had legacy coverage debt when this policy was introduced. The measured floor is 92.82% lines, 82.03% branches and 89.35% functions. `npm test` fails below those thresholds, so coverage cannot regress while subsequent changes drive the floor upward toward 100%.
 
 The target is 100% whole-repository coverage. Until that legacy target is reached, Corvis must not describe the repository as globally 100% covered. A changed file can still merge only at 100/100/100.
@@ -43,9 +49,9 @@ Do not rely on a single percentage to prove correctness. Coverage proves executi
 
 ## Browser storage invariant
 
-Web Storage is best-effort browser state and may throw when site data is blocked, storage is unavailable or privacy/quota controls intervene. Production code must access `localStorage` and `sessionStorage` only through `src/lib/safe-storage.ts`.
+Web Storage is best-effort browser state and may throw when site data is blocked, storage is unavailable or privacy/quota controls intervene. Production code must access `localStorage` and `sessionStorage` only through `src/shared/lib/safe-storage.ts`.
 
-`src/core/browser-storage-boundary.test.ts` scans production browser code and fails on a direct Web Storage bypass. Workspace-context tests cover server rendering, malformed/incomplete state, blocked storage and per-page context pinning. Playwright retains end-to-end coverage for blocked browser storage on real customer/admin surfaces.
+`tools/repo-checks/browser-storage-boundary.test.ts` scans production browser code and fails on a direct Web Storage bypass. Workspace-context tests cover server rendering, malformed/incomplete state, blocked storage and per-page context pinning. Playwright retains end-to-end coverage for blocked browser storage on real customer/admin surfaces.
 
 This combination would have surfaced the failure class fixed in PR #301 before merge.
 

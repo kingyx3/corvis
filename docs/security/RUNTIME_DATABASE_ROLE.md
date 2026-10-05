@@ -28,7 +28,7 @@ Least privilege is real, not nominal. Tables the application changes only throug
 
 ### How the grants were derived
 
-From the application's SQL (`src/lib/server`, `src/app/api`, `core`) with the verb (`select`/`insert into`/`update`/`delete from`, `for update`/`for share` which need `UPDATE`, `on conflict do update`) read per statement, plus the transitive closure through the bodies of the `SECURITY INVOKER` functions the application calls and the trigger functions its DML fires (a `SECURITY DEFINER` body runs with its owner's privileges and contributes nothing), plus the base tables of every granted view (the views are `security_invoker`). The suites in the next section then ran the real application code on those privileges; every privilege a suite needed beyond them is either added or listed as test-only in `db/postgres/tests/runtime-role-ci-fixture.sql`.
+From the application's SQL (`src/modules/*/server`, `src/platform`, `src/app/api`, `src/modules/*/domain`) with the verb (`select`/`insert into`/`update`/`delete from`, `for update`/`for share` which need `UPDATE`, `on conflict do update`) read per statement, plus the transitive closure through the bodies of the `SECURITY INVOKER` functions the application calls and the trigger functions its DML fires (a `SECURITY DEFINER` body runs with its owner's privileges and contributes nothing), plus the base tables of every granted view (the views are `security_invoker`). The suites in the next section then ran the real application code on those privileges; every privilege a suite needed beyond them is either added or listed as test-only in `db/postgres/tests/runtime-role-ci-fixture.sql`.
 
 ## Row level security for this role
 
@@ -99,112 +99,112 @@ The third column is the first reference found (an application file, or the funct
 
 | Table | Privileges | Reference |
 | --- | --- | --- |
-| `corvis_consolidated.consolidated_fact` | SELECT, INSERT, UPDATE | src/lib/server/export-delivery.ts+5 |
+| `corvis_consolidated.consolidated_fact` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-delivery.ts+5 |
 | `corvis_consolidated.consolidation_run` | SELECT, INSERT, UPDATE | function corvis_consolidated.consolidate_reconciliation |
-| `corvis_consolidated.fund_period_snapshot` | SELECT, INSERT, UPDATE | src/lib/server/export-delivery.ts+10 |
-| `corvis_consolidated.publication_run` | SELECT, INSERT, UPDATE | src/lib/server/processing-published-stage.ts |
-| `corvis_consolidated.reconciliation_exception` | SELECT, INSERT, UPDATE | src/lib/server/physical-exports.ts+4 |
-| `corvis_consolidated.reconciliation_resolution_event` | SELECT, INSERT | src/lib/server/workspace-summary.ts |
-| `corvis_consolidated.reconciliation_run` | SELECT, INSERT, UPDATE | src/lib/server/export-delivery.ts+3 |
-| `corvis_consolidated.snapshot_publication_event` | SELECT, INSERT | src/lib/server/postgres-lineage.ts |
+| `corvis_consolidated.fund_period_snapshot` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-delivery.ts+10 |
+| `corvis_consolidated.publication_run` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-published-stage.ts |
+| `corvis_consolidated.reconciliation_exception` | SELECT, INSERT, UPDATE | src/modules/delivery/server/physical-exports.ts+4 |
+| `corvis_consolidated.reconciliation_resolution_event` | SELECT, INSERT | src/modules/workspace/server/workspace-summary.ts |
+| `corvis_consolidated.reconciliation_run` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-delivery.ts+3 |
+| `corvis_consolidated.snapshot_publication_event` | SELECT, INSERT | src/platform/database/postgres-lineage.ts |
 | `corvis_control.api_rate_limit` | SELECT, INSERT, UPDATE | function corvis_control.consume_api_rate_limit |
-| `corvis_control.audit_event` | SELECT, INSERT | src/lib/server/audit-query.ts+5 |
+| `corvis_control.audit_event` | SELECT, INSERT | src/modules/governance/server/audit-query.ts+5 |
 | `corvis_control.control_definition` | SELECT, UPDATE | function corvis_control.promote_control_implementation |
-| `corvis_control.control_evidence` | SELECT, INSERT | src/lib/server/operations.ts |
-| `corvis_control.control_evidence_record` | SELECT, INSERT | src/lib/server/control-evidence-collector.ts |
+| `corvis_control.control_evidence` | SELECT, INSERT | src/platform/operations.ts |
+| `corvis_control.control_evidence_record` | SELECT, INSERT | src/modules/governance/server/control-evidence-collector.ts |
 | `corvis_control.control_evidence_requirement` | SELECT | function corvis_control.promote_control_implementation |
-| `corvis_control.data_correction_incident` | SELECT, INSERT, UPDATE | src/lib/server/data-correction.ts |
-| `corvis_control.data_issue_case` | SELECT, INSERT, UPDATE | src/lib/server/data-issue.ts |
-| `corvis_control.data_issue_case_event` | SELECT, INSERT | src/lib/server/data-issue.ts |
+| `corvis_control.data_correction_incident` | SELECT, INSERT, UPDATE | src/modules/governance/server/data-correction.ts |
+| `corvis_control.data_issue_case` | SELECT, INSERT, UPDATE | src/modules/governance/server/data-issue.ts |
+| `corvis_control.data_issue_case_event` | SELECT, INSERT | src/modules/governance/server/data-issue.ts |
 | `corvis_control.data_rights` | SELECT | src/app/api/v1/admin/access-review/route.ts+3 |
-| `corvis_control.deletion_execution_evidence` | SELECT, INSERT | src/lib/server/data-lifecycle.ts |
-| `corvis_control.deletion_request` | SELECT, INSERT, UPDATE | src/lib/server/data-lifecycle.ts+1 |
-| `corvis_control.email_outbox` | SELECT, INSERT, UPDATE | src/lib/server/export-schedule-notifications.ts+1 |
-| `corvis_control.event_inbox` | SELECT, INSERT, UPDATE | src/lib/server/platform-repositories.ts |
-| `corvis_control.export_schedule` | SELECT, INSERT, UPDATE | src/lib/server/export-history.ts+2 |
-| `corvis_control.export_schedule_run` | SELECT, INSERT | src/lib/server/export-history.ts+2 |
-| `corvis_control.feature_flag` | SELECT, INSERT, UPDATE | src/lib/server/feature-flags.ts+1 |
-| `corvis_control.feature_flag_emergency_stop` | SELECT, INSERT, UPDATE | src/lib/server/feature-flags.ts |
-| `corvis_control.idempotency_key` | SELECT, INSERT, DELETE | src/lib/server/idempotency.ts |
+| `corvis_control.deletion_execution_evidence` | SELECT, INSERT | src/modules/governance/server/data-lifecycle.ts |
+| `corvis_control.deletion_request` | SELECT, INSERT, UPDATE | src/modules/governance/server/data-lifecycle.ts+1 |
+| `corvis_control.email_outbox` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-schedule-notifications.ts+1 |
+| `corvis_control.event_inbox` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts |
+| `corvis_control.export_schedule` | SELECT, INSERT, UPDATE | src/modules/delivery/server/export-history.ts+2 |
+| `corvis_control.export_schedule_run` | SELECT, INSERT | src/modules/delivery/server/export-history.ts+2 |
+| `corvis_control.feature_flag` | SELECT, INSERT, UPDATE | src/modules/admin/server/feature-flags.ts+1 |
+| `corvis_control.feature_flag_emergency_stop` | SELECT, INSERT, UPDATE | src/modules/admin/server/feature-flags.ts |
+| `corvis_control.idempotency_key` | SELECT, INSERT, DELETE | src/platform/http/idempotency.ts |
 | `corvis_control.identity_lifecycle_event` | SELECT, INSERT | function corvis_control.reactivate_identity_admin |
 | `corvis_control.identity_subject` | SELECT, INSERT, UPDATE | src/app/api/v1/admin/access-review/route.ts+10 |
-| `corvis_control.legal_hold` | SELECT | src/core/data-retention.ts+2 |
+| `corvis_control.legal_hold` | SELECT | src/modules/governance/domain/data-retention.ts+2 |
 | `corvis_control.membership` | SELECT, INSERT, UPDATE, DELETE | src/app/api/v1/admin/access-review/route.ts+7 |
-| `corvis_control.notification_preference` | SELECT, INSERT, UPDATE | src/lib/server/notifications.ts |
-| `corvis_control.notification_recipient` | SELECT, INSERT, UPDATE | src/lib/server/notifications.ts |
-| `corvis_control.outbox_event` | SELECT, INSERT, UPDATE | src/lib/server/delivery.ts+4 |
-| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/lib/server/operations.ts+4 |
-| `corvis_control.processing_recovery_event` | SELECT, INSERT | src/lib/server/platform-repositories.ts |
-| `corvis_control.processing_stage_effect` | SELECT, INSERT, UPDATE | src/lib/server/processing-reviewed-stage.ts |
-| `corvis_control.research_answer_pin` | SELECT, INSERT, DELETE | src/lib/server/research-pins.ts |
+| `corvis_control.notification_preference` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
+| `corvis_control.notification_recipient` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
+| `corvis_control.outbox_event` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+4 |
+| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/platform/operations.ts+4 |
+| `corvis_control.processing_recovery_event` | SELECT, INSERT | src/platform/platform-repositories.ts |
+| `corvis_control.processing_stage_effect` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-reviewed-stage.ts |
+| `corvis_control.research_answer_pin` | SELECT, INSERT, DELETE | src/modules/research/server/research-pins.ts |
 | `corvis_control.resource_entitlement` | SELECT, INSERT, UPDATE, DELETE | src/app/api/v1/admin/access-review/route.ts+4 |
-| `corvis_control.retention_policy` | SELECT | src/core/data-retention.ts+2 |
-| `corvis_control.review_item_comment` | SELECT, INSERT | src/lib/server/review-discussion.ts |
-| `corvis_control.review_item_thread` | SELECT, INSERT, UPDATE | src/lib/server/review-discussion.ts |
-| `corvis_control.semantic_query_log` | SELECT, INSERT, UPDATE | src/lib/server/research-pins.ts+1 |
-| `corvis_control.service_account` | SELECT, INSERT, UPDATE | src/lib/server/service-account-credential.ts+1 |
-| `corvis_control.service_account_credential` | SELECT, INSERT, UPDATE | src/lib/server/service-account-credential.ts+1 |
+| `corvis_control.retention_policy` | SELECT | src/modules/governance/domain/data-retention.ts+2 |
+| `corvis_control.review_item_comment` | SELECT, INSERT | src/modules/review/server/review-discussion.ts |
+| `corvis_control.review_item_thread` | SELECT, INSERT, UPDATE | src/modules/review/server/review-discussion.ts |
+| `corvis_control.semantic_query_log` | SELECT, INSERT, UPDATE | src/modules/research/server/research-pins.ts+1 |
+| `corvis_control.service_account` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/service-account-credential.ts+1 |
+| `corvis_control.service_account_credential` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/service-account-credential.ts+1 |
 | `corvis_control.service_identity_grant` | SELECT, INSERT, UPDATE | src/app/api/v1/admin/access-review/route.ts+1 |
-| `corvis_control.session_revocation` | SELECT, INSERT | src/lib/server/authorization.ts+1 |
+| `corvis_control.session_revocation` | SELECT, INSERT | src/modules/identity-access/server/authorization.ts+1 |
 | `corvis_control.support_access_grant` | SELECT, INSERT, UPDATE, DELETE | src/app/api/v1/admin/access-review/route.ts+4 |
 | `corvis_control.tenant` | SELECT, INSERT, UPDATE | src/app/api/v1/admin/tenant-health/route.ts+7 |
-| `corvis_control.tenant_access_notification` | SELECT, INSERT, UPDATE | src/lib/server/support-access-self-service.ts+1 |
-| `corvis_control.tenant_export_download_grant` | SELECT, INSERT, UPDATE, DELETE | src/lib/server/tenant-export.ts |
-| `corvis_control.tenant_export_request` | SELECT, INSERT, UPDATE | src/lib/server/tenant-export-operations.ts+1 |
-| `corvis_control.tenant_export_request_event` | SELECT, INSERT | src/lib/server/tenant-export.ts |
-| `corvis_control.tenant_identity_provider` | SELECT, INSERT, UPDATE | src/lib/server/authorization.ts+1 |
+| `corvis_control.tenant_access_notification` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/support-access-self-service.ts+1 |
+| `corvis_control.tenant_export_download_grant` | SELECT, INSERT, UPDATE, DELETE | src/modules/delivery/server/tenant-export.ts |
+| `corvis_control.tenant_export_request` | SELECT, INSERT, UPDATE | src/modules/delivery/server/tenant-export-operations.ts+1 |
+| `corvis_control.tenant_export_request_event` | SELECT, INSERT | src/modules/delivery/server/tenant-export.ts |
+| `corvis_control.tenant_identity_provider` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/authorization.ts+1 |
 | `corvis_control.tenant_invitation` | SELECT, INSERT, UPDATE | src/app/api/v1/admin/tenant-health/route.ts+4 |
-| `corvis_control.tenant_scim_configuration` | SELECT, INSERT, UPDATE | src/lib/server/scim.ts+1 |
-| `corvis_control.tenant_scim_identity` | SELECT, INSERT, UPDATE | src/lib/server/scim.ts+1 |
-| `corvis_control.tenant_session_activity` | SELECT, INSERT, UPDATE, DELETE | src/lib/server/session-activity-sweep.ts+1 |
-| `corvis_control.tenant_session_policy` | SELECT, INSERT, UPDATE | src/lib/server/session-policy.ts |
-| `corvis_control.tenant_verified_domain` | SELECT, INSERT, DELETE | src/lib/server/identity-records.ts |
-| `corvis_control.webhook_delivery` | SELECT, INSERT, UPDATE | src/lib/server/delivery.ts+1 |
-| `corvis_control.webhook_signing_key` | SELECT, INSERT, UPDATE | src/lib/server/delivery.ts+1 |
-| `corvis_control.webhook_subscription` | SELECT, INSERT, UPDATE | src/lib/server/delivery.ts+1 |
+| `corvis_control.tenant_scim_configuration` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/scim.ts+1 |
+| `corvis_control.tenant_scim_identity` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/scim.ts+1 |
+| `corvis_control.tenant_session_activity` | SELECT, INSERT, UPDATE, DELETE | src/modules/identity-access/server/session-activity-sweep.ts+1 |
+| `corvis_control.tenant_session_policy` | SELECT, INSERT, UPDATE | src/modules/identity-access/server/session-policy.ts |
+| `corvis_control.tenant_verified_domain` | SELECT, INSERT, DELETE | src/modules/identity-access/server/identity-records.ts |
+| `corvis_control.webhook_delivery` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+1 |
+| `corvis_control.webhook_signing_key` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+1 |
+| `corvis_control.webhook_subscription` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+1 |
 | `corvis_control.workspace` | SELECT, INSERT | src/app/api/v1/admin/access-review/route.ts+12 |
-| `corvis_control.workspace_user_preference` | SELECT, INSERT, UPDATE | src/lib/server/notifications.ts+2 |
+| `corvis_control.workspace_user_preference` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts+2 |
 | `corvis_facts.canonical_candidate` | SELECT, INSERT | function corvis_facts.canonicalize_reviewed_extraction_v3 |
 | `corvis_facts.canonicalization_run` | SELECT, INSERT, UPDATE | function corvis_consolidated.reconcile_canonicalization |
 | `corvis_facts.client_portfolio` | SELECT | view corvis_serving.client_portfolios |
 | `corvis_facts.client_portfolio_fund_position` | SELECT | view corvis_serving.client_portfolio_fund_positions |
 | `corvis_facts.company_sector_classification` | SELECT, INSERT, UPDATE | view corvis_serving.company_sectors |
-| `corvis_facts.holding` | SELECT, INSERT, UPDATE | src/lib/server/platform-repositories.ts |
+| `corvis_facts.holding` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts |
 | `corvis_facts.holding_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v2 |
 | `corvis_facts.instrument` | SELECT, INSERT, UPDATE | view corvis_serving.instruments |
 | `corvis_facts.instrument_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v2 |
-| `corvis_facts.observation` | SELECT, INSERT, UPDATE | src/lib/server/platform-repositories.ts+2 |
+| `corvis_facts.observation` | SELECT, INSERT, UPDATE | src/platform/platform-repositories.ts+2 |
 | `corvis_facts.observation_correction` | SELECT, INSERT | function corvis_facts.apply_review_decision |
-| `corvis_facts.observation_source_reference` | SELECT, INSERT | src/lib/server/performance-scorecard.ts+1 |
+| `corvis_facts.observation_source_reference` | SELECT, INSERT | src/modules/analytics/server/performance-scorecard.ts+1 |
 | `corvis_facts.position_financial_statement` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
 | `corvis_facts.position_financial_statement_line` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
 | `corvis_facts.position_financial_statement_value` | SELECT, INSERT | view corvis_serving.position_financial_statement_values |
-| `corvis_facts.review_event` | SELECT, INSERT | src/lib/server/platform-repositories.ts |
-| `corvis_identity.company` | SELECT, INSERT | src/lib/server/company-sectors.ts+1 |
+| `corvis_facts.review_event` | SELECT, INSERT | src/platform/platform-repositories.ts |
+| `corvis_identity.company` | SELECT, INSERT | src/modules/workspace/server/company-sectors.ts+1 |
 | `corvis_identity.entity_external_identifier` | SELECT | view corvis_serving.entity_directory |
-| `corvis_identity.entity_lifecycle_event` | SELECT, INSERT | src/lib/server/public-serving-resources.ts |
-| `corvis_identity.entity_lifecycle_participant` | SELECT, INSERT | src/lib/server/public-serving-resources.ts |
+| `corvis_identity.entity_lifecycle_event` | SELECT, INSERT | src/platform/public-serving-resources.ts |
+| `corvis_identity.entity_lifecycle_participant` | SELECT, INSERT | src/platform/public-serving-resources.ts |
 | `corvis_identity.entity_name` | SELECT, INSERT, UPDATE | view corvis_serving.entity_directory |
-| `corvis_identity.fund` | SELECT, INSERT | src/lib/server/performance-scorecard.ts+2 |
-| `corvis_identity.tenant_entity_lifecycle_evidence` | SELECT, INSERT, UPDATE | src/lib/server/public-serving-resources.ts |
+| `corvis_identity.fund` | SELECT, INSERT | src/modules/analytics/server/performance-scorecard.ts+2 |
+| `corvis_identity.tenant_entity_lifecycle_evidence` | SELECT, INSERT, UPDATE | src/platform/public-serving-resources.ts |
 | `corvis_identity.tenant_entity_name` | SELECT, INSERT | function corvis_control.access_policy_resource_belongs_to_tenant |
 | `corvis_identity.tenant_entity_revision` | INSERT | function corvis_identity.record_reviewed_entity_candidate_lineage |
 | `corvis_identity.tenant_lifecycle_revision` | INSERT | function corvis_facts.canonicalize_reviewed_extraction_v3 |
-| `corvis_review.candidate_review_event` | SELECT, INSERT | src/lib/server/processing-reviewed-stage.ts |
-| `corvis_review.candidate_review_requirement` | SELECT, INSERT | src/lib/server/processing-reviewed-stage.ts |
-| `corvis_review.extraction_review_gate` | SELECT, INSERT, UPDATE | src/lib/server/processing-reviewed-stage.ts |
-| `corvis_semantic.metric_definition` | SELECT | src/core/performance-scorecard.ts+2 |
+| `corvis_review.candidate_review_event` | SELECT, INSERT | src/modules/processing/server/processing-reviewed-stage.ts |
+| `corvis_review.candidate_review_requirement` | SELECT, INSERT | src/modules/processing/server/processing-reviewed-stage.ts |
+| `corvis_review.extraction_review_gate` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-reviewed-stage.ts |
+| `corvis_semantic.metric_definition` | SELECT | src/modules/analytics/domain/performance-scorecard.ts+2 |
 | `corvis_semantic.sector` | SELECT | src/app/api/v1/sectors/route.ts+2 |
-| `corvis_semantic.sector_alias` | SELECT | src/core/sector-taxonomy.ts+1 |
-| `corvis_serving.export_download_grant` | SELECT, INSERT, UPDATE, DELETE | src/lib/server/export-grant-sweep.ts+1 |
-| `corvis_serving.export_job` | SELECT, INSERT, UPDATE | src/lib/server/delivery.ts+4 |
-| `corvis_source.acquired_document` | SELECT, INSERT | src/lib/server/source-connector-sync.ts+2 |
-| `corvis_source.document` | SELECT, INSERT, UPDATE | src/lib/server/processing-published-stage.ts+8 |
-| `corvis_source.document_artifact_version` | SELECT, INSERT, UPDATE | src/lib/server/postgres-lineage.ts+8 |
-| `corvis_source.document_representation` | SELECT, INSERT | src/lib/server/processing-extracted-stage.ts+1 |
-| `corvis_source.extraction_candidate` | SELECT, INSERT | src/lib/server/processing-extracted-stage.ts+1 |
-| `corvis_source.extraction_candidate_source_reference` | SELECT, INSERT | src/lib/server/processing-extracted-stage.ts |
-| `corvis_source.extraction_run` | SELECT, INSERT, UPDATE | src/lib/server/processing-extracted-stage.ts+1 |
-| `corvis_source.source_connection` | SELECT, INSERT, UPDATE | src/lib/server/source-connector-governance.ts+5 |
-| `corvis_source.source_connection_run` | SELECT, INSERT, UPDATE | src/lib/server/source-connector-sync.ts+2 |
-| `corvis_source.source_reference` | SELECT, INSERT | src/lib/server/export-delivery.ts+8 |
+| `corvis_semantic.sector_alias` | SELECT | src/modules/workspace/domain/sector-taxonomy.ts+1 |
+| `corvis_serving.export_download_grant` | SELECT, INSERT, UPDATE, DELETE | src/modules/delivery/server/export-grant-sweep.ts+1 |
+| `corvis_serving.export_job` | SELECT, INSERT, UPDATE | src/modules/delivery/server/delivery.ts+4 |
+| `corvis_source.acquired_document` | SELECT, INSERT | src/modules/sources/server/source-connector-sync.ts+2 |
+| `corvis_source.document` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-published-stage.ts+8 |
+| `corvis_source.document_artifact_version` | SELECT, INSERT, UPDATE | src/platform/database/postgres-lineage.ts+8 |
+| `corvis_source.document_representation` | SELECT, INSERT | src/modules/processing/server/processing-extracted-stage.ts+1 |
+| `corvis_source.extraction_candidate` | SELECT, INSERT | src/modules/processing/server/processing-extracted-stage.ts+1 |
+| `corvis_source.extraction_candidate_source_reference` | SELECT, INSERT | src/modules/processing/server/processing-extracted-stage.ts |
+| `corvis_source.extraction_run` | SELECT, INSERT, UPDATE | src/modules/processing/server/processing-extracted-stage.ts+1 |
+| `corvis_source.source_connection` | SELECT, INSERT, UPDATE | src/modules/sources/server/source-connector-governance.ts+5 |
+| `corvis_source.source_connection_run` | SELECT, INSERT, UPDATE | src/modules/sources/server/source-connector-sync.ts+2 |
+| `corvis_source.source_reference` | SELECT, INSERT | src/modules/delivery/server/export-delivery.ts+8 |

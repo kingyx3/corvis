@@ -46,42 +46,28 @@ Human-entered technical deployment configuration should be set in GitHub Environ
 
 See [`docs/operations/GITHUB_ENVIRONMENTS.md`](./docs/operations/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
 
-## Repository ownership
+## Repository layout
 
-Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `src/app/`, `src/lib/`, `src/core/`, `src/adapters/`, `src/features/` and `infra/terraform/modules/` today; see [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) for the current map.
+One Next.js application plus the services, infrastructure and tooling that surround it. Application code lives in `src/`, organised by bounded module; everything else sits at the top level by purpose.
 
 ```text
-apps/
-  customer-web/
-  admin-web/
-services/
-  api/
-  workers/
-packages/
-  contracts/
-  domain/
-  auth/
-  feature-flags/
-  observability/
-  shared/
-infra/
-  terraform/
-    modules/
-      cloudflare/
-      gcp/
-      supabase/
-      snowflake/       # optional downstream only
-    environments/
-      dev/
-      uat/
-      prod/
-db/
-  postgres/
-    migrations/
-  snowflake/           # optional downstream only
+src/
+  app/                  Next.js routing: thin pages and /api route handlers
+  modules/<module>/     domain/  server/  adapters/  ui/   (one bounded module each)
+  platform/             cross-cutting server infrastructure (http, database, gcp, config, telemetry)
+  shared/               shared kernel: domain vocabulary, client-safe helpers, design system
+  composition/          wires ports to concrete adapters
+services/               deployables that run outside the web app: control-loop, extractor, litellm-gateway
+tools/                  ci/ and dev/ scripts, repo-checks/ policy tests, convex-conformance/
+db/postgres/            migrations (immutable once applied) and database acceptance tests
+infra/terraform/        modules, environments and the shared Cloudflare root
+openapi/                public API contract
+ops/                    runbooks, SLOs and control catalogues
+e2e/                    Playwright suites
+docs/                   technical documentation by kind: architecture, features, operations, security, engineering, reviews
 ```
 
-The physical layout is migrating incrementally toward these boundaries. Production application or infrastructure code must not live in an untracked external deployment project.
+Module and layer boundaries, where new code goes, and the dependency rules are in [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) and [`docs/architecture/MODULARITY.md`](docs/architecture/MODULARITY.md). The Terraform module and environment layout is in [`docs/operations/INFRASTRUCTURE.md`](docs/operations/INFRASTRUCTURE.md). Production application or infrastructure code must not live in an untracked external deployment project.
 
 ## Public repository posture
 

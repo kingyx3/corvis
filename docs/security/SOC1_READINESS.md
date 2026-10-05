@@ -10,7 +10,7 @@ SOC 1 is relevant only to controls at Corvis that are likely to matter to user e
 
 ## Machine-readable readiness map
 
-[`../ops/soc1-controls.json`](../../ops/soc1-controls.json) maps the intended SOC 1 control objectives to owners, technical evidence and readiness state. [`../core/soc1-readiness.test.ts`](../../tools/repo-checks/soc1-readiness.test.ts) prevents accidental removal of required control objectives and prevents readiness language from being converted into an issued-report claim.
+[`../ops/soc1-controls.json`](../../ops/soc1-controls.json) maps the intended SOC 1 control objectives to owners, technical evidence and readiness state. [`../../tools/repo-checks/soc1-readiness.test.ts`](../../tools/repo-checks/soc1-readiness.test.ts) prevents accidental removal of required control objectives and prevents readiness language from being converted into an issued-report claim.
 
 ## Existing technical foundation
 

@@ -34,7 +34,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 - [`SECTOR_TAXONOMY.md`](./architecture/SECTOR_TAXONOMY.md) — sector taxonomy.
 - [`STAGE_WORKER_IDEMPOTENCY.md`](./architecture/STAGE_WORKER_IDEMPOTENCY.md) — processing stage worker idempotency contract.
 
-### Product capabilities (`src/features/`)
+### Product capabilities (`features/`)
 
 - [`CLIENT_PORTFOLIO_ATTRIBUTION.md`](./features/CLIENT_PORTFOLIO_ATTRIBUTION.md) — client portfolio attribution.
 - [`NOTIFICATIONS.md`](./features/NOTIFICATIONS.md) — email notifications: categories, recipient addresses, outbox delivery and provider activation.
@@ -42,7 +42,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 - [`SERVICE_ACCOUNTS.md`](./features/SERVICE_ACCOUNTS.md) — customer self-service service accounts and API credentials (F6): design, assumptions and the open credential-verification decision.
 - [`SOURCE_CONNECTORS.md`](./features/SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
 - [`SUPPORT.md`](./features/SUPPORT.md) — in-app help and support: Help menu, Contact support context (no financial data), error-state entry points and the `NEXT_PUBLIC_CORVIS_*` support/docs/status/release-notes configuration.
-- [`tenant-self-service.md`](./features/TENANT_SELF_SERVICE.md) — customer tenant self-service.
+- [`TENANT_SELF_SERVICE.md`](./features/TENANT_SELF_SERVICE.md) — customer tenant self-service.
 
 ### Infrastructure, deployment and operations (`operations/`)
 

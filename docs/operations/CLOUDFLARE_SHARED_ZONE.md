@@ -24,7 +24,7 @@ Cloudflare resources are deliberately split by lifecycle and blast radius.
 
 | Owner | State | Owns | Must not own |
 | --- | --- | --- | --- |
-| Shared Cloudflare root | `infra/terraform/shared/cloudflare` in `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state`, prefix `corvis/cloudflare-zone-policy` | zone TLS settings; custom WAF; optional managed WAF; the single zone rate-limit entry ruleset; authenticated-surface cache bypass | environment DNS records, Worker tools/dev/deployments/routes, GCP origins |
+| Shared Cloudflare root | `infra/terraform/shared/cloudflare` in `${UAT_GCP_PROJECT_ID}-corvis-shared-tf-state`, prefix `corvis/cloudflare-zone-policy` | zone TLS settings; custom WAF; optional managed WAF; the single zone rate-limit entry ruleset; authenticated-surface cache bypass | environment DNS records, Worker scripts/deployments/routes, GCP origins |
 | UAT root | normal UAT state | `api-uat` / `app-uat` / `admin-uat` DNS, Workers and routes | zone settings/rulesets; production hostnames |
 | Prod root | normal prod state | `api` / `app` / `admin` DNS, Workers and routes | zone settings/rulesets; UAT hostnames |
 

@@ -3,6 +3,25 @@
 Scope: directory layout, module boundaries, test/doc/ops placement. Read-only review; no code was moved.
 Baseline: `02a319e` (1,142 tracked files). `node_modules` was not installed, so the Next.js 16 bundled docs (`node_modules/next/dist/docs/`) could not be consulted; framework-specific points below are marked **(verify)** and should be checked against those docs before acting.
 
+## Implementation status
+
+The recommendations below were implemented in one restructuring change. This review is kept as the record of the starting point and the reasoning; the current layout is in [`../architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md). Paths in sections 1 to 6 describe the repository before that change.
+
+| Recommendation | Outcome |
+| --- | --- |
+| Step 0: test discovery globs | Done: `**/*.test.ts` replaces the hand-listed directories. |
+| Step 1: move governance and misplaced tests | Done: 26 policy tests now live in `tools/repo-checks/`; adapter tests sit with their adapters; test helpers moved to `src/test-support/`. |
+| Step 2: docs by kind | Done: `architecture/ features/ operations/ security/ engineering/ reviews/`; `tenant-self-service.md` became `TENANT_SELF_SERVICE.md`. |
+| Step 3: deployables to `services/` | Done for `control-loop/`, `extractor/` and `litellm-gateway/` with their Dockerfiles. The Cloudflare Worker sources stay beside the Terraform that deploys them (`infra/terraform/modules/cloudflare-*`), because Terraform reads them with `file()` and that wiring cannot be validated without provider credentials. |
+| Step 4: one home for scripts | Done: `tools/ci/` (was `.github/scripts/`) and `tools/dev/` (was `scripts/`). |
+| Step 5/6: split `lib/server/` and fold `core/`, `features/`, `adapters/` into modules | Done: 12 modules under `src/modules/<module>/{domain,server,adapters,ui}`, plus `src/platform/`, `src/shared/` and `src/composition/`. `application/` became `modules/sources/application/`. |
+| Step 7: `src/` | Done. Route groups were not introduced: URLs and layouts are unchanged and the admin and customer surfaces already share one root layout. |
+| Step 8: lint-enforced boundaries | Partly: the control loop's `architecture-drift` scanner now enforces the domain and UI rules per module. An ESLint or dependency-cruiser rule set is still open. |
+| Step 9: Convex harness | Moved to `tools/convex-conformance/`; kept, since its conformance workflow still runs. |
+| `db/postgres/migrations` flattening, `contracts/openapi/` | Not done, deliberately: `db/postgres/` and `openapi/` are already clear, and moving them would churn every workflow and test that names them for no gain. |
+
+Two things to know about the move itself. SQL migrations are immutable (the runner refuses checksum drift), so none were edited even where a comment mentions an old path. The changed-code coverage gate now treats a pure move as unchanged (see `docs/engineering/TESTING.md`); the coverage denominator was verified to be the same 224 files before and after.
+
 ## 1. What the repo looks like today
 
 | Dir | Files | Role |
