@@ -114,7 +114,7 @@ The options, none of which this slice picks:
 | **B. Corvis-issued credential exchanged for a short-lived token** (closest to the issue wording: "issue, rotate and revoke its API credential", "last used"; not a recommendation until the decision is made) | The caller presents the credential to a Corvis exchange endpoint; `verifyServiceAccountCredential` decides, and the endpoint returns a short-lived signed assertion that the existing assertion path (point 2) accepts. | The record side is built and tested here. Missing: the exchange route, the signing-key custody and rotation for assertions, rate limiting and abuse controls on the unauthenticated exchange, and `Authorization` handling at the gateway. |
 | **C. Gateway-validated API keys** | API Gateway validates the key and forwards an identity. | Needs a design for key custody and mapping; duplicates what B does in Corvis. |
 
-Either way, "last used" stays `Never` and no credential works until the chosen path is built. If the decision is A, migration 088's credential table and the credential half of the screen should be removed before release (the account half stands).
+**Decision (shipped in #350, #340): option B.** `POST /api/v1/auth/service-account/token` exchanges a Corvis-issued credential for a five-minute signed identity assertion (`authMethod: "service_account"`), accepted by the existing assertion path; "last used" is recorded on a successful exchange. Options A and C were not taken, so migration 088's credential table and the credential half of the screen stand.
 
 ## Assumptions to confirm
 
@@ -138,7 +138,7 @@ Either way, "last used" stays `Never` and no credential works until the chosen p
 
 ## Remaining work (proposed follow-up issues)
 
-1. **Credential verification path** (blocked on the decision above): the exchange endpoint (option B) or IdP mapping (option A), assertion-signing key custody, rate limiting and abuse controls, calling `verifyServiceAccountCredential`, an e2e that a rotated-out credential stops working at the end of its overlap, and removing the "not yet accepted" notice.
+1. ~~Credential verification path~~ Shipped (#340, #350: option B, see "Decision" above). Still open: usage visibility beyond "last used" (count, last source) and an e2e through the real gateway for a rotated-out credential at the end of its overlap (covered today at the SQL/application level in `service-accounts.mjs` and `service-account-exchange.test.ts`).
 2. ~~Account renewal and ownership~~ Shipped (F6b, #341; see above). Still open: a periodic review separate from expiry.
 3. ~~Expiry notifications~~ Shipped (F6d, #341; see above). Still open: **usage visibility**, recent use (count and last source) without writing per request, which needs the credential verification path.
 4. ~~Customer entitlement self-service for service accounts~~ Shipped (F6c, #342; see above). Still open: the same for **people**.

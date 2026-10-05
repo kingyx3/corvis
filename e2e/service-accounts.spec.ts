@@ -68,8 +68,9 @@ test("the list shows role, workspace, creator, last used and expiry, and flags a
   await expect(retired).toContainText("Disabled");
   await expect(retired).toContainText("Replaced by the nightly reporting sync");
   await expect(retired.getByRole("button", { name: /rotate|revoke|issue|deactivate/i })).toHaveCount(0);
-  // The honest status of the credential mechanism is on the page, not buried in documentation.
-  await expect(page.getByText(/credentials are not yet accepted by the api/i)).toBeVisible();
+  // How a credential is used is on the page, not buried in documentation.
+  await expect(page.getByText(/how your systems use a credential/i)).toBeVisible();
+  await expect(page.getByText(/api\/v1\/auth\/service-account\/token/)).toBeVisible();
   const violations = await blockingViolations(page, SECTION);
   expect(violations, describe(violations)).toEqual([]);
 });
