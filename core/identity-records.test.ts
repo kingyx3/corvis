@@ -131,7 +131,7 @@ test("anything that is not a command with a known kind is refused", () => {
 test("an end-session endpoint is an https URL without credentials or fragment, in one normalised form", () => {
   assert.equal(normalizeEndSessionEndpoint("https://idp.acme.com"), "https://idp.acme.com/");
   assert.equal(normalizeEndSessionEndpoint("https://idp.acme.com/oauth2/logout?client=corvis"), "https://idp.acme.com/oauth2/logout?client=corvis");
-  for (const bad of [7, null, "", "   ", "not a url", "http://idp.acme.com/logout", "https://user:pw@idp.acme.com/logout", "https://idp.acme.com/logout#frag", "https://idp.acme.com/a b", `https://idp.acme.com/${"a".repeat(2048)}`]) {
+  for (const bad of [7, null, "", "   ", "not a url", "not-a-url", "http://idp.acme.com/logout", "https://user:pw@idp.acme.com/logout", "https://idp.acme.com/logout#frag", "https://idp.acme.com/a b", `https://idp.acme.com/${"a".repeat(2048)}`]) {
     refused(() => normalizeEndSessionEndpoint(bad), "invalid_end_session_endpoint");
   }
   // Whitespace inside is refused before parsing, and a URL that only grows past the bound once normalised is refused too.

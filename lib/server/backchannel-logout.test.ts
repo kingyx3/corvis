@@ -141,6 +141,8 @@ test("everything invalid gets the same 400 and nothing about why: forged, expire
     ["malformed token", form("not.a.jwt")],
     ["no token", form(undefined)],
     ["wrong content type", form(logoutJwt(), { contentType: "application/json" })],
+    ["no content type at all", new Request("https://corvis.test/x", { method: "POST" })],
+    ["a nonsense content length", form(logoutJwt(), { headers: { "content-length": "abc" } })],
     ["a plain-text content type", new Request("https://corvis.test/x", { method: "POST", body: new URLSearchParams({ logout_token: logoutJwt() }) , headers: { "content-type": "text/plain" } })],
     ["two tokens", new Request("https://corvis.test/x", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `logout_token=${logoutJwt()}&logout_token=${logoutJwt()}` })],
     ["an oversized declared body", form(logoutJwt(), { headers: { "content-length": "999999" } })],
@@ -230,4 +232,39 @@ test("the route is POST-only, reads the correlation id from the request and uses
   const response = await route.POST(form("anything", { headers: { "x-correlation-id": "route-corr-1" } }));
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_request", correlationId: "route-corr-1" });
+});
+
+test("a logout that names only a session, a verifier that fails with something that is not an Error, and the default dependencies", async (t) => {
+  capture(t);
+  // Session-only token: the subject is passed as null, so SQL finds the owner from the session record.
+  const sessionOnly = database([]);
+  const ok = await handleBackchannelLogout(form(logoutJwt({ sub: undefined })), { config, db: sessionOnly, verifier: realVerifier(), now, limiter: new RateLimiter(10) });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(sessionOnly.applied()!.parameters.slice(3, 5), [null, "SECRET-SID"]);
+  // A refusal that is not an Error is still one plain refusal.
+  const odd = await handleBackchannelLogout(form(logoutJwt()), { config, db: database([]), verifier: { verifyLogoutToken: async () => { throw "boom"; } }, now, limiter: new RateLimiter(10) });
+  assert.equal(odd.status, 400);
+  assert.equal(lines.some((line) => line.reason === "token_rejected" && line.message === "unknown"), true);
+
+  // Default dependencies: the process database (an HTTP SQL endpoint here), the process verifier, the process limiter and the real clock.
+  const dsn = "https://backchannel-default.test/sql";
+  const originalFetch = globalThis.fetch;
+  const statements: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url === config.authJwksUrl) return new Response(JSON.stringify(jwks), { status: 200 });
+    if (url !== dsn) return originalFetch(input, init);
+    const { sql } = JSON.parse(String(init?.body ?? "{}")) as { sql: string };
+    statements.push(sql);
+    const rows = /apply_backchannel_logout/.test(sql) ? [{ status: "ok", revoked_sessions: 1, tenants: 1 }] : [];
+    return new Response(JSON.stringify({ rows }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const seconds = Math.floor(Date.now() / 1000);
+    const live = await handleBackchannelLogout(form(logoutJwt({ iat: seconds, exp: seconds + 60 })), { config: { ...config, postgresDsn: dsn } as unknown as ServerConfig });
+    assert.equal(live.status, 200);
+    assert.equal(statements.length, 2, "the recorded providers are read, then the token is applied");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

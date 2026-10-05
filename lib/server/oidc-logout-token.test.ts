@@ -60,6 +60,10 @@ test("a valid back-channel logout token is verified against the issuer's keys an
   assert.equal(matched.audience, "corvis-b");
   // The issuer is compared in its normalised form.
   assert.equal((await verify(jwt(logoutClaims({ iss: `${issuer}/` })), { issuer: "https://IDP.example.com/" })).issuer, issuer);
+  // With no clock supplied the current time is used.
+  const seconds = Math.floor(Date.now() / 1000);
+  const live = await new OidcVerifier(fixtureFetch()).verifyLogoutToken({ token: jwt(logoutClaims({ iat: seconds, exp: seconds + 60 })), issuer, audiences: [audience] });
+  assert.equal(live.jti, "jti-1");
 });
 
 test("a logout token is refused for every missing or wrong claim, with one answer to the caller", async () => {
