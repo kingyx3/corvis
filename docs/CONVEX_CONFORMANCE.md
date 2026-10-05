@@ -26,21 +26,26 @@ The conformance job does not depend on provider-specific PostgreSQL APIs. A prov
 
 ## What CI proves
 
-`db/convex-conformance/` contains a deliberately small reference state machine. The conformance workflow boots the official Convex backend with PostgreSQL persistence and proves two semantics that Corvis database adapters must preserve:
+`db/convex-conformance/` contains a deliberately small reference state machine. `conformance.mjs` drives it from a **single process** so the mutations genuinely overlap at the backend (separate CLI processes can be serialized by start-up jitter, which would let a concurrency test pass vacuously). It proves three semantics that Corvis database adapters must preserve:
 
-1. **Concurrent compare-and-set has one winner.** Eight mutations race from version `0` to `1`. Exactly one transition may succeed and exactly one event may be committed.
-2. **Failed mutations are atomic.** A mutation inserts an event and then throws. The inserted event must not remain visible.
+1. **Concurrent compare-and-set has one winner.** Sixteen mutations race from version `0` to `1`. Exactly one succeeds and exactly one event is committed.
+2. **No lost updates.** Sixteen unlocked read-modify-write increments end at exactly sixteen: conflicting writers are serialized, not interleaved.
+3. **Failed mutations are atomic.** A mutation that inserts and then throws, and one that patches an existing row and inserts and then throws, leave no trace. The failure must carry the intentional error (an unrelated failure is not a pass).
 
-These are reference semantics, not Corvis storage. Corvis's PostgreSQL acceptance tests must establish the same observable invariants for the actual implementation.
+When `CONVEX_POSTGRES_VERIFY_DSN` is set (CI sets it), the run also asserts that documents were actually persisted in PostgreSQL, so a silent fall back to Convex's SQLite default fails the job.
+
+These are reference semantics, not Corvis storage. **`db/postgres/tests/convex-parity.mjs` asserts the same three invariants against Corvis's own `NativePostgresSqlApi`** (compare-and-set via a guarded `UPDATE`, increments under `SELECT ... FOR UPDATE`, rollback of inserts and updates through `transaction()`), and runs in the `rate-limit-postgres` job of `ci.yml`. Keep the contender count and scenarios in `conformance.mjs` and `convex-parity.mjs` in step.
 
 ## Pinned gate and upstream canary
 
 `.github/workflows/convex-conformance.yml` has two modes:
 
-- pull requests and manual runs use a known Convex backend release SHA and an exact Convex CLI version;
-- the weekly scheduled canary uses `ghcr.io/get-convex/convex-backend:latest` and `convex@latest`.
+- pull requests, pushes to `main` and manual runs use a known Convex backend release SHA and an exact Convex CLI version. The workflow runs on every pull request (no path filter), so the check always reports;
+- the weekly scheduled canary uses `ghcr.io/get-convex/convex-backend:latest` and `convex@latest`, and opens (or comments on) a `convex-canary` issue when it fails.
 
-Both modes use PostgreSQL as Convex's persistence engine. This split keeps normal CI reproducible while still letting upstream Convex changes continuously test Corvis's required semantics. Dependabot separately tracks the isolated `convex` npm dependency.
+Both modes use PostgreSQL as Convex's persistence engine. This split keeps normal CI reproducible while still letting upstream Convex changes continuously test Corvis's required semantics.
+
+Each pin has one source of truth: the CLI version is `db/convex-conformance/package.json` (tracked by Dependabot; `run.sh` installs exactly that and fails if the installed version differs), and the backend image SHA is the default in `db/convex-conformance/run.sh`. Backend logs are printed when a run fails.
 
 When the canary passes on a newer upstream release, the pinned backend SHA can be advanced deliberately.
 

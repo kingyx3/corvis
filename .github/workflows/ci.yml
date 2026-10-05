@@ -511,3 +511,7 @@ jobs:
         env:
           CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
         run: node db/postgres/tests/native-adapter.mjs
+      - name: Verify Postgres adapter parity with the Convex reference semantics
+        env:
+          CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
+        run: node db/postgres/tests/convex-parity.mjs
