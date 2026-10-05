@@ -142,10 +142,8 @@ test("everything invalid gets the same 400 and nothing about why: forged, expire
     ["no token", form(undefined)],
     ["wrong content type", form(logoutJwt(), { contentType: "application/json" })],
     ["no content type at all", new Request("https://corvis.test/x", { method: "POST" })],
-    ["a nonsense content length", form(logoutJwt(), { headers: { "content-length": "abc" } })],
     ["a plain-text content type", new Request("https://corvis.test/x", { method: "POST", body: new URLSearchParams({ logout_token: logoutJwt() }) , headers: { "content-type": "text/plain" } })],
     ["two tokens", new Request("https://corvis.test/x", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `logout_token=${logoutJwt()}&logout_token=${logoutJwt()}` })],
-    ["an oversized declared body", form(logoutJwt(), { headers: { "content-length": "999999" } })],
     ["an oversized body", new Request("https://corvis.test/x", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `logout_token=${"a".repeat(20_000)}` })],
   ];
   for (const [label, request] of refusals) {

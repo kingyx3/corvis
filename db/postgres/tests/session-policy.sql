@@ -15,6 +15,12 @@
 --   * (091) the housekeeping purge removes only session records not seen for the whole retention (never below the longest
 --     allowed session plus a day), in every tenant, a bounded batch at a time, never touches session revocations, and leaves
 --     enforcement and sign-out-everywhere working;
+--   * (099, F7a #334) Require SSO: only an OIDC session whose verified issuer and audience equal the tenant's bound record passes
+--     (SAML, gateway assertions and wrong claims are refused; service identities and other tenants are unaffected); enabling it needs
+--     a bound OIDC record and a session that would itself pass (lock-out safeguard); NULL keeps it; disabling always works; and the
+--     per-session MFA evidence is stored (NULL = not reported, never overwritten by NULL);
+--   * (099, F7c #336) back-channel logout: tenant scope per provider, single-use token ids, session/subject revocation through
+--     session_revocation, counts-only audit, a per-issuer rate bound and ledger housekeeping;
 --   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.

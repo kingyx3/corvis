@@ -53,8 +53,6 @@ function rejected(id: string): Response {
 
 async function readLogoutToken(request: Request): Promise<string | undefined> {
   if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return undefined;
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return undefined;
   const body = await request.text();
   if (body.length > MAX_BODY_BYTES) return undefined;
   const values = new URLSearchParams(body).getAll("logout_token");

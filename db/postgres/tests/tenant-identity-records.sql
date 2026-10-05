@@ -12,6 +12,9 @@
 --   * the identity-provider record is compare-and-set on its version, an OpenID Connect issuer must be an https URL
 --     without query, fragment or trailing slash, token binding defaults off and can only be on for an active OIDC
 --     record, the same values change and audit nothing;
+--   * (099) the record also stores the IdP-reported MFA enforcement (true, false or NULL = not reported) and an https end-session
+--     endpoint (refused when malformed, by the function and by the table), both audited with the previous values, and while the
+--     tenant's Require SSO is on the record cannot be weakened (binding off, disabled, SAML);
 --   * every change is audited for the TARGET tenant in the same transaction, with the actor's tenant in the metadata;
 --   * both tables have RLS enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
