@@ -110,9 +110,8 @@ export function createCustomerDeletionService(backend: CustomerDeletionBackend):
   };
 }
 
-export const postgresCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(
-  new PostgresCustomerDeletionBackend(() => postgres(getServerConfig().postgresDsn)),
-);
+export const postgresCustomerDeletionBackend = new PostgresCustomerDeletionBackend(() => postgres(getServerConfig().postgresDsn));
+export const postgresCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(postgresCustomerDeletionBackend);
 export const demoCustomerDeletionService: CustomerDeletionService = createCustomerDeletionService(demoCustomerDeletionStore());
 
 let override: CustomerDeletionService | undefined;
