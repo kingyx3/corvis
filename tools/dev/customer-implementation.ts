@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { evaluateCustomerAcceptance, validateCustomerImplementationManifest, type CustomerAcceptanceEvidence } from "../../src/modules/governance/server/customer-implementation.ts";
+import { evaluateCustomerAcceptance, validateCustomerImplementationManifest, type CustomerAcceptanceEvidence } from "../../src/modules/governance/server/evidence/customer-implementation.ts";
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8"));

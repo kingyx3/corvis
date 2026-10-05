@@ -1,6 +1,6 @@
-import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";
 
 export async function GET(request:Request){

@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { originalSourceDocument } from "@/modules/sources/server/source-document";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { originalSourceDocument } from "@/modules/sources/server/connectors/source-document";
 export async function GET(request: Request, context: { params: Promise<{ sourceReferenceId: string }> }) {
   const id = correlationId(request);
   try {

@@ -5,7 +5,7 @@
  * the response, so nothing here can carry financial data.
  */
 
-/** Log-safe token shape; mirrors the server's acceptance rule in `src/platform/http/http.ts`. */
+/** Log-safe token shape; mirrors the server's acceptance rule in `src/platform/http/api/http.ts`. */
 const CORRELATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 let latest: string | undefined;

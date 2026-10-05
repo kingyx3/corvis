@@ -22,7 +22,7 @@ import {
   type SnapshotPublication,
 } from "../../shared/domain/enterprise.ts";
 import { getServerConfig } from "../config/config.ts";
-import type { KeysetPage } from "../http/pagination.ts";
+import type { KeysetPage } from "../http/api/pagination.ts";
 import {
   PostgresOperationsRepository,
   PostgresReviewPublicationRepository,

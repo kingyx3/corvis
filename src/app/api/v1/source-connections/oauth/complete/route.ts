@@ -1,12 +1,12 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { oauthRedirectUri, redactedConnection, usesSecureCookies } from "@/modules/sources/server/source-connect-http";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
-import { sourceConnectorSecretStore } from "@/modules/sources/server/source-connector-runtime";
-import { ConnectorGovernanceError } from "@/modules/sources/server/source-connectors";
-import { clearedAttemptCookie, consumeOAuthAttempt, discardOAuthAttempt, readAttemptCookie } from "@/modules/sources/server/source-oauth";
-import { approvedSourceProvider, oauthProviderForConnection, resolveScopeSelection } from "@/modules/sources/server/source-providers";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { oauthRedirectUri, redactedConnection, usesSecureCookies } from "@/modules/sources/server/connections/source-connect-http";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
+import { sourceConnectorSecretStore } from "@/modules/sources/server/connectors/source-connector-runtime";
+import { ConnectorGovernanceError } from "@/modules/sources/server/connectors/source-connectors";
+import { clearedAttemptCookie, consumeOAuthAttempt, discardOAuthAttempt, readAttemptCookie } from "@/modules/sources/server/connectors/source-oauth";
+import { approvedSourceProvider, oauthProviderForConnection, resolveScopeSelection } from "@/modules/sources/server/connectors/source-providers";
 import { logEvent } from "@/platform/observability/telemetry";
 
 /**

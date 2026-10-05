@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for physical export download grants: the redemption SQL in
-// src/modules/delivery/server/physical-exports.ts must be bound to the grant's subject, tenant, token hash
+// src/modules/delivery/server/exports/physical-exports.ts must be bound to the grant's subject, tenant, token hash
 // and expiry (and to a complete, unexpired export owned by that subject). Runs the
 // application code itself against a native connection inside one transaction that is
 // always rolled back. Run after the full migration chain on a disposable database:
@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
-import { getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from '../../../src/modules/delivery/server/physical-exports.ts';
+import { getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from '../../../src/modules/delivery/server/exports/physical-exports.ts';
 
 const dsn = process.env.CORVIS_DATABASE_DSN;
 assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');

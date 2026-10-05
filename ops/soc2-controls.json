@@ -50,8 +50,8 @@
       "status": "provider_gated",
       "owners": ["security", "platform-engineering"],
       "evidence": [
-        "src/modules/governance/server/control-evidence-lifecycle.ts",
-        "src/modules/governance/server/control-evidence-registry.ts",
+        "src/modules/governance/server/evidence/control-evidence-lifecycle.ts",
+        "src/modules/governance/server/evidence/control-evidence-registry.ts",
         "ops/slos.yaml",
         "live provider monitoring, vulnerability and control-review evidence"
       ]
@@ -65,7 +65,7 @@
         "Confluence: Enterprise Control Register & Evidence Pack",
         ".github/workflows/ci.yml",
         ".github/workflows/security-acceptance.yml",
-        "src/modules/governance/server/data-lifecycle.ts"
+        "src/modules/governance/server/lifecycle/data-lifecycle.ts"
       ]
     },
     {
@@ -159,7 +159,7 @@
       "owners": ["privacy", "legal", "security"],
       "evidence": [
         "Confluence privacy role/data-flow/retention/subprocessor records",
-        "src/modules/governance/server/data-lifecycle.ts",
+        "src/modules/governance/server/lifecycle/data-lifecycle.ts",
         "incident/legal escalation and data-subject/customer request evidence where applicable"
       ]
     }

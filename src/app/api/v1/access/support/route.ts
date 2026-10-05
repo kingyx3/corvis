@@ -1,10 +1,10 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres, withTransaction } from "@/platform/database/postgres";
-import { acknowledgeSupportAccess, markTenantAccessNotificationsRead, tenantSupportAccessState } from "@/modules/identity-access/server/tenant-admin-self-service";
+import { acknowledgeSupportAccess, markTenantAccessNotificationsRead, tenantSupportAccessState } from "@/modules/identity-access/server/tenants/tenant-admin-self-service";
 
 export async function GET(request:Request){
   const id=correlationId(request);

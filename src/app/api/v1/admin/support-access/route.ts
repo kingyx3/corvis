@@ -1,8 +1,8 @@
 import { getServerConfig } from "@/platform/config/config";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres, withTransaction } from "@/platform/database/postgres";
-import { grantSupportAccess } from "@/modules/identity-access/server/support-access-self-service";
+import { grantSupportAccess } from "@/modules/identity-access/server/tenants/support-access-self-service";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLES = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);

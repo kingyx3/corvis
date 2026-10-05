@@ -1,22 +1,22 @@
 import { timingSafeEqual } from "crypto";
-import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/modules/delivery/server/delivery";
+import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/modules/delivery/server/exports/delivery";
 import { getServerConfig } from "@/platform/config/config";
-import { sweepExpiredExportDownloadGrants } from "@/modules/delivery/server/export-grant-sweep";
-import { processDueExportSchedules } from "@/modules/delivery/server/export-schedule";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { sweepExpiredIdempotencyKeys } from "@/platform/http/idempotency";
-import { dispatchConfiguredProcessingTransport } from "@/modules/processing/server/processing-transport";
-import { verifyConfiguredProcessingWorkerIdentity } from "@/modules/processing/server/processing-worker-ingress";
+import { sweepExpiredExportDownloadGrants } from "@/modules/delivery/server/exports/export-grant-sweep";
+import { processDueExportSchedules } from "@/modules/delivery/server/schedules/export-schedule";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { sweepExpiredIdempotencyKeys } from "@/platform/http/limits/idempotency";
+import { dispatchConfiguredProcessingTransport } from "@/modules/processing/server/transport/processing-transport";
+import { verifyConfiguredProcessingWorkerIdentity } from "@/modules/processing/server/transport/processing-worker-ingress";
 import { processEmailDigests, processEmailOutbox } from "@/modules/notifications/server/notifications";
-import { sweepServiceAccountExpiry } from "@/modules/identity-access/server/service-account-expiry-sweep";
-import { sweepTenantExports } from "@/modules/delivery/server/tenant-export-sweep";
-import { sweepExpiredSourceSecrets } from "@/modules/sources/server/source-connector-runtime";
-import { processDueSourceSyncs } from "@/modules/sources/server/source-sync-scheduler";
-import { processApprovedTenantExports } from "@/modules/delivery/server/tenant-export-worker";
+import { sweepServiceAccountExpiry } from "@/modules/identity-access/server/service-accounts/service-account-expiry-sweep";
+import { sweepTenantExports } from "@/modules/delivery/server/tenant-export/tenant-export-sweep";
+import { sweepExpiredSourceSecrets } from "@/modules/sources/server/connectors/source-connector-runtime";
+import { processDueSourceSyncs } from "@/modules/sources/server/connections/source-sync-scheduler";
+import { processApprovedTenantExports } from "@/modules/delivery/server/tenant-export/tenant-export-worker";
 import { logEvent } from "@/platform/observability/telemetry";
-import { releaseScannedUploads } from "@/modules/sources/server/upload-release";
-import { sweepTenantSessionActivity } from "@/modules/identity-access/server/session-activity-sweep";
-import { sweepUploadSessions } from "@/modules/sources/server/upload-sweep";
+import { releaseScannedUploads } from "@/modules/sources/server/uploads/upload-release";
+import { sweepTenantSessionActivity } from "@/modules/identity-access/server/sessions/session-activity-sweep";
+import { sweepUploadSessions } from "@/modules/sources/server/uploads/upload-sweep";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
 

@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/modules/admin/server/feature-flags";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { demoPositionFinancialStatements } from "@/modules/analytics/server/position-financial-statements-demo";
 import { positionFinancialStatements, type StatementPeriodicity } from "@/modules/analytics/server/position-financial-statements";
 

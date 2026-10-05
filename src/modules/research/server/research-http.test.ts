@@ -4,7 +4,7 @@ import { register } from "node:module";
 import test from "node:test";
 import "../../../test-support/http-sql-driver.ts";
 
-// Route modules use the Next.js "@/..." alias; see src/modules/sources/server/source-connections-routes.test.ts.
+// Route modules use the Next.js "@/..." alias; see src/modules/sources/server/connections/source-connections-routes.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
@@ -33,7 +33,7 @@ const demoHeaders = {
 };
 
 test("Ask Corvis execution failures have stable structured HTTP mappings", async () => {
-  const source = await readFile("src/platform/http/http.ts", "utf8");
+  const source = await readFile("src/platform/http/api/http.ts", "utf8");
   assert.match(source, /error instanceof ResearchTimeoutError[\s\S]*error: error\.code[\s\S]*status: 504/);
   assert.match(source, /error instanceof ResearchCancelledError[\s\S]*error: error\.code[\s\S]*status: 499/);
   assert.match(source, /error instanceof ResearchProviderError[\s\S]*error: error\.code[\s\S]*status: 502/);

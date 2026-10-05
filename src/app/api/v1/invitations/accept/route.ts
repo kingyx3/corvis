@@ -1,9 +1,9 @@
-import { resolveRequestIdentity } from "@/platform/http/request-context";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { acceptTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenant-invitations";
+import { resolveRequestIdentity } from "@/platform/http/identity/request-context";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { acceptTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenants/tenant-invitations";
 import { postgres } from "@/platform/database/postgres";
 import { getServerConfig } from "@/platform/config/config";
-import { enforceRequestRateLimit } from "@/platform/http/distributed-rate-limit";
+import { enforceRequestRateLimit } from "@/platform/http/limits/distributed-rate-limit";
 import { recordAcceptedInvitationRecipient } from "@/modules/notifications/server/notifications";
 import { logEvent } from "@/platform/observability/telemetry";
 

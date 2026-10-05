@@ -131,7 +131,7 @@ test("only a tenant_admin may grant anyone the tenant_admin role, at the app lay
   for (const path of [
     "src/app/api/v1/admin/identity-lifecycle/route.ts",
     "src/app/api/v1/admin/support-access/route.ts",
-    "src/modules/identity-access/server/identity-lifecycle.ts",
+    "src/modules/identity-access/server/directory/identity-lifecycle.ts",
     "src/modules/admin/ui/governance-forms.tsx",
     "src/modules/identity-access/server/authorization.ts",
   ]) {

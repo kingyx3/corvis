@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { listTenantAccessAudit, tenantAccessAuditCsv } from "@/modules/identity-access/server/tenant-admin-self-service";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { listTenantAccessAudit, tenantAccessAuditCsv } from "@/modules/identity-access/server/tenants/tenant-admin-self-service";
 
 export async function GET(request: Request) {
   const id=correlationId(request);

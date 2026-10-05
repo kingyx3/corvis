@@ -1,15 +1,15 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { createAuditedSourceConnection } from "@/modules/sources/server/source-connector-governance";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { sourceConnectorSecretStore } from "@/modules/sources/server/source-connector-runtime";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { createAuditedSourceConnection } from "@/modules/sources/server/connectors/source-connector-governance";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { sourceConnectorSecretStore } from "@/modules/sources/server/connectors/source-connector-runtime";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
 import {
   ConnectorGovernanceError,
   type CredentialType,
   type SourceConnection,
   type SourceScope,
-} from "@/modules/sources/server/source-connectors";
+} from "@/modules/sources/server/connectors/source-connectors";
 
 const CREDENTIAL_TYPES = new Set<CredentialType>([
   "oauth_authorization_code", "oauth_client_credentials", "scoped_api_token", "service_account", "browser_session",

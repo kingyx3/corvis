@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { correlationId, json } from "@/platform/http/http";
-import { parseLimit } from "@/platform/http/pagination";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { correlationId, json } from "@/platform/http/api/http";
+import { parseLimit } from "@/platform/http/api/pagination";
 import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
 import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";
 

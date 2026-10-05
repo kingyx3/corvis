@@ -1,4 +1,4 @@
-import { json } from "@/platform/http/http";
+import { json } from "@/platform/http/api/http";
 import { checkReadiness } from "@/platform/observability/readiness-probe";
 
 // Cloud Run startup probe (#235): unlike /api/v1/health (process liveness), this also requires a

@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { canAccessUpload } from "@/modules/sources/server/upload-access";
-import { uploads } from "@/modules/sources/server/uploads";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { canAccessUpload } from "@/modules/sources/server/uploads/upload-access";
+import { uploads } from "@/modules/sources/server/uploads/uploads";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 export async function GET(request: Request, context: { params: Promise<{ uploadId: string }> }) {
   const id = correlationId(request);

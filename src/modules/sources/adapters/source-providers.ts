@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SourceProviderDescriptor } from "../domain/source-connect-wizard.ts";
-import type { ConnectorErrorClass, SecretPayload } from "../server/source-connectors.ts";
-import type { SourceOAuthClient } from "../server/source-oauth.ts";
+import type { ConnectorErrorClass, SecretPayload } from "../server/connectors/source-connectors.ts";
+import type { SourceOAuthClient } from "../server/connectors/source-oauth.ts";
 
 /**
  * Demonstration providers for the "Connect source" flow, served only in demo
@@ -28,7 +28,7 @@ export const DEMO_TOKENS = {
 
 export const DEMO_OAUTH_ACCESS_TOKEN = "demo-oauth-access-token";
 export const DEMO_OAUTH_REFRESH_TOKEN = "demo-oauth-refresh-token";
-/** The demo provider's access tokens live this long, so the expiry and refresh path (src/modules/sources/server/source-oauth.ts) is real here too. */
+/** The demo provider's access tokens live this long, so the expiry and refresh path (src/modules/sources/server/connectors/source-oauth.ts) is real here too. */
 export const DEMO_OAUTH_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
 const DEMO_CODE_PREFIX = "demo-code.";
 

@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for the full tenant export (F10, #266), through the application code: the Postgres backend in
-// src/modules/delivery/server/tenant-export.ts and the build worker in src/modules/delivery/server/tenant-export-worker.ts drive the SQL of migration 084
+// src/modules/delivery/server/tenant-export/tenant-export.ts and the build worker in src/modules/delivery/server/tenant-export/tenant-export-worker.ts drive the SQL of migration 084
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
@@ -19,13 +19,13 @@ import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
 
-// src/modules/governance/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
+// src/modules/governance/server/lifecycle/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
 register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresTenantExportBackend } = await import('../../../src/modules/delivery/server/tenant-export.ts');
-const { processApprovedTenantExports } = await import('../../../src/modules/delivery/server/tenant-export-worker.ts');
+const { PostgresTenantExportBackend } = await import('../../../src/modules/delivery/server/tenant-export/tenant-export.ts');
+const { processApprovedTenantExports } = await import('../../../src/modules/delivery/server/tenant-export/tenant-export-worker.ts');
 const { processEmailOutbox } = await import('../../../src/modules/notifications/server/notifications.ts');
-const { sweepTenantExports } = await import('../../../src/modules/delivery/server/tenant-export-sweep.ts');
-const { listTenantExportBuildIssues } = await import('../../../src/modules/delivery/server/tenant-export-operations.ts');
+const { sweepTenantExports } = await import('../../../src/modules/delivery/server/tenant-export/tenant-export-sweep.ts');
+const { listTenantExportBuildIssues } = await import('../../../src/modules/delivery/server/tenant-export/tenant-export-operations.ts');
 const { readStoredZip } = await import('../../../src/test-support/zip-reader.ts');
 
 const dsn = process.env.CORVIS_DATABASE_DSN;

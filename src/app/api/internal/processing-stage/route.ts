@@ -1,8 +1,8 @@
-import { correlationId, json } from "@/platform/http/http";
+import { correlationId, json } from "@/platform/http/api/http";
 import {
   executeConfiguredProcessingWorkerRequest,
   ProcessingWorkerRequestError,
-} from "@/modules/processing/server/processing-worker-ingress";
+} from "@/modules/processing/server/transport/processing-worker-ingress";
 import { logEvent } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request): Promise<Response> {

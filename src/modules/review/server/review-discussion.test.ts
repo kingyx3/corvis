@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { REVIEW_ROLES, type AddReviewCommentCommand, type ReviewSubjectRef } from "../domain/review-discussion.ts";
-import { InvalidCursorError, decodeCursor, encodeCursor } from "../../../platform/http/pagination.ts";
+import { InvalidCursorError, decodeCursor, encodeCursor } from "../../../platform/http/api/pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import {
   PostgresReviewDiscussionBackend,

@@ -1,4 +1,4 @@
-import { correlationId, json } from "@/platform/http/http";
+import { correlationId, json } from "@/platform/http/api/http";
 import {
   BudgetGuardRequestError,
   executeConfiguredBudgetGuardRequest,

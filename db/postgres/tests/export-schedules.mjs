@@ -2,7 +2,7 @@
 // for every fund the owner holds *now* and re-authorized at each run.)
 // (F4b, #328: also the owner's per-schedule notification switch, the run webhook events and the refusal email, end to end.)
 // Real-Postgres acceptance for scheduled exports (F4, #260), through the application code: the backend and the worker in
-// src/modules/delivery/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
+// src/modules/delivery/server/schedules/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
 // (createPhysicalExport) inside one transaction that is always rolled back. Covers what the pure-SQL test
 // (export-schedules.sql) cannot: the owner's real re-authorization (membership, entitlements, contractual data rights),
 // the export job a run hands to the existing export worker, idempotency across ticks, fail-closed refusals recorded as
@@ -12,12 +12,12 @@
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { PostgresPerformanceScorecardRepository } from '../../../src/modules/analytics/server/performance-scorecard.ts';
-import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../src/modules/delivery/server/export-schedule.ts';
-import { listPhysicalExportStatuses } from '../../../src/modules/delivery/server/export-history.ts';
+import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../src/modules/delivery/server/schedules/export-schedule.ts';
+import { listPhysicalExportStatuses } from '../../../src/modules/delivery/server/exports/export-history.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
-import { notifyScheduledExportOutcome } from '../../../src/modules/delivery/server/export-schedule-notifications.ts';
+import { notifyScheduledExportOutcome } from '../../../src/modules/delivery/server/schedules/export-schedule-notifications.ts';
 import { processEmailOutbox } from '../../../src/modules/notifications/server/notifications.ts';
-import { processQueuedExports } from '../../../src/modules/delivery/server/delivery.ts';
+import { processQueuedExports } from '../../../src/modules/delivery/server/exports/delivery.ts';
 
 console.info = () => undefined;
 const dsn = process.env.CORVIS_DATABASE_DSN;

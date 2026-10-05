@@ -1,13 +1,13 @@
 import { getServerConfig } from "@/platform/config/config";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import {
   guardIdentityLifecycleCommand,
   PostgresIdentityLifecycleRepository,
   type HumanAuthMethod,
   type IdentityLifecycleMembership,
   type IdentityLifecycleRole,
-} from "@/modules/identity-access/server/identity-lifecycle";
+} from "@/modules/identity-access/server/directory/identity-lifecycle";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for verified email domains and the per-tenant identity-provider record (F7b #335, F7e #338),
-// through the application code: the operator commands and domain check in src/modules/identity-access/server/identity-records.ts, the view in
-// src/modules/identity-access/server/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL of migration 095
+// through the application code: the operator commands and domain check in src/modules/identity-access/server/directory/identity-records.ts, the view in
+// src/modules/identity-access/server/sessions/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL of migration 095
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-identity-records.sql) cannot:
 // that token binding really refuses a request through the authoritative lookup, only when an operator turned it on and
 // only for OIDC, and that the view reads the real tables; (migration 099, F7a #334, F7c #336) that Require SSO really refuses
@@ -14,13 +14,13 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { PostgresMembershipAuthorizationRepository } from '../../../src/modules/identity-access/server/authorization.ts';
-import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../src/modules/identity-access/server/identity-records.ts';
+import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../src/modules/identity-access/server/directory/identity-records.ts';
 
 register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresSessionPolicyBackend } = await import('../../../src/modules/identity-access/server/session-policy.ts');
-const { handleBackchannelLogout } = await import('../../../src/modules/identity-access/server/backchannel-logout.ts');
-const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../src/modules/identity-access/server/oidc.ts');
-const { RateLimiter } = await import('../../../src/platform/http/rate-limit.ts');
+const { PostgresSessionPolicyBackend } = await import('../../../src/modules/identity-access/server/sessions/session-policy.ts');
+const { handleBackchannelLogout } = await import('../../../src/modules/identity-access/server/sessions/backchannel-logout.ts');
+const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../src/modules/identity-access/server/sessions/oidc.ts');
+const { RateLimiter } = await import('../../../src/platform/http/limits/rate-limit.ts');
 
 console.info = console.warn = () => undefined;
 const dsn = process.env.CORVIS_DATABASE_DSN;

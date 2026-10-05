@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { platform } from "@/platform/data/platform";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { keysetPage, paginate, paginationRequested, parseLimit } from "@/platform/http/pagination";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { keysetPage, paginate, paginationRequested, parseLimit } from "@/platform/http/api/pagination";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

@@ -8,7 +8,7 @@ import {
   type ExportScheduleAction,
   type ExportScheduleRun,
 } from "../domain/export-schedule.ts";
-import { decodeCursor, encodeCursor } from "../../../platform/http/pagination.ts";
+import { decodeCursor, encodeCursor } from "../../../platform/http/api/pagination.ts";
 import {
   ExportScheduleRequestError,
   isTenantAdminIdentity,
@@ -19,7 +19,7 @@ import {
   type ExportSchedulePage,
   type ExportScheduleRunListQuery,
   type ExportScheduleRunPage,
-} from "../server/export-schedule.ts";
+} from "../server/schedules/export-schedule.ts";
 
 /**
  * In-memory scheduled exports for demo mode and the browser suites; not production evidence. Each demo tenant gets its

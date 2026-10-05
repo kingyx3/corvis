@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { SECTOR_TAXONOMY_VERSION, SECTORS } from "@/modules/workspace/domain/sector-taxonomy";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 /**
  * The governed sector taxonomy. src/modules/workspace/domain/sector-taxonomy.ts is the single source;

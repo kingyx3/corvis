@@ -27,7 +27,7 @@ test("feature-flag evaluation is authoritative and denies before rollout state i
 });
 
 test("deletion execution checks retention coverage and legal holds before ever calling the adapter", async () => {
-  const source_ = await source("src/modules/governance/server/data-lifecycle.ts");
+  const source_ = await source("src/modules/governance/server/lifecycle/data-lifecycle.ts");
   const retentionIndex = source_.indexOf("retentionCoverage(db");
   const holdsIndex = source_.indexOf("activeLegalHolds(db");
   const fetchIndex = source_.indexOf("fetchImpl(");

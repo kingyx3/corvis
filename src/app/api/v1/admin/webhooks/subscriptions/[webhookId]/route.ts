@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
-import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { assertWebhookId, webhookSubscriptionTransition } from "@/modules/delivery/server/webhook-subscriptions";
+import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { assertWebhookId, webhookSubscriptionTransition } from "@/modules/delivery/server/webhooks/webhook-subscriptions";
 
 export async function PATCH(request: Request, context: { params: Promise<{ webhookId: string }> }) {
   const id = correlationId(request);

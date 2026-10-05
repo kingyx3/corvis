@@ -1,10 +1,10 @@
-import { handleBackchannelLogout } from "@/modules/identity-access/server/backchannel-logout";
-import { correlationId } from "@/platform/http/http";
+import { handleBackchannelLogout } from "@/modules/identity-access/server/sessions/backchannel-logout";
+import { correlationId } from "@/platform/http/api/http";
 
 /**
  * OpenID Connect Back-Channel Logout 1.0 receiver (F7c, #336). Called by the identity provider, not by a person or a
  * Corvis client, so it has its own authentication: the signed `logout_token` form field is the only credential, verified
- * against a provider Corvis trusts (see src/modules/identity-access/server/backchannel-logout.ts). `200` once a valid token was applied, `400` for
+ * against a provider Corvis trusts (see src/modules/identity-access/server/sessions/backchannel-logout.ts). `200` once a valid token was applied, `400` for
  * anything else, `429`/`503` when the sender should back off or retry. Register this URL as the client's
  * `backchannel_logout_uri` at the identity provider.
  */

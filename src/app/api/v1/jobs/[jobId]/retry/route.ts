@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/shared/domain/enterprise";
-import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { retryProcessingJobCommand } from "@/modules/processing/server/processing-retry";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { retryProcessingJobCommand } from "@/modules/processing/server/recovery/processing-retry";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
   const id = correlationId(request);

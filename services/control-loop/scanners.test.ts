@@ -142,7 +142,7 @@ test("the shared domain kernel importing platform infrastructure is flagged, imp
 });
 
 test("a module's ui layer importing server or adapter code is flagged, importing domain or composition code is not", () => {
-  const mixed = scanArchitectureDrift([file("src/modules/review/ui/view.ts", `import { a } from "@/shared/domain/enterprise";\nimport { c } from "@/composition/services";\nimport { b } from "@/modules/delivery/server/delivery";\nimport { d } from "../adapters/demo-store";`)]);
+  const mixed = scanArchitectureDrift([file("src/modules/review/ui/view.ts", `import { a } from "@/shared/domain/enterprise";\nimport { c } from "@/composition/services";\nimport { b } from "@/modules/delivery/server/exports/delivery";\nimport { d } from "../adapters/demo-store";`)]);
   assert.deepEqual(mixed.map((finding) => finding.ruleId), ["CL-ARCH-002", "CL-ARCH-002"]);
 });
 
@@ -153,7 +153,7 @@ test("package and node: imports are not resolved against the repository layout",
 test("boundary prefixes treat * as exactly one path segment", () => {
   assert.equal(matchesPrefix("src/modules/review/domain/decision.ts", "src/modules/*/domain/"), true);
   assert.equal(matchesPrefix("src/modules/review/nested/domain/decision.ts", "src/modules/*/domain/"), false);
-  assert.equal(matchesPrefix("src/platform/http/http.ts", "src/platform/"), true);
+  assert.equal(matchesPrefix("src/platform/http/api/http.ts", "src/platform/"), true);
   assert.equal(matchesPrefix("srcXplatform/http.ts", "src.platform/"), false);
 });
 

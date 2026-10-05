@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "crypto";
 import { assertPermission } from "@/shared/domain/enterprise";
-import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { recoverDeadLetterProcessingJob } from "@/modules/processing/server/processing-recovery";
+import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { recoverDeadLetterProcessingJob } from "@/modules/processing/server/recovery/processing-recovery";
 
 type RecoveryCommand = {
   expectedVersion?: number;

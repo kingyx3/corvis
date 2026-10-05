@@ -1,13 +1,13 @@
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 import {
   assertOperationsTenant,
   normalizeProvisionTenantCommand,
   PostgresTenantProvisioningRepository,
-} from "@/modules/identity-access/server/tenant-provisioning";
-import { createTenantInvitation } from "@/modules/identity-access/server/tenant-invitations";
+} from "@/modules/identity-access/server/tenants/tenant-provisioning";
+import { createTenantInvitation } from "@/modules/identity-access/server/tenants/tenant-invitations";
 import { deliverInvitationEmail } from "@/modules/notifications/server/notifications";
 
 export async function POST(request: Request) {

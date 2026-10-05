@@ -22,7 +22,7 @@ test("upload control plane emits the latency metric named by the SLO", async () 
 
 test("lineage monitoring reflects the fail-closed publication gate", async () => {
   const policy = await read("src/modules/review/server/publication-policy.ts");
-  const http = await read("src/platform/http/http.ts");
+  const http = await read("src/platform/http/api/http.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
   const slos = await read("ops/slos.yaml");
 
@@ -35,7 +35,7 @@ test("lineage monitoring reflects the fail-closed publication gate", async () =>
 });
 
 test("generic authorization denials are observable without being mislabeled cross-tenant", async () => {
-  const http = await read("src/platform/http/http.ts");
+  const http = await read("src/platform/http/api/http.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
 
   assert.match(http, /api\.authorization_denied/);
@@ -51,8 +51,8 @@ test("successful publication transitions are attributable telemetry events", asy
 });
 
 test("document-pipeline completion telemetry is emitted only after durable stage transitions", async () => {
-  const worker = await read("src/modules/processing/server/processing-stage-worker.ts");
-  const publication = await read("src/modules/processing/server/processing-published-stage.ts");
+  const worker = await read("src/modules/processing/server/stages/processing-stage-worker.ts");
+  const publication = await read("src/modules/processing/server/stages/processing-published-stage.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
   const slos = await read("ops/slos.yaml");
 
@@ -74,7 +74,7 @@ test("document-pipeline completion telemetry is emitted only after durable stage
 });
 
 test("export and webhook delivery health uses durable completion/failure ledgers", async () => {
-  const delivery = await read("src/modules/delivery/server/delivery.ts");
+  const delivery = await read("src/modules/delivery/server/exports/delivery.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
 
   assert.match(delivery, /export_job[\s\S]*created_at/);
@@ -96,7 +96,7 @@ test("export and webhook delivery health uses durable completion/failure ledgers
 
 test("session policy enforcement latency and denials are emitted by the authorization lookup and alerted on", async () => {
   const authorization = await read("src/modules/identity-access/server/authorization.ts");
-  const sweep = await read("src/modules/identity-access/server/session-activity-sweep.ts");
+  const sweep = await read("src/modules/identity-access/server/sessions/session-activity-sweep.ts");
   const route = await read("src/app/api/internal/delivery/route.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
   const slos = await read("ops/slos.yaml");

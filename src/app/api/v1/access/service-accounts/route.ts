@@ -1,8 +1,8 @@
 import { parseCreateServiceAccount } from "@/modules/identity-access/domain/service-account";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { correlationId, json } from "@/platform/http/http";
-import { resolveServiceAccountAdmin, serviceAccountErrorResponse } from "@/modules/identity-access/server/service-account-http";
-import { serviceAccountService } from "@/modules/identity-access/server/service-account-service";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { correlationId, json } from "@/platform/http/api/http";
+import { resolveServiceAccountAdmin, serviceAccountErrorResponse } from "@/modules/identity-access/server/service-accounts/service-account-http";
+import { serviceAccountService } from "@/modules/identity-access/server/service-accounts/service-account-service";
 
 /**
  * Service accounts (F6, #262): non-human identities under the existing RBAC, entitlement and data-rights model, for
