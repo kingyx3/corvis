@@ -69,19 +69,73 @@ function ensureCommit(base) {
   }
 }
 
-// Module specifiers (`from "…"`, `import("…")`, `new URL("…", import.meta.url)`) are replaced by a
-// placeholder so that a pure move (a rename whose only edits are rewritten import paths) compares equal.
+// A restructuring PR renames files and rewrites the references to them. Such edits move code; they do
+// not change what it does, so they must not be held to the 100% changed-code bar that guards new logic.
+// Two kinds of edit are recognised, and nothing else:
+//   1. module specifiers (`from "…"`, `import("…")`, `new URL("…", import.meta.url)`), which are
+//      replaced by a placeholder before comparing; and
+//   2. path strings that name a file (or a whole directory) the same diff moved, which are rewritten to
+//      their new location in the old text before comparing.
+// A file counts as unchanged only when the two normalised versions are identical.
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\(\s*|\bnew URL\(\s*|\bregister\(\s*)(["'])[^"'\n]+\2/g;
+const PATH_START = "(?<![\\w./@-])";
 
 function normalizeSpecifiers(source) {
   return source.replace(SPECIFIER, "$1$2<specifier>$2");
 }
 
-function isPureMove(base, previousPath, currentPath) {
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A directory is rewritten only when every file that lived in it at `base` moved together to one new
+// location, so a partial move can never make an unrelated path look like a rename.
+function movedDirectories(renames, baseFiles) {
+  const targets = new Map();
+  const counts = new Map();
+  for (const [from, to] of renames) {
+    const fromParts = from.split("/");
+    const toParts = to.split("/");
+    for (let depth = fromParts.length - 1; depth >= 1; depth -= 1) {
+      const suffix = fromParts.slice(depth).join("/");
+      if (!to.endsWith(`/${suffix}`) && to !== suffix) break;
+      const fromDirectory = fromParts.slice(0, depth).join("/");
+      const toDirectory = toParts.slice(0, toParts.length - (fromParts.length - depth)).join("/");
+      if (!targets.has(fromDirectory)) targets.set(fromDirectory, new Set());
+      targets.get(fromDirectory).add(toDirectory);
+      counts.set(fromDirectory, (counts.get(fromDirectory) ?? 0) + 1);
+    }
+  }
+  const directories = new Map();
+  for (const [directory, destinations] of targets) {
+    if (destinations.size !== 1) continue;
+    const inBase = baseFiles.filter((file) => file.startsWith(`${directory}/`)).length;
+    if (inBase > 0 && inBase === counts.get(directory)) directories.set(directory, [...destinations][0]);
+  }
+  return directories;
+}
+
+function buildPathRewriter(renames, baseFiles) {
+  const files = new Map(renames);
+  const directories = movedDirectories(renames, baseFiles);
+  const fileRe = files.size ? new RegExp(`${PATH_START}(${[...files.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?![A-Za-z0-9_])`, "g") : null;
+  const dirRe = directories.size ? new RegExp(`${PATH_START}(${[...directories.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?=/)`, "g") : null;
+  return (text) => {
+    if (fileRe) text = text.replace(fileRe, (match) => files.get(match));
+    if (dirRe) text = text.replace(dirRe, (match) => directories.get(match));
+    return text;
+  };
+}
+
+function normalize(source, rewritePaths) {
+  return normalizeSpecifiers(rewritePaths(source.replace(/\r?\n$/, "")));
+}
+
+function isPureMove(base, previousPath, currentPath, rewritePaths) {
   try {
     const before = git(["show", `${base}:${previousPath}`], { stdio: ["ignore", "pipe", "ignore"] });
     const after = readFileSync(path.resolve(ROOT, currentPath), "utf8");
-    return normalizeSpecifiers(before.replace(/\r?\n$/, "")) === normalizeSpecifiers(after.replace(/\r?\n$/, ""));
+    return normalize(before, rewritePaths) === normalizeSpecifiers(after.replace(/\r?\n$/, ""));
   } catch { return false; }
 }
 
@@ -92,17 +146,21 @@ function changedFiles() {
     catch { return []; }
   }
   ensureCommit(base);
-  const entries = git(["diff", "--name-status", "--find-renames=30%", "--diff-filter=ACMR", base, "HEAD"])
+  const entries = git(["diff", "--name-status", "--find-renames=30%", base, "HEAD"])
     .split(/\r?\n/)
     .map((line) => line.split("\t"))
     .filter((parts) => parts.length >= 2);
+  const renames = entries
+    .filter(([status]) => status.startsWith("R"))
+    .map(([, from, to]) => [from.trim(), to.trim()]);
+  const baseFiles = git(["ls-tree", "-r", "--name-only", base]).split(/\r?\n/).filter(Boolean);
+  const rewritePaths = buildPathRewriter(renames, baseFiles);
   const changed = [];
   for (const [status, first, second] of entries) {
+    if (!/^[ACMR]/.test(status)) continue;
     const current = (second ?? first).trim().split(path.sep).join("/");
-    // A rename that only rewrites module specifiers moves a file; it does not change executable code.
-    if (status.startsWith("R") && isPureMove(base, first.trim(), current)) continue;
-    // Likewise a file that changed only because the target of one of its imports moved.
-    if (status === "M" && isPureMove(base, current, current)) continue;
+    const previous = first.trim();
+    if ((status.startsWith("R") || status === "M") && isPureMove(base, previous, current, rewritePaths)) continue;
     changed.push(current);
   }
   return changed.filter(Boolean);
