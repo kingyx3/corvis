@@ -431,6 +431,8 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-data-export.sql
           # The same through the application backend and build worker: archive and checksum manifest verify, only redistributable data is exported, links are single-use, rights are re-checked at download. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
+          # Customer deletion requests (F10e): an Organization Admin's own request with dual approval enforced in SQL, blocked by legal holds, the operator lifecycle unchanged, the mandatory approval notice. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/customer-deletion-requests.sql
           # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
           # Service accounts (F6): only an Organization Admin acts, never an administrator role for a machine, hashed credentials with a rotation overlap and immediate revocation, deactivation everywhere, tenant/RLS. Rolled back.
