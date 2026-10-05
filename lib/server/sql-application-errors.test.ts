@@ -123,6 +123,28 @@ test("tenant-export refusals classify to stable codes: 400 for input, 403 for wh
   }
 });
 
+test("customer deletion refusals classify to stable codes: 400 for input, 403 for who may act, 409 for a legal hold or what the request's state cannot accept", () => {
+  const expected: Record<string, [string, number]> = {
+    "customer deletion purpose required": ["invalid_reason", 400],
+    "customer deletion requires an active organization admin": ["tenant_admin_required", 403],
+    "customer deletion scope invalid": ["invalid_data_classes", 400],
+    "customer deletion blocked by legal hold": ["deletion_blocked_by_legal_hold", 409],
+    "customer deletion already pending": ["deletion_request_already_pending", 409],
+    "customer deletion requires an independent approver": ["deletion_independent_approver_required", 403],
+    "customer deletion can only be cancelled by its requester": ["deletion_cancel_requester_only", 403],
+    "customer deletion approval window has passed": ["deletion_approval_expired", 409],
+    "customer deletion decision note required": ["invalid_note", 400],
+    "customer deletion status changed": ["deletion_status_changed", 409],
+    "customer deletion transition not allowed": ["deletion_transition_not_allowed", 409],
+  };
+  for (const [message, [code, status]] of Object.entries(expected)) {
+    assert.deepEqual(adminSqlErrorClassification(new Error(message)), { code, status }, message);
+    const fragment = matchSqlApplicationError(new Error(message));
+    assert.equal(fragment, message, "the fragment is the whole authored message, so the native driver carries it exactly");
+    assert.deepEqual(adminSqlErrorClassification(new PostgresDriverError("query", "P0001", fragment)), { code, status }, `driver: ${message}`);
+  }
+});
+
 test("session-policy refusals classify to stable codes: 400 for input, 403 for who may act, 404 for a missing user, 409 for what the current state cannot accept", () => {
   const expected: Record<string, [string, number]> = {
     "session policy requires an active organization admin": ["tenant_admin_required", 403],

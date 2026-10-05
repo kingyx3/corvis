@@ -10,16 +10,22 @@ import {
 import { demoRetentionStore } from "../../adapters/demo/data-retention-store.ts";
 import { getServerConfig } from "./config.ts";
 import { assertOrganizationAdmin } from "./data-governance.ts";
+import { DELETION_REQUEST_COLUMNS, toDeletionRequestView } from "./deletion-request-view.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 /**
- * The retention periods and legal holds that apply to the caller's organization (F10, #266, criterion 1), read-only.
- * Corvis operations own the data (`corvis_control.retention_policy` and `legal_hold`, migrations 003 and 017); this
- * only reads it, scoped to the caller's tenant, for Organization Admins.
+ * The retention periods, legal holds and deletion requests that apply to the caller's organization (F10, #266, criterion 1;
+ * F10e, #325), read-only. Corvis operations own the data (`corvis_control.retention_policy`, `legal_hold` and
+ * `deletion_request`, migrations 003, 017 and 098); this only reads it, scoped to the caller's tenant, for Organization
+ * Admins, and never selects what only operations may see (see `deletion-request-view.ts`). Making and deciding a deletion
+ * request is `customer-deletion.ts`.
  */
 export interface RetentionService {
   view(identity: RequestIdentity): Promise<RetentionView>;
 }
+
+/** Requests shown. Requests are rare (a customer one is made by hand, an operator one by exception), so this is more than enough. */
+export const DELETION_REQUEST_LIMIT = 100;
 
 function text(row: PostgresRow, key: string): string { return String(row[key]); }
 function flag(row: PostgresRow, key: string): boolean { return row[key] === true || row[key] === "true"; }
@@ -30,7 +36,7 @@ export class PostgresRetentionBackend {
   constructor(defaultDb: () => PostgresSqlApi) { this.defaultDb = defaultDb; }
 
   async view(identity: RequestIdentity, db: PostgresSqlApi = this.defaultDb()): Promise<RetentionView> {
-    const [policyRows, holdRows] = await Promise.all([
+    const [policyRows, holdRows, deletionRows] = await Promise.all([
       // One row per data class: the version in effect now, or (when none is yet) the next one to take effect.
       // A hold on the class counts whichever version carries it, because that is the rule deletion execution applies.
       db.query(`select distinct on (p.data_class) p.data_class, p.retention_days, p.delete_on_termination, p.policy_version,
@@ -44,6 +50,11 @@ export class PostgresRetentionBackend {
         from corvis_control.legal_hold
         where tenant_id = $1::uuid and released_at is null
         order by placed_at desc, legal_hold_id`, [identity.tenantId]),
+      db.query(`select ${DELETION_REQUEST_COLUMNS}
+        from corvis_control.deletion_request r
+        where r.tenant_id = $1::uuid
+        order by r.requested_at desc, r.deletion_request_id desc
+        limit ${DELETION_REQUEST_LIMIT}`, [identity.tenantId]),
     ]);
     const policies: RetentionPolicyView[] = policyRows.map((row) => {
       const days = row.retention_days == null ? null : Number(row.retention_days);
@@ -70,7 +81,7 @@ export class PostgresRetentionBackend {
         placedAt: text(row, "placed_at"),
       };
     });
-    return { policies, legalHolds };
+    return { policies, legalHolds, deletionRequests: deletionRows.map((row) => toDeletionRequestView(row, identity)) };
   }
 }
 

@@ -19,6 +19,7 @@ export type NotificationCategoryId =
   | "security_policy"
   | "tenant_export_approval"
   | "tenant_export_outcome"
+  | "deletion_request_approval"
   | "service_account_expiry"
   | "role_changed";
 
@@ -52,6 +53,7 @@ export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] 
   { id: "security_policy", label: "Sign-in and session policy changes", description: "An Organization Admin changed your organization's session policy or signed a user out of every session.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "tenant_export_approval", label: "Organization export awaiting approval", description: "An Organization Admin asked for a full export of your organization's data and a different Organization Admin must approve it.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "tenant_export_outcome", label: "Organization export updates", description: "A full export of your organization's data that you requested was approved, rejected, is ready to download, or could not be built.", mandatory: false, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
+  { id: "deletion_request_approval", label: "Organization data deletion awaiting approval", description: "An Organization Admin asked for deletion of some of your organization's data and a different Organization Admin must approve it.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "service_account_expiry", label: "Service account or credential expiring", description: "A service account, or the API credential it uses, is about to expire.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "role_changed", label: "Your access changed", description: "Your role in a workspace was changed or removed.", mandatory: true, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
 ];
@@ -328,6 +330,14 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
         lines: [`An Organization Admin asked for a full export of your organization's data${where}. A different Organization Admin must approve it before anything is built.`,
           "Review the request in Access administration. If you did not expect it, reject it there or contact your other Organization Admins."],
         action: { label: "Review export request", url: new URL("/access-self-service", context.appUrl).toString() },
+        optional: false,
+      };
+    case "deletion_request_approval":
+      return {
+        subject: "A Corvis data deletion needs your approval",
+        lines: [`An Organization Admin asked for deletion of some of your organization's data${where}. A different Organization Admin must approve it before Corvis acts on it.`,
+          "Review the request in Access administration. If you did not expect it, reject it there or contact your other Organization Admins."],
+        action: { label: "Review deletion request", url: new URL("/access-self-service", context.appUrl).toString() },
         optional: false,
       };
     case "tenant_export_outcome": {
