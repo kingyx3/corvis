@@ -38,6 +38,8 @@ type PendingAttempt = {
   connectionLabel: string;
   /** Set when the attempt renews an existing connection's authorization instead of creating a connection. */
   reauthorizeConnectionId?: string;
+  /** The folders the administrator chose to read (ids the provider declared), re-checked against the registry when the connection is created. */
+  scopeIds?: string[];
   state: string;
   codeVerifier: string;
   subject: string;
@@ -63,7 +65,7 @@ export type StartedAttempt = { authorizationUrl: string; attemptReference: strin
 /** Records a pending attempt server-side and returns the provider consent URL plus the pointer for the cookie. */
 export async function startOAuthAttempt(
   identity: RequestIdentity,
-  input: { providerKey: string; connectionLabel: string; client: SourceOAuthClient; redirectUri: string; reauthorizeConnectionId?: string },
+  input: { providerKey: string; connectionLabel: string; client: SourceOAuthClient; redirectUri: string; reauthorizeConnectionId?: string; scopeIds?: string[] },
   dependencies: { secrets: SecretStore; now?: () => number },
 ): Promise<StartedAttempt> {
   const now = dependencies.now ?? Date.now;
@@ -74,6 +76,7 @@ export async function startOAuthAttempt(
     providerKey: input.providerKey,
     connectionLabel: input.connectionLabel,
     ...(input.reauthorizeConnectionId ? { reauthorizeConnectionId: input.reauthorizeConnectionId } : {}),
+    ...(input.scopeIds ? { scopeIds: input.scopeIds } : {}),
     state,
     codeVerifier,
     subject: identity.subject,
@@ -121,14 +124,15 @@ export async function discardOAuthAttempt(
   return { providerKey: pending.providerKey, ...(pending.reauthorizeConnectionId ? { reauthorizeConnectionId: pending.reauthorizeConnectionId } : {}) };
 }
 
-export type ConsumedAttempt = { providerKey: string; connectionLabel: string; codeVerifier: string; reauthorizeConnectionId?: string };
+export type ConsumedAttempt = { providerKey: string; connectionLabel: string; codeVerifier: string; reauthorizeConnectionId?: string; scopeIds?: string[] };
 
 const PENDING_FIELD_TYPES = { providerKey: "string", connectionLabel: "string", state: "string", codeVerifier: "string", subject: "string", workspaceId: "string", expiresAt: "number" } as const;
 
 function isPending(value: SecretPayload): value is PendingAttempt {
   return value.kind === "source_oauth_attempt"
     && Object.entries(PENDING_FIELD_TYPES).every(([field, type]) => typeof value[field] === type)
-    && (value.reauthorizeConnectionId === undefined || typeof value.reauthorizeConnectionId === "string");
+    && (value.reauthorizeConnectionId === undefined || typeof value.reauthorizeConnectionId === "string")
+    && (value.scopeIds === undefined || (Array.isArray(value.scopeIds) && value.scopeIds.every((id) => typeof id === "string")));
 }
 
 /**
@@ -161,6 +165,7 @@ export async function consumeOAuthAttempt(
     connectionLabel: pending.connectionLabel,
     codeVerifier: pending.codeVerifier,
     ...(pending.reauthorizeConnectionId ? { reauthorizeConnectionId: pending.reauthorizeConnectionId } : {}),
+    ...(pending.scopeIds ? { scopeIds: pending.scopeIds } : {}),
   };
 }
 

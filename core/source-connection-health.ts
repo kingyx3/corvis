@@ -171,7 +171,23 @@ export type SourceConnectionRecord = {
   lastErrorClass?: string;
   lastSuccessAt?: string;
   lastAttemptAt?: string;
+  /** When the scheduler will next collect from this connection; absent until it has been scheduled (due at the next collection run). */
+  nextScheduledAt?: string;
+  /** The newest run from the run history, when the page has it; used for "Last run" and to say a sync is under way. */
+  lastRun?: RunRecord;
   revokedAt?: string;
+};
+
+/** The parts of a run-history entry the connection card describes. */
+export type RunRecord = {
+  state: string;
+  startedAt: string;
+  finishedAt?: string;
+  discoveredCount: number;
+  acceptedCount: number;
+  duplicateCount: number;
+  rejectedCount: number;
+  errorClass?: string;
 };
 
 /** Distinct treatments; the UI renders each with its own icon and text, never colour alone. */
@@ -200,6 +216,9 @@ export type ConnectionHealth = {
   lastSuccess: { at?: string; relative: string };
   lastAttempt?: { at: string; relative: string; failed: boolean };
   nextSync: string;
+  /** The scheduled time when one is set and still ahead, for a machine-readable `<time>`. */
+  nextSyncAt?: string;
+  lastRun?: RunDescription;
   error?: { summary: string; transient: boolean };
   action: RequiredAction;
   controls: ConnectionControls;
@@ -231,9 +250,32 @@ export function scopeSummary(scope: ReadonlyArray<{ label: string }>): string {
   return `${labels.slice(0, 2).join(", ")} and ${labels.length - 2} more`;
 }
 
-function nextSyncText(status: SourceConnectionStatus | undefined): string {
+/** "in less than a minute", "in 5 minutes", "in 3 hours", "in 2 days". A time already reached is "now"; unparseable input is "unknown". */
+export function describeUntil(to: string | undefined, now: Date): string {
+  if (!to) return "unknown";
+  const then = Date.parse(to);
+  if (!Number.isFinite(then)) return "unknown";
+  const remaining = then - now.getTime();
+  if (remaining <= 0) return "now";
+  if (remaining < 60 * 1000) return "in less than a minute";
+  if (remaining < 60 * 60 * 1000) return `in ${Math.round(remaining / 60_000)} minutes`;
+  const hours = Math.round(remaining / (60 * 60 * 1000));
+  if (hours < 48) return hours === 1 ? "in 1 hour" : `in ${hours} hours`;
+  return `in ${Math.round(hours / 24)} days`;
+}
+
+/**
+ * When an active connection is collected from next, from its stored schedule: a time still ahead is described as
+ * "in 3 hours"; no schedule, or one already reached, means it is due and starts at the next collection run; a run under
+ * way is "Syncing now". Every other status explains why nothing is scheduled.
+ */
+export function describeNextSync(status: SourceConnectionStatus | undefined, nextScheduledAt: string | undefined, now: Date, syncing = false): string {
   switch (status) {
-    case "active": return "Scheduled sync is not enabled yet";
+    case "active": {
+      if (syncing) return "Syncing now";
+      const scheduled = nextScheduledAt === undefined ? Number.NaN : Date.parse(nextScheduledAt);
+      return Number.isFinite(scheduled) && scheduled > now.getTime() ? `Scheduled ${describeUntil(nextScheduledAt, now)}` : "Due now: starts at the next collection run";
+    }
     case "paused": return "Not scheduled — resume the connection to restart the schedule";
     case "reauthorization_required": return "Sync is stopped until the connection is reauthorized";
     case "suspended": return "Sync is stopped until the issue is resolved and the connection is reauthorized";
@@ -241,6 +283,35 @@ function nextSyncText(status: SourceConnectionStatus | undefined): string {
     case "revoked": return "Never — this connection was revoked";
     default: return "Not scheduled";
   }
+}
+
+export type RunDescription = {
+  /** When the run finished (or started, while it is still running). */
+  at: string;
+  relative: string;
+  /** The run-state vocabulary word ("Succeeded", "Stopped before collecting"…). */
+  label: string;
+  tone: "success" | "error" | "neutral";
+  /** What the run did or why it did not, in plain words. */
+  detail: string;
+};
+
+/** What the newest run did, for the connection card: its outcome, the counts, or the plain-language reason it failed or was refused. */
+export function describeRun(run: RunRecord, now: Date): RunDescription {
+  const at = run.finishedAt ?? run.startedAt;
+  const base = { at, relative: describeAge(at, now), label: runStateLabel(run.state) };
+  if (run.state === "succeeded") {
+    const detail = run.discoveredCount === 0
+      ? "No documents were found in the confirmed scope."
+      : `${run.discoveredCount} found: ${run.acceptedCount} new, ${run.duplicateCount} already collected, ${run.rejectedCount} not accepted.`;
+    return { ...base, tone: "success", detail };
+  }
+  if (run.state === "running") return { ...base, tone: "neutral", detail: "Collecting now." };
+  if (run.state === "refused" || run.state === "failed" || run.state === "retryable" || run.state === "dead_letter") {
+    const fallback = run.state === "refused" ? "Nothing was collected because the connection was not active." : "The run ended before it finished.";
+    return { ...base, tone: "error", detail: run.errorClass ? runErrorSummary(run.errorClass) : fallback };
+  }
+  return { ...base, tone: "neutral", detail: "This run's outcome is not recognised." };
 }
 
 function knownStatus(status: string): SourceConnectionStatus | undefined {
@@ -327,7 +398,9 @@ export function describeConnection(record: SourceConnectionRecord, now: Date = n
     credentialLabel: credentialTypeLabel(record.credentialType),
     lastSuccess: { ...(record.lastSuccessAt ? { at: record.lastSuccessAt } : {}), relative: lastSuccessRelative },
     ...(record.lastAttemptAt ? { lastAttempt: { at: record.lastAttemptAt, relative: describeAge(record.lastAttemptAt, now), failed: attemptFailed } } : {}),
-    nextSync: nextSyncText(status),
+    nextSync: describeNextSync(status, record.nextScheduledAt, now, record.lastRun?.state === "running"),
+    ...(status === "active" && record.nextScheduledAt && Date.parse(record.nextScheduledAt) > now.getTime() && record.lastRun?.state !== "running" ? { nextSyncAt: record.nextScheduledAt } : {}),
+    ...(record.lastRun ? { lastRun: describeRun(record.lastRun, now) } : {}),
     ...(errorCopy ? { error: { summary: errorCopy.summary, transient: errorCopy.transient } } : {}),
     action: classification.action,
     controls: controlsFor(record, status),

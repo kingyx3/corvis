@@ -39,6 +39,6 @@ export async function GET(request: Request) {
   deny.searchParams.set("state", state);
   return page(`<p class="demo"><strong>Demonstration only.</strong> This page stands in for a provider&apos;s consent screen. No real portal is contacted.</p>
 <h1>Demo data room: approve access?</h1>
-<p>Corvis is asking to read the folder &ldquo;Demo fund reports&rdquo;. It cannot upload, change or delete anything.</p>
+<p>Corvis is asking to read the demo data room folders you chose in Corvis. It cannot upload, change or delete anything.</p>
 <p><a class="button primary" href="${escapeHtml(approve.toString())}">Approve access</a><a class="button" href="${escapeHtml(deny.toString())}">Deny access</a></p>`);
 }

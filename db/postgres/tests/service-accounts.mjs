@@ -4,7 +4,9 @@
 // is always rolled back. Covers what the pure-SQL test (service-accounts.sql) cannot: that a created account resolves
 // through the EXISTING membership/lifecycle-grant authorization (and stops resolving when disabled), that the secret is
 // shown once and stored nowhere, that verification enforces rotation overlap / immediate revocation / expiry, that the
-// access review and tenant access audit show the account, and that tenants are isolated. Run after the full migration
+// access review and tenant access audit show the account, that an Organization Admin's entitlement grants resolve through
+// that same lookup within the organization's data rights (and are refused beyond them), that expiry notices are queued once
+// per window, sent in words only and suppressed for an admin who lost the role, and that tenants are isolated. Run after the full migration
 // chain on a disposable database:
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/service-accounts.mjs
 import assert from 'node:assert/strict';
@@ -20,6 +22,9 @@ const { PostgresMembershipAuthorizationRepository } = await import('../../../lib
 const { PostgresOperationsRepository } = await import('../../../lib/server/platform-repositories.ts');
 const { listTenantAccessAudit } = await import('../../../lib/server/tenant-admin-self-service.ts');
 const { listTenantAccessMembers } = await import('../../../lib/server/tenant-access.ts');
+const { sweepServiceAccountExpiry } = await import('../../../lib/server/service-account-expiry-sweep.ts');
+const { processEmailOutbox } = await import('../../../lib/server/notifications.ts');
+const { RecordingEmailSender } = await import('../../../adapters/email/recording-email-sender.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
@@ -271,6 +276,59 @@ try {
     const again = await backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx);
     assert.ok(Math.abs(Date.parse(again.serviceAccount.expiresAt) - (Date.now() + 300 * 86_400_000)) < 60_000, 'with an owner again it extends');
 
+    // ---- Entitlement self-service (F6c, migration 096): an Organization Admin scopes the account's data access without a Corvis
+    // operator, within the organization's data rights, through the rows the existing authorization lookup already reads.
+    await tx.execute(`insert into corvis_identity.fund (global_fund_id, canonical_name) values ('f6-fund-licensed','Licensed Fund One'),('f6-fund-unlicensed','Unlicensed Fund Two'),('f6-fund-foreign','Foreign Fund Three') on conflict do nothing`);
+    await tx.execute(`insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
+      values ($1,gen_random_uuid(),'f6-fund-licensed','Q2 2026',1,'draft','1','1'),($1,gen_random_uuid(),'f6-fund-unlicensed','Q2 2026',1,'draft','1','1'),($2,gen_random_uuid(),'f6-fund-foreign','Q2 2026',1,'draft','1','1')`, [tenantId, otherTenantId]);
+    await tx.execute(`insert into corvis_source.document (tenant_id,document_id,display_name,media_type,status,created_by) values ($1,$2,'Licensed report.pdf','application/pdf','published','fixture')`, [tenantId, id(700)]);
+    // The organization holds a client-visible right for one fund and one document, and (wrongly) for a fund that is another tenant's: that last one must still be refused.
+    await tx.execute(`insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible,effective_from) values ($1,'fund','f6-fund-licensed',true,now()-interval '1 day'),($1,'document',$2,true,now()-interval '1 day'),($1,'fund','f6-fund-foreign',true,now()-interval '1 day')`, [tenantId, id(700)]);
+    const target = renewable.serviceAccountId;
+    const before = await backend.list(adminIdentity, tx);
+    assert.deepEqual(before.grantable.map((resource) => [resource.resourceType, resource.resourceId, resource.label]), [
+      ['document', id(700), 'Licensed report.pdf'], ['fund', 'f6-fund-licensed', 'Licensed Fund One'],
+    ], 'only what the organization owns and holds a client-visible data right for is offered');
+    assert.deepEqual((await authorization.resolve(renewablePrincipal)).fundIds, [], 'a new account sees nothing until granted');
+
+    const grantedFund = await backend.grantEntitlement(adminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx);
+    assert.deepEqual(grantedFund.serviceAccount.entitlements.map((entitlement) => [entitlement.resourceId, entitlement.label, entitlement.permission, entitlement.withinDataRights]), [['f6-fund-licensed', 'Licensed Fund One', 'read', true]]);
+    await backend.grantEntitlement(adminIdentity, target, { resourceType: 'document', resourceId: id(700) }, tx);
+    const scoped = await authorization.resolve(renewablePrincipal);
+    assert.deepEqual([scoped.fundIds, scoped.documentIds], [['f6-fund-licensed'], [id(700)]], 'the existing authorization lookup now resolves exactly what the admin granted');
+    assert.deepEqual(scoped.sourceDocumentIds, [], 'source-document access is a separate contractual right and is not granted here');
+    const entitlementRows = await tx.query(`select workspace_id::text as workspace_id, permission, valid_until from corvis_control.resource_entitlement where tenant_id=$1::uuid and subject_user_id=$2::uuid`, [tenantId, renewable.userId]);
+    assert.equal(entitlementRows.length, 2);
+    assert.ok(entitlementRows.every((row) => row.workspace_id === workspaceId && row.permission === 'read' && row.valid_until === null), 'read-only, in the account\'s own workspace');
+
+    // Beyond what the organization holds, the same refusal whatever the reason; nothing is recorded.
+    for (const [resourceType, resourceId] of [['fund', 'f6-fund-unlicensed'], ['fund', 'f6-fund-foreign'], ['fund', 'f6-fund-unknown'], ['document', id(701)]]) {
+      assert.equal(code(await refused(tx, () => backend.grantEntitlement(adminIdentity, target, { resourceType, resourceId }, tx))), 'service account resource outside organization data rights', `${resourceType} ${resourceId}`);
+    }
+    assert.equal(code(await refused(tx, () => backend.grantEntitlement(adminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account entitlement already granted');
+    assert.equal(code(await refused(tx, () => backend.grantEntitlement(analystIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account requires an active organization admin');
+    assert.equal(code(await refused(tx, () => backend.grantEntitlement(otherAdminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account not found');
+    assert.equal(code(await refused(tx, () => backend.revokeEntitlement(analystIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account requires an active organization admin');
+    assert.equal((await authorization.resolve(renewablePrincipal)).fundIds.length, 1, 'refused grants changed nothing');
+    // The same refusal for a deactivated account: its entitlements were ended with it, and nothing can be added.
+    assert.equal(code(await refused(tx, () => backend.grantEntitlement(adminIdentity, serviceAccount.serviceAccountId, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account is not active');
+
+    // Access follows the organization's right: when the right lapses the entitlement stays on record, flagged, and the lookup ignores it.
+    await tx.execute(`update corvis_control.data_rights set effective_to = now() where tenant_id=$1::uuid and resource_id='f6-fund-licensed'`, [tenantId]);
+    const lapsed = await backend.get(adminIdentity, target, tx);
+    assert.deepEqual(lapsed.entitlements.map((entitlement) => [entitlement.resourceId, entitlement.withinDataRights]).sort(), [['f6-fund-licensed', false], [id(700), true]]);
+    assert.deepEqual((await authorization.resolve(renewablePrincipal)).fundIds, [], 'no data right, no access, even though the entitlement row exists');
+    assert.deepEqual((await backend.list(adminIdentity, tx)).grantable.map((resource) => resource.resourceId), [id(700)], 'and it is no longer offered');
+    // Revocation is never refused for that reason, ends everything on the resource and keeps the row for review.
+    const removed = await backend.revokeEntitlement(adminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx);
+    assert.equal(removed.endedEntitlements, 1);
+    assert.deepEqual(removed.serviceAccount.entitlements.map((entitlement) => entitlement.resourceId), [id(700)]);
+    assert.equal(code(await refused(tx, () => backend.revokeEntitlement(adminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account entitlement not found');
+    assert.equal((await tx.query(`select count(*)::int as n from corvis_control.resource_entitlement where tenant_id=$1::uuid and subject_user_id=$2::uuid and resource_id='f6-fund-licensed'`, [tenantId, renewable.userId]))[0].n, 1);
+    assert.equal(code(await refused(tx, () => backend.grantEntitlement(adminIdentity, target, { resourceType: 'fund', resourceId: 'f6-fund-licensed' }, tx))), 'service account resource outside organization data rights', 'with the right gone it cannot be granted again');
+    // Another tenant's admin sees none of this.
+    assert.equal((await backend.list(otherAdminIdentity, tx)).grantable.length, 0);
+
     // ---- Every action is audited and visible in the tenant access audit (C9).
     const operations = new PostgresOperationsRepository(tx);
     const events = [
@@ -281,6 +339,8 @@ try {
       ['service_account.disabled', { reason: 'Integration retired' }],
       ['service_account.extended', { previousExpiresAt: extension.previousExpiresAt, expiresAt: extension.serviceAccount.expiresAt, nextReviewAt: extension.serviceAccount.expiresAt }],
       ['service_account.owner_transferred', { previousOwner: admin.subject, ownerSubject: adminTwo.subject }],
+      ['service_account.entitlement_granted', { resourceType: 'fund', resourceId: 'f6-fund-licensed', permission: 'read', reason: 'Feeds the warehouse' }],
+      ['service_account.entitlement_revoked', { resourceType: 'fund', resourceId: 'f6-fund-licensed', endedEntitlements: 1, reason: 'Right lapsed' }],
     ];
     for (const [action, detail] of events) await operations.audit(serviceAccountAuditEvent(adminIdentity, 'corr-f6', action, serviceAccount, detail));
     const trail = await listTenantAccessAudit(adminIdentity, tx);
@@ -293,6 +353,48 @@ try {
     }
     assert.equal((await listTenantAccessAudit(otherAdminIdentity, tx)).some((entry) => entry.targetType === 'service_account'), false, 'another tenant never sees them');
     assert.equal(JSON.stringify(trail).includes(credential.secret), false);
+
+    // ---- Expiry notices (F6d, migration 096) end to end: the delivery tick's sweep queues one mandatory notice per active
+    // Organization Admin per window, the outbox dispatcher sends it in words only, and it is never queued twice.
+    await tx.execute(`insert into corvis_control.notification_recipient (tenant_id,user_id,email,source) values ($1,$2,'admin-one@example.test','verified_identity_claim'),($1,$3,'admin-two@example.test','verified_identity_claim')`, [tenantId, admin.userId, adminTwo.userId]);
+    await backend.create(adminIdentity, { name: 'Expiring feed', purpose: 'Expires within the warning window', workspaceId, roleName: 'viewer', expiresInDays: 10, credentialExpiresInDays: 5 }, tx);
+    const noticeRows = () => tx.query(`select recipient_user_id::text as user_id, template_params->>'subject' as subject, template_params->>'window' as win, status, suppression_reason from corvis_control.email_outbox
+      where tenant_id=$1::uuid and category='service_account_expiry' order by subject, win, status`, [tenantId]);
+    // Drain whatever other tests committed to a shared database, so the counts below are this tenant's.
+    await sweepServiceAccountExpiry(tx, 500);
+    const queuedNow = (await noticeRows());
+    // The new account (warning), its credential (warning), and the 10-day credential of the renewed feed from above (warning): admin two was deactivated, so only admin one is addressed.
+    assert.deepEqual(queuedNow.map((row) => [row.user_id, row.subject, row.win]), [
+      [admin.userId, 'account', 'warning'], [admin.userId, 'credential', 'warning'], [admin.userId, 'credential', 'warning'],
+    ], 'one notice per item per active Organization Admin; a deactivated admin and an analyst are not addressed');
+    assert.equal(await sweepServiceAccountExpiry(tx, 500), 0, 'a second tick queues nothing');
+
+    const noticeSender = new RecordingEmailSender();
+    const dispatched = await processEmailOutbox({ db: tx, sender: noticeSender, appUrl: 'https://app.corvis.test' });
+    assert.ok(dispatched.sent >= 3);
+    const noticeEmails = noticeSender.sent.filter((email) => email.category === 'service_account_expiry');
+    assert.equal(noticeEmails.length, 3);
+    for (const email of noticeEmails) {
+      assert.equal(email.to, 'admin-one@example.test');
+      assert.match(email.text, /expires within the next 14 days/);
+      assert.match(email.text, /https:\/\/app\.corvis\.test\/access-self-service/);
+      assert.match(email.text, /cannot be turned off/, 'a mandatory notice says so and carries no settings link');
+      assert.doesNotMatch(email.text + email.html + email.subject, /Expiring feed|Short feed|Reporting sync|Primary Workspace|corvis_sa_|service-account:/, 'words only: no account, workspace or credential detail');
+    }
+    assert.deepEqual((await noticeRows()).map((row) => row.status), ['sent', 'sent', 'sent']);
+    assert.equal(await sweepServiceAccountExpiry(tx, 500), 0, 'a sent notice is not queued again');
+
+    // A notice queued for an admin who then loses the role is suppressed at send time, never emailed.
+    await backend.create(adminIdentity, { name: 'Late feed', purpose: 'Expires inside the final window', workspaceId, roleName: 'viewer', expiresInDays: 2, credentialExpiresInDays: 2 }, tx);
+    assert.equal(await sweepServiceAccountExpiry(tx, 500), 1, 'the final window queues one notice (the credential ends with the account, so it is the account\'s)');
+    await tx.execute(`update corvis_control.membership set status='revoked', valid_until=now(), valid_from=now()-interval '1 microsecond' where tenant_id=$1::uuid and user_id=$2::uuid`, [tenantId, admin.userId]);
+    const lateSender = new RecordingEmailSender();
+    await processEmailOutbox({ db: tx, sender: lateSender, appUrl: 'https://app.corvis.test' });
+    assert.equal(lateSender.sent.filter((email) => email.category === 'service_account_expiry').length, 0);
+    assert.deepEqual((await noticeRows()).filter((row) => row.win === 'final').map((row) => [row.status, row.suppression_reason]), [['suppressed', 'not_eligible']]);
+    // The category is mandatory: it is never a stored preference and the settings read never lets an admin switch it off.
+    const mandatory = await tx.query(`select count(*)::int as n from corvis_control.notification_preference where tenant_id=$1::uuid and category='service_account_expiry'`, [tenantId]);
+    assert.equal(mandatory[0].n, 0);
 
     throw ROLLBACK;
   }), (error) => error === ROLLBACK);

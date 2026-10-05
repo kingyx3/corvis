@@ -8,6 +8,9 @@ export const JWKS_MIN_REFRESH_INTERVAL_MS = 30_000;
 export type OidcIdentity = {
   subject: string;
   sessionId: string;
+  /** The issuer and audience the token was verified against (the issuer in the normalised form it was compared in). */
+  issuer: string;
+  audience: string;
   email?: string;
   emailVerified?: boolean;
 };
@@ -239,6 +242,8 @@ export class OidcVerifier {
     return {
       subject: claims.sub,
       sessionId,
+      issuer,
+      audience: input.audience,
       ...(typeof claims.email === "string" ? { email: claims.email.trim().toLowerCase() } : {}),
       ...(typeof claims.email_verified === "boolean" ? { emailVerified: claims.email_verified } : {}),
     };

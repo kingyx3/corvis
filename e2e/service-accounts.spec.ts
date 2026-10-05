@@ -278,3 +278,107 @@ test("a deactivated account offers neither an extension nor a new owner @matrix"
   await expect(retired.getByRole("button", { name: /extend expiry|change owner|assign a new owner/i })).toHaveCount(0);
   await expect(retired).not.toContainText("Needs a new owner.");
 });
+
+// ------------------------------------------------------------------ data access self-service (F6c, #342)
+test("seeded accounts show what they can read, and flag access the organization's data rights no longer cover @matrix", async ({ page }) => {
+  await open(page);
+  const nightly = card(page, "Nightly reporting sync");
+  const access = nightly.getByRole("group", { name: "Data access of Nightly reporting sync" });
+  await expect(access).toContainText("Advent International GPE VIII");
+  await expect(access).toContainText("EQT IX");
+  await expect(access).toContainText("Can view");
+  await expect(access).not.toContainText("Not covered");
+  // This one was granted when the organization's right to the fund existed; it no longer does, and the screen says so.
+  const reader = card(page, "Compliance export reader");
+  await expect(reader.getByRole("group", { name: "Data access of Compliance export reader" })).toContainText("Not covered by your organization's data rights");
+  // An account with nothing granted says so, and a deactivated one offers no way to grant.
+  await expect(card(page, "Partner data feed").getByRole("group", { name: "Data access of Partner data feed" })).toContainText("It cannot see any fund or document yet.");
+  const retired = card(page, "Retired data bridge");
+  await expect(retired.getByRole("group", { name: "Data access of Retired data bridge" })).toContainText("Deactivated: it has no access.");
+  await expect(retired.getByRole("button", { name: /grant data access|remove access/i })).toHaveCount(0);
+  const violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+});
+
+test("an Organization Admin scopes a new account's data access within the organization's rights, with a reason, and can remove it @matrix", async ({ page }) => {
+  await open(page);
+  const form = page.locator(`${SECTION} form`);
+  await form.getByLabel("Name").fill("Scoped loader");
+  await form.getByLabel("What it is for").fill("Reads one fund for the warehouse");
+  await form.getByRole("button", { name: /create service account/i }).click();
+  await page.getByRole("group", { name: "New API credential" }).getByRole("button", { name: /i have stored it/i }).click();
+
+  const scoped = card(page, "Scoped loader");
+  await expect(scoped.getByRole("group", { name: "Data access of Scoped loader" })).toContainText("It cannot see any fund or document yet.");
+  await scoped.getByRole("button", { name: "Grant data access" }).click();
+  const panel = scoped.getByRole("group", { name: "Grant data access to Scoped loader" });
+  const confirm = scoped.getByRole("button", { name: "Confirm grant" });
+  await expect(confirm).toBeDisabled();
+  // Only what the organization is licensed to see is offered: the catalog also holds a fund and a document it is not licensed for.
+  const offered = await panel.getByLabel("Fund or document").locator("option").allTextContents();
+  expect(offered).toContain("Fund: Nordic Capital Fund V");
+  expect(offered).toContain("Document: Advent International GPE VIII — Q2 2026.pdf");
+  expect(offered.join("|")).not.toContain("Hg Genesis");
+  expect(offered.join("|")).not.toContain("EQT IX — Schedule");
+  let violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+
+  await panel.getByLabel("Fund or document").selectOption({ label: "Fund: Nordic Capital Fund V" });
+  await expect(confirm).toBeDisabled(); // a reason is required: it is kept in the audit trail
+  await panel.getByLabel("Reason").fill("Feeds the reporting warehouse");
+  await confirm.click();
+  await expect(page.getByRole("status").filter({ hasText: "Scoped loader can now read Nordic Capital Fund V." })).toBeVisible();
+  const access = scoped.getByRole("group", { name: "Data access of Scoped loader" });
+  await expect(access).toContainText("Nordic Capital Fund V");
+  await expect(access).toContainText("Can view");
+  await expect(access).not.toContainText("Not covered");
+
+  // Granted, so no longer offered again.
+  await scoped.getByRole("button", { name: "Grant data access" }).click();
+  expect(await scoped.getByLabel("Fund or document").locator("option").allTextContents()).not.toContain("Fund: Nordic Capital Fund V");
+  await scoped.getByRole("button", { name: "Back" }).click();
+
+  // Remove it, with a reason.
+  await scoped.getByRole("button", { name: "Remove access to Nordic Capital Fund V from Scoped loader" }).click();
+  await expect(scoped.getByText("Remove access to Nordic Capital Fund V?")).toBeVisible();
+  const remove = scoped.getByRole("button", { name: "Confirm removal" });
+  await expect(remove).toBeDisabled();
+  violations = await blockingViolations(page, SECTION);
+  expect(violations, describe(violations)).toEqual([]);
+  await scoped.getByLabel("Reason").fill("No longer needed");
+  await remove.click();
+  await expect(page.getByRole("status").filter({ hasText: "Scoped loader can no longer read Nordic Capital Fund V." })).toBeVisible();
+  await expect(access).toContainText("It cannot see any fund or document yet.");
+});
+
+test("a grant beyond the organization's data rights is refused by the server, and the screen explains it @matrix", async ({ page, request }) => {
+  const tenant = await isolate(page);
+  const headers = { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": "admin" };
+  const listed = await request.get("/api/v1/access/service-accounts", { headers });
+  const body = (await listed.json()) as { data: { serviceAccounts: Array<{ serviceAccountId: string; name: string }>; grantable: Array<{ resourceId: string }> } };
+  const feed = body.data.serviceAccounts.find((account) => account.name === "Partner data feed")!;
+  expect(body.data.grantable.map((resource) => resource.resourceId)).not.toContain("fund-hg-genesis-9");
+  const act = (command: unknown, extra: Record<string, string> = {}) => request.post(`/api/v1/access/service-accounts/${feed.serviceAccountId}`, { headers: { ...headers, ...extra }, data: command });
+
+  // A fund in the catalog that the organization is not licensed for, one that does not exist, and a document id used as a fund: all one refusal.
+  for (const [resourceType, resourceId] of [["fund", "fund-hg-genesis-9"], ["fund", "fund-of-another-organization"], ["fund", "doc-adv-viii-q2"], ["document", "doc-hg-genesis-q2"]]) {
+    const refused = await act({ action: "grant_entitlement", resourceType, resourceId, reason: "Beyond our rights" });
+    expect([refused.status(), ((await refused.json()) as { error: string }).error], `${resourceType} ${resourceId}`).toEqual([422, "entitlement_outside_data_rights"]);
+  }
+  // It is a customer action for an Organization Admin: a role without admin:manage is refused.
+  expect((await act({ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-nordic-v", reason: "Self service" }, { "x-corvis-demo-roles": "analyst" })).status()).toBe(403);
+  const after = (await (await request.get("/api/v1/access/service-accounts", { headers })).json()) as { data: { serviceAccounts: Array<{ name: string; entitlements: unknown[] }> } };
+  expect(after.data.serviceAccounts.find((account) => account.name === "Partner data feed")!.entitlements).toEqual([]);
+
+  // The screen explains the refusal in words when it happens (here the grant is refused under the admin's feet).
+  await page.route(/\/api\/v1\/access\/service-accounts\/[0-9a-f-]+$/, (route) => route.request().method() === "POST"
+    ? route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "entitlement_outside_data_rights" }) })
+    : route.fallback());
+  await page.goto("/access-self-service");
+  const partner = card(page, "Partner data feed");
+  await partner.getByRole("button", { name: "Grant data access" }).click();
+  await partner.getByLabel("Fund or document").selectOption({ label: "Fund: EQT IX" });
+  await partner.getByLabel("Reason").fill("Feeds the reporting warehouse");
+  await partner.getByRole("button", { name: "Confirm grant" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /not licensed to share that fund or document/i })).toBeVisible();
+});

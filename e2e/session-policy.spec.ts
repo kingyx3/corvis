@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { accessibilityBudget } from "./quality-budgets.ts";
 
@@ -46,12 +46,52 @@ test("an Organization Admin sees the identity provider, SCIM status and sign-in 
   await expect(provider).toContainText("https://login.meridian.example/demo");
   await expect(provider).toContainText("Enabled · 12 active users");
   await expect(provider).toContainText("OpenID Connect: 4");
-  await expect(section(page)).toContainText("Identity-provider and SCIM setup is done with Corvis support, so it is read-only here.");
+  // F7e (#338): the organization's own recorded provider, with its audience, status and whether binding is enforced.
+  await expect(provider).toContainText("corvis-meridian");
+  await expect(provider).toContainText("Active · tokens are not restricted to this issuer and audience");
+  // F7b (#335): the verified email domains, and what they mean for new invitations.
+  await expect(provider).toContainText("meridian.example");
+  await expect(provider).toContainText("new invitations and provisioned users must use one of these");
+  await expect(section(page)).toContainText("Identity-provider, verified-domain and SCIM setup is done with Corvis support, so it is read-only here.");
   // Read-only: nothing inside the provider table can be edited.
   await expect(provider.getByRole("textbox")).toHaveCount(0);
   await expect(provider.getByRole("button")).toHaveCount(0);
   const violations = await blockingViolations(page, "section[aria-labelledby='session-policy-heading']");
   expect(violations, describe(violations)).toEqual([]);
+});
+
+test("a person whose session the organization's policy ended is told so, not shown a code or a generic failure @matrix", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const form = section(page);
+  await form.getByRole("checkbox", { name: "No idle limit" }).uncheck();
+  await form.getByLabel("Minutes without activity before a session ends").fill("30");
+  await form.getByLabel("Why are you changing this?").fill("Align with our information security policy");
+  // The save is answered with the stable 401 reason for a policy-ended session (a pre-isolation route continues the demo call; this one answers it).
+  const answer = (error: string) => async (route: Route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error, correlationId: "e2e-401" }) });
+  };
+  const saveRoute = /\/api\/v1\/access\/session-policy$/;
+  await page.route(saveRoute, answer("session_ended_by_policy"));
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  const ended = form.getByRole("alert").filter({ hasText: "Something went wrong" });
+  await expect(ended).toContainText("Your session ended because of your organization's sign-in policy. Sign in again to continue.");
+  await expect(ended).not.toContainText("session_ended_by_policy");
+  const violations = await blockingViolations(page, "section[aria-labelledby='session-policy-heading']");
+  expect(violations, describe(violations)).toEqual([]);
+
+  // A generic 401 (a missing, invalid or revoked token) keeps the plain expiry copy: it must not look like a policy decision.
+  await page.unroute(saveRoute);
+  await page.route(saveRoute, answer("authentication_required"));
+  // A failed save reloads the server's policy into the form, so the change is entered again.
+  const noIdle = form.getByRole("checkbox", { name: "No idle limit" });
+  if (await noIdle.isChecked()) await noIdle.uncheck();
+  await form.getByLabel("Minutes without activity before a session ends").fill("30");
+  await form.getByLabel("Why are you changing this?").fill("Align with our information security policy");
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  await expect(form.getByRole("alert").filter({ hasText: "Something went wrong" })).toContainText("Your session has expired. Sign in again to continue.");
+  await expect(form.getByRole("alert")).not.toContainText("organization's sign-in policy");
 });
 
 test("limits can be set within the Corvis bounds, need a reason, and are kept @matrix", async ({ page }) => {

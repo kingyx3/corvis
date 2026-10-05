@@ -9,6 +9,8 @@
  * them, and the bounds are also checks on the table, so no code path can store a value outside them.
  */
 
+import type { IdentityProtocol, IdentityProviderStatus, VerifiedDomainView } from "./identity-records.ts";
+
 /** Idle timeout: 15 minutes to 8 hours. */
 export const SESSION_IDLE_TIMEOUT_BOUNDS = { min: 15, max: 480 } as const;
 /** Maximum session length: 1 hour to 7 days. */
@@ -54,10 +56,20 @@ export type SessionPolicyUpdate = {
 };
 
 export type IdentityProviderView = {
-  /** Always OpenID Connect today: Corvis verifies bearer tokens from one configured issuer. */
-  protocol: "oidc";
-  /** The issuer URL tokens must come from, or null when none is configured. */
+  protocol: IdentityProtocol;
+  /** The issuer tokens must come from (an OIDC issuer URL, or a SAML entity id), or null when none is configured. */
   issuer: string | null;
+  /** The audience tokens must be issued for; null while the shared provider is shown (its audience is a deployment setting, not a tenant record). */
+  audience: string | null;
+  /**
+   * "tenant": Corvis operations recorded this organization's own provider (F7e, #338), shown with its real configuration.
+   * "global": none is recorded, so what is shown is the single provider Corvis verifies tokens from for every organization.
+   */
+  source: "tenant" | "global";
+  /** The recorded provider's status; null for the shared provider. */
+  status: IdentityProviderStatus | null;
+  /** Whether a token is accepted for this organization only from the recorded issuer and audience (off unless Corvis operations turned it on). */
+  tokenBindingEnforced: boolean;
 };
 
 export type ScimView = {
@@ -85,6 +97,11 @@ export type SessionPolicyView = {
   policy: SessionPolicy;
   bounds: { idleTimeoutMinutes: { min: number; max: number }; maxSessionMinutes: { min: number; max: number } };
   identityProvider: IdentityProviderView;
+  /**
+   * The email domains Corvis operations verified belong to this organization (F7b, #335). While there is at least one, a new
+   * invitation or SCIM user must be on one of them; with none the check is off. Existing people are never affected.
+   */
+  verifiedDomains: VerifiedDomainView[];
   scim: ScimView;
   signInMethods: SignInMethodView[];
   members: SessionMemberView[];

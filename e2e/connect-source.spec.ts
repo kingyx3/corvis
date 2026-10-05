@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { accessibilityBudget } from "./quality-budgets.ts";
-import { confirmReview, goToConsent, goToReauthorizeConsent, isolateSourceConnections, openConnectWizard, submitToken, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER, REAUTHORIZE_SUMMIT } from "./support/surfaces.ts";
+import { confirmReview, goToConsent, goToReauthorizeConsent, isolateSourceConnections, openConnectWizard, submitToken, untickFolders, DEMO_OAUTH_PROVIDER, DEMO_TOKEN_PROVIDER, REAUTHORIZE_SUMMIT } from "./support/surfaces.ts";
 
 // Connect source (B1). The demo composition serves /api/v1/source-connections from an in-memory store and offers
 // two clearly labelled demo providers, so the whole flow, including the OAuth redirect through a consent page
@@ -130,7 +130,9 @@ test("focus follows the steps, Back keeps what was typed, and a valid token conn
   await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
   await expect(stepHeading(page, /^connection verified$/i)).toBeFocused();
   await expect(dialog(page)).toContainText("Fund III GP portal");
-  await expect(dialog(page)).toContainText("Scheduled collection is not switched on yet");
+  await expect(dialog(page)).toContainText("scheduled collection is on");
+  await expect(dialog(page)).toContainText("The first sync starts at the next collection run");
+  await expect(dialog(page)).not.toContainText("not switched on yet");
   expect(await page.content(), "the credential is never rendered back").not.toContain(token);
   expect(await page.evaluate(() => JSON.stringify([window.localStorage, window.sessionStorage])), "nor kept in browser storage").not.toContain(token);
   expect(seen.join(""), "nor echoed by the API").not.toContain(token);
@@ -174,6 +176,7 @@ test("a failed test says why in plain words, blocks scheduled collection and can
   await expect(pending).toContainText("Run a connection test to finish setup");
   await expect(pending).not.toContainText("Collecting normally");
   await expect(pending).toContainText("Not scheduled — sync starts after setup is finished");
+  await expect(pending, "a connection whose test failed never syncs").toContainText("No run yet");
 });
 
 test("a rejected credential leaves the connection needing reauthorization, never active", async ({ page }) => {
@@ -357,4 +360,92 @@ test("declining at the provider leaves a connection that needs reauthorization e
   await expect(dialog(page)).toContainText("nothing was connected or changed");
   await dialog(page).getByRole("button", { name: /^close$/i }).click();
   await expect(card(page, REAUTHORIZE_SUMMIT)).toContainText("Suspended");
+});
+
+test("the review step lets the administrator choose which folders to read, says so in plain words, and the connection reads only those", async ({ page }) => {
+  await isolateSourceConnections(page);
+  await asAdmin(page);
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  await page.getByRole("button", { name: /^connect source$/i }).click();
+  await page.getByRole("button", { name: DEMO_TOKEN_PROVIDER }).click();
+
+  const folders = dialog(page).getByRole("group", { name: /^folders to read$/i });
+  await expect(folders.getByRole("checkbox")).toHaveCount(2);
+  await expect(folders.getByRole("checkbox", { name: /quarterly reports/i })).toBeChecked();
+  await expect(folders).toContainText("Corvis will read all 2 folders: Quarterly reports, Capital account statements.");
+
+  await untickFolders(page);
+  await expect(folders).toContainText("No folder is chosen");
+  await dialog(page).getByRole("checkbox", { name: /i am authorized to give corvis access/i }).check();
+  await dialog(page).getByRole("button", { name: /^continue to enter credential$/i }).click();
+  await expect(dialog(page).getByRole("alert")).toContainText("Choose at least one folder");
+  const first = folders.getByRole("checkbox").first();
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute("aria-invalid", "true");
+  expect(await blockingViolations(page, '[role="dialog"]')).toEqual([]);
+
+  await folders.getByRole("checkbox", { name: /capital account statements/i }).check();
+  await expect(dialog(page).getByRole("alert")).toHaveCount(0);
+  await expect(folders).toContainText("Corvis will read 1 of 2 folders: Capital account statements. It will not read: Quarterly reports.");
+  await dialog(page).getByRole("textbox", { name: /connection name/i }).fill("Capital only portal");
+  await dialog(page).getByRole("button", { name: /^continue to enter credential$/i }).click();
+  await submitToken(page, "demo-valid-token");
+  await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+
+  const created = card(page, "Capital only portal");
+  await expect(created).toContainText("Capital account statements");
+  await expect(created).not.toContainText("Quarterly reports");
+  await created.getByText("Scope details").click();
+  await expect(created.getByText("/Fund III/Capital accounts")).toBeVisible();
+  await expect(created.getByText("/Fund III/Quarterly")).toHaveCount(0);
+  await expect(created, "scheduled collection read only the kept folder").toContainText("2 found: 2 new");
+});
+
+test("OAuth: the folders kept before the sign-in are what the connection reads after it", async ({ page }) => {
+  await isolateSourceConnections(page);
+  await asAdmin(page);
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  await page.getByRole("button", { name: /^connect source$/i }).click();
+  await page.getByRole("button", { name: DEMO_OAUTH_PROVIDER }).click();
+  await dialog(page).getByRole("group", { name: /^folders to read$/i }).getByRole("checkbox", { name: /side letters/i }).uncheck();
+  await confirmReview(page);
+  await dialog(page).getByRole("button", { name: /^go to the provider$/i }).click();
+  await page.getByRole("link", { name: /^approve access$/i }).click();
+  await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+  const created = card(page, "Demo data room (sign-in with OAuth)");
+  await expect(created).toContainText("Demo fund reports");
+  await expect(created).not.toContainText("Demo side letters");
+});
+
+test("scheduled collection is on: a verified connection collects its documents, the card shows its last run and next sync, and a later look collects nothing twice", async ({ page }) => {
+  await isolateSourceConnections(page);
+  await asAdmin(page);
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  await page.getByRole("button", { name: /^connect source$/i }).click();
+  await page.getByRole("button", { name: DEMO_TOKEN_PROVIDER }).click();
+  await dialog(page).getByRole("textbox", { name: /connection name/i }).fill("Scheduled portal");
+  await confirmReview(page);
+  await submitToken(page, "demo-valid-token");
+  await expect(stepHeading(page, /^connection verified$/i)).toBeVisible();
+  await dialog(page).getByRole("button", { name: /^done$/i }).click();
+
+  const created = card(page, "Scheduled portal");
+  await expect(created).toContainText("Last run");
+  await expect(created).toContainText("Succeeded");
+  await expect(created).toContainText("4 found: 4 new, 0 already collected, 0 not accepted.");
+  await expect(created).toContainText("Next sync");
+  await expect(created).toContainText("Scheduled in 6 hours");
+  await expect(created).not.toContainText("not enabled yet");
+  const history = page.getByRole("region", { name: "Source connector run history" });
+  await expect(history).toContainText("Scheduled portal");
+
+  // Looking again before the next run is due collects nothing: still the one run, and nothing is collected twice.
+  await page.reload();
+  await page.getByRole("button", { name: /^documents$/i }).first().click();
+  const again = card(page, "Scheduled portal");
+  await expect(again).toContainText("4 found: 4 new, 0 already collected, 0 not accepted.");
+  await expect(again).toContainText("Scheduled in 6 hours");
+  expect(await blockingViolations(page, ".source-connections")).toEqual([]);
 });

@@ -4,6 +4,10 @@ import {
   SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS,
   SERVICE_ACCOUNT_DEFAULT_OVERLAP_MINUTES,
   SERVICE_ACCOUNT_MAX_LIFETIME_DAYS,
+  SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH,
+  SERVICE_ACCOUNT_PERMISSION_LABEL,
+  SERVICE_ACCOUNT_RESOURCE_TYPES,
+  SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL,
   SERVICE_ACCOUNT_ROLES,
   ServiceAccountValidationError,
   credentialStatus,
@@ -207,4 +211,37 @@ test("extending and transferring validate their own parameters", () => {
 
   assert.deepEqual(parseServiceAccountCommand({ action: "transfer", ownerSubject: "  idp|priya.nair  " }), { action: "transfer", ownerSubject: "idp|priya.nair" });
   for (const ownerSubject of [undefined, null, 7, "", "ab", "x".repeat(1025), "line\nbreak"]) assert.throws(() => parseServiceAccountCommand({ action: "transfer", ownerSubject }), invalid("invalid_owner"), String(ownerSubject));
+});
+
+test("granting and revoking data access validate the resource type, the identifier and a stated reason (F6c)", () => {
+  assert.deepEqual([...SERVICE_ACCOUNT_RESOURCE_TYPES], ["fund", "document"], "an admin scopes a machine to funds and documents only");
+  assert.deepEqual(parseServiceAccountCommand({ action: "grant_entitlement", resourceType: "fund", resourceId: "  fund-advent-viii ", reason: " Feeds the warehouse " }),
+    { action: "grant_entitlement", resourceType: "fund", resourceId: "fund-advent-viii", reason: "Feeds the warehouse" });
+  assert.deepEqual(parseServiceAccountCommand({ action: "revoke_entitlement", resourceType: "document", resourceId: "5b0c2f10-9f70-4a63-8f0e-3f5f6a2a6c11", reason: "No longer needed" }),
+    { action: "revoke_entitlement", resourceType: "document", resourceId: "5b0c2f10-9f70-4a63-8f0e-3f5f6a2a6c11", reason: "No longer needed" });
+
+  for (const action of ["grant_entitlement", "revoke_entitlement"]) {
+    // Only a fund or a document: never a workspace, an unknown type or anything that is not a string.
+    for (const resourceType of ["workspace", "tenant", "FUND", "", undefined, null, 7]) {
+      assert.throws(() => parseServiceAccountCommand({ action, resourceType, resourceId: "f", reason: "Needed here" }), invalid("invalid_resource_type"), `${action} ${String(resourceType)}`);
+    }
+    for (const resourceId of [undefined, null, 7, "", "   ", "x".repeat(SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH + 1), "line\nbreak", "tab\there"]) {
+      assert.throws(() => parseServiceAccountCommand({ action, resourceType: "fund", resourceId, reason: "Needed here" }), invalid("invalid_resource"), `${action} ${String(resourceId)}`);
+    }
+    assert.equal((parseServiceAccountCommand({ action, resourceType: "fund", resourceId: "x".repeat(SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH), reason: "Needed here" }) as { resourceId: string }).resourceId.length, SERVICE_ACCOUNT_MAX_RESOURCE_ID_LENGTH);
+    for (const reason of [undefined, "", "no", "x".repeat(1001), "line\nbreak"]) {
+      assert.throws(() => parseServiceAccountCommand({ action, resourceType: "fund", resourceId: "f", reason }), invalid("invalid_reason"), `${action} ${String(reason)}`);
+    }
+  }
+});
+
+test("what an admin can do to an account's data access follows its lifecycle and what it holds (F6c)", () => {
+  const facts = (disabled: boolean, expiresInDays: number, entitlementCount?: number) => serviceAccountLifecycle({ disabled, ownerActive: true, expiresAt: at(expiresInDays), credentials: [], ...(entitlementCount === undefined ? {} : { entitlementCount }) }, NOW).entitlementAccess;
+  assert.deepEqual(facts(false, 60), { canGrant: true, canRevoke: false }, "nothing to remove until something is granted");
+  assert.deepEqual(facts(false, 60, 0), { canGrant: true, canRevoke: false });
+  assert.deepEqual(facts(false, 60, 3), { canGrant: true, canRevoke: true });
+  assert.deepEqual(facts(false, -1, 2), { canGrant: false, canRevoke: true }, "an expired account is granted nothing, but its access can still be removed");
+  assert.deepEqual(facts(true, 60, 2), { canGrant: false, canRevoke: false }, "a deactivated account has had its entitlements ended");
+  assert.equal(SERVICE_ACCOUNT_PERMISSION_LABEL.read, "Can view");
+  assert.equal(SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL.fund, "Fund");
 });

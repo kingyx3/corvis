@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import type { AuthorizationPrincipal, MembershipAuthorizationRepository } from "./authorization.ts";
+import type { AuthorizationPrincipal, MembershipAuthorizationRepository, ResolveOptions } from "./authorization.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
 import { RateLimitError, RateLimiter } from "./rate-limit.ts";
 import { AuthenticationError, type GatewayIdentityAssertion } from "./request-context.ts";
@@ -53,9 +53,11 @@ async function withEnv<T>(fn: () => Promise<T>): Promise<T> {
 
 test("authoritative Postgres roles, resource grants and data rights override signed claims", { concurrency: false }, async () => {
   let resolvedPrincipal: AuthorizationPrincipal | undefined;
+  let resolvedOptions: ResolveOptions | undefined;
   const repository: MembershipAuthorizationRepository = {
-    async resolve(principal) {
+    async resolve(principal, options) {
       resolvedPrincipal = principal;
+      resolvedOptions = options;
       return {
         roles: ["read_only"],
         workspaceIds: [
@@ -99,6 +101,10 @@ test("authoritative Postgres roles, resource grants and data rights override sig
     assert.equal(identity.entitlements.modelTrainingAllowed, false);
     assert.equal(identity.entitlements.redistributionAllowed, false);
     assert.equal(resolvedPrincipal?.sessionId, "session-1");
+    // F7e: the interactive path asks for the tenant's token binding; a signed assertion carries no verified token claims to compare.
+    assert.deepEqual(resolvedOptions, { enforceIdentityBinding: true });
+    assert.equal(resolvedPrincipal?.tokenIssuer, undefined);
+    assert.equal(resolvedPrincipal?.tokenAudience, undefined);
     assert.deepEqual(identity.workspaceMemberships, [
       { workspaceId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", workspaceDisplayName: "Primary Workspace", roles: ["read_only"] },
       { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: "Secondary Workspace", roles: ["analyst"] },

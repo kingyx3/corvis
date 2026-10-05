@@ -17,9 +17,14 @@ import { Icon } from "@/components/ui/icon";
 import { Modal } from "@/components/ui/modal";
 import { createExportSchedule, exportScheduleErrorMessage } from "@/features/export-schedules/api";
 
-/** What an on-publish trigger means for this scope, in words: a snapshot scope follows that snapshot, a position scope follows its fund. */
+/**
+ * What an on-publish trigger means for this scope, in words: a snapshot scope follows that snapshot, a position scope (or a
+ * scorecard of one fund) follows its fund, and an unfiltered scorecard follows every fund the owner is entitled to when it runs.
+ */
 function publishTriggerLabel(scope: ScheduledExportScope): string {
-  return "snapshotId" in scope ? "When a new version of this snapshot is published" : "When a snapshot of this fund is published";
+  if ("snapshotId" in scope) return "When a new version of this snapshot is published";
+  if ("performanceScorecard" in scope && scope.fundId === undefined) return "When a snapshot of any fund you are entitled to is published";
+  return "When a snapshot of this fund is published";
 }
 
 /**
@@ -77,6 +82,7 @@ export function ScheduleExportDialog({ scope, onClose }: { scope: ScheduledExpor
       <dl className="preview-dl schedule-scope" aria-label="What will be exported">
         <div className="form-field"><dt>Scope</dt><dd>{exportScopeSummary(scope)}</dd></div>
       </dl>
+      {"performanceScorecard" in scope && scope.fundId === undefined && <p className="field-hint">This scorecard covers every fund you are entitled to when each run is made, so funds added to or removed from your access later are included or left out of later runs.</p>}
       <label className="form-field">
         <span>Run</span>
         <select className="filter-button" value={trigger} disabled={busy} onChange={(event) => setTrigger(EXPORT_SCHEDULE_TRIGGERS.find((value) => value === event.target.value) ?? "monthly")}>

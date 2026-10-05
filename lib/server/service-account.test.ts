@@ -186,7 +186,7 @@ test("rows map to ISO instants, derive credential status from time, and flag a c
 });
 
 test("an account row carries role, workspace, creator, last use, expiry and the credential-expiry flag, and no secret", () => {
-  const account = toServiceAccount(accountRow(), [credentialRow(), credentialRow({ credential_id: "c0", ends_at: "2026-10-03 11:00:00+00", last_used_at: "2026-10-01 00:00:00+00" })], NOW);
+  const account = toServiceAccount(accountRow(), [credentialRow(), credentialRow({ credential_id: "c0", ends_at: "2026-10-03 11:00:00+00", last_used_at: "2026-10-01 00:00:00+00" })], [], NOW);
   assert.deepEqual([account.name, account.roleName, account.workspaceName, account.createdBy, account.userId], ["Reporting sync", "analyst", "Primary Workspace", "idp|alex", OTHER]);
   assert.equal(account.status, "active");
   assert.equal(account.expiresAt, "2027-09-01T08:00:00.000Z");
@@ -201,17 +201,19 @@ test("an account row carries role, workspace, creator, last use, expiry and the 
 
   // An owner who was deactivated (or demoted) is reported, not hidden; any value but a real boolean true is "not active".
   for (const owner_active of [false, null, "t"]) {
-    const orphaned = toServiceAccount(accountRow({ owner_active }), [credentialRow()], NOW);
+    const orphaned = toServiceAccount(accountRow({ owner_active }), [credentialRow()], [], NOW);
     assert.deepEqual([orphaned.ownerActive, orphaned.needsOwner, orphaned.actions.canExtend, orphaned.status], [false, true, false, "active"], String(owner_active));
   }
 
-  const disabled = toServiceAccount(accountRow({ status: "disabled", disabled_at: "2026-10-02 10:00:00+00", disabled_by_subject: "idp|sam", disable_reason: "Integration retired" }), [], NOW);
+  const disabled = toServiceAccount(accountRow({ status: "disabled", disabled_at: "2026-10-02 10:00:00+00", disabled_by_subject: "idp|sam", disable_reason: "Integration retired" }), [], [], NOW);
   assert.deepEqual([disabled.status, disabled.disabledAt, disabled.disabledBy, disabled.disableReason], ["disabled", "2026-10-02T10:00:00.000Z", "idp|sam", "Integration retired"]);
 });
 
 // ------------------------------------------------------------------ the Postgres backend
 const COMMAND: CreateServiceAccountCommand = { name: "Reporting sync", purpose: "Nightly", workspaceId: WORKSPACE, roleName: "analyst", expiresInDays: 365, credentialExpiresInDays: 90 };
-const READ_ACCOUNTS = /from corvis_control\.service_account a\b/;
+const READ_ACCOUNTS = /from corvis_control\.service_account a\s+join corvis_control\.workspace/;
+const READ_ENTITLEMENTS = /join corvis_control\.resource_entitlement e/;
+const READ_GRANTABLE = /from corvis_control\.data_rights dr/;
 const READ_CREDENTIALS = /from corvis_control\.service_account_credential c\b/;
 
 function backendWith(db: ScriptedDb, extra: (call: Call) => PostgresRow[] | undefined = () => undefined): PostgresServiceAccountBackend {
@@ -250,7 +252,7 @@ test("listing is bound to the caller's tenant, shows the workspaces an account c
   const none = new ScriptedDb();
   none.handler = () => [];
   const empty = await new PostgresServiceAccountBackend(() => none).list(identity(), none);
-  assert.deepEqual(empty, { serviceAccounts: [], workspaces: [], owners: [] });
+  assert.deepEqual(empty, { serviceAccounts: [], workspaces: [], owners: [], grantable: [] });
   assert.equal(none.calls.some((call) => READ_CREDENTIALS.test(call.sql)), false);
 });
 
@@ -325,7 +327,7 @@ test("service-account actions are part of what an Organization Admin sees in the
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /action like 'service_account\.%'/);
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /'service_account'[,)]/);
   // Every action the service writes is under that prefix and target type.
-  for (const action of ["created", "credential_issued", "credential_rotated", "credential_revoked", "disabled", "extended", "owner_transferred"]) {
+  for (const action of ["created", "credential_issued", "credential_rotated", "credential_revoked", "disabled", "extended", "owner_transferred", "entitlement_granted", "entitlement_revoked"]) {
     const event = serviceAccountAuditEvent(identity(), "c", `service_account.${action}`, { serviceAccountId: ACCOUNT, workspaceId: WORKSPACE });
     assert.ok(event.action.startsWith("service_account."));
     assert.equal(event.targetType, "service_account");
@@ -354,4 +356,78 @@ test("transferring names the new owner to the SQL function, which checks they ar
   assert.equal(transferred.previousOwner, "idp|alex");
   assert.equal(transferred.serviceAccount.serviceAccountId, ACCOUNT);
   await assert.rejects(backend.transferOwner(identity(), "nope", "idp|sam", db), refusal("service_account_not_found", 404));
+});
+
+// ------------------------------------------------------------------ entitlement self-service (F6c)
+const ENTITLEMENT_ROW = { service_account_id: ACCOUNT, resource_type: "fund", resource_id: "fund-advent-viii", permission: "read", valid_from: "2026-09-02 08:00:00+00", label: "Advent International GPE VIII", within_data_rights: true };
+
+test("an entitlement row maps to a named resource, and says whether the organization's data right still covers it", () => {
+  const account = toServiceAccount(accountRow(), [credentialRow()], [
+    ENTITLEMENT_ROW,
+    { ...ENTITLEMENT_ROW, resource_type: "document", resource_id: "doc-1", label: "doc-1", permission: "review", within_data_rights: false },
+    { ...ENTITLEMENT_ROW, resource_id: "fund-x", within_data_rights: "t" },
+  ], NOW);
+  assert.deepEqual(account.entitlements[0], { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII", permission: "read", grantedAt: "2026-09-02T08:00:00.000Z", withinDataRights: true });
+  assert.deepEqual([account.entitlements[1]!.resourceType, account.entitlements[1]!.permission, account.entitlements[1]!.withinDataRights], ["document", "review", false], "an operator-granted permission is shown as it is");
+  assert.equal(account.entitlements[2]!.withinDataRights, false, "only a real boolean true counts as within the data right");
+  assert.deepEqual(account.entitlementAccess, { canGrant: true, canRevoke: true });
+  assert.deepEqual(toServiceAccount(accountRow(), [], [], NOW).entitlements, []);
+  assert.deepEqual(toServiceAccount(accountRow(), [], [], NOW).entitlementAccess, { canGrant: true, canRevoke: false });
+});
+
+test("an account's entitlements are read inside the caller's tenant, bounded, through the rows the authorization lookup reads", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => READ_ENTITLEMENTS.test(call.sql) ? [ENTITLEMENT_ROW] : undefined);
+  const account = await backend.get(identity(), ACCOUNT, db);
+  assert.equal(account.entitlements.length, 1);
+  const read = db.calls.find((call) => READ_ENTITLEMENTS.test(call.sql))!;
+  assert.deepEqual(read.parameters, [TENANT, ACCOUNT], "bound to the caller's tenant and the account");
+  assert.match(read.sql, /corvis_control\.resource_entitlement e/, "the same table the authorization lookup reads: no parallel plane");
+  assert.match(read.sql, /e\.valid_from <= now\(\) and \(e\.valid_until is null or e\.valid_until > now\(\)\)/, "only what is effective now");
+  assert.match(read.sql, /service_account_data_right_effective\(e\.tenant_id, e\.resource_type, e\.resource_id\)/);
+  assert.match(read.sql, /position <= 200/);
+});
+
+test("the grantable list is the organization's own resources that hold an effective client-visible data right, by the grant function's own tests", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => {
+    if (/from corvis_control\.workspace/.test(call.sql)) return [];
+    if (READ_GRANTABLE.test(call.sql)) return [{ resource_type: "fund", resource_id: "fund-advent-viii", label: "Advent International GPE VIII" }, { resource_type: "document", resource_id: "doc-1", label: "Report.pdf" }];
+    return undefined;
+  });
+  const listed = await backend.list(identity(), db);
+  assert.deepEqual(listed.grantable, [
+    { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII" },
+    { resourceType: "document", resourceId: "doc-1", label: "Report.pdf" },
+  ]);
+  const query = db.calls.find((call) => READ_GRANTABLE.test(call.sql))!;
+  assert.deepEqual(query.parameters, [TENANT], "never a client selector");
+  assert.match(query.sql, /service_account_data_right_effective\(\$1::uuid, 'fund', r\.resource_id\)/);
+  assert.match(query.sql, /access_policy_resource_belongs_to_tenant\(\$1::uuid, 'fund', r\.resource_id\)/);
+  assert.match(query.sql, /service_account_data_right_effective\(\$1::uuid, 'document', r\.resource_id\)/);
+  assert.match(query.sql, /access_policy_resource_belongs_to_tenant\(\$1::uuid, 'document', r\.resource_id\)/);
+  assert.match(query.sql, /limit 500/);
+});
+
+test("granting passes the actor, the account, one fund or document and the bound to the SQL function, which decides every rule", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => READ_ENTITLEMENTS.test(call.sql) ? [ENTITLEMENT_ROW] : undefined);
+  const granted = await backend.grantEntitlement(identity(), ACCOUNT, { resourceType: "fund", resourceId: "fund-advent-viii" }, db);
+  const call = db.calls.find((entry) => /grant_service_account_entitlement/.test(entry.sql))!;
+  assert.deepEqual(call.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "fund", "fund-advent-viii", 200]);
+  assert.match(call.sql, /\$7::integer/);
+  assert.equal(granted.serviceAccount.entitlements[0]!.resourceId, "fund-advent-viii");
+  // A grant never names a user, a workspace or a permission: those come from the account and are fixed in SQL.
+  assert.equal(call.parameters.length, 7);
+  await assert.rejects(backend.grantEntitlement(identity(), "nope", { resourceType: "fund", resourceId: "f" }, db), refusal("service_account_not_found", 404));
+});
+
+test("revoking reports how many entitlements it ended and returns the account", async () => {
+  const db = new ScriptedDb();
+  const backend = backendWith(db, (call) => /revoke_service_account_entitlement/.test(call.sql) ? [{ ended: "2" }] : undefined);
+  const revoked = await backend.revokeEntitlement(identity(), ACCOUNT, { resourceType: "document", resourceId: "doc-1" }, db);
+  assert.deepEqual(db.calls.find((entry) => /revoke_service_account_entitlement/.test(entry.sql))!.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "document", "doc-1"]);
+  assert.equal(revoked.endedEntitlements, 2);
+  assert.equal(revoked.serviceAccount.serviceAccountId, ACCOUNT);
+  await assert.rejects(backend.revokeEntitlement(identity(), "nope", { resourceType: "fund", resourceId: "f" }, db), refusal("service_account_not_found", 404));
 });

@@ -264,6 +264,9 @@ test("production OIDC verifies the caller token API Gateway forwards in X-Forwar
       const identity = await resolveRequestIdentity(gatewayRequest);
       assert.equal(identity.subject, "user-gw");
       assert.equal(identity.tenantId, tenantUuid);
+      // F7e: the issuer and audience the token was verified against travel with the identity, for a tenant's token binding.
+      assert.equal(identity.tokenIssuer, issuer);
+      assert.equal(identity.tokenAudience, "corvis");
 
       const direct = new Request("https://corvis.example/api/v1/me", { headers: {
         authorization: `Bearer ${userToken}`, "x-corvis-tenant": tenantUuid, "x-corvis-workspace": workspaceUuid,

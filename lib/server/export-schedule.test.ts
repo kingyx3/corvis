@@ -98,6 +98,12 @@ test("the fingerprint binds the whole schedule and ignores nothing that is part 
   assert.notEqual(scheduleFingerprint({ ...command, scope: { positionFinancials: { ...positionScope.positionFinancials, portfolioId: "pf-1" } } }), base);
   assert.notEqual(scheduleFingerprint({ ...command, scope: { positionFinancials: { ...positionScope.positionFinancials, periodicity: "annual" } } }), base);
   assert.equal(scheduleFingerprint({ ...command, scope: { snapshotId: SNAPSHOT } }), scheduleFingerprint({ ...command, scope: { snapshotId: SNAPSHOT } }));
+  const scorecard = scheduleFingerprint({ ...command, scope: { performanceScorecard: true } });
+  assert.notEqual(scorecard, base);
+  assert.notEqual(scheduleFingerprint({ ...command, scope: { performanceScorecard: true, fundId: "fund-1" } }), scorecard, "a fund filter is a different schedule");
+  assert.notEqual(scheduleFingerprint({ ...command, scope: { performanceScorecard: true, period: "Q1 2026" } }), scorecard, "a period filter is a different schedule");
+  assert.notEqual(scheduleFingerprint({ ...command, scope: { performanceScorecard: true, fundId: "fund-1", period: "Q1 2026" } }), scheduleFingerprint({ ...command, scope: { performanceScorecard: true, period: "Q1 2026" } }));
+  assert.equal(scheduleFingerprint({ ...command, scope: { performanceScorecard: true, fundId: "fund-1" } }), scheduleFingerprint({ ...command, scope: { performanceScorecard: true, fundId: "fund-1" } }));
 });
 
 test("the audit event carries identifiers, the label, the trigger and the status, and never data", () => {
@@ -172,6 +178,30 @@ test("a scope is only schedulable by someone entitled to its fund, and a missing
   await assert.rejects(assertScopeEntitled(identity(), { snapshotId: SNAPSHOT }, new FakeDb(() => [])), refusal("export_scope_not_entitled", 403), "an unknown or unpublished snapshot");
   await assert.rejects(assertScopeEntitled(identity(), { snapshotId: SNAPSHOT }, new FakeDb(() => [{ fund_id: "fund-1" }, { fund_id: "fund-9" }])), refusal("export_scope_not_entitled", 403), "every fund behind the snapshot must be entitled");
   await assert.rejects(assertScopeEntitled(identity({ entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } }), { snapshotId: SNAPSHOT }, known), refusal("export_scope_not_entitled", 403));
+});
+
+test("a scorecard scope is schedulable by someone entitled to a fund: every fund they hold now, or the one fund it names", async () => {
+  const db = new FakeDb();
+  await assertScopeEntitled(identity(), { performanceScorecard: true }, db);
+  await assertScopeEntitled(identity(), { performanceScorecard: true, period: "Q1 2026" }, db);
+  await assertScopeEntitled(identity(), { performanceScorecard: true, fundId: "fund-2" }, db);
+  assert.equal(db.calls.length, 0, "decided from the owner's entitlements alone");
+  const none = identity({ entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } });
+  await assert.rejects(assertScopeEntitled(none, { performanceScorecard: true }, db), refusal("export_scope_not_entitled", 403), "all funds is nothing without any fund");
+  await assert.rejects(assertScopeEntitled(identity({ entitlements: { workspaceIds: [], fundIds: [], sourceDocumentAccessAllowed: false } }), { performanceScorecard: true }, db), refusal("export_scope_not_entitled", 403));
+  await assert.rejects(assertScopeEntitled(identity(), { performanceScorecard: true, fundId: "fund-9" }, db), refusal("export_scope_not_entitled", 403), "a fund filter never grants a fund");
+  await assert.rejects(assertScopeEntitled(none, { performanceScorecard: true, fundId: "fund-1" }, db), refusal("export_scope_not_entitled", 403));
+});
+
+test("a scorecard schedule is saved with its scope, its filters and the one wording its exports carry", async () => {
+  const db = new FakeDb((sql, parameters) => sql.includes("create_export_schedule") ? [scheduleRow({ schedule_id: parameters[1], scope: JSON.parse(String(parameters[8])), scope_label: parameters[9] })] : []);
+  const backend = new PostgresExportScheduleBackend(() => db, allow);
+  const scope = { performanceScorecard: true as const, fundId: "fund-1", period: "Q1 2026" };
+  const { item } = await backend.create(identity(), { ...command, scope, trigger: "on_publish" }, db);
+  const save = db.calls.find((call) => call.sql.includes("create_export_schedule"))!;
+  assert.deepEqual(save.parameters.slice(7, 12), ["Monthly sparrow", JSON.stringify(scope), "Performance scorecard · fund-1 · Q1 2026", "csv", "on_publish"]);
+  assert.deepEqual(item.scope, scope);
+  await assert.rejects(backend.create(identity(), { ...command, scope: { performanceScorecard: true, fundId: "fund-9" } }, db), refusal("export_scope_not_entitled", 403));
 });
 
 test("the Parquet format gate is the same feature flag an interactive export request goes through", async () => {
@@ -595,7 +625,7 @@ test("the default dependencies resolve the owner from the real membership query 
   assert.deepEqual(exported[0]!.entitlements.fundIds, ["fund-1"]);
   assert.equal(exported[0]!.entitlements.redistributionAllowed, true);
   const resolution = db.calls.find((call) => call.sql.includes("from corvis_control.identity_subject s"))!;
-  assert.deepEqual(resolution.parameters, [TENANT, "idp|owner", "oidc", scheduleSessionId(SCHEDULE), WORKSPACE]);
+  assert.deepEqual(resolution.parameters, [TENANT, "idp|owner", "oidc", scheduleSessionId(SCHEDULE), WORKSPACE, false, null, null]);
 
   // A Parquet schedule with the flag not configured is refused as format_unavailable, through the default gate.
   const parquet = new FakeDb((sql) => {
@@ -620,6 +650,94 @@ test("a run records which snapshot published when the trigger was a publication,
   await processDueExportSchedules(25, { authorize: async (_store, who) => { principal = who; return authorization; }, formatGate: allow, requestExport: async (_who, _format, options) => { assert.deepEqual(options?.scope, { snapshotId: SNAPSHOT }); return exportedManifest; } }, db);
   assert.equal((principal as { authMethod: string }).authMethod, "service_account");
   assert.equal(runs()[0]![3], `publish:${SNAPSHOT}:v3`);
+});
+
+const scorecardPublishSchedule = (scope: Record<string, unknown> = { performanceScorecard: true }, overrides: PostgresRow = {}) =>
+  scheduleRow({ trigger_kind: "on_publish", scope, scope_label: "Performance scorecard · all entitled funds", next_run_at: null, publish_watermark: "2026-10-01 00:00:00+00", ...overrides });
+const publishClaim = { trigger_key: `publish:${SNAPSHOT}:v1`, snapshot_id: SNAPSHOT, snapshot_version: 1 };
+
+test("an all-funds scorecard on publish re-authorizes the owner before the claim and claims only publications of the funds they hold now", async () => {
+  const order: string[] = [];
+  const db = new FakeDb((sql) => {
+    if (sql.includes("stop_export_schedules_for_inactive_owners")) return [];
+    if (sql.includes("list_due_export_schedules")) return [{ tenant_id: TENANT, schedule_id: SCHEDULE }];
+    if (sql.includes("from corvis_control.export_schedule where")) return [scorecardPublishSchedule()];
+    if (sql.includes("claim_export_schedule_trigger")) { order.push("claim"); return [publishClaim]; }
+    return [];
+  });
+  const requests: unknown[] = [];
+  const summary = await processDueExportSchedules(25, {
+    authorize: async () => { order.push("authorize"); return { ...authorization, fundIds: ["fund-1", "fund-3"] }; },
+    formatGate: allow,
+    requestExport: async (who, _format, options) => { order.push("export"); requests.push([who.entitlements.fundIds, options]); return exportedManifest; },
+  }, db);
+  assert.deepEqual(summary, { stopped: 0, requested: 1, failed: 0, errors: 0 });
+  assert.deepEqual(order, ["authorize", "claim", "export"], "authorized once, before the claim, and that authorization is the run's");
+  const claim = db.calls.find((call) => call.sql.includes("claim_export_schedule_trigger"))!;
+  assert.match(claim.sql, /\$3::jsonb/);
+  assert.deepEqual(claim.parameters, [TENANT, SCHEDULE, JSON.stringify(["fund-1", "fund-3"])], "the owner's current funds narrow the publication trigger");
+  assert.deepEqual(requests, [[["fund-1", "fund-3"], { scope: { performanceScorecard: true }, source: "delivery" }]], "the export is requested for all funds the owner holds at this moment");
+});
+
+test("a scorecard run for an owner who now holds no fund is claimed unnarrowed and recorded as a refusal the owner can see", async () => {
+  const db = new FakeDb((sql) => {
+    if (sql.includes("list_due_export_schedules")) return [{ tenant_id: TENANT, schedule_id: SCHEDULE }];
+    if (sql.includes("from corvis_control.export_schedule where")) return [scorecardPublishSchedule()];
+    if (sql.includes("claim_export_schedule_trigger")) return [publishClaim];
+    return [];
+  });
+  let exported = false;
+  const summary = await processDueExportSchedules(25, {
+    authorize: async () => ({ ...authorization, fundIds: [] }), formatGate: allow, requestExport: async () => { exported = true; return exportedManifest; },
+  }, db);
+  assert.deepEqual(summary, { stopped: 0, requested: 0, failed: 1, errors: 0 });
+  assert.equal(exported, false);
+  assert.equal(db.calls.find((call) => call.sql.includes("claim_export_schedule_trigger"))!.parameters[2], null, "nothing to narrow by: the run is claimed so the refusal is recorded");
+  const run = db.executed.find((call) => call.sql.includes("insert into corvis_control.export_schedule_run"))!;
+  assert.deepEqual(run.parameters.slice(4, 7), ["failed", null, "scope_not_entitled"]);
+});
+
+test("a scorecard run whose owner can no longer be authorized stops the schedule: it is claimed unnarrowed and authorizes once", async () => {
+  let authorizations = 0;
+  const db = new FakeDb((sql) => {
+    if (sql.includes("list_due_export_schedules")) return [{ tenant_id: TENANT, schedule_id: SCHEDULE }];
+    if (sql.includes("from corvis_control.export_schedule where")) return [scorecardPublishSchedule()];
+    if (sql.includes("claim_export_schedule_trigger")) return [publishClaim];
+    if (sql.includes("stop_export_schedule(")) return [scheduleRow({ status: "stopped", stop_reason: "owner_inactive" })];
+    return [];
+  });
+  const summary = await processDueExportSchedules(25, { authorize: async () => { authorizations += 1; return null; }, formatGate: allow }, db);
+  assert.deepEqual(summary, { stopped: 0, requested: 0, failed: 1, errors: 0 });
+  assert.equal(authorizations, 1, "a null authorization is the answer, not a reason to ask again");
+  assert.equal(db.calls.find((call) => call.sql.includes("claim_export_schedule_trigger"))!.parameters[2], null);
+});
+
+test("a scorecard with a fund filter, or on a calendar trigger, is not narrowed at the claim and authorizes only after it", async () => {
+  for (const [scope, overrides] of [
+    [{ performanceScorecard: true, fundId: "fund-1" }, {}],
+    [{ performanceScorecard: true }, { trigger_kind: "monthly", publish_watermark: null, next_run_at: "2026-10-01 00:00:00+00" }],
+    [{ snapshotId: SNAPSHOT }, {}],
+  ] as const) {
+    const order: string[] = [];
+    const db = new FakeDb((sql) => {
+      if (sql.includes("list_due_export_schedules")) return [{ tenant_id: TENANT, schedule_id: SCHEDULE }];
+      if (sql.includes("from corvis_control.export_schedule where")) return [scorecardPublishSchedule(scope, overrides)];
+      if (sql.includes("claim_export_schedule_trigger")) { order.push("claim"); return [publishClaim]; }
+      return [];
+    });
+    await processDueExportSchedules(25, { authorize: async () => { order.push("authorize"); return authorization; }, formatGate: allow, requestExport: async () => exportedManifest }, db);
+    assert.deepEqual(order, ["claim", "authorize"], JSON.stringify(scope));
+    assert.equal(db.calls.find((call) => call.sql.includes("claim_export_schedule_trigger"))!.parameters[2], null, JSON.stringify(scope));
+  }
+});
+
+test("a schedule that is gone by the time it is run is skipped without a claim or an authorization", async () => {
+  const db = new FakeDb((sql) => sql.includes("list_due_export_schedules") ? [{ tenant_id: TENANT, schedule_id: SCHEDULE }] : []);
+  let authorized = false;
+  const summary = await processDueExportSchedules(25, { authorize: async () => { authorized = true; return authorization; }, formatGate: allow }, db);
+  assert.deepEqual(summary, { stopped: 0, requested: 0, failed: 0, errors: 0 });
+  assert.equal(authorized, false);
+  assert.equal(db.calls.some((call) => call.sql.includes("claim_export_schedule_trigger")), false);
 });
 
 test("schedules whose owner was deactivated are stopped and audited by the system, once", async () => {

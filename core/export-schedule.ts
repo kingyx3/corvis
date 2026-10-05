@@ -10,10 +10,16 @@
  * stable reasons below and exports nothing.
  */
 
-import type { ExportFormat, PositionFinancialsExportScope, SnapshotExportScope } from "./delivery.ts";
+import type { ExportFormat, PerformanceScorecardExportScope, PositionFinancialsExportScope, SnapshotExportScope } from "./delivery.ts";
+import { parseScorecardFilters, scorecardScopeLabel } from "./performance-scorecard.ts";
 
-/** What can be scheduled today: the performance scorecard export (F1) is not a schedulable scope yet. */
-export type ScheduledExportScope = SnapshotExportScope | PositionFinancialsExportScope;
+/**
+ * What can be scheduled: exactly the scopes an "Export this view" request carries. The performance scorecard (F1c, #332) is the one
+ * scope that names no single fund: unless it carries a `fundId` filter it means "every fund the owner is entitled to *now*", which is
+ * why an on-publish run is only triggered by a publication of a fund the owner is entitled to when the run is claimed, and why each run
+ * re-resolves it from the owner's current entitlements.
+ */
+export type ScheduledExportScope = SnapshotExportScope | PositionFinancialsExportScope | PerformanceScorecardExportScope;
 
 export const EXPORT_SCHEDULE_TRIGGERS = ["on_publish", "monthly", "quarterly"] as const;
 export type ExportScheduleTrigger = (typeof EXPORT_SCHEDULE_TRIGGERS)[number];
@@ -202,9 +208,19 @@ function optionalLine(value: unknown, max: number, code: string): string | undef
   return value === undefined || value === null ? undefined : requiredLine(value, max, code);
 }
 
-/** The saved scope: exactly what an "Export this view" request carries (a published snapshot, or one Position Financials view). */
+/** The saved scope: exactly what an "Export this view" request carries (a published snapshot, a Position Financials view or the performance scorecard). */
 export function parseExportScheduleScope(value: unknown): ScheduledExportScope {
   if (!isRecord(value)) throw new ExportScheduleValidationError("invalid_scope");
+  if (value.performanceScorecard !== undefined) {
+    // One scope per schedule: a scorecard scope never also names a snapshot or a position.
+    if (value.performanceScorecard !== true || value.snapshotId !== undefined || value.positionFinancials !== undefined) throw new ExportScheduleValidationError("invalid_scope");
+    try {
+      return { performanceScorecard: true, ...parseScorecardFilters(value) };
+    } catch {
+      // The only thing the parse can refuse is a malformed filter, which makes the scope invalid.
+      throw new ExportScheduleValidationError("invalid_scope");
+    }
+  }
   if (value.snapshotId !== undefined) return { snapshotId: requiredLine(value.snapshotId, MAX_ID_LENGTH, "invalid_scope") };
   const raw = value.positionFinancials;
   if (!isRecord(raw)) throw new ExportScheduleValidationError("invalid_scope");
@@ -319,12 +335,17 @@ export function describeTriggerKey(triggerKey: string): string {
 /** The scope in words, identical to the "Scope" shown for the export it produces in delivery history. */
 export function exportScopeSummary(scope: ScheduledExportScope): string {
   if ("snapshotId" in scope) return `Snapshot ${scope.snapshotId}`;
-  const p = scope.positionFinancials;
+  if ("performanceScorecard" in scope) return scorecardScopeLabel(scope);
+  const p =scope.positionFinancials;
   return `Position financials · ${p.companyId} · ${p.periodicity}${p.portfolioId ? ` · portfolio ${p.portfolioId}` : ""}`;
 }
 
-/** The fund whose publications can trigger an on-publish run, when the scope names one (a snapshot scope names the snapshot itself). */
+/**
+ * The fund whose publications can trigger an on-publish run, when the scope names one (a snapshot scope names the snapshot itself;
+ * an unfiltered scorecard names none: it follows any fund the owner is entitled to at the time of the run).
+ */
 export function scopeFundId(scope: ScheduledExportScope): string | null {
+  if ("performanceScorecard" in scope) return scope.fundId ?? null;
   return "positionFinancials" in scope ? scope.positionFinancials.fundId : null;
 }
 

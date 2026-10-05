@@ -10,11 +10,15 @@ import {
   OAUTH_ATTEMPT_UNUSABLE,
   OAUTH_COMPLETING,
   OAUTH_DENIED,
+  SCOPE_SELECTION_REQUIRED,
   TEST_FAILURE_CONSEQUENCE,
   buildConnectSecret,
   connectCredentialField,
   connectFailureMessage,
+  describeConnectedCollection,
+  describeScopeSelection,
   describeTestFailure,
+  selectableScope,
   validateConnectionName,
   type OAuthReturn,
   type SourceProviderDescriptor,
@@ -42,8 +46,8 @@ type Step =
   | { id: "authorize"; provider: Provider }
   /** `label` is null while the sign-in redirect is being completed and the provider is not yet known. */
   | { id: "testing"; label: string | null }
-  /** `reauthorized` is set when the sign-in renewed an existing connection instead of creating one. */
-  | { id: "success"; connection: SourceConnectionRecord; reauthorized?: boolean }
+  /** `reauthorized` is set when the sign-in renewed an existing connection instead of creating one; `collection` says, from the connection's own schedule, when collection runs. */
+  | { id: "success"; connection: SourceConnectionRecord; collection: string; reauthorized?: boolean }
   | { id: "failed"; connection: SourceConnectionRecord; errorClass?: string }
   | { id: "oauth-problem"; kind: "denied" | "invalid" };
 
@@ -87,17 +91,21 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
   const [reloadKey, setReloadKey] = useState(0);
   const [name, setName] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  // The folders the administrator leaves in scope, when the provider lets them choose (all of them until they change it).
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [errorSeq, setErrorSeq] = useState(0);
   const [busy, setBusy] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLInputElement>(null);
+  const scopeRef = useRef<HTMLInputElement>(null);
   const credentialRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
-  const focusTarget = useRef<"name" | "confirm" | "credential">("name");
+  const focusTarget = useRef<"name" | "scope" | "confirm" | "credential">("name");
   const resumed = useRef(false);
   const errorId = useId();
   const hintId = useId();
+  const scopeSummaryId = useId();
 
   // Each step announces itself by taking focus on its heading. Deferred one tick so it wins over the dialog's own initial focus.
   const stepKey = step.id;
@@ -109,7 +117,7 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
   // A refused step moves focus to the control that needs fixing (named before the error counter changes).
   useEffect(() => {
     if (errorSeq === 0) return;
-    const control = { name: nameRef, confirm: confirmRef, credential: credentialRef }[focusTarget.current].current;
+    const control = { name: nameRef, scope: scopeRef, confirm: confirmRef, credential: credentialRef }[focusTarget.current].current;
     control?.focus();
   }, [errorSeq]);
 
@@ -137,7 +145,7 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per redirect; `showResult` only reads stable setters and the prop callback.
   }, [resume]);
 
-  function fail(message: string, focus?: "name" | "confirm" | "credential") {
+  function fail(message: string, focus?: "name" | "scope" | "confirm" | "credential") {
     setError(message);
     if (focus) { focusTarget.current = focus; setErrorSeq((seq) => seq + 1); }
   }
@@ -145,11 +153,12 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
   function showResult(connection: SourceConnectionRecord, test: TestResult, reauthorized = false) {
     setBusy(false);
     onConnected(connection.sourceConnectionId);
-    setStep(test.ok ? { id: "success", connection, ...(reauthorized ? { reauthorized: true } : {}) } : { id: "failed", connection, ...(test.errorClass ? { errorClass: test.errorClass } : {}) });
+    setStep(test.ok ? { id: "success", connection, collection: describeConnectedCollection(connection, new Date()), ...(reauthorized ? { reauthorized: true } : {}) } : { id: "failed", connection, ...(test.errorClass ? { errorClass: test.errorClass } : {}) });
   }
 
   function choose(provider: Provider) {
     setName(provider.displayName);
+    setSelectedIds(new Set((selectableScope(provider.scope) ?? []).map((item) => item.id!)));
     setConfirmed(false);
     setError(null);
     setStep({ id: "review", provider });
@@ -159,15 +168,27 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     event.preventDefault();
     const checked = validateConnectionName(name);
     if (!checked.ok) { fail(checked.error, "name"); return; }
+    if (selectableScope(provider.scope) && selectedIds.size === 0) { fail(SCOPE_SELECTION_REQUIRED, "scope"); return; }
     if (!confirmed) { fail(CONNECT_CONFIRMATION_REQUIRED, "confirm"); return; }
     setError(null);
     setStep(provider.connect.method === "oauth" ? { id: "authorize", provider } : { id: "credential", provider, credentialType: provider.connect.credentialType });
   }
 
+  /** The folders to read, only for a provider that lets the administrator choose; the server checks them against its own registry. */
+  function selectionBody(provider: Provider): { selectedScopeIds?: string[] } {
+    const choices = selectableScope(provider.scope);
+    return choices ? { selectedScopeIds: choices.filter((item) => selectedIds.has(item.id!)).map((item) => item.id!) } : {};
+  }
+
+  function toggleScope(id: string, checked: boolean) {
+    setSelectedIds((current) => { const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next; });
+    if (checked) setError(null);
+  }
+
   async function startOAuth(provider: Provider) {
     setBusy(true);
     setError(null);
-    const reply = await request<{ authorizationUrl: string }>(`${CONNECTIONS}/oauth/start`, "POST", { providerKey: provider.providerKey, connectionLabel: name.trim(), scopeConfirmed: true });
+    const reply = await request<{ authorizationUrl: string }>(`${CONNECTIONS}/oauth/start`, "POST", { providerKey: provider.providerKey, connectionLabel: name.trim(), scopeConfirmed: true, ...selectionBody(provider) });
     if (!reply.ok) { setBusy(false); fail(reply.message ?? connectFailureMessage(reply.status)); return; }
     // Leaves the app for the provider's consent page; the provider redirects back with a one-time code.
     window.location.assign(reply.data.authorizationUrl);
@@ -183,7 +204,7 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     setError(null);
     setStep({ id: "testing", label: provider.displayName });
     const reply = await request<{ connection: SourceConnectionRecord; test: TestResult }>(`${CONNECTIONS}/connect`, "POST", {
-      providerKey: provider.providerKey, connectionLabel: name.trim(), scopeConfirmed: true, secret: built.secret,
+      providerKey: provider.providerKey, connectionLabel: name.trim(), scopeConfirmed: true, secret: built.secret, ...selectionBody(provider),
     });
     if (!reply.ok) {
       setBusy(false);
@@ -229,18 +250,27 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
     {step.id === "review" && (() => {
       const provider = step.provider;
       const nameMissing = !validateConnectionName(name).ok;
+      const choices = selectableScope(provider.scope);
+      const scopeEmpty = choices !== undefined && selectedIds.size === 0;
+      const scopeInvalid = Boolean(error) && !nameMissing && scopeEmpty;
       return <form onSubmit={(event) => confirmReview(event, provider)} autoComplete="off" noValidate>
         <div className="dialog-header"><div>{eyebrow("Step 2 of 4 · Review access")}{heading("Review what Corvis will access")}<p>{provider.displayName}{provider.demo && " · demonstration provider, no real portal is contacted"}</p></div></div>
         <div className="dialog-body">
           <section aria-labelledby="connect-reads"><h3 id="connect-reads">What Corvis will read</h3><ul className="source-connection-consequences">{provider.disclosure.reads.map((line) => <li key={line}>{line}</li>)}</ul>
-            <p className="table-secondary">In scope:</p><ul className="source-connection-consequences">{provider.scope.map((item) => <li key={`${item.label}|${item.path ?? ""}`}>{item.label}{item.path && <span className="table-secondary"> · {item.path}</span>}</li>)}</ul></section>
+            {!choices && <><p className="table-secondary">In scope:</p><ul className="source-connection-consequences">{provider.scope.map((item) => <li key={`${item.label}|${item.path ?? ""}`}>{item.label}{item.path && <span className="table-secondary"> · {item.path}</span>}</li>)}</ul></>}</section>
+          {choices && <fieldset className="connect-source-scope" aria-describedby={scopeInvalid ? `${scopeSummaryId} ${errorId}` : scopeSummaryId}>
+            <legend>Folders to read</legend>
+            <p className="table-secondary">Everything below is in scope by default. Untick a folder to leave it out: Corvis then never reads it, and what you confirm is exactly what is stored with the connection.</p>
+            <ul className="connect-source-scope-list">{choices.map((item, index) => <li key={item.id}><label className="connect-source-scope-option"><input ref={index === 0 ? scopeRef : undefined} type="checkbox" name="scope" value={item.id} checked={selectedIds.has(item.id!)} onChange={(event) => toggleScope(item.id!, event.target.checked)} aria-invalid={scopeInvalid ? true : undefined}/><span>{item.label}{item.path && <span className="table-secondary"> · {item.path}</span>}</span></label></li>)}</ul>
+            <p id={scopeSummaryId} className="connect-source-scope-summary" aria-live="polite">{describeScopeSelection(choices, selectedIds)}</p>
+          </fieldset>}
           <section aria-labelledby="connect-behaviour"><h3 id="connect-behaviour">How it works</h3><ul className="source-connection-consequences">{provider.disclosure.behaviour.map((line) => <li key={line}>{line}</li>)}</ul></section>
           <section aria-labelledby="connect-limits"><h3 id="connect-limits">What Corvis will not do</h3><ul className="source-connection-consequences">{provider.disclosure.limits.map((line) => <li key={line}>{line}</li>)}</ul></section>
           <label className="form-field"><span>Connection name</span>
             <input ref={nameRef} className="input-control" name="connection-name" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={error && nameMissing ? true : undefined} aria-describedby={error && nameMissing ? errorId : undefined} autoComplete="off"/>
             <small className="field-hint">The name you will recognise in the list of source connections.</small>
           </label>
-          <label className="connect-source-confirm"><input ref={confirmRef} type="checkbox" checked={confirmed} onChange={(event) => { setConfirmed(event.target.checked); if (event.target.checked) setError(null); }} aria-invalid={error && !nameMissing && !confirmed ? true : undefined} aria-describedby={error && !nameMissing ? errorId : undefined}/><span>{CONNECT_CONFIRMATION_LABEL}</span></label>
+          <label className="connect-source-confirm"><input ref={confirmRef} type="checkbox" checked={confirmed} onChange={(event) => { setConfirmed(event.target.checked); if (event.target.checked) setError(null); }} aria-invalid={error && !nameMissing && !scopeEmpty && !confirmed ? true : undefined} aria-describedby={error && !nameMissing && !scopeEmpty ? errorId : undefined}/><span>{CONNECT_CONFIRMATION_LABEL}</span></label>
           {errorBox}
         </div>
         <div className="dialog-actions">
@@ -301,7 +331,7 @@ export function ConnectSourceWizard({ resume, onClose, onConnected }: {
       <div className="dialog-body">
         <div className="lineage-note tone-success"><Icon name="check"/><div><strong>Corvis can reach the provider with the access you confirmed.</strong><span>{step.reauthorized
           ? `The new credential is saved and the previous one was retired. ${step.connection.status === "paused" ? "The connection is paused and stays paused until you resume it." : "The connection is active again."}`
-          : "The connection is active. Scheduled collection is not switched on yet, so nothing has been collected; once it is, documents enter the normal Corvis review process."}</span></div></div>
+          : step.collection}</span></div></div>
         <p>You can test again, pause, reauthorize or revoke this connection from the Source connections list.</p>
       </div>
       <div className="dialog-actions"><button type="button" className="primary-button" onClick={onClose}>Done</button></div>

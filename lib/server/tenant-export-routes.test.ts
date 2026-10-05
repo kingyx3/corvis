@@ -180,7 +180,7 @@ test("a decision, a link and a download go through the service with their own au
   seed((query) => /decide_tenant_export/.test(query.sql)
     ? [row({ state: "approved", decided_by_subject: "idp|morgan", decided_at: "2026-10-01 11:00:00+00" })]
     : /from corvis_control\.tenant_export_request r\s+where/.test(query.sql) ? [row({ state: "complete", checksum_sha256: "a".repeat(64), size_bytes: 10, artifact_expires_at: "2026-10-04 10:00:00+00", manifest, download_available: true })]
-      : /tenant_export_rights/.test(query.sql) ? []
+      : /tenant_export_scope_changed/.test(query.sql) ? [{ changed: false }]
         : /insert into corvis_control\.tenant_export_download_grant/.test(query.sql) ? [{ expires_at: "2026-10-03 10:10:00+00" }]
           : []);
   const approved = await itemPost(request(`/access/data-exports/${REQUEST}`, { method: "POST", subject: "idp|morgan", body: { action: "approve", expectedStatus: "pending_approval", note: "ok" } }), params(REQUEST));
@@ -190,7 +190,8 @@ test("a decision, a link and a download go through the service with their own au
 
   seed((query) => /from corvis_control\.tenant_export_request r\s+where/.test(query.sql)
     ? [row({ state: "complete", checksum_sha256: "a".repeat(64), size_bytes: 10, artifact_expires_at: "2026-10-04 10:00:00+00", manifest, download_available: true })]
-    : /insert into corvis_control\.tenant_export_download_grant/.test(query.sql) ? [{ expires_at: "2026-10-03 10:10:00+00" }] : []);
+    : /tenant_export_scope_changed/.test(query.sql) ? [{ changed: false }]
+      : /insert into corvis_control\.tenant_export_download_grant/.test(query.sql) ? [{ expires_at: "2026-10-03 10:10:00+00" }] : []);
   const link = await itemPost(request(`/access/data-exports/${REQUEST}`, { method: "POST", body: { action: "prepare_download" } }), params(REQUEST));
   assert.equal(link.status, 200);
   assert.match((await body(link)).data.downloadUrl, /\/download\?grant=/);

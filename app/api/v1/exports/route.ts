@@ -14,8 +14,14 @@ function exportScope(value: unknown): ExportScope | undefined | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
   if (isNonEmptyString(candidate.snapshotId)) return { snapshotId: candidate.snapshotId };
-  const scorecard = performanceScorecardScope(candidate);
-  if (scorecard) return scorecard;
+  try {
+    // The scorecard scope with its canonical filters; a malformed filter is an invalid scope, never a wider scorecard.
+    const scorecard = performanceScorecardScope(candidate);
+    if (scorecard) return scorecard;
+  } catch {
+    // performanceScorecardScope only ever refuses a malformed filter.
+    return null;
+  }
   const raw = candidate.positionFinancials;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const position = raw as Record<string, unknown>;

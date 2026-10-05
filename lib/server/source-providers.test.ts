@@ -10,6 +10,7 @@ import {
   oauthProviderForConnection,
   providerDescriptor,
   registerApprovedSourceProvider,
+  resolveScopeSelection,
   unregisterApprovedSourceProvider,
   type ApprovedSourceProvider,
 } from "./source-providers.ts";
@@ -111,4 +112,32 @@ test("the approvals live on globalThis, so next dev evaluating this module again
   const shared = globalThis as typeof globalThis & { approvedSourceProviders?: Map<string, ApprovedSourceProvider> };
   registerApprovedSourceProvider(provider(), driver());
   assert.equal(shared.approvedSourceProviders?.get("acme-portal")?.providerKey, "acme-portal");
+});
+
+const CHOICE_SCOPE = [{ id: "q", label: "Quarterly reports", path: "/q" }, { id: "s", label: "Statements" }, { id: "l", label: "Side letters", path: "/l" }];
+
+test("a provider's folder ids reach the browser descriptor, and nothing else server-side does", () => {
+  const described = providerDescriptor(provider({ scope: CHOICE_SCOPE }));
+  assert.deepEqual(described.scope, CHOICE_SCOPE);
+  assert.deepEqual(providerDescriptor(provider()).scope, [{ label: "Quarterly reports", path: "/q" }, { label: "Statements" }], "no id is invented for a provider that declares none");
+});
+
+test("no selection means the provider's whole declared scope, stored without the provider's internal ids", () => {
+  assert.deepEqual(resolveScopeSelection(provider({ scope: CHOICE_SCOPE }), undefined), [{ label: "Quarterly reports", path: "/q" }, { label: "Statements" }, { label: "Side letters", path: "/l" }]);
+  assert.deepEqual(resolveScopeSelection(provider(), undefined), [{ label: "Quarterly reports", path: "/q" }, { label: "Statements" }]);
+});
+
+test("a selection can only narrow what the provider declares, in the provider's order, and is never trusted as sent", () => {
+  const choice = provider({ scope: CHOICE_SCOPE });
+  assert.deepEqual(resolveScopeSelection(choice, ["l", "q"]), [{ label: "Quarterly reports", path: "/q" }, { label: "Side letters", path: "/l" }]);
+  assert.deepEqual(resolveScopeSelection(choice, ["s"]), [{ label: "Statements" }]);
+  const refused = (error: unknown) => error instanceof Error && error.message === "invalid_scope_selection";
+  assert.throws(() => resolveScopeSelection(choice, []), refused, "nothing selected is not a scope");
+  assert.throws(() => resolveScopeSelection(choice, ["q", "q"]), refused, "duplicates");
+  assert.throws(() => resolveScopeSelection(choice, ["q", "/etc"]), refused, "an id the provider never declared cannot add a path");
+  assert.throws(() => resolveScopeSelection(choice, "q"), refused, "not a list");
+  assert.throws(() => resolveScopeSelection(choice, [1]), refused, "not strings");
+  assert.throws(() => resolveScopeSelection(choice, null), refused);
+  assert.throws(() => resolveScopeSelection(provider(), ["q"]), refused, "a provider that declares no choice refuses any selection");
+  assert.throws(() => resolveScopeSelection(provider({ scope: [{ id: "only", label: "One folder" }] }), ["only"]), refused, "one folder is not a choice");
 });

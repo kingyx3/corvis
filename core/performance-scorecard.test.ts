@@ -6,14 +6,20 @@ import {
   NOT_REPORTED,
   SCORECARD_EXPORT_COLUMNS,
   SCORECARD_METRIC_CODES,
+  ScorecardFilterError,
   buildScorecard,
   cellSortValue,
   compareLatestFirst,
   figureAsOf,
   figureSortValue,
   formatFigure,
+  filterScorecardPayload,
   latestFigures,
+  nameOrder,
+  parseScorecardFilters,
   reportedFigureStatus,
+  scorecardPeriodOptions,
+  scorecardScopeLabel,
   scorecardExportRows,
   scorecardSnapshotIds,
   type FormatNumber,
@@ -322,4 +328,61 @@ test("a governed export is pinned to exactly the snapshots the shown figures com
   assert.deepEqual(scorecardSnapshotIds(scorecard), ["snap-a", "snap-b", "snap-c"], "history and projections are not part of the view");
   assert.deepEqual(scorecardSnapshotIds({ funds: [] }), []);
   assert.deepEqual(scorecardSnapshotIds(buildScorecard({ funds: [{ fundId: "fund-a", fund: "Alpha" }], facts: [] })), []);
+});
+
+test("filters are canonical: absent or null is no filter, a present one is a trimmed non-empty single-line string within its bound", () => {
+  assert.deepEqual(parseScorecardFilters({}), {});
+  assert.deepEqual(parseScorecardFilters({ fundId: null, period: undefined, other: "x" } as never), {});
+  assert.deepEqual(parseScorecardFilters({ fundId: " fund-a ", period: " Q1 2026 " }), { fundId: "fund-a", period: "Q1 2026" });
+  assert.deepEqual(parseScorecardFilters({ period: "Q1 2026" }), { period: "Q1 2026" });
+  for (const bad of [{ fundId: "" }, { fundId: "   " }, { period: "" }, { fundId: 7 }, { period: ["Q1"] }, { fundId: "a\nb" }, { period: "a\u2028b" }, { fundId: "x".repeat(513) }, { period: "x".repeat(65) }]) {
+    assert.throws(() => parseScorecardFilters(bad), (error: unknown) => error instanceof ScorecardFilterError && error.code === "invalid_scorecard_filter" && error.status === 400, JSON.stringify(bad));
+  }
+  assert.doesNotThrow(() => parseScorecardFilters({ fundId: "x".repeat(512), period: "x".repeat(64) }));
+});
+
+test("the scope label names the filters in one wording shared by manifests, delivery history and schedules", () => {
+  assert.equal(scorecardScopeLabel({}), "Performance scorecard · all entitled funds");
+  assert.equal(scorecardScopeLabel({ fundId: "fund-a" }), "Performance scorecard · fund-a");
+  assert.equal(scorecardScopeLabel({ period: "Q1 2026" }), "Performance scorecard · all entitled funds · Q1 2026");
+  assert.equal(scorecardScopeLabel({ fundId: "fund-a", period: "Q1 2026" }), "Performance scorecard · fund-a · Q1 2026");
+});
+
+test("filtering by fund keeps that fund; filtering by period keeps the figures stated for that period, so older periods are shown as reported", () => {
+  const payload = {
+    funds: [{ fundId: "fund-a", fund: "Alpha" }, { fundId: "fund-b", fund: "Beta" }],
+    facts: [
+      fact({ factId: "a-q2", fundId: "fund-a", period: "Q2 2026", asOf: "2026-06-30", valueNumber: "200" }),
+      fact({ factId: "a-q1", fundId: "fund-a", period: "Q1 2026", asOf: "2026-03-31", valueNumber: "100" }),
+      fact({ factId: "b-q2", fundId: "fund-b", period: "Q2 2026", asOf: "2026-06-30" }),
+    ],
+  };
+  assert.deepEqual(filterScorecardPayload(payload, {}), payload);
+  assert.deepEqual(filterScorecardPayload(payload, { fundId: "fund-a" }).funds, [{ fundId: "fund-a", fund: "Alpha" }]);
+  assert.deepEqual(filterScorecardPayload(payload, { fundId: "fund-a" }).facts.map((f) => f.factId), ["a-q2", "a-q1"]);
+  assert.deepEqual(filterScorecardPayload(payload, { period: "Q1 2026" }).facts.map((f) => f.factId), ["a-q1"]);
+  assert.equal(filterScorecardPayload(payload, { period: "Q1 2026" }).funds.length, 2, "every entitled fund keeps its row; a fund without that period is Not reported");
+  assert.deepEqual(filterScorecardPayload(payload, { fundId: "fund-b", period: "Q1 2026" }), { funds: [{ fundId: "fund-b", fund: "Beta" }], facts: [] });
+  // The Q1 view shows the Q1 NAV the GP reported (never the newer Q2 one, and never "Not reported" for a figure that exists).
+  const q1 = buildScorecard(filterScorecardPayload(payload, { period: "Q1 2026" }));
+  assert.equal(q1.funds[0]!.cells[0]!.figures[0]!.valueNumber, "100");
+  assert.equal(buildScorecard(payload).funds[0]!.cells[0]!.figures[0]!.valueNumber, "200");
+});
+
+test("period options list each reporting period once, latest as-of first, undated last, ties by label", () => {
+  assert.deepEqual(scorecardPeriodOptions([]), []);
+  assert.deepEqual(
+    scorecardPeriodOptions([
+      { period: "Q1 2026", asOf: "2026-03-31" }, { period: "Q2 2026", asOf: "2026-06-30" }, { period: "Q1 2026", asOf: "2026-03-30" },
+      { period: "FY 2025", asOf: null }, { period: "Annual", asOf: null }, { period: "  ", asOf: "2026-09-30" }, { period: "Q4 2025", asOf: "2025-12-31" },
+      { period: "Q4 2025", asOf: null }, { period: "H1 2026", asOf: "2026-06-30" }, { period: "FY 2025", asOf: "2025-12-31" },
+    ]),
+    ["H1 2026", "Q2 2026", "Q1 2026", "FY 2025", "Q4 2025", "Annual"],
+  );
+});
+
+test("fund order is name, then id", () => {
+  assert.ok(nameOrder({ name: "Alpha", id: "z" }, { name: "Beta", id: "a" }) < 0);
+  assert.ok(nameOrder({ name: "Alpha", id: "b" }, { name: "Alpha", id: "a" }) > 0);
+  assert.equal(nameOrder({ name: "Alpha", id: "a" }, { name: "Alpha", id: "a" }), 0);
 });
