@@ -20,8 +20,8 @@ import {
   type ServiceAccountResourceType,
   type ServiceAccountRole,
 } from "../domain/service-account.ts";
-import { ServiceAccountError, daysFromNow, type ServiceAccountBackend, type ServiceAccountResourceRef } from "../server/service-account.ts";
-import { hashCredentialSecret, mintCredential } from "../server/service-account-credential.ts";
+import { ServiceAccountError, daysFromNow, type ServiceAccountBackend, type ServiceAccountResourceRef } from "../server/service-accounts/service-account.ts";
+import { hashCredentialSecret, mintCredential } from "../server/service-accounts/service-account-credential.ts";
 import { documents as demoDocuments, fundSnapshots } from "../../../platform/demo/catalog.ts";
 
 /**

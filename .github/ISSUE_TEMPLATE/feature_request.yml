@@ -1,0 +1,20 @@
+name: Feature or change request
+description: Propose a capability, an improvement or a piece of technical debt to retire.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or goal
+      description: What is hard or missing today, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Which module owns it and what changes. Link the Confluence page if it affects a business requirement.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and risks

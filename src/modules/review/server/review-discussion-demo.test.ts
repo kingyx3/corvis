@@ -4,10 +4,10 @@ import test from "node:test";
 import type { AuditEvent, RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { MAX_REVIEW_COMMENTS_PER_THREAD, type ReviewSubjectRef } from "../domain/review-discussion.ts";
 import { DEMO_EXCEPTIONS, DemoReviewDiscussionStore, demoMemberId, demoReviewDiscussionStore, demoSubjectResolver } from "../adapters/review-discussion-store.ts";
-import { InvalidCursorError, encodeCursor } from "../../../platform/http/pagination.ts";
+import { InvalidCursorError, encodeCursor } from "../../../platform/http/api/pagination.ts";
 import { ReviewDiscussionRequestError } from "./review-discussion.ts";
 
-// See src/modules/sources/server/source-connections-routes.test.ts for why this loader is needed (the "@/..." route alias).
+// See src/modules/sources/server/connections/source-connections-routes.test.ts for why this loader is needed (the "@/..." route alias).
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";

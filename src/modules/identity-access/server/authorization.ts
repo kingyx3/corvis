@@ -1,7 +1,7 @@
 import type { RequestIdentity, Role, WorkspaceMembershipSummary } from "../../../shared/domain/enterprise.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
-import { SessionEndedByPolicyError } from "../../../platform/http/request-context.ts";
+import { SessionEndedByPolicyError } from "../../../platform/http/identity/request-context.ts";
 import { countMetric, durationMetric, logEvent } from "../../../platform/observability/telemetry.ts";
 
 export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId" | "tokenIssuer" | "tokenAudience" | "mfaUsed">;

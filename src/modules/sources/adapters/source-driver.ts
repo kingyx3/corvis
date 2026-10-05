@@ -1,4 +1,4 @@
-import type { ConnectorDriver, RemoteDocumentRef, SourceScope } from "../server/source-connectors.ts";
+import type { ConnectorDriver, RemoteDocumentRef, SourceScope } from "../server/connectors/source-connectors.ts";
 
 /**
  * The connector driver behind the demonstration providers (src/modules/sources/adapters/source-providers.ts), used only in demo mode.

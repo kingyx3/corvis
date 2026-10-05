@@ -5,7 +5,7 @@
 //   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/export-schedule-concurrency.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
-import { PostgresExportScheduleBackend, processDueExportSchedules } from '../../../src/modules/delivery/server/export-schedule.ts';
+import { PostgresExportScheduleBackend, processDueExportSchedules } from '../../../src/modules/delivery/server/schedules/export-schedule.ts';
 
 const dsn = process.env.CORVIS_DATABASE_DSN;
 assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');

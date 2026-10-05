@@ -8,8 +8,8 @@ import {
   sourceConnectorSecretStore,
   sourceConnectorDrivers,
   sweepExpiredSourceSecrets,
-} from "../../modules/sources/server/source-connector-runtime.ts";
-import type { SecretStore } from "../../modules/sources/server/source-connectors.ts";
+} from "../../modules/sources/server/connectors/source-connector-runtime.ts";
+import type { SecretStore } from "../../modules/sources/server/connectors/source-connectors.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";
 const PROJECT_ID = "corvis-uat-98213";

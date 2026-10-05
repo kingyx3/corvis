@@ -37,7 +37,7 @@ export type ServerConfig = {
   // workload OIDC instead of a shared secret.
   workerSecret?: string;
   // Identifies the Corvis-operated internal tenant whose administrators may
-  // provision brand-new client tenants (see src/modules/identity-access/server/tenant-provisioning.ts).
+  // provision brand-new client tenants (see src/modules/identity-access/server/tenants/tenant-provisioning.ts).
   // Unset by default: cross-tenant tenant creation is disabled until an
   // operator deliberately designates their internal operations tenant.
   operationsTenantId?: string;

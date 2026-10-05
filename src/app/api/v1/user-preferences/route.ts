@@ -1,6 +1,6 @@
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getUserPreferences, saveDisplayPreferences, mutateSavedView, PreferenceError } from "@/modules/workspace/server/user-preferences";
 export async function GET(request: Request) {
   const id = correlationId(request);

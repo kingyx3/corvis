@@ -1,7 +1,7 @@
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { nameOrder, SCORECARD_METRIC_CODES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../domain/performance-scorecard.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
-import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/pagination.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/api/pagination.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**

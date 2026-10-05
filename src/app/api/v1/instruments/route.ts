@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { holdingInstrumentServing } from "@/modules/analytics/server/holding-instrument-serving";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { keysetPage, paginate, parseLimit } from "@/platform/http/pagination";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { keysetPage, paginate, parseLimit } from "@/platform/http/api/pagination";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

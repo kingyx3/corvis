@@ -1,6 +1,6 @@
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
-import { retentionService } from "@/modules/governance/server/data-retention";
-import { correlationId, json } from "@/platform/http/http";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
+import { retentionService } from "@/modules/governance/server/lifecycle/data-retention";
+import { correlationId, json } from "@/platform/http/api/http";
 
 /**
  * The retention periods and legal holds that apply to the caller's organization (F10, #266). Read-only and

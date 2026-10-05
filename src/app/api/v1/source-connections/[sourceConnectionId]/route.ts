@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
-import { assertSourceConnectionId, type SourceConnection } from "@/modules/sources/server/source-connectors";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
+import { assertSourceConnectionId, type SourceConnection } from "@/modules/sources/server/connectors/source-connectors";
 
 /** Never returns the secret reference; it is an internal resource pointer, not customer-facing state. */
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {

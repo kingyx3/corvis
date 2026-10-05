@@ -1,10 +1,10 @@
 import { IdentityRecordValidationError, parseTargetTenant, parseTenantIdentityCommand } from "@/modules/identity-access/domain/identity-records";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { applyTenantIdentityCommand, readTenantIdentityRecords } from "@/modules/identity-access/server/identity-records";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { applyTenantIdentityCommand, readTenantIdentityRecords } from "@/modules/identity-access/server/directory/identity-records";
 import { postgres } from "@/platform/database/postgres";
-import { assertOperationsTenant } from "@/modules/identity-access/server/tenant-provisioning";
+import { assertOperationsTenant } from "@/modules/identity-access/server/tenants/tenant-provisioning";
 
 /**
  * Corvis-assisted identity records (F7b #335 verified email domains, F7e #338 per-tenant identity-provider record). Initial

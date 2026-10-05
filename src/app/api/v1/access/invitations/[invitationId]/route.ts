@@ -1,11 +1,11 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 import { deliverInvitationEmail } from "@/modules/notifications/server/notifications";
-import { resendTenantInvitation, revokeTenantInvitation } from "@/modules/identity-access/server/tenant-admin-self-service";
+import { resendTenantInvitation, revokeTenantInvitation } from "@/modules/identity-access/server/tenants/tenant-admin-self-service";
 
 export async function POST(request:Request,{params}:{params:Promise<{invitationId:string}>}){
   const id=correlationId(request);

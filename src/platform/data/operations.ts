@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
 import { getServerConfig } from "../config/config.ts";
-import { parseDeletionScope } from "../../modules/governance/server/data-lifecycle.ts";
+import { parseDeletionScope } from "../../modules/governance/server/lifecycle/data-lifecycle.ts";
 import { platform } from "./platform.ts";
 import { postgres, type PostgresSqlApi } from "../database/postgres.ts";
 

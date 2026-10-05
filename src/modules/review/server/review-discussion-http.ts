@@ -1,5 +1,5 @@
 import { ReviewDiscussionValidationError } from "../domain/review-discussion.ts";
-import { apiError, json } from "../../../platform/http/http.ts";
+import { apiError, json } from "../../../platform/http/api/http.ts";
 import { ReviewDiscussionRequestError } from "./review-discussion.ts";
 
 /** Typed review-discussion failures keep their stable code and status; everything else goes through the shared API error mapper. */

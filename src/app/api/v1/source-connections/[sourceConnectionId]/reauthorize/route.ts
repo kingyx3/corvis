@@ -1,9 +1,9 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
 import { ConflictError } from "@/platform/data/platform";
-import { assertSourceConnectionId, type SourceConnection } from "@/modules/sources/server/source-connectors";
+import { assertSourceConnectionId, type SourceConnection } from "@/modules/sources/server/connectors/source-connectors";
 
 function toResponse(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
   const { secretReference, ...rest } = connection;

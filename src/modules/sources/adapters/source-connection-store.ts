@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { connectionTransition, type ConnectionAction } from "../domain/source-connection-health.ts";
-import { classifyRunFailure, collectDocuments, type CollectionCounts, type LedgerEntry } from "../server/source-connector-sync.ts";
+import { classifyRunFailure, collectDocuments, type CollectionCounts, type LedgerEntry } from "../server/connectors/source-connector-sync.ts";
 import {
   ConnectorGovernanceError,
   acquisitionKey,
@@ -11,11 +11,11 @@ import {
   type ConnectorErrorClass,
   type IngestSink,
   type SourceConnection,
-} from "../server/source-connectors.ts";
-import { emptySyncSummary, leaseExpiry, nextRunAt, type SourceSyncSummary } from "../server/source-sync-schedule.ts";
+} from "../server/connectors/source-connectors.ts";
+import { emptySyncSummary, leaseExpiry, nextRunAt, type SourceSyncSummary } from "../server/connections/source-sync-schedule.ts";
 import { DEMO_OAUTH_PROVIDER_KEY, DEMO_TOKEN_PROVIDER_KEY, type DemoTestOutcome } from "./source-providers.ts";
 import { demoConnectorDriver } from "./source-driver.ts";
-import { plainAcquisitionReason, type SourceActivityAcquisition, type SourceActivityConnection, type SourceActivityRun } from "../server/source-lifecycle.ts";
+import { plainAcquisitionReason, type SourceActivityAcquisition, type SourceActivityConnection, type SourceActivityRun } from "../server/connectors/source-lifecycle.ts";
 
 /**
  * In-memory source connections for demo mode and the browser suites; not
@@ -123,7 +123,7 @@ function connectionId(slot: number): string {
   return `00000000-0000-4000-8000-${String(slot).padStart(12, "d")}`;
 }
 
-/** Mirrors `connectionAttention` in src/modules/sources/server/source-lifecycle.ts, which is the production source of these sentences. */
+/** Mirrors `connectionAttention` in src/modules/sources/server/connectors/source-lifecycle.ts, which is the production source of these sentences. */
 function attentionReason(status: ConnectionStatus, failures: number): string | undefined {
   if (status === "reauthorization_required") return "Connection authorization must be renewed before acquisition can continue.";
   if (status === "suspended") return "Connection is suspended and needs administrator attention.";
@@ -258,7 +258,7 @@ export class DemoSourceConnectionStore {
 
   /**
    * The demo scheduler: the same collection loop, failure rules and schedule as production (collectDocuments,
-   * classifyRunFailure and nextRunAt, shared with src/modules/sources/server/source-connector-sync.ts) over the in-memory connections,
+   * classifyRunFailure and nextRunAt, shared with src/modules/sources/server/connectors/source-connector-sync.ts) over the in-memory connections,
    * with the demonstration driver and the supplied ingest sink. Only an active connection made through the wizard with a
    * demo provider is collected from; one that is not active (a failed test, paused, awaiting reauthorization) never is.
    * A connection is claimed by pushing its next run time out by the lease before anything is read, so overlapping

@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
 import { assertDocumentAccess, assertPermission } from "@/shared/domain/enterprise";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getSourceReference } from "@/platform/data/operations";
 import { platform } from "@/platform/data/platform";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 
 // Source reference ids are uuids; anything else can never match and must not reach the
 // `::uuid` cast, which would fail the query and surface as a 500.

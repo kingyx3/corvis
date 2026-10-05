@@ -47,5 +47,5 @@ There is no Terraform or GitHub Environment wiring for these variables: browser-
 ## Testing
 
 - `src/modules/support/domain/support.test.ts`, `src/modules/support/domain/support-scope.test.ts` and `src/shared/lib/request-correlation.test.ts` cover the pure helpers at 100% (the changed-code coverage gate applies to every `domain/` and `src/shared/lib/` file).
-- `e2e/help-support.spec.ts` covers the Help menu, the pre-filled context, the palette commands, the phone route and a view error. The Help menu is also a surface in `e2e/support/surfaces.ts`, so it runs through the axe matrix in both themes.
-- `e2e/non-demo-smoke.spec.ts` checks, against the real HTTP adapter, that Contact support quotes the correlation id of a failed API call.
+- `e2e/journeys/help-support.spec.ts` covers the Help menu, the pre-filled context, the palette commands, the phone route and a view error. The Help menu is also a surface in `e2e/support/surfaces.ts`, so it runs through the axe matrix in both themes.
+- `e2e/smoke/non-demo-smoke.spec.ts` checks, against the real HTTP adapter, that Contact support quotes the correlation id of a failed API call.

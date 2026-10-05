@@ -7,7 +7,7 @@ import { demoExposureDimensionFacts, portfolioValueFacts } from "@/platform/demo
 import { demoCompanySectorStore } from "@/modules/workspace/adapters/company-sector-store";
 import { buildWorkspaceSummary } from "@/modules/workspace/domain/workspace-summary";
 
-// Matches the CORVIS_DEMO_MODE defaults in src/platform/http/request-context.ts, so
+// Matches the CORVIS_DEMO_MODE defaults in src/platform/http/identity/request-context.ts, so
 // the client-side demo port and the server-side demo identity path agree.
 const DEMO_TENANT_DISPLAY_NAME = "Meridian Capital Partners";
 const DEMO_WORKSPACE_DISPLAY_NAME = "Primary Workspace";

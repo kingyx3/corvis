@@ -1,13 +1,13 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import type { ExportScope } from "@/modules/delivery/domain/delivery";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { assertFeatureEnabled } from "@/modules/admin/server/feature-flags";
-import { withIdempotency } from "@/platform/http/idempotency";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { withIdempotency } from "@/platform/http/limits/idempotency";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { performanceScorecardScope } from "@/modules/analytics/server/performance-scorecard-export";
-import { createPhysicalExport } from "@/modules/delivery/server/physical-exports";
-import { listPhysicalExportStatuses } from "@/modules/delivery/server/export-history";
-import { isNonEmptyString } from "@/platform/http/request-validation";
+import { createPhysicalExport } from "@/modules/delivery/server/exports/physical-exports";
+import { listPhysicalExportStatuses } from "@/modules/delivery/server/exports/export-history";
+import { isNonEmptyString } from "@/platform/http/api/request-validation";
 
 function exportScope(value: unknown): ExportScope | undefined | null {
   if (value === undefined) return undefined;

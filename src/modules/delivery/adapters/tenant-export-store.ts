@@ -15,8 +15,8 @@ import {
   type TenantExportState,
 } from "../domain/tenant-export.ts";
 import { toCsv } from "../../../shared/lib/csv.ts";
-import { DataGovernanceError } from "../../governance/server/data-governance.ts";
-import { assembleTenantExportBundle, publicTenantExportManifest } from "../server/tenant-export-bundle.ts";
+import { DataGovernanceError } from "../../governance/server/lifecycle/data-governance.ts";
+import { assembleTenantExportBundle, publicTenantExportManifest } from "../server/tenant-export/tenant-export-bundle.ts";
 import {
   TENANT_EXPORT_LINK_MINUTES,
   decodeKeysetCursor,
@@ -27,7 +27,7 @@ import {
   type TenantExportListQuery,
   type TenantExportBackend,
   type TenantExportStream,
-} from "../server/tenant-export.ts";
+} from "../server/tenant-export/tenant-export.ts";
 import { documents, observations } from "../../../platform/demo/catalog.ts";
 
 /**

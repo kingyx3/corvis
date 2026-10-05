@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SCORECARD_METRIC_CODES } from "../domain/performance-scorecard.ts";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { InvalidCursorError, encodeCursor } from "../../../platform/http/pagination.ts";
+import { InvalidCursorError, encodeCursor } from "../../../platform/http/api/pagination.ts";
 import {
   fundsAfterCursor,
   nextFundCursor,

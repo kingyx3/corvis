@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { keysetPage, paginate, parseLimit } from "@/platform/http/pagination";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { keysetPage, paginate, parseLimit } from "@/platform/http/api/pagination";
 import { publicServingResources } from "@/platform/data/public-serving-resources";
 
 export async function GET(request: Request) {

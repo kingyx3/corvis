@@ -1,7 +1,7 @@
 import { hasPermission, type Permission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { isFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/modules/admin/server/feature-flags";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 const PERMISSIONS: readonly Permission[] = [
   "documents:read",

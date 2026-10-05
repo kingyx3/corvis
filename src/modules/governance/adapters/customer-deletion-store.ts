@@ -10,8 +10,8 @@ import {
   type DeletionRequestCommand,
   type DeletionRequestView,
 } from "../domain/data-retention.ts";
-import { DataGovernanceError } from "../server/data-governance.ts";
-import type { CustomerDeletionBackend } from "../server/customer-deletion.ts";
+import { DataGovernanceError } from "../server/lifecycle/data-governance.ts";
+import type { CustomerDeletionBackend } from "../server/lifecycle/customer-deletion.ts";
 import { demoLegalHoldCovers, demoRetentionCovers } from "./data-retention-fixtures.ts";
 
 /**

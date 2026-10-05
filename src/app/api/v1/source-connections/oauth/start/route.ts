@@ -1,13 +1,13 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { oauthRedirectUri, parseOAuthStartRequest, usesSecureCookies } from "@/modules/sources/server/source-connect-http";
-import { enforceSourceConnectAttemptLimit } from "@/modules/sources/server/source-connect-limits";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
-import { sourceConnectorSecretStore } from "@/modules/sources/server/source-connector-runtime";
-import { ConnectorGovernanceError } from "@/modules/sources/server/source-connectors";
-import { attemptCookie, startOAuthAttempt } from "@/modules/sources/server/source-oauth";
-import { oauthProviderForConnection, type ApprovedSourceProvider } from "@/modules/sources/server/source-providers";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { oauthRedirectUri, parseOAuthStartRequest, usesSecureCookies } from "@/modules/sources/server/connections/source-connect-http";
+import { enforceSourceConnectAttemptLimit } from "@/modules/sources/server/connections/source-connect-limits";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
+import { sourceConnectorSecretStore } from "@/modules/sources/server/connectors/source-connector-runtime";
+import { ConnectorGovernanceError } from "@/modules/sources/server/connectors/source-connectors";
+import { attemptCookie, startOAuthAttempt } from "@/modules/sources/server/connectors/source-oauth";
+import { oauthProviderForConnection, type ApprovedSourceProvider } from "@/modules/sources/server/connectors/source-providers";
 
 /**
  * Starts the OAuth authorization-code leg, either for a new connection (`providerKey`, `connectionLabel`,

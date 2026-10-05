@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { setFeatureFlag } from "@/modules/admin/server/feature-flags";
 import { listFeatureFlags } from "@/platform/data/operations";
 import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";

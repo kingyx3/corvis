@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for customer deletion requests (F10e, #325), through the application code: the customer backend in
-// src/modules/governance/server/customer-deletion.ts, the retention view in src/modules/governance/server/data-retention.ts and the unchanged operator flow in
-// src/modules/governance/server/data-lifecycle.ts drive migration 098 inside one transaction that is always rolled back. Covers what the pure-SQL
+// src/modules/governance/server/lifecycle/customer-deletion.ts, the retention view in src/modules/governance/server/lifecycle/data-retention.ts and the unchanged operator flow in
+// src/modules/governance/server/lifecycle/data-lifecycle.ts drive migration 098 inside one transaction that is always rolled back. Covers what the pure-SQL
 // test (customer-deletion-requests.sql) cannot: that the application's statements run against the real schema, that the
 // customer read never returns what only operators may see, and that the operator flow cannot execute a customer's request
 // before a different Organization Admin approved it, and still blocks it under a legal hold afterwards. Run after the full
@@ -10,11 +10,11 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 
-// src/modules/governance/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
+// src/modules/governance/server/lifecycle/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
 register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresCustomerDeletionBackend, createCustomerDeletionService } = await import('../../../src/modules/governance/server/customer-deletion.ts');
-const { PostgresRetentionBackend } = await import('../../../src/modules/governance/server/data-retention.ts');
-const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await import('../../../src/modules/governance/server/data-lifecycle.ts');
+const { PostgresCustomerDeletionBackend, createCustomerDeletionService } = await import('../../../src/modules/governance/server/lifecycle/customer-deletion.ts');
+const { PostgresRetentionBackend } = await import('../../../src/modules/governance/server/lifecycle/data-retention.ts');
+const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await import('../../../src/modules/governance/server/lifecycle/data-lifecycle.ts');
 const { createDeletionRequest } = await import('../../../src/platform/data/operations.ts');
 const { adminSqlErrorClassification } = await import('../../../src/platform/database/sql-application-errors.ts');
 

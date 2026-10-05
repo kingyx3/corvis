@@ -1,6 +1,6 @@
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
-import { sqlKeyset, type KeysetPage } from "../../../platform/http/pagination.ts";
+import { sqlKeyset, type KeysetPage } from "../../../platform/http/api/pagination.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 export type ClientPortfolio = {

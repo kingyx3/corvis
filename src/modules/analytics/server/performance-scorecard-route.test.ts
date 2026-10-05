@@ -7,7 +7,7 @@ import { trustedIdentityHeaders } from "../../../test-support/identity-assertion
 import "../../../test-support/http-sql-driver.ts";
 
 // Production-mode behaviour of GET /performance-scorecard against a faked SQL gateway
-// (see src/platform/http/route-authorization.test.ts for the same injection technique).
+// (see src/platform/http/security/route-authorization.test.ts for the same injection technique).
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 const TENANT = "11111111-aaaa-4aaa-8aaa-111111111111";

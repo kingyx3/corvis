@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
 import type { RequestIdentity } from "@/shared/domain/enterprise";
 import { getServerConfig } from "@/platform/config/config";
-import { closeDataIssuesForCorrection } from "@/modules/governance/server/data-issue";
-import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/modules/governance/server/data-correction";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { closeDataIssuesForCorrection } from "@/modules/governance/server/data-issues/data-issue";
+import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/modules/governance/server/lifecycle/data-correction";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, type PostgresSqlApi, withTransaction } from "@/platform/database/postgres";
 

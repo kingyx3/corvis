@@ -10,7 +10,7 @@ import {
   type DataIssueTransitionCommand,
   type ReportDataIssueCommand,
 } from "../domain/data-issue.ts";
-import { decodeCursor, encodeCursor } from "../../../platform/http/pagination.ts";
+import { decodeCursor, encodeCursor } from "../../../platform/http/api/pagination.ts";
 import {
   DataIssueRequestError,
   canViewDataIssue,
@@ -21,7 +21,7 @@ import {
   type DataIssueBackend,
   type DataIssueList,
   type DataIssueListQuery,
-} from "../server/data-issue.ts";
+} from "../server/data-issues/data-issue.ts";
 
 /**
  * In-memory data-issue cases for demo mode and the browser suites; not production evidence. Each demo tenant gets

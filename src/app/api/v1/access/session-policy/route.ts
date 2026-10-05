@@ -1,8 +1,8 @@
 import { parseSessionPolicyUpdate } from "@/modules/identity-access/domain/session-policy";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
-import { correlationId, json } from "@/platform/http/http";
-import { sessionPolicyErrorResponse, sessionPolicyService } from "@/modules/identity-access/server/session-policy";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
+import { correlationId, json } from "@/platform/http/api/http";
+import { sessionPolicyErrorResponse, sessionPolicyService } from "@/modules/identity-access/server/sessions/session-policy";
 
 /**
  * The organization's sign-in setup and session policy (F7, #263): the configured identity provider, SCIM status, the

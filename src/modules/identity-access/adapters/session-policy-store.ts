@@ -8,8 +8,8 @@ import {
   type SignOutEverywhereCommand,
   type SignOutEverywhereResult,
 } from "../domain/session-policy.ts";
-import { DataGovernanceError } from "../../governance/server/data-governance.ts";
-import type { SessionPolicyBackend, SessionPolicyChange } from "../server/session-policy.ts";
+import { DataGovernanceError } from "../../governance/server/lifecycle/data-governance.ts";
+import type { SessionPolicyBackend, SessionPolicyChange } from "../server/sessions/session-policy.ts";
 
 /**
  * In-memory session policy for demo mode and the browser suites; not production evidence. Each demo tenant gets its own

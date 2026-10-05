@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { exportObjectKey, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "@/modules/delivery/server/physical-exports";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { exportObjectKey, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "@/modules/delivery/server/exports/physical-exports";
 import { gcs } from "@/platform/gcp/gcs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
