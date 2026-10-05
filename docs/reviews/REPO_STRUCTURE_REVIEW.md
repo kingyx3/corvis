@@ -33,7 +33,8 @@ A follow-up change took the layout to what is usual for a repository of this siz
 | Contributor-facing files | `.editorconfig`, `.gitattributes`, `CONTRIBUTING.md`, a pull request template and issue forms. |
 | TypeScript projects | `tsconfig.json` covers `src/` (what `next build` checks); `tsconfig.tools.json` covers tooling, services, e2e and db. Together they cover the same 817 files as before. |
 | Enforcement | The layout check now also fails when one directory under `src`, `tools`, `services` or `e2e` holds more than 35 files. |
-| Left open on purpose | `CODEOWNERS` (needs named owners and changes merge rules), `LICENSE` (a legal decision for a repository that is public "for now"), and the Node version spread (`.nvmrc` and CI use 24, the images use 26, `engines` allows 22.18 and up). |
+| Ownership and licence | `.github/CODEOWNERS` (`* @kingyx3`) and a proprietary all-rights-reserved `LICENSE`, with `"license": "UNLICENSED"` in `package.json`; a repo check keeps the three consistent. |
+| Left open on purpose | The Node version spread (`.nvmrc` and CI use 24, the images use 26, `engines` allows 22.18 and up): aligning it changes the runtime. |
 
 ## 1. What the repo looks like today
 

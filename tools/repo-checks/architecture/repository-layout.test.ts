@@ -26,7 +26,7 @@ const isFile = (entries: string[]) => entries.every((entry) => entry === "");
 test("the repository root holds only known files and directories", () => {
   const allowed = new Set([
     ".dockerignore", ".editorconfig", ".env.example", ".gitattributes", ".github", ".gitignore", ".gitleaksignore", ".nvmrc",
-    "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "Dockerfile", "README.md", "SECURITY.md",
+    "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "Dockerfile", "LICENSE", "README.md", "SECURITY.md",
     "db", "docs", "e2e", "eslint.config.mjs", "infra", "next.config.ts", "openapi", "ops",
     "package-lock.json", "package.json", "playwright.config.ts", "services", "src", "tools", "tsconfig.json", "tsconfig.tools.json",
   ]);
@@ -88,4 +88,13 @@ test("no directory in the code areas grows past the size a reader can scan", () 
   }
   const oversized = [...sizes].filter(([, count]) => count > LIMIT).map(([directory, count]) => `${directory} (${count} files)`);
   assert.deepEqual(oversized, [], `group the files into feature folders; limit is ${LIMIT} files per directory (tests included)`);
+});
+
+test("ownership and licensing are declared and consistent", () => {
+  const owners = readFileSync(".github/CODEOWNERS", "utf8").split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  assert.ok(owners.some((line) => /^\*\s+@\S+/.test(line)), "CODEOWNERS needs a catch-all rule so every path has an owner");
+  const license = readFileSync("LICENSE", "utf8");
+  assert.match(license, /All rights reserved/);
+  assert.match(license, /No license is granted/);
+  assert.equal((JSON.parse(readFileSync("package.json", "utf8")) as { license?: string }).license, "UNLICENSED", "package.json must declare the proprietary license");
 });

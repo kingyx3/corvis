@@ -1,6 +1,6 @@
 # Contributing to Corvis
 
-Thanks for helping. This repository is public: treat every committed byte and every Git-history version as permanently public. Never commit customer data, credentials, private keys, real secrets or confidential evidence. To report a vulnerability, follow [SECURITY.md](SECURITY.md), not a public issue.
+Thanks for helping. This repository is proprietary (see [LICENSE](LICENSE)): contributions are limited to people the owner has authorised, and every contribution is covered by the same terms. It is also public, so treat every committed byte and every Git-history version as permanently public. Never commit customer data, credentials, private keys, real secrets or confidential evidence. To report a vulnerability, follow [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Set up
 

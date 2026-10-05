@@ -71,6 +71,10 @@ Module and layer boundaries, where new code goes, and the dependency rules are i
 
 To contribute, read [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, the checks a pull request must pass and the rules that are easy to break.
 
+## License
+
+Proprietary. All rights reserved: no use, copying, modification or distribution is permitted without the copyright holder's written permission. See [`LICENSE`](LICENSE). The repository is visible on GitHub, which is not a license.
+
 ## Public repository posture
 
 The repository is intentionally public for now, with an H2 2027 privacy review recorded in Confluence. Treat every committed byte and Git-history version as permanently public: never commit customer data, production credentials, private keys, real secrets, confidential control evidence or sensitive environment values.
