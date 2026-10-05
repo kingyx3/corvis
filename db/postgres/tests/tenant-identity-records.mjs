@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for verified email domains and the per-tenant identity-provider record (F7b #335, F7e #338),
-// through the application code: the operator commands and domain check in lib/server/identity-records.ts, the view in
-// lib/server/session-policy.ts and the authoritative lookup in lib/server/authorization.ts drive the SQL of migration 095
+// through the application code: the operator commands and domain check in src/modules/identity-access/server/identity-records.ts, the view in
+// src/modules/identity-access/server/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL of migration 095
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-identity-records.sql) cannot:
 // that token binding really refuses a request through the authoritative lookup, only when an operator turned it on and
 // only for OIDC, and that the view reads the real tables; (migration 099, F7a #334, F7c #336) that Require SSO really refuses
@@ -8,23 +8,23 @@
 // that the MFA a token reported is shown, that "sign out everywhere" names a recorded end-session endpoint, and that a signed
 // OIDC back-channel logout token revokes the session immediately while a replayed, forged or expired one does nothing.
 // Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/tenant-identity-records.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/tenant-identity-records.mjs
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { PostgresMembershipAuthorizationRepository } from '../../../lib/server/authorization.ts';
-import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../lib/server/identity-records.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+import { PostgresMembershipAuthorizationRepository } from '../../../src/modules/identity-access/server/authorization.ts';
+import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../src/modules/identity-access/server/identity-records.ts';
 
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresSessionPolicyBackend } = await import('../../../lib/server/session-policy.ts');
-const { handleBackchannelLogout } = await import('../../../lib/server/backchannel-logout.ts');
-const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../lib/server/oidc.ts');
-const { RateLimiter } = await import('../../../lib/server/rate-limit.ts');
+register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresSessionPolicyBackend } = await import('../../../src/modules/identity-access/server/session-policy.ts');
+const { handleBackchannelLogout } = await import('../../../src/modules/identity-access/server/backchannel-logout.ts');
+const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../src/modules/identity-access/server/oidc.ts');
+const { RateLimiter } = await import('../../../src/platform/http/rate-limit.ts');
 
 console.info = console.warn = () => undefined;
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const opsTenant = 'f9500000-0000-4000-8000-0000000000f0';
 const tenantId = 'f9500000-0000-4000-8000-000000000001';
@@ -157,7 +157,7 @@ try {
       if (url === `${token.tokenIssuer}/jwks` || url === 'https://login.example.test/keys') return new Response(JSON.stringify(jwks));
       return new Response('nope', { status: 404 });
     });
-    const config = { demoMode: false, authIssuer: 'https://login.example.test', authAudience: 'corvis-global', authJwksUrl: 'https://login.example.test/keys', postgresDsn: dsn };
+    const config = { demoMode: false, authIssuer: 'https://login.example.test', authAudience: 'corvis-global', authJwksUrl: 'https://login.example.test/keys', databaseDsn: dsn };
     const seconds = Math.floor(Date.now() / 1000);
     const logoutToken = (claims = {}, key = privateKey, iss = token.tokenIssuer, aud = token.tokenAudience) => {
       const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'bc-key', typ: 'logout+jwt' })).toString('base64url');

@@ -11,5 +11,5 @@ export default defineConfig([
     // skips detection. Keep it in step with the react dependency in package.json.
     settings: { react: { version: "19.3" } },
   },
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".claude/**", "db/convex-conformance/**"]),
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".claude/**", "tools/convex-conformance/**"]),
 ]);

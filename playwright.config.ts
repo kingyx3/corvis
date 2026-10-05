@@ -35,7 +35,7 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
-    // Dialogs/drawers animate in over ~150-180ms (see app/globals.css
+    // Dialogs/drawers animate in over ~150-180ms (see src/app/globals.css
     // `dialog-in`/`fade-in`/`drawer-in`). `toBeVisible()` passes as soon as the
     // element has a box and isn't display:none — well before that animation
     // finishes — so an axe scan run right after can catch every element
@@ -67,7 +67,7 @@ export default defineConfig({
         CORVIS_RUNTIME_SURFACE: "combined",
         CORVIS_AUTH_ISSUER: "https://issuer.invalid",
         CORVIS_AUTH_AUDIENCE: "corvis-e2e-smoke",
-        CORVIS_POSTGRES_DSN: "postgres://smoke:smoke@127.0.0.1:1/smoke",
+        CORVIS_DATABASE_DSN: "postgres://smoke:smoke@127.0.0.1:1/smoke",
         CORVIS_OBJECT_STORE_BUCKET: "corvis-e2e-smoke",
       } : {}),
     },

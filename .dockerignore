@@ -8,6 +8,9 @@ test-results
 e2e
 docs
 infra
+ops
+services
+tools
 *.log
 .env
 .env.*

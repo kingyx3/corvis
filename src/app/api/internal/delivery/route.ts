@@ -1,0 +1,84 @@
+import { timingSafeEqual } from "crypto";
+import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/modules/delivery/server/delivery";
+import { getServerConfig } from "@/platform/config/config";
+import { sweepExpiredExportDownloadGrants } from "@/modules/delivery/server/export-grant-sweep";
+import { processDueExportSchedules } from "@/modules/delivery/server/export-schedule";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { sweepExpiredIdempotencyKeys } from "@/platform/http/idempotency";
+import { dispatchConfiguredProcessingTransport } from "@/modules/processing/server/processing-transport";
+import { verifyConfiguredProcessingWorkerIdentity } from "@/modules/processing/server/processing-worker-ingress";
+import { processEmailDigests, processEmailOutbox } from "@/modules/notifications/server/notifications";
+import { sweepServiceAccountExpiry } from "@/modules/identity-access/server/service-account-expiry-sweep";
+import { sweepTenantExports } from "@/modules/delivery/server/tenant-export-sweep";
+import { sweepExpiredSourceSecrets } from "@/modules/sources/server/source-connector-runtime";
+import { processDueSourceSyncs } from "@/modules/sources/server/source-sync-scheduler";
+import { processApprovedTenantExports } from "@/modules/delivery/server/tenant-export-worker";
+import { logEvent } from "@/platform/observability/telemetry";
+import { releaseScannedUploads } from "@/modules/sources/server/upload-release";
+import { sweepTenantSessionActivity } from "@/modules/identity-access/server/session-activity-sweep";
+import { sweepUploadSessions } from "@/modules/sources/server/upload-sweep";
+
+function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
+
+async function authorizedWorker(request: Request): Promise<boolean> {
+  const config = getServerConfig();
+  try {
+    await verifyConfiguredProcessingWorkerIdentity(request);
+    return true;
+  } catch {
+    // Local/test compatibility only. Production service-to-service calls are
+    // authenticated with Google OIDC and never depend on a shared header secret.
+    return config.environment !== "production" && safeEqual(request.headers.get("x-corvis-worker-secret"), config.workerSecret);
+  }
+}
+
+export async function POST(request:Request){
+  const id=correlationId(request);
+  if(!await authorizedWorker(request)) return json({error:"forbidden",correlationId:id},{status:403});
+  try{
+    // This route runs on the private worker service. Derive its exact provider
+    // URL from the authenticated request instead of hard-coding a run.app host
+    // or introducing a self-referential Terraform environment variable.
+    const processingWorkerUrl = new URL("/api/internal/processing-stage", request.url).toString();
+    // allSettled: one rejected task must not hide the others' results (their side effects already happened).
+    const {results,failed}=await settleDeliveryTasks({
+      exports:()=>processQueuedExports(),
+      // Full tenant exports approved by a second Organization Admin (F10): same tick, same object store and artifact lifetime.
+      tenantExports:()=>processApprovedTenantExports(),
+      // F4: due schedule triggers become governed export requests made as the schedule's owner; the export worker above delivers them.
+      exportSchedules:()=>processDueExportSchedules(),
+      webhooks:()=>processWebhookDeliveries(),
+      processing:()=>dispatchConfiguredProcessingTransport(processingWorkerUrl),
+      webhookFanoutSweep:()=>sweepUnsubscribedWebhookFanoutEvents(),
+      idempotencyKeySweep:()=>sweepExpiredIdempotencyKeys(),
+      exportGrantSweep:()=>sweepExpiredExportDownloadGrants(),
+      // F10f: expired tenant-export artifacts are deleted from the object store and recorded, and spent download grants removed; both audited.
+      tenantExportSweep:()=>sweepTenantExports(),
+      uploadRelease:()=>releaseScannedUploads(),
+      uploadSweep:()=>sweepUploadSessions(),
+      // F7d: drop session records not seen for the whole retention window (never one a session limit is still measuring; revocations are untouched).
+      sessionActivitySweep:()=>sweepTenantSessionActivity(),
+      // B1d: pending OAuth attempts are short-lived secrets; a secret store with no native expiry is swept here (Secret Manager expires its own).
+      sourceSecretSweep:()=>sweepExpiredSourceSecrets(),
+      // B1c: active source connections that are due are collected from (through the upload pipeline), each under a lease so no two workers run one connection.
+      sourceSync:()=>processDueSourceSyncs(),
+      // F6d: Organization Admins are told, once per window, before a service account or its credential expires (queued here, sent by emailOutbox on a following tick).
+      serviceAccountExpirySweep:()=>sweepServiceAccountExpiry(),
+      emailDigests:()=>processEmailDigests(),
+      emailOutbox:()=>processEmailOutbox(),
+    });
+    // The upload sweep absorbs per-tenant failures into its summary instead of rejecting; surface them as a task failure too.
+    const sweepSummary=results.uploadSweep as {errors?:unknown}|null|undefined;
+    const sweepErrors=typeof sweepSummary?.errors==="number"?sweepSummary.errors:0;
+    if(sweepErrors>0&&!failed.includes("uploadSweep")) failed.push("uploadSweep");
+    // Likewise an artifact the sweep could not delete: the tick answers 500 so it is retried and alerted rather than silently kept.
+    const exportSweep=results.tenantExportSweep as {errors?:unknown}|null|undefined;
+    if(typeof exportSweep?.errors==="number"&&exportSweep.errors>0&&!failed.includes("tenantExportSweep")) failed.push("tenantExportSweep");
+    // A connection whose pass hit an unexpected fault was queued for a retry with a backoff; the tick still answers 500 so it is alerted. A run the provider failed is a recorded outcome, not a tick failure.
+    const sourceSync=results.sourceSync as {errors?:unknown}|null|undefined;
+    if(typeof sourceSync?.errors==="number"&&sourceSync.errors>0&&!failed.includes("sourceSync")) failed.push("sourceSync");
+    for(const task of failed) logEvent("error","delivery.task_failed",{correlationId:id},{task,failure:results[task as keyof typeof results]});
+    // A partial failure is still reported per task, but answers 500 so the scheduler retries and alerts.
+    return json({data:results,failed,correlationId:id},{status:failed.length>0?500:200});
+  }catch(error){return apiError(error,id);}
+}

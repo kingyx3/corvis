@@ -16,8 +16,8 @@
       "status": "design_present_operating_evidence_required",
       "owners": ["leadership", "operations", "platform-engineering"],
       "evidence": [
-        "docs/ARCHITECTURE.md",
-        "docs/DATA_PLATFORM.md",
+        "docs/architecture/ARCHITECTURE.md",
+        "docs/architecture/DATA_PLATFORM.md",
         "Confluence system description and control ownership",
         "auditor-agreed scope and subservice treatment"
       ]
@@ -28,7 +28,7 @@
       "status": "implementation_present_live_completeness_evidence_required",
       "owners": ["data-product", "platform-engineering", "data-governance"],
       "evidence": [
-        "docs/SOURCE_CONNECTORS.md",
+        "docs/features/SOURCE_CONNECTORS.md",
         "source authorization and rights enforcement",
         "ingestion manifests/checksums and expected-source completeness evidence",
         "source acquisition exception records"
@@ -53,7 +53,7 @@
       "owners": ["data-product", "operations"],
       "evidence": [
         "db/postgres/migrations/012_reconciliation_resolution.sql",
-        "app/api/v1/reconciliation-exceptions",
+        "src/app/api/v1/reconciliation-exceptions",
         "authorized exception resolution records",
         "reconciliation population/completeness evidence"
       ]

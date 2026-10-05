@@ -1,0 +1,384 @@
+import { createHash, randomBytes, randomUUID } from "crypto";
+import type { ExportScope } from "../domain/delivery.ts";
+import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
+import { getServerConfig } from "../../../platform/config/config.ts";
+import { scorecardScopeLabel } from "../../analytics/domain/performance-scorecard.ts";
+import { resolveScorecardExport } from "../../analytics/server/performance-scorecard-export.ts";
+import { PostgresPositionFinancialStatementRepository } from "../../analytics/server/position-financial-statements.ts";
+import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
+
+export type ExportFormat = ExportManifest["format"];
+export type ExportSource = NonNullable<ExportManifest["source"]>;
+type DeliveryManifest = ExportManifest & {
+  scope?: ExportScope;
+  scopeLabel?: string;
+  artifact?: {
+    contentType?: string;
+    sizeBytes?: number;
+    objectKey?: string;
+    fundIds?: string[];
+    documentIds?: string[];
+  };
+};
+
+export type ExportStatus = {
+  exportId: string;
+  format: ExportFormat;
+  state: string;
+  createdAt: string;
+  completedAt?: string;
+  expiresAt?: string;
+  checksumSha256?: string;
+  manifest: DeliveryManifest;
+  /** True when the export is complete and unexpired; a grant is issued only by the single-export read. */
+  downloadAvailable: boolean;
+  downloadUrl?: string;
+  downloadExpiresAt?: string;
+};
+
+function jsonIds(values: readonly string[]): string { return JSON.stringify(values); }
+function text(row: PostgresRow, key: string, fallback = ""): string {
+  const value = row[key];
+  return value == null ? fallback : value instanceof Date ? value.toISOString() : String(value);
+}
+function sha256(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
+function covers(current: readonly string[] | undefined, required: readonly string[] | undefined): boolean {
+  if (!required?.length) return true;
+  const allowed = new Set(current ?? []);
+  return required.every((value) => allowed.has(value));
+}
+function isSnapshotScope(scope: ExportScope | undefined): scope is { snapshotId: string } {
+  return Boolean(scope && "snapshotId" in scope);
+}
+
+/** Exported so the defensive entitlement guard (which createPhysicalExport's own pre-check makes unreachable) is testable. */
+export async function positionFinancialSnapshots(
+  identity: RequestIdentity,
+  scope: Extract<ExportScope, { positionFinancials: unknown }>,
+  store: PostgresSqlApi,
+): Promise<PostgresRow[]> {
+  const fundIds = identity.entitlements.fundIds ?? [];
+  const documentIds = identity.entitlements.documentIds ?? [];
+  if (!fundIds.includes(scope.positionFinancials.fundId) || documentIds.length === 0) return [];
+  const p = scope.positionFinancials;
+  const parameters: unknown[] = [identity.tenantId, jsonIds(fundIds), jsonIds(documentIds), identity.workspaceId, p.fundId, p.holdingId, p.companyId];
+  let portfolioPredicate = "";
+  if (p.portfolioId) {
+    parameters.push(p.portfolioId);
+    portfolioPredicate = `and exists (
+        select 1 from corvis_serving.client_portfolio_holding_attribution pa
+        where pa.tenant_id=v.tenant_id
+          and pa.workspace_id::text=$4
+          and pa.portfolio_id::text=$8
+          and pa.owning_fund_id=v.fund_id
+          and pa.holding_id::text=v.holding_id::text
+          and pa.root_fund_id in (select jsonb_array_elements_text($2::jsonb))
+          and pa.owning_fund_id in (select jsonb_array_elements_text($2::jsonb))
+      )`;
+  }
+  return store.query(`select distinct ps.snapshot_id,ps.schema_version,ps.taxonomy_version,ps.fund_id,ps.version,
+    (select count(*)::integer from corvis_consolidated.reconciliation_exception e
+      where e.tenant_id=ps.tenant_id and e.snapshot_id=ps.snapshot_id and e.snapshot_version=ps.version and e.status='open'
+    ) as blocking_exception_count
+    from corvis_serving.position_financial_statement_values v
+    join corvis_consolidated.reconciliation_run rr
+      on rr.tenant_id=v.tenant_id
+     and rr.canonicalization_run_id=v.canonicalization_run_id
+     and rr.document_id=v.document_id
+     and rr.fund_id=v.fund_id
+     and rr.report_period=v.report_period
+     and rr.status='ready'
+    join corvis_consolidated.fund_period_snapshot ps
+      on ps.tenant_id=rr.tenant_id
+     and ps.snapshot_id=rr.snapshot_id
+     and ps.version>=rr.snapshot_version
+     and ps.status='published'
+    where v.tenant_id=$1::uuid
+      and v.fund_id in (select jsonb_array_elements_text($2::jsonb))
+      and v.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+      and v.fund_id=$5
+      and v.holding_id::text=$6
+      and v.company_id::text=$7
+      ${portfolioPredicate}
+      and not exists (
+        select 1 from corvis_consolidated.fund_period_snapshot newer
+        where newer.tenant_id=ps.tenant_id
+          and newer.snapshot_id=ps.snapshot_id
+          and newer.version>ps.version
+      )
+    order by ps.snapshot_id`, parameters as import("../../../platform/database/postgres.ts").PostgresPrimitive[]);
+}
+
+export async function createPhysicalExport(
+  identity: RequestIdentity,
+  format: ExportFormat,
+  options: { scope?: ExportScope; source?: ExportSource } = {},
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
+): Promise<ExportManifest> {
+  const { scope, source = "delivery" } = options;
+  assertRedistributionAllowed(identity);
+  const fundIds = identity.entitlements.fundIds ?? [];
+  const documentIds = identity.entitlements.documentIds ?? [];
+  const snapshotScope = isSnapshotScope(scope) ? scope : undefined;
+  const positionScope = scope && "positionFinancials" in scope ? scope : undefined;
+  const scorecardScope = scope && "performanceScorecard" in scope ? scope : undefined;
+
+  let snapshots: PostgresRow[];
+  let positionRowCount: number | undefined;
+  let scorecardRowCount = 0;
+  if (positionScope) {
+    const p = positionScope.positionFinancials;
+    const rows = await new PostgresPositionFinancialStatementRepository(store).list(identity, {
+      fundId: p.fundId,
+      holdingId: p.holdingId,
+      companyId: p.companyId,
+      periodicity: p.periodicity,
+      portfolioId: p.portfolioId,
+      limit: 5000,
+    });
+    if (rows.length === 0) throw new AuthorizationError("exports:scope");
+    positionRowCount = rows.length;
+    snapshots = await positionFinancialSnapshots(identity, positionScope, store);
+  } else if (scorecardScope) {
+    const resolved = await resolveScorecardExport(identity, store, scorecardScope);
+    scorecardRowCount = resolved.rowCount;
+    snapshots = resolved.snapshots;
+  } else {
+    snapshots = fundIds.length === 0 ? [] : await store.query(`select s.snapshot_id,s.schema_version,s.taxonomy_version,s.fund_id,s.version,s.blocking_exception_count
+      from corvis_serving.fund_period_snapshots s
+      where s.tenant_id=$1 and s.status='published'
+        and not exists (
+          select 1 from corvis_serving.fund_period_snapshots newer
+          where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+        )
+        and s.fund_id in (select jsonb_array_elements_text($2::jsonb))
+        ${snapshotScope ? "and s.snapshot_id::text=$3" : ""}
+      order by s.published_at desc`,
+    snapshotScope ? [identity.tenantId, jsonIds(fundIds), snapshotScope.snapshotId] : [identity.tenantId, jsonIds(fundIds)]);
+  }
+  // Any scoped export must resolve to the exact already-entitled published data
+  // represented by that scope; fail closed rather than falling back to broader data.
+  if (scope && snapshots.length === 0) throw new AuthorizationError("exports:scope");
+
+  const scopedFundIds = scope ? [...new Set(snapshots.map((row) => text(row, "fund_id")))] : fundIds;
+  const counts = positionScope || scorecardScope || scopedFundIds.length === 0 || documentIds.length === 0 ? [] : await store.query(`select count(distinct o.observation_id) as row_count
+    from corvis_serving.observations o
+    join corvis_source.source_reference r
+      on r.tenant_id=o.tenant_id and r.source_reference_id=o.source_reference_id
+    where o.tenant_id=$1 and o.review_state='approved'
+      and o.fund_id in (select jsonb_array_elements_text($2::jsonb))
+      and r.document_id in (select entitled.id::uuid from jsonb_array_elements_text($3::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`,
+  [identity.tenantId, jsonIds(scopedFundIds), jsonIds(documentIds)]);
+
+  const exportId = randomUUID();
+  const generatedAt = new Date().toISOString();
+  const scopeLabel = positionScope
+    ? `Position financials · ${positionScope.positionFinancials.companyId} · ${positionScope.positionFinancials.periodicity}${positionScope.positionFinancials.portfolioId ? ` · portfolio ${positionScope.positionFinancials.portfolioId}` : ""}`
+    : scorecardScope ? scorecardScopeLabel(scorecardScope)
+    : snapshotScope ? `Snapshot ${snapshotScope.snapshotId}` : undefined;
+  const rowCounts: Record<string, number> = positionScope
+    ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }
+    : scorecardScope ? { performanceScorecard: scorecardRowCount, snapshots: snapshots.length }
+    : { observations: Number(counts[0]?.row_count ?? 0), snapshots: snapshots.length };
+  const snapshotState = snapshots
+    .filter((row) => row.version != null)
+    .map((row) => ({
+      snapshotId: text(row, "snapshot_id"),
+      version: Number(row.version),
+      openExceptionCount: Number(row.blocking_exception_count ?? 0),
+    }));
+  const base = {
+    exportId,
+    tenantId: identity.tenantId,
+    generatedAt,
+    schemaVersion: snapshots.length ? text(snapshots[0]!, "schema_version", "v1") : "v1",
+    taxonomyVersion: snapshots.length ? text(snapshots[0]!, "taxonomy_version", "v1") : "v1",
+    snapshotIds: snapshots.map((row) => text(row, "snapshot_id")),
+    format,
+    rowCounts,
+    source,
+    ...(scope ? { scope } : {}),
+    ...(scopeLabel ? { scopeLabel } : {}),
+    ...(snapshotState.length ? { snapshotState } : {}),
+  };
+  const manifest: DeliveryManifest = { ...base, checksumSha256: sha256(JSON.stringify(base)) };
+
+  // The job row and its ExportRequested event commit together: a job without the event is never
+  // picked up (it would sit 'queued' forever), and an event without the job has nothing to run.
+  await withTransaction(store, async (tx) => {
+    await tx.execute(`insert into corvis_serving.export_job
+        (tenant_id,export_id,workspace_id,auth_method,session_id,requested_by,format,snapshot_ids,state,checksum_sha256,manifest,created_at)
+      values ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,array(select jsonb_array_elements_text($8::jsonb)::uuid),'queued',$9,$10::jsonb,now())`,
+    [identity.tenantId, exportId, identity.workspaceId, identity.authMethod, identity.sessionId, identity.subject,
+      format, JSON.stringify(manifest.snapshotIds), manifest.checksumSha256, JSON.stringify(manifest)]);
+    await tx.execute(`insert into corvis_control.outbox_event
+        (tenant_id,event_id,event_type,aggregate_type,aggregate_id,payload,created_at)
+      values ($1,gen_random_uuid(),'ExportRequested','export',$2,$3::jsonb,now())`,
+    [identity.tenantId, exportId, JSON.stringify({ exportId, format, snapshotIds: manifest.snapshotIds })]);
+  });
+  return manifest;
+}
+
+async function assertCurrentArtifactAccess(
+  identity: RequestIdentity,
+  snapshotIds: readonly string[],
+  manifest: DeliveryManifest,
+  store: PostgresSqlApi,
+): Promise<void> {
+  assertRedistributionAllowed(identity);
+  const artifact = manifest.artifact;
+  if (artifact) {
+    if (!covers(identity.entitlements.fundIds, artifact.fundIds) || !covers(identity.entitlements.documentIds, artifact.documentIds)) {
+      throw new AuthorizationError("exports:current_data_rights");
+    }
+    // A withdrawn or superseded snapshot must stop being downloadable, not only
+    // stop being exportable: the artifact's bytes outlive the publication.
+    if (snapshotIds.length > 0) {
+      const current = await store.query(`select count(distinct s.snapshot_id) as snapshot_count
+        from corvis_consolidated.fund_period_snapshot s
+        where s.tenant_id=$1 and s.status='published'
+          and not exists (
+            select 1 from corvis_consolidated.fund_period_snapshot newer
+            where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+          )
+          and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`,
+      [identity.tenantId, jsonIds(snapshotIds)]);
+      if (Number(current[0]?.snapshot_count ?? 0) !== snapshotIds.length) throw new AuthorizationError("exports:current_data_rights");
+    }
+    return;
+  }
+  if (snapshotIds.length === 0) return;
+  const fundIds = identity.entitlements.fundIds ?? [];
+  if (fundIds.length === 0) throw new AuthorizationError("exports:current_data_rights");
+  const rows = await store.query(`select count(distinct s.snapshot_id) as snapshot_count
+    from corvis_consolidated.fund_period_snapshot s
+    where s.tenant_id=$1 and s.status='published'
+      and not exists (
+        select 1 from corvis_consolidated.fund_period_snapshot newer
+        where newer.tenant_id=s.tenant_id and newer.snapshot_id=s.snapshot_id and newer.version>s.version
+      )
+      and s.snapshot_id in (select entitled.id::uuid from jsonb_array_elements_text($2::jsonb) as entitled(id) where entitled.id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+      and s.fund_id in (select jsonb_array_elements_text($3::jsonb))`,
+  [identity.tenantId, jsonIds(snapshotIds), jsonIds(fundIds)]);
+  if (Number(rows[0]?.snapshot_count ?? 0) !== snapshotIds.length) {
+    throw new AuthorizationError("exports:current_data_rights");
+  }
+}
+
+export const EXPORT_STATUS_COLUMNS = "export_id,format,state,manifest,checksum_sha256,created_at,completed_at,expires_at,snapshot_ids";
+
+/**
+ * Builds a caller-visible status from one export_job row after re-checking the
+ * caller's current rights to the exported data. Read-only: it never issues a
+ * download grant. Throws AuthorizationError when current rights no longer
+ * cover the artifact.
+ */
+export async function exportStatusFromJob(
+  identity: RequestIdentity,
+  row: PostgresRow,
+  store: PostgresSqlApi,
+): Promise<ExportStatus> {
+  const manifest = row.manifest as DeliveryManifest;
+  const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
+  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
+  const state = text(row, "state");
+  const expiresAt = row.expires_at == null ? undefined : text(row, "expires_at");
+  return {
+    exportId: text(row, "export_id"),
+    format: text(row, "format") as ExportFormat,
+    state,
+    createdAt: text(row, "created_at"),
+    completedAt: row.completed_at == null ? undefined : text(row, "completed_at"),
+    expiresAt,
+    checksumSha256: row.checksum_sha256 == null ? undefined : text(row, "checksum_sha256"),
+    manifest,
+    downloadAvailable: state === "complete" && expiresAt != null && Date.parse(expiresAt) > Date.now(),
+  };
+}
+
+/**
+ * Reads one of the caller's exports and, when it is downloadable, issues a
+ * fresh short-lived single-subject download grant. Clients call this on
+ * demand when the user asks to download, never from a polling loop.
+ */
+export async function getPhysicalExportStatus(
+  identity: RequestIdentity,
+  exportId: string,
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
+): Promise<ExportStatus | null> {
+  const rows = await store.query(`select ${EXPORT_STATUS_COLUMNS}
+    from corvis_serving.export_job
+    where tenant_id=$1 and export_id=$2::uuid and requested_by=$3
+    limit 1`, [identity.tenantId, exportId, identity.subject]);
+  const row = rows[0];
+  if (!row) return null;
+  const result = await exportStatusFromJob(identity, row, store);
+  if (result.downloadAvailable && result.expiresAt) {
+    const token = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Math.min(Date.parse(result.expiresAt), Date.now() + 10 * 60_000)).toISOString();
+    await store.execute(`insert into corvis_serving.export_download_grant
+        (tenant_id,grant_id,export_id,subject,token_sha256,expires_at,created_at)
+      values ($1,gen_random_uuid(),$2::uuid,$3,$4,$5::timestamptz,now())`,
+    [identity.tenantId, exportId, identity.subject, sha256(token), expiresAt]);
+    result.downloadUrl = `/api/v1/exports/${encodeURIComponent(exportId)}/download?grant=${encodeURIComponent(token)}`;
+    result.downloadExpiresAt = expiresAt;
+  }
+  return result;
+}
+
+export async function redeemPhysicalExportGrant(
+  identity: RequestIdentity,
+  exportId: string,
+  token: string,
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
+): Promise<{ objectUri: string; format: ExportFormat; checksumSha256: string } | null> {
+  if (!token || token.length > 256) return null;
+  // Single use: the grant is consumed by the same statement that validates it, so a replayed
+  // or concurrent redemption of one token matches no row. (A download that then fails must
+  // request a fresh grant from the single-export read.)
+  const rows = await store.query(`update corvis_serving.export_download_grant g
+    set consumed_at=now()
+    from corvis_serving.export_job j
+    where j.tenant_id=g.tenant_id and j.export_id=g.export_id
+      and g.tenant_id=$1 and g.export_id=$2::uuid and g.subject=$3
+      and g.token_sha256=$4 and g.expires_at>now() and g.consumed_at is null
+      and j.requested_by=$3 and j.state='complete' and j.expires_at>now()
+    returning j.object_uri,j.format,j.checksum_sha256,j.snapshot_ids,j.manifest`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+  const row = rows[0];
+  if (!row?.object_uri || !row?.checksum_sha256) return null;
+  const manifest = row.manifest as DeliveryManifest;
+  const snapshotIds = Array.isArray(row.snapshot_ids) ? row.snapshot_ids.map(String) : manifest.snapshotIds;
+  await assertCurrentArtifactAccess(identity, snapshotIds, manifest, store);
+  return {
+    objectUri: String(row.object_uri),
+    format: String(row.format) as ExportFormat,
+    checksumSha256: String(row.checksum_sha256),
+  };
+}
+
+/**
+ * Gives a consumed grant back when the download failed before a single byte was handed to the caller (the object
+ * store errored or the object is missing), so a transient failure does not force a fresh grant. Bound to the same
+ * tenant, export, subject and token hash as the redemption; it never revives an expired grant.
+ */
+export async function restorePhysicalExportGrant(
+  identity: RequestIdentity,
+  exportId: string,
+  token: string,
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
+): Promise<void> {
+  if (!token || token.length > 256) return;
+  await store.execute(`update corvis_serving.export_download_grant
+    set consumed_at=null
+    where tenant_id=$1 and export_id=$2::uuid and subject=$3 and token_sha256=$4
+      and consumed_at is not null and expires_at>now()`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+}
+
+export function exportObjectKey(objectUri: string): string {
+  const config = getServerConfig();
+  const prefix = `gs://${config.objectStoreBucket ?? ""}/`;
+  if (!config.objectStoreBucket || !objectUri.startsWith(prefix)) throw new Error("invalid_export_object_uri");
+  const key = objectUri.slice(prefix.length);
+  if (!key.startsWith("exports/") || key.includes("..")) throw new Error("invalid_export_object_uri");
+  return key;
+}

@@ -120,10 +120,10 @@ jobs:
             exit 1
           fi
 
-          bash .github/scripts/verify-gcp-trust-anchor.sh
+          bash tools/ci/verify-gcp-trust-anchor.sh
 
       - name: Bootstrap protected Terraform state
-        run: bash .github/scripts/terraform-state.sh ensure
+        run: bash tools/ci/terraform-state.sh ensure
 
       - name: Terraform init
         shell: bash
@@ -133,7 +133,7 @@ jobs:
             -backend-config="prefix=corvis/${{ inputs.environment }}"
 
       - name: Re-adopt retained KMS bootstrap anchors
-        run: bash .github/scripts/terraform-kms-state.sh adopt
+        run: bash tools/ci/terraform-kms-state.sh adopt
 
       - name: Terraform format check
         run: terraform fmt -check -recursive infra/terraform
@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           terraform -chdir="${TF_ROOT}" show -json bootstrap.tfplan > "${RUNNER_TEMP}/bootstrap-plan.json"
-          bash .github/scripts/assert-no-runtime-destroy.sh "${RUNNER_TEMP}/bootstrap-plan.json"
+          bash tools/ci/assert-no-runtime-destroy.sh "${RUNNER_TEMP}/bootstrap-plan.json"
 
       - name: Apply keyless GCP foundation
         if: inputs.action == 'apply'

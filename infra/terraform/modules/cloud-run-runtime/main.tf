@@ -104,7 +104,7 @@ resource "google_secret_manager_secret_iam_member" "deployer_postgres" {
   member    = "serviceAccount:${local.deployer_service_account_email}"
 }
 
-# GcpSecretManagerSecretStore (lib/server/source-connector-runtime.ts, used
+# GcpSecretManagerSecretStore (src/modules/sources/server/source-connector-runtime.ts, used
 # only by the customer-facing /api/v1/source-connections routes, which run on
 # the API service -- never the worker) creates, adds versions to, reads and
 # deletes per-tenant source-connector credential secrets under the
@@ -268,7 +268,7 @@ resource "google_cloud_run_v2_service" "worker" {
       }
 
       env {
-        name = "CORVIS_POSTGRES_DSN"
+        name = "CORVIS_DATABASE_DSN"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.postgres_dsn.secret_id
@@ -540,7 +540,7 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
-        name = "CORVIS_POSTGRES_DSN"
+        name = "CORVIS_DATABASE_DSN"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.postgres_dsn.secret_id

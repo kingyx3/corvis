@@ -1,0 +1,20 @@
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { holdingInstrumentServing } from "@/modules/analytics/server/holding-instrument-serving";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { keysetPage, paginate, parseLimit } from "@/platform/http/pagination";
+
+export async function GET(request: Request) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAuthorizedRequestIdentity(request);
+    assertPermission(identity, "observations:read");
+    const url = new URL(request.url);
+    const limit = parseLimit(url.searchParams.get("limit"));
+    const cursor = url.searchParams.get("cursor");
+    // Keyset page in SQL (limit + 1 rows after the cursor key) instead of loading the whole entitled set.
+    const rows = await holdingInstrumentServing().holdings(identity, keysetPage(cursor, limit));
+    const page = paginate(rows, (row) => row.id, limit, cursor);
+    return json({ data: page.items, nextCursor: page.nextCursor, correlationId: id });
+  } catch (error) { return apiError(error, id); }
+}

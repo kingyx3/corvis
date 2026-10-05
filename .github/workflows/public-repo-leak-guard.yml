@@ -35,4 +35,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: Reject sensitive or generated artifacts in tracked files and history
-        run: bash .github/scripts/public-repo-leak-guard.sh
+        run: bash tools/ci/public-repo-leak-guard.sh

@@ -1,0 +1,30 @@
+import { randomUUID } from "crypto";
+import { retireFeatureFlag } from "@/modules/admin/server/feature-flags";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { getServerConfig } from "@/platform/config/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
+import { postgres, withTransaction } from "@/platform/database/postgres";
+
+/** Retirement is terminal: a retired flag can never be re-enabled or re-registered under the same key. */
+export async function POST(request: Request) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAdminRequestIdentity(request);
+    const body = await readJsonObject(request) as { key?: string } | undefined;
+    if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    if (typeof body.key !== "string" || !body.key || body.key.length > 128) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
+    const key = body.key;
+    // Retirement is terminal and its audit event must commit together with
+    // it, so a failed audit insert never leaves an unaudited retirement in place.
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
+      await retireFeatureFlag(identity, key, tx);
+      await new PostgresOperationsRepository(tx).audit({
+        id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,
+        actorSubject: identity.subject, sessionId: identity.sessionId, action: "feature_flag.retire",
+        targetType: "feature_flag", targetId: key, outcome: "success", correlationId: id,
+      });
+    });
+    return json({ data: { key: body.key, retired: true }, correlationId: id });
+  } catch (error) { return apiError(error, id); }
+}

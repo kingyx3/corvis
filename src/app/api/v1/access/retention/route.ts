@@ -1,0 +1,15 @@
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { retentionService } from "@/modules/governance/server/data-retention";
+import { correlationId, json } from "@/platform/http/http";
+
+/**
+ * The retention periods and legal holds that apply to the caller's organization (F10, #266). Read-only and
+ * Organization-Admin-only: Corvis operations set and lift both; this only shows them.
+ */
+export async function GET(request: Request) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveOrganizationAdmin(request);
+    return json({ data: await retentionService().view(identity), correlationId: id });
+  } catch (error) { return dataGovernanceErrorResponse(error, id); }
+}

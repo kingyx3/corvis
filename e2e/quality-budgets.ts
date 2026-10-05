@@ -1,5 +1,5 @@
 // Version-controlled quality budgets. Every number here is asserted by e2e/performance.spec.ts
-// and documented in docs/QUALITY_BUDGETS.md. Budgets are deliberately generous ceilings that catch
+// and documented in docs/engineering/QUALITY_BUDGETS.md. Budgets are deliberately generous ceilings that catch
 // order-of-magnitude regressions without depending on runner speed.
 
 export type BudgetTarget = "development" | "production";

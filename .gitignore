@@ -33,7 +33,7 @@ pnpm-debug.log*
 next-env.d.ts
 
 # Runtime-only operational state (restored/saved by GitHub Actions cache)
-control-loop/state/
+services/control-loop/state/
 
 # Ephemeral local agent worktrees
 .claude/worktrees/

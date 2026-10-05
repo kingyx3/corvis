@@ -106,7 +106,7 @@ jobs:
           terraform-version: "1.13.3"
 
       - name: Require initialized Terraform state
-        run: bash .github/scripts/terraform-state.sh require
+        run: bash tools/ci/terraform-state.sh require
 
       - name: Terraform init and validate
         shell: bash
@@ -141,7 +141,7 @@ jobs:
 
       - name: Repair retained KMS state after a partial full teardown
         if: steps.managed_state.outputs.has_resources == 'true'
-        run: bash .github/scripts/terraform-kms-state.sh adopt
+        run: bash tools/ci/terraform-kms-state.sh adopt
 
       - name: Resolve current runtimes for safe protection removal
         if: steps.managed_state.outputs.has_resources == 'true'
@@ -240,7 +240,7 @@ jobs:
             echo "Processing push subscription still exists after idle transition."
             exit 1
           fi
-          bash .github/scripts/terraform-state.sh require
+          bash tools/ci/terraform-state.sh require
 
       - name: Full Terraform decommission
         if: inputs.action == 'apply' && inputs.mode == 'full' && steps.managed_state.outputs.has_resources == 'true'
@@ -272,7 +272,7 @@ jobs:
 
       - name: Hibernate retained KMS anchor
         if: inputs.action == 'apply' && inputs.mode == 'full'
-        run: bash .github/scripts/terraform-kms-state.sh hibernate
+        run: bash tools/ci/terraform-kms-state.sh hibernate
 
       - name: Delete remote Terraform state last
         if: inputs.action == 'apply' && inputs.mode == 'full'

@@ -1,0 +1,38 @@
+import { assertPermission } from "@/shared/domain/enterprise";
+import { canAccessUpload } from "@/modules/sources/server/upload-access";
+import { uploads } from "@/modules/sources/server/uploads";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+
+export async function GET(request: Request, context: { params: Promise<{ uploadId: string }> }) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAuthorizedRequestIdentity(request);
+    assertPermission(identity, "documents:write");
+    const { uploadId } = await context.params;
+    const session = await uploads().get(identity, uploadId);
+    if (!canAccessUpload(identity, session)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
+    return json({ data: {
+      uploadId: session.uploadId,
+      documentId: session.documentId,
+      artifactVersionId: session.artifactVersionId,
+      ingestionId: session.ingestionId,
+      chunkSize: session.chunkSize,
+      state: session.state,
+      uploadUrl: ["initiated", "uploading"].includes(session.state) ? session.resumableUploadUrl : undefined,
+    }, correlationId: id });
+  } catch (error) { return apiError(error, id); }
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ uploadId: string }> }) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAuthorizedRequestIdentity(request);
+    assertPermission(identity, "documents:write");
+    const { uploadId } = await context.params;
+    const session = await uploads().get(identity, uploadId);
+    if (!canAccessUpload(identity, session)) return json({ error: "upload_not_found", correlationId: id }, { status: 404 });
+    await uploads().abort(identity, uploadId);
+    return new Response(null, { status: 204 });
+  } catch (error) { return apiError(error, id); }
+}

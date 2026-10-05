@@ -1,18 +1,18 @@
 // Real-Postgres acceptance for data-issue reports (F5, #261), through the application code: the repository in
-// lib/server/data-issue.ts drives the SQL functions of migration 083 inside one transaction that is always rolled back.
+// src/modules/governance/server/data-issue.ts drives the SQL functions of migration 083 inside one transaction that is always rolled back.
 // Covers what the pure-SQL test (data-issue-reports.sql) cannot: visibility predicates as the repository builds them,
 // keyset paging, the reporter's unseen indicator, the in-app/email notice by status, send-time eligibility and
 // preferences from the F2 outbox, and the link from the governed correction flow. Run after the full migration chain on a
 // disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/data-issue-reports.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/data-issue-reports.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
-import { PostgresDataIssueBackend, closeDataIssuesForCorrection } from '../../../lib/server/data-issue.ts';
-import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../lib/server/notifications.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
+import { PostgresDataIssueBackend, closeDataIssuesForCorrection } from '../../../src/modules/governance/server/data-issue.ts';
+import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../src/modules/notifications/server/notifications.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'f5000000-0000-4000-8000-000000000001';
 const otherTenantId = 'f5000000-0000-4000-8000-000000000009';

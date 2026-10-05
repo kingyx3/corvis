@@ -1,20 +1,20 @@
 // Real-Postgres acceptance for assigning and discussing review items (F3, #259), through the application code: the
-// repository in lib/server/review-discussion.ts drives the SQL functions of migration 086 inside one transaction that is
+// repository in src/modules/review/server/review-discussion.ts drives the SQL functions of migration 086 inside one transaction that is
 // always rolled back. Covers what the pure-SQL test (review-item-discussion.sql) cannot: the repository's predicates and
 // labels, keyset paging, the open-assignments read behind the Overview attention list, the audit event round trip, the
 // notice and its send-time eligibility and preferences from the F2 outbox, and that discussion leaves dual control alone.
 // Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/review-item-discussion.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/review-item-discussion.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
-import { PostgresReviewDiscussionBackend, commentFingerprint, reviewDiscussionAuditEvent } from '../../../lib/server/review-discussion.ts';
-import { PostgresOperationsRepository } from '../../../lib/server/platform-repositories.ts';
-import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../lib/server/notifications.ts';
-import { mentionedUserIds } from '../../../core/review-discussion.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
+import { PostgresReviewDiscussionBackend, commentFingerprint, reviewDiscussionAuditEvent } from '../../../src/modules/review/server/review-discussion.ts';
+import { PostgresOperationsRepository } from '../../../src/platform/data/platform-repositories.ts';
+import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../src/modules/notifications/server/notifications.ts';
+import { mentionedUserIds } from '../../../src/modules/review/domain/review-discussion.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'f3000000-0000-4000-8000-000000000001';
 const otherTenantId = 'f3000000-0000-4000-8000-000000000009';

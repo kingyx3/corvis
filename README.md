@@ -30,7 +30,7 @@ Key Confluence business references:
 - **Snowflake** — optional downstream analytics / secure sharing only after an explicit activation decision; never the application write authority.
 - **No Corvis-managed AWS infrastructure by default.**
 
-Detailed technical implementation is in [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) and [`docs/DATA_PLATFORM.md`](docs/DATA_PLATFORM.md).
+Detailed technical implementation is in [`docs/operations/INFRASTRUCTURE.md`](./docs/operations/INFRASTRUCTURE.md) and [`docs/architecture/DATA_PLATFORM.md`](./docs/architecture/DATA_PLATFORM.md).
 
 ## GitHub-first environment configuration
 
@@ -44,44 +44,30 @@ prod
 
 Human-entered technical deployment configuration should be set in GitHub Environment variables/secrets and propagated by GitHub Actions to GCP, Cloudflare and Supabase wherever provider APIs/IaC allow. GCP runtime secrets ultimately live in Secret Manager; GitHub is the deployment control plane, not the application runtime secret store.
 
-See [`docs/GITHUB_ENVIRONMENTS.md`](docs/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
+See [`docs/operations/GITHUB_ENVIRONMENTS.md`](./docs/operations/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
 
-## Repository ownership
+## Repository layout
 
-Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `app/`, `lib/`, `core/`, `adapters/`, `features/` and `infra/terraform/modules/` today; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current map.
+One Next.js application plus the services, infrastructure and tooling that surround it. Application code lives in `src/`, organised by bounded module; everything else sits at the top level by purpose.
 
 ```text
-apps/
-  customer-web/
-  admin-web/
-services/
-  api/
-  workers/
-packages/
-  contracts/
-  domain/
-  auth/
-  feature-flags/
-  observability/
-  shared/
-infra/
-  terraform/
-    modules/
-      cloudflare/
-      gcp/
-      supabase/
-      snowflake/       # optional downstream only
-    environments/
-      dev/
-      uat/
-      prod/
-db/
-  postgres/
-    migrations/
-  snowflake/           # optional downstream only
+src/
+  app/                  Next.js routing: thin pages and /api route handlers
+  modules/<module>/     domain/  server/  adapters/  ui/   (one bounded module each)
+  platform/             cross-cutting server infrastructure (http, database, gcp, config, telemetry)
+  shared/               shared kernel: domain vocabulary, client-safe helpers, design system
+  composition/          wires ports to concrete adapters
+services/               deployables that run outside the web app: control-loop, extractor, litellm-gateway
+tools/                  ci/ and dev/ scripts, repo-checks/ policy tests, convex-conformance/
+db/postgres/            migrations (immutable once applied) and database acceptance tests
+infra/terraform/        modules, environments and the shared Cloudflare root
+openapi/                public API contract
+ops/                    runbooks, SLOs and control catalogues
+e2e/                    Playwright suites
+docs/                   technical documentation by kind: architecture, features, operations, security, engineering, reviews
 ```
 
-The physical layout is migrating incrementally toward these boundaries. Production application or infrastructure code must not live in an untracked external deployment project.
+Module and layer boundaries, where new code goes, and the dependency rules are in [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) and [`docs/architecture/MODULARITY.md`](docs/architecture/MODULARITY.md). The Terraform module and environment layout is in [`docs/operations/INFRASTRUCTURE.md`](docs/operations/INFRASTRUCTURE.md). Production application or infrastructure code must not live in an untracked external deployment project.
 
 ## Public repository posture
 
@@ -120,9 +106,9 @@ The Postgres-primary application migration is complete: production application p
 
 Technical status and activation:
 
-- [`docs/ENTERPRISE_IMPLEMENTATION.md`](docs/ENTERPRISE_IMPLEMENTATION.md)
-- [`docs/PRODUCTION_ACTIVATION.md`](docs/PRODUCTION_ACTIVATION.md)
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- [`docs/operations/ENTERPRISE_IMPLEMENTATION.md`](./docs/operations/ENTERPRISE_IMPLEMENTATION.md)
+- [`docs/operations/PRODUCTION_ACTIVATION.md`](./docs/operations/PRODUCTION_ACTIVATION.md)
+- [`docs/operations/DEPLOYMENT.md`](./docs/operations/DEPLOYMENT.md)
 - [`ops/RUNBOOK.md`](ops/RUNBOOK.md)
 - [`ops/slos.yaml`](ops/slos.yaml)
 

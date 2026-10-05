@@ -3,14 +3,14 @@ name: Governed extractor validation
 on:
   pull_request:
     paths:
-      - "ops/extractor/**"
-      - "Dockerfile.extractor"
+      - "services/extractor/**"
+      - "services/extractor/Dockerfile"
       - ".github/workflows/extractor-validation.yml"
   push:
     branches: [main]
     paths:
-      - "ops/extractor/**"
-      - "Dockerfile.extractor"
+      - "services/extractor/**"
+      - "services/extractor/Dockerfile"
       - ".github/workflows/extractor-validation.yml"
 
 permissions:
@@ -28,18 +28,18 @@ jobs:
           node-version: 26
 
       - name: Parse extractor runtime
-        run: node --check ops/extractor/server.mjs
+        run: node --check services/extractor/server.mjs
 
       - name: Guard extraction contract and privilege boundaries
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'POST' ops/extractor/server.mjs >/dev/null
-          grep -F '/v1/extractions' ops/extractor/server.mjs >/dev/null
-          grep -F 'document_interpretation_v1' ops/extractor/server.mjs >/dev/null
-          grep -F 'ifGenerationMatch' ops/extractor/server.mjs >/dev/null
-          grep -F 'CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON' ops/extractor/server.mjs >/dev/null
-          if grep -Eq 'CORVIS_ATLASSIAN_SKILL_UPDATE|CORVIS_POSTGRES_DSN' ops/extractor/server.mjs; then
+          grep -F 'POST' services/extractor/server.mjs >/dev/null
+          grep -F '/v1/extractions' services/extractor/server.mjs >/dev/null
+          grep -F 'document_interpretation_v1' services/extractor/server.mjs >/dev/null
+          grep -F 'ifGenerationMatch' services/extractor/server.mjs >/dev/null
+          grep -F 'CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON' services/extractor/server.mjs >/dev/null
+          if grep -Eq 'CORVIS_ATLASSIAN_SKILL_UPDATE|CORVIS_DATABASE_DSN|CORVIS_POSTGRES_DSN' services/extractor/server.mjs; then
             echo "::error::Ordinary extraction must not receive Confluence write or canonical Postgres authority."
             exit 1
           fi
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
-          docker run --rm -i "${image}" hadolint --failure-threshold warning - < Dockerfile.extractor
+          docker run --rm -i "${image}" hadolint --failure-threshold warning - < services/extractor/Dockerfile
 
       - name: Build extractor container
-        run: docker build --pull --tag corvis-extractor-ci --file Dockerfile.extractor .
+        run: docker build --pull --tag corvis-extractor-ci --file services/extractor/Dockerfile .

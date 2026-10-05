@@ -2,26 +2,26 @@
 // for every fund the owner holds *now* and re-authorized at each run.)
 // (F4b, #328: also the owner's per-schedule notification switch, the run webhook events and the refusal email, end to end.)
 // Real-Postgres acceptance for scheduled exports (F4, #260), through the application code: the backend and the worker in
-// lib/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
+// src/modules/delivery/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
 // (createPhysicalExport) inside one transaction that is always rolled back. Covers what the pure-SQL test
 // (export-schedules.sql) cannot: the owner's real re-authorization (membership, entitlements, contractual data rights),
 // the export job a run hands to the existing export worker, idempotency across ticks, fail-closed refusals recorded as
 // stable failed runs, the audit trail, the owner-only / Organization Admin views and the schedule label on delivery
 // history. Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { PostgresPerformanceScorecardRepository } from '../../../lib/server/performance-scorecard.ts';
-import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../lib/server/export-schedule.ts';
-import { listPhysicalExportStatuses } from '../../../lib/server/export-history.ts';
-import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
-import { notifyScheduledExportOutcome } from '../../../lib/server/export-schedule-notifications.ts';
-import { processEmailOutbox } from '../../../lib/server/notifications.ts';
-import { processQueuedExports } from '../../../lib/server/delivery.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+import { PostgresPerformanceScorecardRepository } from '../../../src/modules/analytics/server/performance-scorecard.ts';
+import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../src/modules/delivery/server/export-schedule.ts';
+import { listPhysicalExportStatuses } from '../../../src/modules/delivery/server/export-history.ts';
+import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
+import { notifyScheduledExportOutcome } from '../../../src/modules/delivery/server/export-schedule-notifications.ts';
+import { processEmailOutbox } from '../../../src/modules/notifications/server/notifications.ts';
+import { processQueuedExports } from '../../../src/modules/delivery/server/delivery.ts';
 
 console.info = () => undefined;
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'f4000000-0000-4000-8000-000000000001';
 const otherTenantId = 'f4000000-0000-4000-8000-000000000009';

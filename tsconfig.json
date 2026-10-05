@@ -25,7 +25,7 @@
     ],
     "paths": {
       "@/*": [
-        "./*"
+        "./src/*"
       ]
     }
   },
@@ -38,6 +38,6 @@
   ],
   "exclude": [
     "node_modules",
-    "db/convex-conformance"
+    "tools/convex-conformance"
   ]
 }

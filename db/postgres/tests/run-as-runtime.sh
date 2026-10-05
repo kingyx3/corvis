@@ -54,7 +54,7 @@ run_sql() { # login, suite
 }
 run_mjs() { # login, suite
   echo "[runtime-role] $1: $2.mjs"
-  CORVIS_POSTGRES_DSN="postgres://$1:${password}@${host}:${port}/${PGDATABASE}?sslmode=disable" node "$tests/$2.mjs" > /dev/null
+  CORVIS_DATABASE_DSN="postgres://$1:${password}@${host}:${port}/${PGDATABASE}?sslmode=disable" node "$tests/$2.mjs" > /dev/null
 }
 
 psql -X -q -v ON_ERROR_STOP=1 -v pw="$password" -f "$tests/runtime-role-ci-fixture.sql"

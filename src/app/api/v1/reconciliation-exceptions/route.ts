@@ -1,0 +1,21 @@
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { platform } from "@/platform/data/platform";
+
+export async function GET(request: Request) {
+  const id = correlationId(request);
+  try {
+    const identity = await resolveAuthorizedRequestIdentity(request);
+    assertPermission(identity, "observations:review");
+    const url = new URL(request.url);
+    const snapshotId = url.searchParams.get("snapshotId") ?? "";
+    const snapshotVersion = Number(url.searchParams.get("snapshotVersion"));
+    // snapshot_version is a Postgres integer; a larger value would fail the query with a 500.
+    if (!snapshotId || !Number.isInteger(snapshotVersion) || snapshotVersion <= 0 || snapshotVersion > 2_147_483_647) {
+      return json({ error: "invalid_reconciliation_query", correlationId: id }, { status: 400 });
+    }
+    const data = await platform().listReconciliationExceptions(identity, snapshotId, snapshotVersion);
+    return json({ data, correlationId: id });
+  } catch (error) { return apiError(error, id); }
+}

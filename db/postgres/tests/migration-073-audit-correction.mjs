@@ -2,13 +2,13 @@
 // webhook subscription whose pause is attributed to an actor other than migration 064 AND that migration 069
 // mislabelled; it is idempotent and never touches other subscriptions. Runs the migration file itself inside one
 // transaction that is always rolled back (audit_event is append-only). Run after the full migration chain:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/migration-073-audit-correction.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/migration-073-audit-correction.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'c7300000-0000-4000-8000-000000000001';
 const ids = { userPaused: 'c7300000-0000-4000-8000-0000000000a1', migrationPaused: 'c7300000-0000-4000-8000-0000000000a2', unlabelled: 'c7300000-0000-4000-8000-0000000000a3', active: 'c7300000-0000-4000-8000-0000000000a4' };

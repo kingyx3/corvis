@@ -113,7 +113,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
           RELEASE_SHA: ${{ github.sha }}
-        run: node .github/scripts/release-governance.mjs
+        run: node tools/ci/release-governance.mjs
 
       - name: Authenticate to GCP for shared Terraform state
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -132,7 +132,7 @@ jobs:
           terraform-version: "1.13.3"
 
       - name: Ensure independent protected shared state
-        run: bash .github/scripts/terraform-state.sh ensure
+        run: bash tools/ci/terraform-state.sh ensure
 
       - name: Terraform init
         shell: bash

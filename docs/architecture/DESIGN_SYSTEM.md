@@ -1,0 +1,100 @@
+# Corvis design system
+
+This is the implementation contract for customer-workspace UI. It complements the UX architecture in Confluence and prevents new surfaces from inventing one-off styling patterns.
+
+## Live catalog
+
+Run `npm run dev` and open `/design-system`. The route renders the real typed primitives and is intentionally unavailable in production (`notFound()` when `NODE_ENV=production`). The live catalog covers headings, actions, status vocabulary, metric cards, sidebar navigation, sortable/density-aware tables, and chart/table fallbacks.
+
+## Tokens
+
+Tokens live in `src/app/globals.css`; dark-theme overrides live in `src/app/design-system.css`. Feature code must consume tokens instead of hard-coded presentation colors.
+
+| Group | Tokens | Use |
+| --- | --- | --- |
+| Surfaces | `--bg`, `--surface`, `--surface-raised`, `--surface-sunken`, `--surface-hover` | Page, card, nested and hover backgrounds |
+| Borders | `--border`, `--border-strong`, `--border-subtle` | Standard, emphasized and quiet separators |
+| Text | `--text`, `--text-strong`, `--text-body`, `--text-muted`, `--text-subtle` | Default, heading, body and secondary copy |
+| Brand | `--brand`, `--brand-hover`, `--brand-ink`, `--accent` | Primary controls and Corvis accent |
+| Sidebar | `--sidebar`, `--sidebar-hover`, `--sidebar-border`, `--sidebar-text`, `--sidebar-muted` | Workspace chrome only |
+| Semantic | `--success*`, `--warning*`, `--danger*`, `--info*`, `--focus` | Status, validation and focus; never encode meaning by color alone |
+| Shape | `--radius-sm`, `--radius`, `--radius-lg`, `--shadow-sm`, `--shadow-lg` | Consistent geometry/elevation |
+| Type | `--serif`, `--sans`, `--mono` | Display, UI/body and data/code |
+| Layout | `--sidebar-width`, `--topbar-height` | Shell dimensions |
+| Charts | `--chart-series-1` … `--chart-series-8`, `--chart-series-other`, `--chart-series-unassigned`, `--chart-grid`, `--chart-axis` | Stable categorical order, muted gaps and axes |
+
+Dark mode is automatic through `prefers-color-scheme: dark`; the token names do not change between themes. New code must not branch on theme in React.
+
+## Typed primitives
+
+| Primitive | File | Use |
+| --- | --- | --- |
+| `PageHeading` | `src/shared/ui/page-heading.tsx` | Every customer surface H1, eyebrow, lede and heading actions |
+| `MetricCard` | `src/shared/ui/metric-card.tsx` | Dashboard/analytics KPI; renders a native button only when actionable and accepts a trend node |
+| `SidebarNavItem` | `src/shared/ui/sidebar-nav-item.tsx` | Workspace primary navigation with active/current state and optional badge |
+| `StatusPill` | `src/shared/ui/status-pill.tsx` | Governed state labels; use the exported vocabulary when a status is known. Unknown strings render neutral, never a fabricated semantic color |
+| `SortableDataTable` | `src/shared/ui/sortable-data-table.tsx` | Dense tabular data. Sorting is a native header button and `aria-sort` is announced on the column header |
+| `TableDensityToggle` | `src/shared/ui/table-density-toggle.tsx` | Compact/comfortable density control for dense financial tables |
+| `Modal` | `src/shared/ui/modal.tsx` | Dialogs; includes focus trapping/restoration |
+| `Icon` | `src/shared/ui/icon.tsx` | Shared icon vocabulary |
+| `TimeSeriesChart` | `src/shared/ui/charts/time-series-chart.tsx` | Time trends with explicit status semantics and table fallback |
+| `CompositionChart` | `src/shared/ui/charts/composition-chart.tsx` | Allocation/composition views with fixed palette and table fallback |
+| `Sparkline` | `src/shared/ui/charts/sparkline.tsx` | Inline KPI trend; includes textual delta and full value disclosure |
+| `ChartFigure` | `src/shared/ui/charts/chart-figure.tsx` | Required chart wrapper with caption and native table-view disclosure |
+
+## Reusable global classes
+
+These are the supported global styling hooks in `src/app/globals.css` and `src/app/design-system.css`. Feature-specific classes must be prefixed with the feature name (for example `position-financials-*`) and are not general-purpose primitives.
+
+- Shell/navigation: `.app-shell`, `.sidebar`, `.sidebar-section`, `.sidebar-bottom`, `.main-area`, `.topbar`, `.breadcrumb`, `.top-actions`, `.global-search`, `.content`, `.skip-link`, `.visually-hidden`.
+- Headings/layout: `.hero-row`, `.page-heading`, `.eyebrow`, `.lede`, `.heading-actions`, `.two-column`.
+- Actions: `.primary-button`, `.secondary-button`, `.danger-button`, `.text-button`, `.icon-button`.
+- Cards/panels: `.panel`, `.panel-heading`, `.metric-grid`, `.metric-card`, `.metric-head`, `.metric-icon`, `.metric-card-trend`.
+- Forms: `.form-field`, `.form-row`, `.segmented-control` (when present on a surface); labels remain explicit and native controls remain keyboard operable.
+- Status/feedback: `.status-pill`, `.status-dot`, `.status-stack`, `.lineage-note`, `.tone-warning`, `.empty-row`.
+- Lists/data: `.snapshot-list`, `.snapshot-row`, `.snapshot-main`, `.activity-list`, `.activity-row`, `.muted-time`, `.data-table-wrap`, `.data-table`, `.sortable-header-button`, `.table-density-toggle`.
+- Search/command palette: `.search-palette-input`, `.search-palette-results`, `.search-palette-empty`, `.search-result`, `.search-kind`, `.search-palette-footer`.
+- Help and support: `.help-button` (top bar), `.help-links`, `.help-link`, `.help-context` (Help dialog). Palette commands in the `Help` category are named `Help: <entry>`. Colours come from theme tokens only.
+- Charts: `.chart-figure`, `.chart-plot`, `.chart-description`, `.chart-empty`, `.chart-legend`, `.chart-legend-swatch`, `.chart-tooltip`, `.chart-data-toggle`, `.chart-data-table-wrap`, `.chart-data-table`, `.sparkline`, `.sparkline-plot`, `.sparkline-delta`, `.sparkline-caption`.
+
+If a reusable pattern is missing, promote it to a typed primitive first and document it here; do not add an unscoped one-off class to a feature.
+
+## Portfolio analytics lenses and the performance scorecard (F1)
+
+Portfolio analytics is one navigation entry with two lenses switched by an `aria-pressed` segmented control (`.analytics-lens-switch`, `AnalyticsView`): **Position financials** (the default, and the target of every drill-through from Data review and the Overview) and **Performance scorecard** (`PerformanceScorecardView`). Adding a lens never adds a navigation entry, so the nav-count assertions are unchanged. The scorecard is registered in the axe-core surface matrix (`e2e/support/surfaces.ts`, id `scorecard`) and is scanned loaded with a fund expanded, in light and dark and on desktop and phone.
+
+Scorecard presentation rules (classes `scorecard-*`): every figure shows its value, a `StatusPill` of `Final`, `Preliminary` or `Restated`, a second `Derived` pill when Corvis rather than the GP produced it, and "As of <date>" (or "Period <label>" when the report carries no as-of date). A metric the GP did not report reads "Not reported" in muted italics, never 0 or an empty cell. The figure itself is the single control that opens its source document (a native button; its accessible name carries the subject, metric and value, and its title the text as printed in the source). A fund row expands (`aria-expanded`, a native button) to a nested sortable table of its underlying investments, rendered through `SortableDataTable`'s `renderRowDetail`.
+
+Filters and paging (F1c): a `scorecard-filters` row (reusing `position-financials-controls`, native labelled selects for Fund and Reporting period, and Clear filters) narrows the tables, "Export this view" and "Schedule export" alike; picking a period adds a status note that a metric with no figure for it is Not reported. The table loads fund by fund: a `role="status"` line reads "Showing N of M funds." with a native "Load more funds" button (a failed page keeps what is shown and offers another try); sorting applies to the funds loaded so far, while exports always cover every fund.
+
+`SortableDataTable` gained two behaviours used here and available to every table: `renderRowDetail` (an optional full-width row under a row) and rows whose sort value is missing now stay last in both directions instead of leading a descending sort. The scorecard's money columns sort at the scale the GP stated ("USD 1,958 millions" sorts above "USD 1,271,000,000" units correctly).
+
+## Help and support
+
+`HelpDialog` (`src/modules/support/ui/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
+
+Error states use `ContactSupportLink` (`src/modules/support/ui/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `src/app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](../features/SUPPORT.md).
+
+## Status vocabulary
+
+Source connections (stories B5/B8) added `Paused` and `Revoked` (neutral), `Retrying` (info), and `Suspended` and `Needs reauthorization` (danger) so a blocked connection never shares a label or tone with a transient failure; `Stale` and `Needs attention` (warning) and `Healthy` (success) already existed. The connection list also pairs each state with an icon (`Icon` gained `pause`, `refresh` and `lock`) and a distinct border treatment on its notice (solid, double, dashed, dotted), so no state is carried by colour alone. The classes are `source-connection-*` in `src/app/design-system.css`.
+
+Data issues (story F5) added `Received` and `No change` (neutral), `Investigating` and `Updated` (info) and `Corrected` (success). `Updated` marks a case whose status changed since its reporter last looked; the case card also gets a leading bar, so the signal is never colour alone. The classes are `data-issue-*` and `data-issues-*` in `src/app/design-system.css`.
+
+Assigning and discussing review items (story F3) states the assignee in words ("Assigned to you", "Assigned to <person>", "Unassigned"), never by colour alone; the person's own assignment is also bold. A mention in a comment is bold and tinted (`.review-mention`). The Overview attention filter reuses the segmented `table-density-toggle` control with `aria-pressed`. The classes are `review-*` and `attention-filter` in `src/app/design-system.css`.
+
+`STATUS_PILL_VOCABULARY` is the source of truth. Known states map to `success`, `warning`, `danger`, `info`, or `neutral`. `StatusPill` intentionally accepts future server-provided strings, but an unknown value uses the neutral fallback and keeps its original label. This prevents a new backend state from accidentally inheriting a misleading color through class-name construction.
+
+## Dense-table rules
+
+1. Use `SortableDataTable` instead of hand-rolled sortable headers.
+2. Give every sortable column a `sortValue`; header buttons are keyboard-native and the owning `<th>` supplies `aria-sort`.
+3. Keep a real `<caption>` (it may be visually hidden).
+4. Use `TableDensityToggle` where badges/metadata make rows visually dense; compact mode changes spacing/typography only, not data.
+5. Preserve source order as the initial order for financial statements; sorting is an explicit user action.
+
+## Accessibility and theming
+
+The Playwright accessibility matrix runs customer surfaces under both light and dark OS color schemes. Semantic state always has text/icon support; focus uses `--focus`; chart identity is never color-only; charts retain a keyboard-reachable table representation.
+
+Scheduled exports (story F4) reuse the existing vocabulary: `Active`, `Paused` and `Failed` pills, plus `Stopped` (neutral fallback) for a schedule whose owner was deactivated, and the run state (`Queued`, `Complete`) of the export a run produced. Schedules are cards (`export-schedule-*` in `src/app/design-system.css`) so they stay readable on a phone; their runs use the shared history table. Pause, resume and the two-step delete are plain buttons named with the schedule (`Pause <name>`).

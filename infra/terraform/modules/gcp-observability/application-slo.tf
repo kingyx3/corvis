@@ -1,6 +1,6 @@
 # Application-emitted SLO signals. These resources are intentionally separate
 # from main.tf so every log metric has a corresponding application event before
-# it becomes an alert. See lib/server/telemetry.ts and ops/slos.yaml.
+# it becomes an alert. See src/platform/observability/telemetry.ts and ops/slos.yaml.
 
 resource "google_logging_metric" "upload_initiation_duration" {
   project = var.project_id
@@ -474,7 +474,7 @@ resource "google_monitoring_alert_policy" "api_latency_p95" {
   }
 }
 
-# app/api/internal/delivery logs delivery.task_failed for each scheduler-tick
+# src/app/api/internal/delivery logs delivery.task_failed for each scheduler-tick
 # task (exports, webhooks, processing transport, sweeps) that rejected. The
 # tick answers 500 so the scheduler retries; persistent failure pages here.
 resource "google_logging_metric" "delivery_task_failed" {
@@ -528,14 +528,14 @@ resource "google_monitoring_alert_policy" "delivery_task_failed" {
   }
 }
 
-# F7d (#337). lib/server/authorization.ts times every session policy check
+# F7d (#337). src/modules/identity-access/server/authorization.ts times every session policy check
 # (metric.duration "auth.session_policy", tagged with the verdict, so its count
 # is the denominator of the denial rate) and counts every denial
 # (metric.count "auth.session_policy_denied", tagged with the reason:
 # idle_timeout, max_session, untracked_session or unknown). Neither carries a
 # subject or a session id. A burst of denials is a policy that is too tight, an
 # identity provider that stopped sending a stable session id (untracked_session)
-# or a fail-closed lookup (unknown); see docs/tenant-self-service.md.
+# or a fail-closed lookup (unknown); see docs/features/TENANT_SELF_SERVICE.md.
 resource "google_logging_metric" "session_policy_enforcement_duration" {
   project = var.project_id
   name    = "corvis_${var.environment}_session_policy_enforcement_duration_ms"
@@ -622,7 +622,7 @@ resource "google_monitoring_alert_policy" "session_policy_enforcement_latency" {
   notification_channels = var.notification_channel_ids
 
   documentation {
-    content   = "Checking an organization's session policy (corvis_control.enforce_session_policy) is slow for 15 minutes; every authorized request pays for it. Check Postgres pool waits and the tenant_session_activity table size and its housekeeping (the sessionActivitySweep task of the delivery tick) before changing the threshold (docs/tenant-self-service.md)."
+    content   = "Checking an organization's session policy (corvis_control.enforce_session_policy) is slow for 15 minutes; every authorized request pays for it. Check Postgres pool waits and the tenant_session_activity table size and its housekeeping (the sessionActivitySweep task of the delivery tick) before changing the threshold (docs/features/TENANT_SELF_SERVICE.md)."
     mime_type = "text/markdown"
   }
 }
@@ -660,7 +660,7 @@ resource "google_monitoring_alert_policy" "session_policy_denials" {
   notification_channels = var.notification_channel_ids
 
   documentation {
-    content   = "Session policy denials (auth.session_policy_denied) are far above the usual rate. Group by the reason label: idle_timeout or max_session means an organization's limits are tighter than its people's working pattern; untracked_session means the identity provider stopped sending a stable session id (sid or jti) while a limit is set, which refuses everyone; unknown means the policy check answered nothing and failed closed (docs/tenant-self-service.md)."
+    content   = "Session policy denials (auth.session_policy_denied) are far above the usual rate. Group by the reason label: idle_timeout or max_session means an organization's limits are tighter than its people's working pattern; untracked_session means the identity provider stopped sending a stable session id (sid or jti) while a limit is set, which refuses everyone; unknown means the policy check answered nothing and failed closed (docs/features/TENANT_SELF_SERVICE.md)."
     mime_type = "text/markdown"
   }
 }

@@ -36,7 +36,7 @@ variable "uptime_check_host" {
 }
 
 variable "notification_channel_ids" {
-  description = "Existing Cloud Monitoring notification channel IDs. Channel creation itself is one-time external bootstrap (docs/GITHUB_ENVIRONMENTS.md), not managed here."
+  description = "Existing Cloud Monitoring notification channel IDs. Channel creation itself is one-time external bootstrap (docs/operations/GITHUB_ENVIRONMENTS.md), not managed here."
   type        = list(string)
   default     = []
 }

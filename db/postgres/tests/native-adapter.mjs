@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-const dsn = process.env.CORVIS_POSTGRES_DSN;
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+const dsn = process.env.CORVIS_DATABASE_DSN;
 assert.ok(dsn, 'CI connection required');
 const db = new NativePostgresSqlApi(dsn);
 try {
