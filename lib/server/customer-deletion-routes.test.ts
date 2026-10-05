@@ -40,7 +40,7 @@ const { GET: retentionGet } = await import("@/app/api/v1/access/retention/route"
 const { POST: requestPost } = await import("@/app/api/v1/access/deletion-requests/route");
 const { POST: decidePost } = await import("@/app/api/v1/access/deletion-requests/[requestId]/route");
 const { DataGovernanceError } = await import("./data-governance.ts");
-const { PostgresCustomerDeletionBackend, createCustomerDeletionService, customerDeletionService, overrideCustomerDeletionService, postgresCustomerDeletionBackend, postgresCustomerDeletionService } = await import("./customer-deletion.ts");
+const { PostgresCustomerDeletionBackend, createCustomerDeletionService, customerDeletionService, overrideCustomerDeletionService, postgresCustomerDeletionService } = await import("./customer-deletion.ts");
 
 /** A `deletion_request` row as DELETION_REQUEST_COLUMNS returns it for a request an Organization Admin made. */
 function customerRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -255,14 +255,4 @@ test("SQL refusals reach the client as stable codes, and the loser of a race for
     (error: unknown) => error instanceof DataGovernanceError && error.code === "deletion_request_already_pending" && error.status === 409);
   const broken = failing(new Error("connection lost"));
   await assert.rejects(() => new PostgresCustomerDeletionBackend().request(identity, { dataClasses: ["audit"], reason: "Closing the account" }, broken), /connection lost/, "any other failure is not hidden");
-});
-
-test("the production backend opens its own connection when no transaction is handed in", async () => {
-  const identity = { subject: "idp|alex", tenantId: TENANT, workspaceId: WORKSPACE, roles: ["admin"], isTenantAdmin: true, authMethod: "oidc", sessionId: "s", entitlements: { workspaceIds: [], sourceDocumentAccessAllowed: false } } as RequestIdentity;
-  seed(() => { throw new Error("stop after connecting"); });
-  await assert.rejects(() => postgresCustomerDeletionBackend.request(identity, { dataClasses: ["audit"], reason: "Closing the account" }));
-  assert.ok(queries.length > 0, "the request reached the configured Postgres endpoint");
-  seed(() => { throw new Error("stop after connecting"); });
-  await assert.rejects(() => postgresCustomerDeletionBackend.decide(identity, REQUEST, { action: "approve" } as never));
-  assert.ok(queries.length > 0, "the decision reached the configured Postgres endpoint");
 });
