@@ -2,15 +2,23 @@
 set -euo pipefail
 
 CONVEX_BACKEND_IMAGE="${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a}"
-CONVEX_CLI_VERSION="${CONVEX_CLI_VERSION:-1.46.0}"
 CONVEX_POSTGRES_URL="${CONVEX_POSTGRES_URL:-}"
 CONVEX_POSTGRES_REQUIRE_TLS="${CONVEX_POSTGRES_REQUIRE_TLS:-true}"
+# Optional: a client DSN for the database Convex persists into. When set, the
+# run proves documents really landed in PostgreSQL rather than a silent SQLite
+# fallback. Requires psql on PATH.
+CONVEX_POSTGRES_VERIFY_DSN="${CONVEX_POSTGRES_VERIFY_DSN:-}"
 CONTAINER="corvis-convex-conformance-${RANDOM}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULT_DIR="$(mktemp -d)"
 
 cleanup() {
-  docker logs "$CONTAINER" >"$RESULT_DIR/backend.log" 2>&1 || true
+  status=$?
+  if [[ "$status" -ne 0 ]]; then
+    echo "::group::Convex backend logs (last 200 lines)" >&2
+    docker logs --tail 200 "$CONTAINER" >&2 || true
+    echo "::endgroup::" >&2
+  fi
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   rm -rf "$RESULT_DIR"
 }
@@ -19,10 +27,20 @@ trap cleanup EXIT
 cd "$SCRIPT_DIR"
 export NO_COLOR=1
 
-# Keep Convex isolated from Corvis's production dependency graph. The exact
-# version is pinned for PR CI; the scheduled upstream canary overrides it with
-# `latest` to detect changes in the supported Convex CLI/backend contract.
+# package.json is the single source of truth for the pinned CLI, so a Dependabot
+# bump of it is exactly what CI then exercises. The scheduled canary overrides
+# CONVEX_CLI_VERSION with `latest`.
+PINNED_CLI_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).dependencies.convex")"
+CONVEX_CLI_VERSION="${CONVEX_CLI_VERSION:-$PINNED_CLI_VERSION}"
+
+# Keep Convex isolated from Corvis's production dependency graph.
 npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund "convex@${CONVEX_CLI_VERSION}"
+installed_cli="$(node -p "JSON.parse(require('fs').readFileSync('node_modules/convex/package.json','utf8')).version")"
+if [[ "$CONVEX_CLI_VERSION" != "latest" && "$installed_cli" != "$CONVEX_CLI_VERSION" ]]; then
+  echo "Installed convex@${installed_cli}, expected ${CONVEX_CLI_VERSION}" >&2
+  exit 1
+fi
+echo "Convex CLI ${installed_cli}; backend image ${CONVEX_BACKEND_IMAGE}"
 
 docker pull "$CONVEX_BACKEND_IMAGE"
 docker_args=(
@@ -60,7 +78,6 @@ for attempt in $(seq 1 60); do
   fi
   if [[ "$attempt" -eq 60 ]]; then
     echo "Convex backend did not become healthy" >&2
-    docker logs "$CONTAINER" >&2 || true
     exit 1
   fi
   sleep 1
@@ -75,45 +92,21 @@ test -n "$CONVEX_SELF_HOSTED_ADMIN_KEY"
 # atomicity/concurrency semantics Corvis requires from every database adapter.
 npx --no-install convex dev --once
 
-npx --no-install convex run conformance:reset '{"key":"race"}' >/dev/null
+# All contention is generated from one process (conformance.mjs) so the
+# mutations genuinely overlap at the backend: single winner, no lost updates,
+# and atomic rollback of failed mutations.
+node conformance.mjs
 
-pids=()
-for i in $(seq 1 8); do
-  npx --no-install convex run conformance:compareAndSet \
-    '{"key":"race","expected":0,"next":1}' \
-    >"$RESULT_DIR/race-${i}.out" 2>"$RESULT_DIR/race-${i}.err" &
-  pids+=("$!")
-done
-for pid in "${pids[@]}"; do
-  wait "$pid"
-done
-
-successes=0
-for i in $(seq 1 8); do
-  result="$(tail -n 1 "$RESULT_DIR/race-${i}.out" | tr -d '\r')"
-  case "$result" in
-    true) successes=$((successes + 1)) ;;
-    false) ;;
-    *)
-      echo "Unexpected Convex compare-and-set result: $result" >&2
-      cat "$RESULT_DIR/race-${i}.err" >&2 || true
+persistence="default (SQLite)"
+if [[ -n "$CONVEX_POSTGRES_URL" ]]; then
+  persistence="PostgreSQL"
+  if [[ -n "$CONVEX_POSTGRES_VERIFY_DSN" ]]; then
+    stored="$(psql "$CONVEX_POSTGRES_VERIFY_DSN" -X -tA -c 'select count(*) from documents' | tr -d '[:space:]')"
+    if ! [[ "$stored" =~ ^[0-9]+$ ]] || [[ "$stored" -eq 0 ]]; then
+      echo "Convex was configured for PostgreSQL but no documents were persisted there (count: ${stored:-none})" >&2
       exit 1
-      ;;
-  esac
-done
-
-test "$successes" -eq 1
-summary="$(npx --no-install convex run conformance:summary '{"key":"race"}' | tail -n 1 | tr -d '\r')"
-test "$summary" = '"1:1"'
-
-# Convex mutations are all-or-nothing: the event inserted before the intentional
-# throw must not remain visible after the failed mutation.
-if npx --no-install convex run conformance:writeThenFail '{"key":"rollback"}' \
-  >"$RESULT_DIR/rollback.out" 2>"$RESULT_DIR/rollback.err"; then
-  echo "Intentional Convex rollback mutation unexpectedly succeeded" >&2
-  exit 1
+    fi
+    echo "Verified ${stored} Convex documents persisted in PostgreSQL."
+  fi
 fi
-rollback_count="$(npx --no-install convex run conformance:eventCount '{"key":"rollback"}' | tail -n 1 | tr -d '\r')"
-test "$rollback_count" = "0"
-
-echo "Convex upstream conformance passed: PostgreSQL persistence, one CAS winner, one event, failed mutation rolled back."
+echo "Convex upstream conformance passed on ${persistence} persistence."

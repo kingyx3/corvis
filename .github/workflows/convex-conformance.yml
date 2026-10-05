@@ -1,23 +1,27 @@
 name: Convex Conformance
 
+# Runs on every pull request (no path filter) so the check always reports and can
+# be made required without leaving unrelated PRs pending. It takes about a minute.
 on:
   pull_request:
-    paths:
-      - "lib/server/database.ts"
-      - "lib/server/database.test.ts"
-      - "lib/server/postgres.ts"
-      - "db/convex-conformance/**"
-      - "docs/DATABASE_PORTABILITY.md"
-      - "docs/CONVEX_CONFORMANCE.md"
-      - ".github/workflows/convex-conformance.yml"
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 2"
+
+concurrency:
+  group: convex-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # Pins live in one place each: the Convex CLI version in
+  # db/convex-conformance/package.json (tracked by Dependabot) and the backend
+  # image in db/convex-conformance/run.sh. Nothing is overridden here, so a bump
+  # to either is exactly what this job exercises.
   pinned:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -36,9 +40,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:c449d75382dafa006f431521da4623d74edbad1a
-      CONVEX_CLI_VERSION: "1.46.0"
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted
       CONVEX_POSTGRES_REQUIRE_TLS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -52,6 +55,9 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     services:
       postgres:
         image: postgres:17
@@ -69,6 +75,7 @@ jobs:
       CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
       CONVEX_CLI_VERSION: latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
+      CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted
       CONVEX_POSTGRES_REQUIRE_TLS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -77,3 +84,19 @@ jobs:
           node-version: 24
       - name: Run Corvis database semantics against current upstream Convex + PostgreSQL
         run: bash db/convex-conformance/run.sh
+      # A weekly failure nobody sees is worth nothing: open (or update) one issue.
+      - name: Report canary failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create convex-canary --color B60205 --description "Upstream Convex conformance canary failed" 2>/dev/null || true
+          existing="$(gh issue list --label convex-canary --state open --json number --jq '.[0].number // empty')"
+          body="The weekly upstream Convex canary (\`convex-backend:latest\` + \`convex@latest\`) failed: ${RUN_URL}. Do not advance the pinned backend/CLI until it is understood; see docs/CONVEX_CONFORMANCE.md."
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --label convex-canary --title "Convex upstream conformance canary failing" --body "$body"
+          fi
