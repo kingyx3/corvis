@@ -110,6 +110,7 @@ docs/                     technical documentation, grouped by kind (see docs/REA
 
 - A new capability belongs in the module that owns its data and rules. Add `domain/` first (types, ports, validation), then `server/`, `adapters/` and `ui/` as needed. Create a new module only for a new bounded context.
 - Code needed by several modules and unrelated to any one capability goes in `src/platform/` (server) or `src/shared/` (client-safe). If only two modules need it, keep it in the owning module and import it through that module's public files.
+- `tsconfig.json` type-checks `src/` (what `next build` uses); `tsconfig.tools.json` extends it for `tools/`, `services/`, `e2e/` and `db/`. `npm run typecheck` runs both.
 - Each module and area has a README (`src/modules/README.md`, `services/README.md`, `tools/README.md`); `tools/repo-checks/architecture/repository-layout.test.ts` fails if the layout drifts from this document.
 - Tests sit next to the code they test as `*.test.ts`. Tests that read workflows, Terraform, docs or the source tree to assert repository policy go in `tools/repo-checks/`.
 - Route handlers in `src/app/api/` stay thin: authenticate, validate, call a module's `server/` function, shape the response.

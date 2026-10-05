@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./tsconfig.tools.tsbuildinfo"
+  },
+  "include": [
+    "next-env.d.ts",
+    "*.ts",
+    "tools/**/*.ts",
+    "services/**/*.ts",
+    "e2e/**/*.ts",
+    "db/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tools/convex-conformance"
+  ]
+}

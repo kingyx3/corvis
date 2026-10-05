@@ -28,7 +28,7 @@ test("the repository root holds only known files and directories", () => {
     ".dockerignore", ".editorconfig", ".env.example", ".gitattributes", ".github", ".gitignore", ".gitleaksignore", ".nvmrc",
     "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "Dockerfile", "README.md", "SECURITY.md",
     "db", "docs", "e2e", "eslint.config.mjs", "infra", "next.config.ts", "openapi", "ops",
-    "package-lock.json", "package.json", "playwright.config.ts", "services", "src", "tools", "tsconfig.json",
+    "package-lock.json", "package.json", "playwright.config.ts", "services", "src", "tools", "tsconfig.json", "tsconfig.tools.json",
   ]);
   const unexpected = [...children("").keys()].filter((name) => !allowed.has(name));
   assert.deepEqual(unexpected, [], "add new top-level entries to this list and to docs/architecture/ARCHITECTURE.md on purpose");

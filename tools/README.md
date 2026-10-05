@@ -10,3 +10,5 @@ Repository tooling. Nothing here ships in an application image.
 | `convex-conformance/` | Isolated harness that checks database semantics against the upstream Convex backend. It has its own `package.json`. |
 
 Scripts run from the repository root and import application code with relative paths (no `@/` alias).
+
+Two TypeScript projects share one set of compiler options: `tsconfig.json` covers `src/` and is the one `next build` checks; `tsconfig.tools.json` covers `tools/`, `services/`, `e2e/`, `db/` and the root config files. `npm run typecheck` runs both, so tooling cannot break an application build and vice versa.
