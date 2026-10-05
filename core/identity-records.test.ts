@@ -4,6 +4,7 @@ import {
   IdentityRecordValidationError,
   emailDomain,
   normalizeDomain,
+  normalizeEndSessionEndpoint,
   normalizeIssuer,
   parseTargetTenant,
   parseTenantIdentityCommand,
@@ -83,10 +84,10 @@ test("a verified-domain command states its tenant, a normalised domain, how it w
 });
 
 test("an identity-provider command states every field and the version it is based on", () => {
-  const set = { kind: "identity_provider_set", tenantId: TENANT, protocol: "oidc", issuer: "https://IDP.acme.com/", audience: " corvis ", status: "active", enforceTokenBinding: true, expectedVersion: 2, reason: "Binding on" };
+  const set = { kind: "identity_provider_set", tenantId: TENANT, protocol: "oidc", issuer: "https://IDP.acme.com/", audience: " corvis ", status: "active", enforceTokenBinding: true, idpEnforcesMfa: true, endSessionEndpoint: null, expectedVersion: 2, reason: "Binding on" };
   assert.deepEqual(parseTenantIdentityCommand(set), {
     kind: "identity_provider_set", tenantId: TENANT, protocol: "oidc", issuer: "https://idp.acme.com", audience: "corvis",
-    status: "active", enforceTokenBinding: true, expectedVersion: 2, reason: "Binding on",
+    status: "active", enforceTokenBinding: true, idpEnforcesMfa: true, endSessionEndpoint: null, expectedVersion: 2, reason: "Binding on",
   });
   assert.equal((parseTenantIdentityCommand({ ...set, protocol: "saml", issuer: "urn:acme", enforceTokenBinding: false }) as { protocol: string }).protocol, "saml");
   assert.equal((parseTenantIdentityCommand({ ...set, status: "pending", enforceTokenBinding: false, expectedVersion: 0 }) as { expectedVersion: number }).expectedVersion, 0);
@@ -98,6 +99,15 @@ test("an identity-provider command states every field and the version it is base
   refused(() => parseTenantIdentityCommand({ ...set, status: "pending" }), "invalid_binding");
   refused(() => parseTenantIdentityCommand({ ...set, status: "disabled" }), "invalid_binding");
   refused(() => parseTenantIdentityCommand({ ...set, protocol: "saml", issuer: "urn:acme" }), "invalid_binding");
+  // MFA enforcement and the end-session endpoint are stated every time: true, false or null (not reported); an https URL or null.
+  assert.equal((parseTenantIdentityCommand({ ...set, idpEnforcesMfa: false }) as { idpEnforcesMfa: boolean | null }).idpEnforcesMfa, false);
+  assert.equal((parseTenantIdentityCommand({ ...set, idpEnforcesMfa: null }) as { idpEnforcesMfa: boolean | null }).idpEnforcesMfa, null);
+  refused(() => parseTenantIdentityCommand({ ...set, idpEnforcesMfa: undefined }), "invalid_idp_mfa");
+  refused(() => parseTenantIdentityCommand({ ...set, idpEnforcesMfa: "yes" }), "invalid_idp_mfa");
+  assert.equal((parseTenantIdentityCommand({ ...set, endSessionEndpoint: " https://IDP.acme.com/logout?x=1 " }) as { endSessionEndpoint: string | null }).endSessionEndpoint, "https://idp.acme.com/logout?x=1");
+  refused(() => parseTenantIdentityCommand({ ...set, endSessionEndpoint: undefined }), "invalid_end_session_endpoint");
+  refused(() => parseTenantIdentityCommand({ ...set, endSessionEndpoint: "http://idp.acme.com/logout" }), "invalid_end_session_endpoint");
+  refused(() => parseTenantIdentityCommand({ ...set, protocol: "saml", issuer: "urn:acme", enforceTokenBinding: false, endSessionEndpoint: "https://idp.acme.com/logout" }), "invalid_end_session_endpoint");
   refused(() => parseTenantIdentityCommand({ ...set, expectedVersion: -1 }), "invalid_version");
   refused(() => parseTenantIdentityCommand({ ...set, expectedVersion: 1.5 }), "invalid_version");
   refused(() => parseTenantIdentityCommand({ ...set, expectedVersion: "1" }), "invalid_version");
@@ -116,4 +126,14 @@ test("anything that is not a command with a known kind is refused", () => {
   refused(() => parseTenantIdentityCommand({ tenantId: TENANT, kind: "delete_everything" }), "invalid_kind");
   refused(() => parseTenantIdentityCommand({ tenantId: TENANT }), "invalid_kind");
   refused(() => parseTenantIdentityCommand({ kind: "verified_domain_remove" }), "invalid_tenant");
+});
+
+test("an end-session endpoint is an https URL without credentials or fragment, in one normalised form", () => {
+  assert.equal(normalizeEndSessionEndpoint("https://idp.acme.com"), "https://idp.acme.com/");
+  assert.equal(normalizeEndSessionEndpoint("https://idp.acme.com/oauth2/logout?client=corvis"), "https://idp.acme.com/oauth2/logout?client=corvis");
+  for (const bad of [7, null, "", "   ", "not a url", "http://idp.acme.com/logout", "https://user:pw@idp.acme.com/logout", "https://idp.acme.com/logout#frag", "https://idp.acme.com/a b", `https://idp.acme.com/${"a".repeat(2048)}`]) {
+    refused(() => normalizeEndSessionEndpoint(bad), "invalid_end_session_endpoint");
+  }
+  // Whitespace inside is refused before parsing, and a URL that only grows past the bound once normalised is refused too.
+  refused(() => normalizeEndSessionEndpoint(`https://idp.acme.com/?${"é".repeat(400)}`), "invalid_end_session_endpoint");
 });

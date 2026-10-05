@@ -4,7 +4,7 @@ import { postgres, type PostgresSqlApi } from "./postgres.ts";
 import { SessionEndedByPolicyError } from "./request-context.ts";
 import { countMetric, durationMetric, logEvent } from "./telemetry.ts";
 
-export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId" | "tokenIssuer" | "tokenAudience">;
+export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId" | "tokenIssuer" | "tokenAudience" | "mfaUsed">;
 
 export type MembershipAuthorization = {
   roles: Role[];
@@ -140,7 +140,11 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
           where b.tenant_id=s.tenant_id
             and b.enforce_token_binding
             and not coalesce(b.protocol='oidc' and b.status='active' and b.issuer=$7 and b.audience=$8, false)
-        )) as identity_binding_denied
+        )) as identity_binding_denied,
+        -- F7a: Require SSO is a per-tenant flag an Organization Admin sets. Evaluated for every interactive request (the caller
+        -- asked for it, $9) of a human identity, OIDC or SAML: only an OIDC session whose verified token matches the tenant's
+        -- active, binding-enforced provider passes (corvis_control.sso_session_allowed, which fails closed on a null issuer).
+        ($9::boolean and not corvis_control.sso_session_allowed(s.tenant_id, s.auth_method, $7, $8)) as sso_denied
       from corvis_control.identity_subject s
       join corvis_control.tenant t
         on t.tenant_id=s.tenant_id and t.status='active'
@@ -191,7 +195,8 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
         and (m.valid_until is null or m.valid_until > now())
       order by m.workspace_id, m.role_name, e.resource_type, e.resource_id`,
     [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId,
-      options.enforceIdentityBinding === true && principal.authMethod === "oidc", principal.tokenIssuer ?? null, principal.tokenAudience ?? null]);
+      options.enforceIdentityBinding === true && principal.authMethod === "oidc", principal.tokenIssuer ?? null, principal.tokenAudience ?? null,
+      options.enforceIdentityBinding === true]);
 
     const workspaceIds = [...new Set(rows.map((row) => text(row.workspace_id)).filter(Boolean))];
     if (!workspaceIds.includes(principal.workspaceId)) return null;
@@ -205,6 +210,12 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       // The same generic 401 as any other refusal, so nothing says whether the tenant uses binding. Never logs the subject or the token's values.
       logEvent("warn", "auth.identity_binding_denied", { correlationId: "identity-binding", tenantId: principal.tenantId }, { hasTokenClaims: principal.tokenIssuer !== undefined && principal.tokenAudience !== undefined });
       countMetric("auth.identity_binding_denied", 1, { correlationId: "identity-binding", tenantId: principal.tenantId });
+      return null;
+    }
+    if (rows.some((row) => truthy(row.sso_denied))) {
+      // The same generic 401 again: nothing says that the tenant requires SSO or why this sign-in was not accepted.
+      logEvent("warn", "auth.sso_required_denied", { correlationId: "require-sso", tenantId: principal.tenantId }, { authMethod: principal.authMethod, hasTokenClaims: principal.tokenIssuer !== undefined && principal.tokenAudience !== undefined });
+      countMetric("auth.sso_required_denied", 1, { correlationId: "require-sso", tenantId: principal.tenantId });
       return null;
     }
     if (options.applySessionPolicy !== false) {
@@ -282,8 +293,8 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
     if (principal.authMethod === "service_account") return "ok";
     const context = { correlationId: "session-policy", tenantId: principal.tenantId };
     const startedAt = Date.now();
-    const rows = await this.db.query(`select corvis_control.enforce_session_policy($1::uuid,$2,$3,$4) as verdict`,
-      [principal.tenantId, principal.authMethod, principal.subject, principal.sessionId]);
+    const rows = await this.db.query(`select corvis_control.enforce_session_policy($1::uuid,$2,$3,$4,$5::boolean) as verdict`,
+      [principal.tenantId, principal.authMethod, principal.subject, principal.sessionId, principal.mfaUsed ?? null]);
     const verdict = text(rows[0]?.verdict);
     const outcome = verdict || "unknown";
     durationMetric("auth.session_policy", startedAt, context, { outcome });

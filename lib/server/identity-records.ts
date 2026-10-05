@@ -28,7 +28,7 @@ function str(row: PostgresRow, key: string): string { return String(row[key]); }
 /** The records of one tenant, with an explicit tenant predicate (the tables have no client policy). Never selects who verified a domain or the evidence reference. */
 export async function readTenantIdentityRecords(db: PostgresSqlApi, tenantId: string): Promise<TenantIdentityRecords> {
   const [providerRows, domainRows] = await Promise.all([
-    db.query(`select protocol, issuer, audience, status, enforce_token_binding, version, updated_at
+    db.query(`select protocol, issuer, audience, status, enforce_token_binding, idp_enforces_mfa, end_session_endpoint, version, updated_at
       from corvis_control.tenant_identity_provider where tenant_id = $1::uuid`, [tenantId]),
     db.query(`select domain, verification_method, verified_at
       from corvis_control.tenant_verified_domain where tenant_id = $1::uuid order by domain limit 100`, [tenantId]),
@@ -42,6 +42,8 @@ export async function readTenantIdentityRecords(db: PostgresSqlApi, tenantId: st
         audience: str(provider, "audience"),
         status: str(provider, "status") as IdentityProviderStatus,
         enforceTokenBinding: provider.enforce_token_binding === true || provider.enforce_token_binding === "true",
+        idpEnforcesMfa: provider.idp_enforces_mfa == null ? null : provider.idp_enforces_mfa === true || provider.idp_enforces_mfa === "true",
+        endSessionEndpoint: provider.end_session_endpoint == null ? null : str(provider, "end_session_endpoint"),
         version: Number(provider.version),
         updatedAt: str(provider, "updated_at"),
       }
@@ -85,8 +87,8 @@ export async function applyTenantIdentityCommand(
           (select corvis_control.remove_tenant_verified_domain($1::uuid,$2::uuid,$3,$4,$5,$6,$7) as r) x`,
       [command.tenantId, ...actor, command.domain, command.reason, correlationId])
       : await db.query(`select (r->>'changed')::boolean as changed, (r->>'version')::integer as version from
-          (select corvis_control.set_tenant_identity_provider($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::boolean,$10::integer,$11,$12) as r) x`,
-      [command.tenantId, ...actor, command.protocol, command.issuer, command.audience, command.status, command.enforceTokenBinding, command.expectedVersion, command.reason, correlationId]);
+          (select corvis_control.set_tenant_identity_provider($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::boolean,$10::integer,$11,$12,$13::boolean,$14) as r) x`,
+      [command.tenantId, ...actor, command.protocol, command.issuer, command.audience, command.status, command.enforceTokenBinding, command.expectedVersion, command.reason, correlationId, command.idpEnforcesMfa, command.endSessionEndpoint]);
   const row = rows[0];
   return { changed: row?.changed === true || row?.changed === "true", version: row?.version == null ? null : Number(row.version) };
 }

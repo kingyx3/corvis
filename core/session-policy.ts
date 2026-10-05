@@ -42,6 +42,11 @@ export type SessionPolicy = {
   idleTimeoutMinutes: number | null;
   /** Minutes after which a session ends however active it is; null means the organization sets no limit. */
   maxSessionMinutes: number | null;
+  /**
+   * Require SSO (F7a, #334): while on, an interactive human session is accepted only if it authenticated through the
+   * organization's recorded, active OpenID Connect provider with token binding. A SAML or gateway-asserted sign-in is refused.
+   */
+  requireSso: boolean;
   /** Bumped on every change; a change names the version it was based on so two admins cannot overwrite each other. */
   version: number;
   updatedAt: string | null;
@@ -51,6 +56,8 @@ export type SessionPolicy = {
 export type SessionPolicyUpdate = {
   idleTimeoutMinutes: number | null;
   maxSessionMinutes: number | null;
+  /** Left out, the stored value is kept: a caller that does not state it can never weaken it. */
+  requireSso?: boolean;
   expectedVersion: number;
   reason: string;
 };
@@ -70,6 +77,13 @@ export type IdentityProviderView = {
   status: IdentityProviderStatus | null;
   /** Whether a token is accepted for this organization only from the recorded issuer and audience (off unless Corvis operations turned it on). */
   tokenBindingEnforced: boolean;
+  /**
+   * Whether the identity provider enforces MFA for this organization's sign-ins, as recorded by Corvis support (F7a, #334):
+   * true, false, or null when it is not reported (also null for the shared provider, which has no tenant record).
+   */
+  idpEnforcesMfa: boolean | null;
+  /** The provider's OIDC end-session (RP-initiated logout) endpoint as recorded by Corvis support, or null when none is recorded. */
+  endSessionEndpoint: string | null;
 };
 
 export type ScimView = {
@@ -91,6 +105,16 @@ export type SessionMemberView = {
   isCurrentUser: boolean;
   /** Sessions Corvis has seen recently that neither expired under the policy nor were signed out. */
   activeSessions: number;
+  /** Of those, the sessions whose token reported more than one factor (`amr`). Sessions that reported nothing are not counted. */
+  sessionsWithMfa: number;
+};
+
+/** What the verified token of the administrator's own request says about how they signed in (F7a, #334); never stored from here. */
+export type CurrentSessionView = {
+  /** True: more than one factor was reported; false: an `amr` was reported without one; null: no `amr` was reported. */
+  mfaUsed: boolean | null;
+  /** The token's `acr` claim when the provider sent one. */
+  authContext: string | null;
 };
 
 export type SessionPolicyView = {
@@ -104,11 +128,21 @@ export type SessionPolicyView = {
   verifiedDomains: VerifiedDomainView[];
   scim: ScimView;
   signInMethods: SignInMethodView[];
+  currentSession: CurrentSessionView;
   members: SessionMemberView[];
 };
 
 export type SignOutEverywhereCommand = { userId: string; reason: string };
-export type SignOutEverywhereResult = { userId: string; label: string; revokedSessions: number };
+export type SignOutEverywhereResult = {
+  userId: string;
+  label: string;
+  revokedSessions: number;
+  /**
+   * The identity provider's end-session endpoint when Corvis support recorded one (F7c, #336). Corvis does not call it:
+   * ending the person's session at the identity provider is a step for the administrator, who is told so.
+   */
+  idpEndSessionEndpoint: string | null;
+};
 
 export class SessionPolicyValidationError extends Error {
   readonly code: string;
@@ -148,7 +182,16 @@ export function parseSessionPolicyUpdate(body: unknown): SessionPolicyUpdate {
   if (idleTimeoutMinutes !== null && maxSessionMinutes !== null && idleTimeoutMinutes > maxSessionMinutes) return fail("idle_exceeds_max_session");
   const expectedVersion = body.expectedVersion;
   if (typeof expectedVersion !== "number" || !Number.isInteger(expectedVersion) || expectedVersion < 0) return fail("invalid_version");
-  return { idleTimeoutMinutes, maxSessionMinutes, expectedVersion, reason: reasonText(body.reason) };
+  if (body.requireSso !== undefined && typeof body.requireSso !== "boolean") return fail("invalid_require_sso");
+  return {
+    idleTimeoutMinutes, maxSessionMinutes, ...(body.requireSso === undefined ? {} : { requireSso: body.requireSso }),
+    expectedVersion, reason: reasonText(body.reason),
+  };
+}
+
+/** Whether Require SSO can be turned on at all: the organization needs its own active OpenID Connect provider with token binding. */
+export function ssoCanBeRequired(provider: IdentityProviderView): boolean {
+  return provider.source === "tenant" && provider.protocol === "oidc" && provider.status === "active" && provider.tokenBindingEnforced;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

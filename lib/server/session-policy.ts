@@ -58,7 +58,7 @@ export const SESSION_POLICY_BOUNDS = {
 } as const;
 
 /** A stale or missing policy as the view shows it: no limits, version 0 (the version a first change is based on). */
-export const NO_SESSION_POLICY: SessionPolicy = { idleTimeoutMinutes: null, maxSessionMinutes: null, version: 0, updatedAt: null, updatedBy: null };
+export const NO_SESSION_POLICY: SessionPolicy = { idleTimeoutMinutes: null, maxSessionMinutes: null, requireSso: false, version: 0, updatedAt: null, updatedBy: null };
 
 function sessionAuditEvent(identity: RequestIdentity, correlationId: string, action: string, targetType: string, targetId: string, metadata: AuditEvent["metadata"]): AuditEvent {
   return {
@@ -90,8 +90,10 @@ export function createSessionPolicyService(backend: SessionPolicyBackend): Sessi
         audit: ({ policy, previous, changed }) => changed ? sessionAuditEvent(identity, correlationId, "access.session_policy.updated", "session_policy", identity.tenantId, {
           previousIdleTimeoutMinutes: previous.idleTimeoutMinutes,
           previousMaxSessionMinutes: previous.maxSessionMinutes,
+          previousRequireSso: previous.requireSso,
           idleTimeoutMinutes: policy.idleTimeoutMinutes,
           maxSessionMinutes: policy.maxSessionMinutes,
+          requireSso: policy.requireSso,
           version: policy.version,
           reason: command.reason,
         }) : undefined,
@@ -105,6 +107,10 @@ export function createSessionPolicyService(backend: SessionPolicyBackend): Sessi
         mutate: (db) => backend.signOut(identity, command, db),
         audit: (result) => sessionAuditEvent(identity, correlationId, "access.session.signed_out_everywhere", "user_sessions", result.userId, {
           revokedSessions: result.revokedSessions,
+          // F7c (#336): Corvis ends its own sessions but never calls the identity provider. When Corvis support recorded the
+          // provider's end-session endpoint, the audit trail says the person's session there still has to be ended.
+          idpSessionEndRequired: result.idpEndSessionEndpoint !== null,
+          idpEndSessionEndpoint: result.idpEndSessionEndpoint,
           reason: command.reason,
         }),
       });
@@ -126,15 +132,27 @@ function toPolicy(row: PostgresRow | undefined): SessionPolicy {
   return {
     idleTimeoutMinutes: optionalInt(row, "idle_timeout_minutes"),
     maxSessionMinutes: optionalInt(row, "max_session_minutes"),
+    requireSso: flag(row, "require_sso"),
     version: Number(row.version),
     updatedAt: optionalStr(row, "updated_at"),
     updatedBy: optionalStr(row, "updated_by_subject"),
   };
 }
 
-const POLICY_COLUMNS = "idle_timeout_minutes, max_session_minutes, version, updated_at, updated_by_subject";
+const POLICY_COLUMNS = "idle_timeout_minutes, max_session_minutes, require_sso, version, updated_at, updated_by_subject";
 
 /** How a person is named to an administrator: the address they were invited with, otherwise their identity subject. */
+/** The sessions of the person `s` that are active now (seen within the idle limit, a day when none is set, inside the maximum length, not signed out); `extra` narrows them. */
+const ACTIVE_SESSIONS_SQL = (extra: string): string => `(select count(*) from corvis_control.tenant_session_activity a
+            where a.tenant_id = s.tenant_id
+              and exists (select 1 from corvis_control.identity_subject x
+                where x.tenant_id = a.tenant_id and x.user_id = s.user_id and x.auth_method = a.auth_method and x.subject = a.subject)
+              and not exists (select 1 from corvis_control.session_revocation r
+                where r.tenant_id = a.tenant_id and r.auth_method = a.auth_method and r.subject = a.subject and r.session_id = a.session_id)
+              and a.last_seen_at > now() - make_interval(mins => coalesce(p.idle_timeout_minutes, 1440))
+              and (p.max_session_minutes is null or a.first_seen_at > now() - make_interval(mins => p.max_session_minutes))
+              ${extra})`;
+
 const MEMBER_LABEL_SQL = `coalesce((select i.email from corvis_control.tenant_invitation i
     where i.tenant_id = s.tenant_id and i.accepted_user_id = s.user_id and i.status = 'accepted' order by i.accepted_at desc limit 1), min(s.subject))`;
 
@@ -163,14 +181,8 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
       // Active sessions: seen within the idle limit (a day when none is set), inside the maximum length, and not signed out.
       db.query(`select s.user_id::text as user_id, ${MEMBER_LABEL_SQL} as label,
           coalesce(bool_or(s.auth_method = $2 and s.subject = $3), false) as is_current,
-          (select count(*) from corvis_control.tenant_session_activity a
-            where a.tenant_id = s.tenant_id
-              and exists (select 1 from corvis_control.identity_subject x
-                where x.tenant_id = a.tenant_id and x.user_id = s.user_id and x.auth_method = a.auth_method and x.subject = a.subject)
-              and not exists (select 1 from corvis_control.session_revocation r
-                where r.tenant_id = a.tenant_id and r.auth_method = a.auth_method and r.subject = a.subject and r.session_id = a.session_id)
-              and a.last_seen_at > now() - make_interval(mins => coalesce(p.idle_timeout_minutes, 1440))
-              and (p.max_session_minutes is null or a.first_seen_at > now() - make_interval(mins => p.max_session_minutes))) as active_sessions
+          ${ACTIVE_SESSIONS_SQL("")} as active_sessions,
+          ${ACTIVE_SESSIONS_SQL("and a.mfa_used")} as sessions_with_mfa
         from corvis_control.identity_subject s
         left join corvis_control.tenant_session_policy p on p.tenant_id = s.tenant_id
         where s.tenant_id = $1::uuid and s.status = 'active' and s.auth_method in ('oidc','saml')
@@ -198,6 +210,7 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
       label: str(row, "label"),
       isCurrentUser: flag(row, "is_current"),
       activeSessions: Number(row.active_sessions),
+      sessionsWithMfa: Number(row.sessions_with_mfa),
     }));
     return {
       policy: toPolicy(policyRows[0]),
@@ -206,20 +219,27 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
       verifiedDomains: records.verifiedDomains,
       scim,
       signInMethods,
+      // The administrator's own verified token: what the identity provider reported about THIS sign-in, not a stored claim.
+      currentSession: { mfaUsed: identity.mfaUsed ?? null, authContext: identity.authContext ?? null },
       members,
     };
   }
 
   /** The tenant's own recorded provider when Corvis operations set one up; otherwise the single provider every organization shares. */
   private identityProvider(record: TenantIdentityRecords["identityProvider"]): IdentityProviderView {
-    if (!record) return { protocol: "oidc", issuer: this.issuer(), audience: null, source: "global", status: null, tokenBindingEnforced: false };
-    return { protocol: record.protocol, issuer: record.issuer, audience: record.audience, source: "tenant", status: record.status, tokenBindingEnforced: record.enforceTokenBinding };
+    if (!record) return { protocol: "oidc", issuer: this.issuer(), audience: null, source: "global", status: null, tokenBindingEnforced: false, idpEnforcesMfa: null, endSessionEndpoint: null };
+    return {
+      protocol: record.protocol, issuer: record.issuer, audience: record.audience, source: "tenant", status: record.status,
+      tokenBindingEnforced: record.enforceTokenBinding, idpEnforcesMfa: record.idpEnforcesMfa, endSessionEndpoint: record.endSessionEndpoint,
+    };
   }
 
   async update(identity: RequestIdentity, command: SessionPolicyUpdate, db: PostgresSqlApi = this.defaultDb()): Promise<SessionPolicyChange> {
     const previous = toPolicy((await db.query(`select ${POLICY_COLUMNS} from corvis_control.tenant_session_policy where tenant_id = $1::uuid`, [identity.tenantId]))[0]);
-    const rows = await db.query(`select ${POLICY_COLUMNS} from corvis_control.set_tenant_session_policy($1::uuid,$2,$3,$4::integer,$5::integer,$6::integer)`, [
+    const rows = await db.query(`select ${POLICY_COLUMNS} from corvis_control.set_tenant_session_policy($1::uuid,$2,$3,$4::integer,$5::integer,$6::integer,$7::boolean,$8,$9)`, [
       identity.tenantId, identity.authMethod, identity.subject, command.idleTimeoutMinutes, command.maxSessionMinutes, command.expectedVersion,
+      // Left out, Require SSO keeps its stored value. The actor's own verified issuer and audience let SQL refuse enabling it from a session it would refuse.
+      command.requireSso ?? null, identity.tokenIssuer ?? null, identity.tokenAudience ?? null,
     ]);
     // No row: nothing was set and nothing was asked for, so the policy is still "none".
     const policy = toPolicy(rows[0]);
@@ -234,8 +254,11 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
     ]);
     const labelRows = await db.query(`select ${MEMBER_LABEL_SQL} as label from corvis_control.identity_subject s
       where s.tenant_id = $1::uuid and s.user_id = $2::uuid group by s.tenant_id, s.user_id`, [identity.tenantId, command.userId]);
+    // The recorded end-session endpoint of the identity provider, if Corvis support recorded one: shown to the administrator
+    // and written to the audit event, never called (ending the IdP session needs the person's id token or an IdP admin API).
+    const endpointRows = await db.query(`select end_session_endpoint from corvis_control.tenant_identity_provider where tenant_id = $1::uuid`, [identity.tenantId]);
     await this.announce(db, identity, "user_signed_out");
-    return { userId: command.userId, label: str(labelRows[0]!, "label"), revokedSessions: Number(rows[0]!.revoked) };
+    return { userId: command.userId, label: str(labelRows[0]!, "label"), revokedSessions: Number(rows[0]!.revoked), idpEndSessionEndpoint: optionalStr(endpointRows[0] ?? {}, "end_session_endpoint") };
   }
 
   /**

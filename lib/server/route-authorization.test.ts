@@ -241,6 +241,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
 // Routes with their own (non-session) authentication, exercised in dedicated tests below.
 const OWN_AUTHENTICATION = new Set([
   "auth/service-account/token/route.ts", // Corvis-issued service-account credential exchange
+  "auth/oidc/backchannel-logout/route.ts", // called by the identity provider; authenticated only by the signed logout token
   "health/route.ts", // public
   "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership

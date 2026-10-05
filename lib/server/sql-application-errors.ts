@@ -146,6 +146,10 @@ export const SQL_APPLICATION_ERRORS = [
   "service account entitlement already granted",
   "service account entitlement limit reached",
   "service account entitlement not found",
+  // corvis_control.set_tenant_session_policy (Require SSO, 099) and set_tenant_identity_provider (099)
+  "session policy sso needs token binding",
+  "session policy sso would lock out current session",
+  "identity provider change would weaken require sso",
   // corvis_control.set_tenant_verified_domain / remove_tenant_verified_domain / set_tenant_identity_provider (095)
   "identity records require an active operations admin",
   "identity record change needs a stated reason",
@@ -298,6 +302,10 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account entitlement already granted": { code: "service_account_entitlement_exists", status: 409 },
   "service account entitlement limit reached": { code: "service_account_entitlement_limit_reached", status: 409 },
   "service account entitlement not found": { code: "service_account_entitlement_not_found", status: 404 },
+  // Require SSO (F7a, #334): needs a recorded, bound OIDC provider, is never enabled from a session it would refuse, and the provider record cannot be weakened while it is on.
+  "session policy sso needs token binding": { code: "sso_requires_token_binding", status: 409 },
+  "session policy sso would lock out current session": { code: "sso_would_lock_out_current_session", status: 409 },
+  "identity provider change would weaken require sso": { code: "sso_required_by_policy", status: 409 },
   // Verified domains and the identity-provider record (F7b/F7e): Corvis operations only, one tenant per domain, a stale version.
   "identity records require an active operations admin": { code: "operations_admin_required", status: 403 },
   "identity record change needs a stated reason": { code: "invalid_reason", status: 400 },
