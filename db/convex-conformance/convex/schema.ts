@@ -10,4 +10,8 @@ export default defineSchema({
     key: v.string(),
     kind: v.string(),
   }).index("by_key", ["key"]),
+  counters: defineTable({
+    key: v.string(),
+    value: v.number(),
+  }).index("by_key", ["key"]),
 });
