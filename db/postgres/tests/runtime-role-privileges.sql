@@ -14,7 +14,7 @@
 -- Run after the full migration chain on an isolated disposable database, as the role that applied the migrations (the
 -- default-privilege probe creates one function in a rolled-back transaction). Read-only.
 --
--- Updating the manifest is a security decision: every table row needs a code reference (see docs/RUNTIME_DATABASE_ROLE.md).
+-- Updating the manifest is a security decision: every table row needs a code reference (see docs/security/RUNTIME_DATABASE_ROLE.md).
 
 \set ON_ERROR_STOP on
 

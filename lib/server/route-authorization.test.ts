@@ -932,7 +932,7 @@ test("uploads are tenant-isolated: another tenant cannot read, complete or abort
       method: "POST", subject: "uploader-owner", body: { fileName: "report.pdf", contentType: "application/pdf", sizeBytes: 2048, idempotencyKey: "upload-authz-1" },
     }));
     assert.equal(created.status, 201);
-    // uploads/initiate is one of the two documented non-enveloped families (docs/API_CONVENTIONS.md).
+    // uploads/initiate is one of the two documented non-enveloped families (docs/architecture/API_CONVENTIONS.md).
     const data = await created.json() as { uploadId: string };
     const ctx = { params: Promise.resolve({ uploadId: data.uploadId }) };
 

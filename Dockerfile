@@ -13,7 +13,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_CORVIS_API_BASE=""
 ARG NEXT_PUBLIC_CORVIS_DEMO_MODE="false"
-# In-app help and support links (docs/SUPPORT.md); empty uses the documented defaults.
+# In-app help and support links (docs/features/SUPPORT.md); empty uses the documented defaults.
 ARG NEXT_PUBLIC_CORVIS_SUPPORT_EMAIL=""
 ARG NEXT_PUBLIC_CORVIS_SUPPORT_URL=""
 ARG NEXT_PUBLIC_CORVIS_DOCS_URL=""

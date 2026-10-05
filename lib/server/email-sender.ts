@@ -3,7 +3,7 @@ import { DisabledEmailSender } from "../../adapters/email/disabled-email-sender.
 import { getServerConfig, type ServerConfig } from "./config.ts";
 import { logEvent } from "./telemetry.ts";
 
-/** Providers with a reviewed adapter. Activation also needs a vendor/subprocessor approval (see docs/NOTIFICATIONS.md). */
+/** Providers with a reviewed adapter. Activation also needs a vendor/subprocessor approval (see docs/features/NOTIFICATIONS.md). */
 export const SUPPORTED_EMAIL_PROVIDERS = ["disabled"] as const;
 
 let warnedProvider: string | undefined;

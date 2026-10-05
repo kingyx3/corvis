@@ -14,7 +14,7 @@
  *                audited transfer. An owner who is deactivated is never silently orphaned: the account is flagged as
  *                needing a new owner, and it is not extended until it has one.
  *
- * This contract says nothing about how a presented credential is accepted at the API edge: see docs/SERVICE_ACCOUNTS.md.
+ * This contract says nothing about how a presented credential is accepted at the API edge: see docs/features/SERVICE_ACCOUNTS.md.
  */
 
 /** Roles a service account may hold: the ordinary roles below any administrator. A machine is never an administrator. */

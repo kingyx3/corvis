@@ -72,7 +72,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
@@ -160,7 +160,7 @@ jobs:
           echo "EXPECTED_WORKER_INVOKER=${expected_worker_member}" >> "${GITHUB_ENV}"
           echo "WORKER_TRANSPORT_BOUNDARY=${worker_transport_boundary}" >> "${GITHUB_ENV}"
       - name: Verify edge, gateway, worker and origin security
-        run: node .github/scripts/security-acceptance.mjs
+        run: node tools/ci/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -178,7 +178,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts security-acceptance-evidence.json
+          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts security-acceptance-evidence.json
           unset dsn
 
   postgres-rls:
@@ -198,7 +198,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
@@ -246,7 +246,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
+          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
           unset dsn
 
   control-loop:
@@ -267,7 +267,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # scripts/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
@@ -352,7 +352,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node scripts/collect-control-evidence.ts control-loop-runtime-acceptance-evidence.json
+          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts control-loop-runtime-acceptance-evidence.json
           unset dsn
 
   record-known-good-release:

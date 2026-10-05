@@ -62,7 +62,7 @@ resource "google_monitoring_alert_policy" "api_5xx_rate" {
   notification_channels = var.notification_channel_ids
 
   documentation {
-    content   = "API 5xx error rate exceeded the ops/slos.yaml web_api availability target (99.9%). See docs/INFRASTRUCTURE.md and ops/RUNBOOK.md."
+    content   = "API 5xx error rate exceeded the ops/slos.yaml web_api availability target (99.9%). See docs/operations/INFRASTRUCTURE.md and ops/RUNBOOK.md."
     mime_type = "text/markdown"
   }
 }
@@ -241,7 +241,7 @@ resource "google_pubsub_topic" "budget_updates" {
 
 # Cost telemetry/budget (issue #9's "Cloud Run, GCS, Pub/Sub/Tasks,
 # Supabase/Postgres and Cloudflare health/cost attribution and budgets").
-# Billing-account access is bootstrap-level (docs/GITHUB_ENVIRONMENTS.md), so
+# Billing-account access is bootstrap-level (docs/operations/GITHUB_ENVIRONMENTS.md), so
 # this stays optional until that access exists. Programmatic notifications are
 # deliberately non-destructive: the UAT cost guard pauses automated work at 85%
 # rather than disabling billing or deleting the project.

@@ -5,7 +5,7 @@ import { approvedSourceProviders, providerDescriptor } from "@/lib/server/source
 
 /**
  * The approved providers the "Connect source" wizard may offer, each with the plain-language access description
- * it shows before anything is authorized. Empty until a provider integration is certified (docs/SOURCE_CONNECTORS.md);
+ * it shows before anything is authorized. Empty until a provider integration is certified (docs/features/SOURCE_CONNECTORS.md);
  * in demo mode it also lists the labelled demo providers. Administrators only.
  */
 export async function GET(request: Request) {

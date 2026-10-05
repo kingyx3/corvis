@@ -30,7 +30,7 @@ Key Confluence business references:
 - **Snowflake** — optional downstream analytics / secure sharing only after an explicit activation decision; never the application write authority.
 - **No Corvis-managed AWS infrastructure by default.**
 
-Detailed technical implementation is in [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) and [`docs/DATA_PLATFORM.md`](docs/DATA_PLATFORM.md).
+Detailed technical implementation is in [`docs/operations/INFRASTRUCTURE.md`](./docs/operations/INFRASTRUCTURE.md) and [`docs/architecture/DATA_PLATFORM.md`](./docs/architecture/DATA_PLATFORM.md).
 
 ## GitHub-first environment configuration
 
@@ -44,11 +44,11 @@ prod
 
 Human-entered technical deployment configuration should be set in GitHub Environment variables/secrets and propagated by GitHub Actions to GCP, Cloudflare and Supabase wherever provider APIs/IaC allow. GCP runtime secrets ultimately live in Secret Manager; GitHub is the deployment control plane, not the application runtime secret store.
 
-See [`docs/GITHUB_ENVIRONMENTS.md`](docs/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
+See [`docs/operations/GITHUB_ENVIRONMENTS.md`](./docs/operations/GITHUB_ENVIRONMENTS.md) for the exact variable/secret checklist and unavoidable one-time bootstrap exceptions.
 
 ## Repository ownership
 
-Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `app/`, `lib/`, `core/`, `adapters/`, `features/` and `infra/terraform/modules/` today; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current map.
+Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `app/`, `lib/`, `core/`, `adapters/`, `features/` and `infra/terraform/modules/` today; see [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) for the current map.
 
 ```text
 apps/
@@ -120,9 +120,9 @@ The Postgres-primary application migration is complete: production application p
 
 Technical status and activation:
 
-- [`docs/ENTERPRISE_IMPLEMENTATION.md`](docs/ENTERPRISE_IMPLEMENTATION.md)
-- [`docs/PRODUCTION_ACTIVATION.md`](docs/PRODUCTION_ACTIVATION.md)
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- [`docs/operations/ENTERPRISE_IMPLEMENTATION.md`](./docs/operations/ENTERPRISE_IMPLEMENTATION.md)
+- [`docs/operations/PRODUCTION_ACTIVATION.md`](./docs/operations/PRODUCTION_ACTIVATION.md)
+- [`docs/operations/DEPLOYMENT.md`](./docs/operations/DEPLOYMENT.md)
 - [`ops/RUNBOOK.md`](ops/RUNBOOK.md)
 - [`ops/slos.yaml`](ops/slos.yaml)
 

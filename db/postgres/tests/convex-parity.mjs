@@ -1,4 +1,4 @@
-// Parity of Corvis's PostgreSQL adapter with the Convex reference semantics in db/convex-conformance/conformance.mjs:
+// Parity of Corvis's PostgreSQL adapter with the Convex reference semantics in tools/convex-conformance/conformance.mjs:
 // one winner for a concurrent compare-and-set, no lost updates under contention, and all-or-nothing transactions
 // (inserts and updates both roll back). Uses a scratch table in the connected database and drops it afterwards, so it
 // needs no Corvis migrations:
@@ -8,7 +8,7 @@ import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
-const CONTENDERS = 16; // keep equal to db/convex-conformance/conformance.mjs
+const CONTENDERS = 16; // keep equal to tools/convex-conformance/conformance.mjs
 
 const db = new NativePostgresSqlApi(dsn, { max: CONTENDERS });
 

@@ -110,7 +110,7 @@ resource "google_cloud_run_v2_job" "control_loop" {
         }
         env {
           name  = "CONTROL_LOOP_STATE_PREFIX"
-          value = "control-loop/${var.environment}"
+          value = "services/control-loop/${var.environment}"
         }
         env {
           name  = "GITHUB_REPOSITORY"

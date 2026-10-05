@@ -25,7 +25,7 @@
 -- predicates after request authorization has succeeded.
 --
 -- This migration does NOT define how a presented credential is accepted at the API edge (see
--- docs/SERVICE_ACCOUNTS.md, "Decision needed"): it stores and lifecycles credentials and nothing here authenticates
+-- docs/features/SERVICE_ACCOUNTS.md, "Decision needed"): it stores and lifecycles credentials and nothing here authenticates
 -- a request.
 
 begin;

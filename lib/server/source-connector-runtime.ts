@@ -21,7 +21,7 @@ const LOCAL_PLACEHOLDER_PROJECT_ID = "corvis-local-dev";
  *
  * `projectId` must be the real GCP project the secret is (or will be) stored
  * in; every one of Corvis's `dev`/`uat`/`prod` environments has its own
- * project (see docs/GITHUB_ENVIRONMENTS.md, `GCP_PROJECT_ID`), so this can
+ * project (see docs/operations/GITHUB_ENVIRONMENTS.md, `GCP_PROJECT_ID`), so this can
  * never be hardcoded to one of them. Callers that have no real project
  * (the in-memory/local store) pass `LOCAL_PLACEHOLDER_PROJECT_ID`.
  */
@@ -262,7 +262,7 @@ const sharedDrivers = globalThis as typeof globalThis & { sourceConnectorDrivers
 
 /**
  * Registered connector drivers, keyed by `provider_key`. Empty until a real
- * connector is certified end to end (docs/SOURCE_CONNECTORS.md, "Initial
+ * connector is certified end to end (docs/features/SOURCE_CONNECTORS.md, "Initial
  * implementation sequence" step 4); `testSourceConnection` fails closed with
  * `unregistered_provider` for any connection whose provider has no
  * registered driver, which is the correct behavior while the catalog is

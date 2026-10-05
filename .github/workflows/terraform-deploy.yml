@@ -198,14 +198,14 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
-        run: bash .github/scripts/assert-release-matches-head.sh "${RELEASE_SHA}"
+        run: bash tools/ci/assert-release-matches-head.sh "${RELEASE_SHA}"
 
       - name: Verify effective release governance
         if: inputs.action == 'apply'
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
           RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
-        run: node .github/scripts/release-governance.mjs
+        run: node tools/ci/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -224,7 +224,7 @@ jobs:
           terraform-version: "1.13.3"
 
       - name: Require bootstrap-owned remote state
-        run: bash .github/scripts/terraform-state.sh require
+        run: bash tools/ci/terraform-state.sh require
 
       - name: Resolve immutable release set
         id: release
@@ -346,7 +346,7 @@ jobs:
         shell: bash
         env:
           CORVIS_ENVIRONMENT: ${{ inputs.environment }}
-        run: bash .github/scripts/assert-prod-alerting.sh
+        run: bash tools/ci/assert-prod-alerting.sh
 
       - name: Terraform init
         shell: bash

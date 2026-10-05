@@ -8,7 +8,7 @@ import { parseViewHash } from "./view-hash.ts";
  * so nothing sensitive can reach a support request by accident.
  */
 
-/** Where help lives. Set at build time through the `NEXT_PUBLIC_CORVIS_SUPPORT_*` variables (see docs/SUPPORT.md). */
+/** Where help lives. Set at build time through the `NEXT_PUBLIC_CORVIS_SUPPORT_*` variables (see docs/features/SUPPORT.md). */
 export type SupportConfig = {
   /** Mailbox that "Contact support" composes an email to. */
   supportEmail: string;

@@ -3,12 +3,12 @@ name: LiteLLM gateway validation
 on:
   pull_request:
     paths:
-      - "ops/litellm/**"
+      - "services/litellm-gateway/**"
       - ".github/workflows/litellm-gateway-validation.yml"
   push:
     branches: [main]
     paths:
-      - "ops/litellm/**"
+      - "services/litellm-gateway/**"
       - ".github/workflows/litellm-gateway-validation.yml"
 
 permissions:
@@ -25,12 +25,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile ops/litellm/entrypoint.py
+          python -m py_compile services/litellm-gateway/entrypoint.py
           python - <<'PY'
           import importlib.util
           from pathlib import Path
 
-          path = Path("ops/litellm/entrypoint.py")
+          path = Path("services/litellm-gateway/entrypoint.py")
           spec = importlib.util.spec_from_file_location("corvis_litellm_entrypoint", path)
           module = importlib.util.module_from_spec(spec)
           assert spec.loader is not None
@@ -87,15 +87,15 @@ jobs:
         run: |
           set -euo pipefail
           image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
-          docker run --rm -i "${image}" hadolint --failure-threshold warning - < ops/litellm/Dockerfile
+          docker run --rm -i "${image}" hadolint --failure-threshold warning - < services/litellm-gateway/Dockerfile
 
       - name: Guard production image contract
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'ARG LITELLM_BASE_IMAGE' ops/litellm/Dockerfile >/dev/null
-          grep -F 'FROM ${LITELLM_BASE_IMAGE}' ops/litellm/Dockerfile >/dev/null
-          if grep -Eq 'FROM .*:(latest|main-latest)([[:space:]]|$)' ops/litellm/Dockerfile; then
+          grep -F 'ARG LITELLM_BASE_IMAGE' services/litellm-gateway/Dockerfile >/dev/null
+          grep -F 'FROM ${LITELLM_BASE_IMAGE}' services/litellm-gateway/Dockerfile >/dev/null
+          if grep -Eq 'FROM .*:(latest|main-latest)([[:space:]]|$)' services/litellm-gateway/Dockerfile; then
             echo "::error::LiteLLM production wrapper must not bake a mutable upstream tag."
             exit 1
           fi

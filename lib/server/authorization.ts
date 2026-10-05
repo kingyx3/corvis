@@ -286,7 +286,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
    * the reason is logged (never the session id) so it can be told apart on a dashboard. F7d (#337) makes it observable:
    * every enforcement emits the `auth.session_policy` duration metric (latency, tagged with the verdict, so its count is
    * the denominator of the denial rate) and every denial the `auth.session_policy_denied` count metric tagged with the
-   * reason; neither carries a subject or a session id. Alert guidance: docs/tenant-self-service.md.
+   * reason; neither carries a subject or a session id. Alert guidance: docs/features/TENANT_SELF_SERVICE.md.
    */
   private async sessionVerdict(principal: AuthorizationPrincipal): Promise<string> {
     // The policy governs people; service identities are controlled by their grants (the SQL function exempts them too).

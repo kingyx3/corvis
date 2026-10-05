@@ -1,0 +1,9 @@
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=8080
+RUN addgroup -S corvis && adduser -S corvis -G corvis
+COPY --chown=corvis:corvis services/extractor/server.mjs /app/server.mjs
+USER corvis
+EXPOSE 8080
+CMD ["node", "/app/server.mjs"]

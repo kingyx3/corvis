@@ -9,7 +9,7 @@ import type { SourceOAuthClient } from "./source-oauth.ts";
  * The registry of approved source providers: the only providers the "Connect
  * source" wizard offers and the only ones the connect routes accept. A
  * provider is approved when a real integration has been certified for it
- * (docs/SOURCE_CONNECTORS.md) and registered here together with its
+ * (docs/features/SOURCE_CONNECTORS.md) and registered here together with its
  * `ConnectorDriver`; until then the registry is empty and the wizard says so
  * honestly. In demo mode (never production) the clearly labelled demo
  * providers are added so the whole flow can be exercised.

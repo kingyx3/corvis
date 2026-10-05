@@ -57,7 +57,7 @@ jobs:
       - name: Verify effective release governance
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
-        run: node .github/scripts/release-governance.mjs
+        run: node tools/ci/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation
         id: gcp_auth
@@ -118,7 +118,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile.control-loop
+          file: services/control-loop/Dockerfile
           pull: true
           push: true
           provenance: mode=max
@@ -132,7 +132,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile.extractor
+          file: services/extractor/Dockerfile
           pull: true
           push: true
           provenance: mode=max
@@ -145,8 +145,8 @@ jobs:
         id: litellm_build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ops/litellm
-          file: ops/litellm/Dockerfile
+          context: services/litellm-gateway
+          file: services/litellm-gateway/Dockerfile
           pull: true
           push: true
           provenance: mode=max

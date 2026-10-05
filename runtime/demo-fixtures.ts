@@ -7,7 +7,7 @@ export const NO_DEMO_FIXTURES: DemoUiFixtures = { recentActivity: [], researchSu
 /**
  * Demo-only presentation fixtures (recent-activity feed, Ask Corvis suggestions). Loaded through a
  * dynamic import behind the inline build-time demo flag, so production bundles carry no demo
- * fund/company names; see scripts/check-bundle-demo-free.ts.
+ * fund/company names; see tools/dev/check-bundle-demo-free.ts.
  */
 export async function loadDemoUiFixtures(): Promise<DemoUiFixtures> {
   if (process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true") {

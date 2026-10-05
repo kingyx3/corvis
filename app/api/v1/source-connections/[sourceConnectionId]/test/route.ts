@@ -8,7 +8,7 @@ import { assertSourceConnectionId } from "@/lib/server/source-connectors";
  * A scoped connectivity check: reads the credential and calls the driver's
  * `testConnection`, without discovering or downloading any document. This is
  * the "Corvis performs a scoped connectivity test and shows the customer the
- * result" step of the connect flow in docs/SOURCE_CONNECTORS.md, not a full
+ * result" step of the connect flow in docs/features/SOURCE_CONNECTORS.md, not a full
  * sync run. The response is `{ ok, errorClass? }`: the class drives the
  * plain-language reason in the UI, and no driver detail text reaches the browser.
  */

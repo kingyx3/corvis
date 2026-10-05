@@ -5,7 +5,7 @@
 -- Until now no migration granted anything to an application role: the app ran as the owner / service role, bypassed row
 -- level security (migration 051 says so) and every tenant boundary rested on `tenant_id = $1` predicates in TypeScript.
 -- This migration adds the role and the grants a deployment needs to move the application onto it; it does NOT change the
--- application's connection (that is a per-environment rollout step, see docs/RUNTIME_DATABASE_ROLE.md), and it changes
+-- application's connection (that is a per-environment rollout step, see docs/security/RUNTIME_DATABASE_ROLE.md), and it changes
 -- nothing for the owner role.
 --
 --   1. `corvis_runtime`: a NOLOGIN group role. Not a superuser, no BYPASSRLS, no CREATEROLE/CREATEDB/REPLICATION, owns
@@ -53,7 +53,7 @@ begin
 end;
 $$;
 
-comment on role corvis_runtime is 'Least-privilege application runtime group role (#227). Grant to the application login role; owns nothing, no DDL, no BYPASSRLS. See docs/RUNTIME_DATABASE_ROLE.md.';
+comment on role corvis_runtime is 'Least-privilege application runtime group role (#227). Grant to the application login role; owns nothing, no DDL, no BYPASSRLS. See docs/security/RUNTIME_DATABASE_ROLE.md.';
 
 -- 2. No function in any corvis_* schema is callable through PUBLIC any more.
 revoke execute on all functions in schema corvis_consolidated from public;

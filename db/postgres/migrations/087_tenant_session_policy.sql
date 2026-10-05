@@ -275,7 +275,7 @@ begin
 end;
 $$;
 
--- The F7 notification category (docs/NOTIFICATIONS.md): outbox rows may now name it. It is a mandatory security
+-- The F7 notification category (docs/features/NOTIFICATIONS.md): outbox rows may now name it. It is a mandatory security
 -- notice to Organization Admins, so it is deliberately not a preference category.
 alter table corvis_control.email_outbox drop constraint if exists email_outbox_category_check;
 alter table corvis_control.email_outbox add constraint email_outbox_category_check check (category in (

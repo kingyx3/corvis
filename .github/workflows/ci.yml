@@ -75,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           image="hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d"
-          for dockerfile in Dockerfile Dockerfile.control-loop; do
+          for dockerfile in Dockerfile services/control-loop/Dockerfile; do
             echo "Linting ${dockerfile}"
             docker run --rm -i "${image}" hadolint --failure-threshold warning - < "${dockerfile}"
           done
@@ -242,7 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           # Every fixture string from adapters/demo/catalog.ts, plus the demo failure-injection marker.
-          node scripts/check-bundle-demo-free.ts .next/static
+          node tools/dev/check-bundle-demo-free.ts .next/static
           if grep -rl "corvis:demo:fail:" .next/static; then
             echo "::error::demo fixtures were bundled into a non-demo build (see files above)"
             exit 1
@@ -325,7 +325,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile.control-loop
+          file: services/control-loop/Dockerfile
           pull: true
           load: true
           tags: corvis-control-loop-ci:${{ github.sha }}

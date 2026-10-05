@@ -119,7 +119,7 @@ test("new public resources are part of the versioned OpenAPI contract", async ()
 });
 
 test("resource tranche intentionally does not fake holdings or instruments", async () => {
-  const contract = (await readFile("docs/API_CONVENTIONS.md", "utf8")).toLowerCase();
+  const contract = (await readFile("docs/architecture/API_CONVENTIONS.md", "utf8")).toLowerCase();
   assert.ok(contract.includes("/api/v1"));
   const repository = (await readFile("lib/server/public-serving-resources.ts", "utf8")).toLowerCase();
   assert.doesNotMatch(repository, /targettype:\s*company_id\s*\?/);

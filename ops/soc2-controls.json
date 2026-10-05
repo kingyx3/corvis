@@ -74,7 +74,7 @@
       "status": "provider_gated",
       "owners": ["security", "platform-engineering"],
       "evidence": [
-        "docs/SERVICE_IDENTITY_HARDENING.md",
+        "docs/security/SERVICE_IDENTITY_HARDENING.md",
         "db/postgres/migrations",
         ".github/workflows/security-acceptance.yml",
         "live IdP MFA/SSO/JML and privileged-access review evidence"
@@ -134,8 +134,8 @@
       "status": "provider_gated",
       "owners": ["security", "privacy", "platform-engineering"],
       "evidence": [
-        "docs/INFRASTRUCTURE.md",
-        "docs/RUNTIME_SECRETS.md",
+        "docs/operations/INFRASTRUCTURE.md",
+        "docs/operations/RUNTIME_SECRETS.md",
         "db/postgres/migrations",
         ".github/workflows/security-acceptance.yml",
         "live KMS/IAM/TLS/retention/deletion evidence"
@@ -147,7 +147,7 @@
       "status": "production_like_uat_required",
       "owners": ["data-product", "engineering", "operations"],
       "evidence": [
-        "docs/ENTERPRISE_IMPLEMENTATION.md",
+        "docs/operations/ENTERPRISE_IMPLEMENTATION.md",
         "core and lib/server processing/review/reconciliation/publication tests",
         "production-like replay, correction, lineage, reconciliation and publication evidence"
       ]
