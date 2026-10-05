@@ -332,7 +332,8 @@ try {
     const broken = {
       bucket: 'ci-bucket',
       async putObjectStream(_key, source) {
-        for await (const _piece of source) { seen = await backend.get(identity(admin1, true), fourth.requestId, tx); break; }
+        await source[Symbol.asyncIterator]().next();
+        seen = await backend.get(identity(admin1, true), fourth.requestId, tx);
         throw new Error('object store down');
       },
       async getObjectStream() { return null; },
