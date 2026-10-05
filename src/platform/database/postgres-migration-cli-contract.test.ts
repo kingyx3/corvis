@@ -8,7 +8,7 @@ test("the migration CLI never applies without an explicit --apply flag and never
   const cli = await source("db/postgres/migrate.ts");
   assert.match(cli, /if \(values\.apply && values\["dry-run"\]\)/);
   assert.match(cli, /if \(!values\.apply\) \{/, "the default path must be the dry-run plan, not an apply");
-  assert.match(cli, /const dsn = process\.env\.CORVIS_POSTGRES_DSN;/);
+  assert.match(cli, /const dsn = process\.env\.CORVIS_DATABASE_DSN;/);
   assert.match(cli, /if \(!dsn\) throw new Error/);
 });
 

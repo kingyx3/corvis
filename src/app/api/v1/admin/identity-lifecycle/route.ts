@@ -78,7 +78,7 @@ export async function POST(request: Request) {
     }
 
     if (lifecycleOperation === "reactivate") {
-      const db = postgres(getServerConfig().postgresDsn);
+      const db = postgres(getServerConfig().databaseDsn);
       const rows = await db.query(`select corvis_control.reactivate_identity_admin(
         $1::uuid,$2,$3,$4::uuid,$5,$6,$7,$8::uuid,$9::jsonb,$10
       ) as result`, [identity.tenantId, eventKey, identity.subject, identity.workspaceId, id,
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
       reason,
     };
     // Guard and apply share one transaction so the last-admin check cannot race.
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     const data = await withTransaction(db, async (tx) => {
       await guardIdentityLifecycleCommand(identity, command, tx);
       return new PostgresIdentityLifecycleRepository(tx).apply(command);

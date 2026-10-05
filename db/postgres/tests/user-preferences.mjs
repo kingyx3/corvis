@@ -4,7 +4,7 @@ import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-na
 import { getUserPreferences, mutateSavedView, saveDisplayPreferences } from '../../../src/modules/workspace/server/user-preferences.ts';
 import { PostgresProductionPlatform } from '../../../src/platform/data/platform.ts';
 process.env.CORVIS_DEMO_MODE='false';
-const db=new NativePostgresSqlApi(process.env.CORVIS_POSTGRES_DSN);
+const db=new NativePostgresSqlApi(process.env.CORVIS_DATABASE_DSN);
 const rollback=new Error('ROLLBACK_PREFERENCE_FIXTURES');
 const tenant='11111111-1111-4111-8111-111111111264', workspace='22222222-2222-4222-8222-222222222264', otherWorkspace='22222222-2222-4222-8222-222222222270';
 try { await db.transaction(async tx=>{

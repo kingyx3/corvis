@@ -30,7 +30,7 @@ const MAX_QUESTION_LENGTH = 2000;
  */
 const MAX_ANSWER_JSON_LENGTH = 512 * 1024;
 
-function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 function toIso(value: unknown): string {
   if (value instanceof Date) return value.toISOString();

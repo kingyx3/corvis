@@ -95,7 +95,7 @@ export async function resolveAuthorizedRequestIdentity(
     return identity;
   }
 
-  const repository = options.repository ?? membershipAuthorizationRepository(config.postgresDsn);
+  const repository = options.repository ?? membershipAuthorizationRepository(config.databaseDsn);
   const authorized = await repository.resolve({
     subject: authenticated.subject,
     tenantId: authenticated.tenantId,

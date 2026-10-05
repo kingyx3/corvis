@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     // A tenant-wide emergency stop and its audit event must commit or roll
     // back together: a failed audit insert must never leave an unaudited
     // engage/release of the stop in place.
-    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       await setFeatureFlagEmergencyStop(identity, engaged, body.reason, tx);
       await new PostgresOperationsRepository(tx).audit({
         id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,

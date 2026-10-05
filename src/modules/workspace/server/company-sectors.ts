@@ -65,7 +65,7 @@ const ENTITLED_COMPANIES = `with entitled_company as (
 
 export class PostgresCompanySectorRepository implements CompanySectorsPort {
   private readonly db: PostgresSqlApi;
-  constructor(db?: PostgresSqlApi) { this.db = db ?? postgres(getServerConfig().postgresDsn); }
+  constructor(db?: PostgresSqlApi) { this.db = db ?? postgres(getServerConfig().databaseDsn); }
 
   async list(identity: RequestIdentity): Promise<CompanySectorRecord[]> {
     const fundIds = identity.entitlements.fundIds ?? [];

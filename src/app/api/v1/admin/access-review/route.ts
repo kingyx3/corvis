@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   const id = correlationId(request);
   try {
     const identity = await resolveAdminRequestIdentity(request);
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     const [memberships, entitlements, rights, serviceGrants, supportGrants] = await Promise.all([
       db.query(`select s.subject,s.auth_method,s.user_id::text,s.status as subject_status,
           m.workspace_id::text,w.display_name as workspace_name,m.role_name,m.status as membership_status,

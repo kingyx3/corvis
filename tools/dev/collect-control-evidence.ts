@@ -38,10 +38,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dsn = process.env.CORVIS_POSTGRES_DSN;
+  const dsn = process.env.CORVIS_DATABASE_DSN;
   const tenantId = process.env.CORVIS_CONTROL_TENANT_ID;
   if (!dsn || !tenantId) {
-    const missing = [!dsn && "CORVIS_POSTGRES_DSN", !tenantId && "CORVIS_CONTROL_TENANT_ID"].filter(Boolean).join(", ");
+    const missing = [!dsn && "CORVIS_DATABASE_DSN", !tenantId && "CORVIS_CONTROL_TENANT_ID"].filter(Boolean).join(", ");
     throw new Error(`Required control-evidence configuration missing: ${missing}`);
   }
 

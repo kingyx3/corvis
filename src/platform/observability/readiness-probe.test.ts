@@ -7,7 +7,7 @@ console.error = () => undefined;
 const env = { ...process.env };
 beforeEach(() => {
   resetReadinessCache();
-  process.env = { ...env, NODE_ENV: "production", CORVIS_DEMO_MODE: "false", CORVIS_AUTH_ISSUER: "https://issuer.test", CORVIS_AUTH_AUDIENCE: "aud", CORVIS_POSTGRES_DSN: "postgres://u:p@db.test/x", CORVIS_OBJECT_STORE_BUCKET: "b" };
+  process.env = { ...env, NODE_ENV: "production", CORVIS_DEMO_MODE: "false", CORVIS_AUTH_ISSUER: "https://issuer.test", CORVIS_AUTH_AUDIENCE: "aud", CORVIS_DATABASE_DSN: "postgres://u:p@db.test/x", CORVIS_OBJECT_STORE_BUCKET: "b" };
 });
 
 const db = (health: () => Promise<boolean>): PostgresSqlApi => ({ async query() { return []; }, async execute() {}, health });
@@ -17,7 +17,7 @@ test("ready when production configuration is complete and the database answers",
 });
 
 test("not ready when a production secret is missing, without touching the database", async () => {
-  delete process.env.CORVIS_POSTGRES_DSN;
+  delete process.env.CORVIS_DATABASE_DSN;
   let called = false;
   assert.deepEqual(await checkReadiness({ db: () => { called = true; return db(async () => true); } }), { ready: false });
   assert.equal(called, false);

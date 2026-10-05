@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     // The kill switch write and its audit event must commit or roll back
     // together, so a failed audit insert never leaves an unaudited kill
     // switch change in place.
-    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       await setFeatureFlagKillSwitch(identity, key, engaged, body.reason, tx);
       await new PostgresOperationsRepository(tx).audit({
         id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,

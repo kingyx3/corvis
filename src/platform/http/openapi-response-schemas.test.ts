@@ -8,7 +8,7 @@ import { parseYaml, responseSchema, validateSchema, type Json, type OpenApiDocum
 register(new URL("../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 // Small budget so the 429 response can be produced for real (each test uses its own subject).
 process.env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE = "5";
 
@@ -19,7 +19,7 @@ let exportJobRows: Array<Record<string, unknown>> = [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as { sql: string; parameters: unknown[] };
   const text = sql.trim();
   let rows: unknown[] = [];

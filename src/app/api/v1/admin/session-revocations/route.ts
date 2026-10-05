@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     // together, so a failed audit insert never leaves an unaudited
     // revocation in place (and a client retry cannot land on a state where
     // the revocation appears not to have happened when it in fact did).
-    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       await new PostgresSessionRevocationRepository(tx).revoke({
         tenantId: identity.tenantId,
         authMethod,

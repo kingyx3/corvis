@@ -324,12 +324,12 @@ export class PostgresSessionRevocationRepository implements SessionRevocationRep
 let membershipSingleton: MembershipAuthorizationRepository | undefined;
 let revocationSingleton: SessionRevocationRepository | undefined;
 
-export function membershipAuthorizationRepository(dsn = getServerConfig().postgresDsn): MembershipAuthorizationRepository {
+export function membershipAuthorizationRepository(dsn = getServerConfig().databaseDsn): MembershipAuthorizationRepository {
   if (!membershipSingleton) membershipSingleton = new PostgresMembershipAuthorizationRepository(postgres(dsn));
   return membershipSingleton;
 }
 
-export function sessionRevocationRepository(dsn = getServerConfig().postgresDsn): SessionRevocationRepository {
+export function sessionRevocationRepository(dsn = getServerConfig().databaseDsn): SessionRevocationRepository {
   if (!revocationSingleton) revocationSingleton = new PostgresSessionRevocationRepository(postgres(dsn));
   return revocationSingleton;
 }

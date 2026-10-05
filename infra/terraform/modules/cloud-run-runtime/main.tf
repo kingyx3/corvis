@@ -268,7 +268,7 @@ resource "google_cloud_run_v2_service" "worker" {
       }
 
       env {
-        name = "CORVIS_POSTGRES_DSN"
+        name = "CORVIS_DATABASE_DSN"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.postgres_dsn.secret_id
@@ -540,7 +540,7 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
-        name = "CORVIS_POSTGRES_DSN"
+        name = "CORVIS_DATABASE_DSN"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.postgres_dsn.secret_id

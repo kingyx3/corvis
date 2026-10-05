@@ -11,7 +11,7 @@ register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), imp
 // A non-demo, non-production identity (the trusted-gateway compatibility
 // path), because only that path carries a document entitlement allowlist.
 process.env.CORVIS_DEMO_MODE = "false";
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = "route-test-secret";
 
 const TENANT = "66666666-6666-4666-8666-666666666666";
@@ -75,7 +75,7 @@ function handleSql(sql: string, parameters: unknown[]): Row[] {
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as { sql: string; parameters: unknown[] };
   return new Response(JSON.stringify({ rows: handleSql(sql, parameters ?? []) }), { status: 200, headers: { "content-type": "application/json" } });
 }) as typeof fetch;

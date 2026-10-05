@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     if (!operation || !reason) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
 
     const supportGrantId = text(body.supportGrantId, 64);
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     if (operation === "revoke") {
       if (!supportGrantId || !UUID.test(supportGrantId)) {
         return json({ error: "invalid_request", correlationId: id }, { status: 400 });

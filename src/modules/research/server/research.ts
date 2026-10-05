@@ -161,7 +161,7 @@ export class PermissionedResearchService {
   private readonly db: PostgresSqlApi;
 
   constructor(db?: PostgresSqlApi) {
-    this.db = db ?? postgres(getServerConfig().postgresDsn);
+    this.db = db ?? postgres(getServerConfig().databaseDsn);
   }
 
   /**

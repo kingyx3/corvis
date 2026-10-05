@@ -19,7 +19,7 @@ function number(row: PostgresRow, key: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export async function recoverDeadLetterProcessingJob({ db = postgres(getServerConfig().postgresDsn), ...input }: {
+export async function recoverDeadLetterProcessingJob({ db = postgres(getServerConfig().databaseDsn), ...input }: {
   identity: RequestIdentity;
   jobId: string;
   expectedVersion: number;

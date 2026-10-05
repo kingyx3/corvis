@@ -47,7 +47,7 @@ export function tenantExportObjectKey(tenantId: string, requestId: string, attem
 /** One tick: builds up to `limit` approved requests. Returns how many completed and how many attempts failed. */
 export async function processApprovedTenantExports(limit = 5, dependencies: TenantExportWorkerDependencies = {}): Promise<{ processed: number; failed: number }> {
   const config = getServerConfig();
-  const store = dependencies.store ?? postgres(config.postgresDsn);
+  const store = dependencies.store ?? postgres(config.databaseDsn);
   const random = dependencies.random ?? Math.random;
   const now = dependencies.now ?? Date.now;
   let processed = 0;

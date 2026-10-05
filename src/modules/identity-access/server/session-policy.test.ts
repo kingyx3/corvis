@@ -9,7 +9,7 @@ import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../pl
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
-delete process.env.CORVIS_POSTGRES_DSN;
+delete process.env.CORVIS_DATABASE_DSN;
 console.warn = console.info = console.error = () => undefined;
 
 const { DemoSessionPolicyStore, demoSessionPolicyStore } = await import("../adapters/session-policy-store.ts");

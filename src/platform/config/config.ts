@@ -9,8 +9,6 @@ export type ServerConfig = {
   /** Provider-neutral primary database binding. PostgreSQL is the current dialect. */
   databaseDsn?: string;
   databaseProvider: "supabase" | "gcp-cloud-sql" | "aws-rds" | "azure-postgresql" | "self-hosted" | "unknown";
-  /** @deprecated Compatibility alias. New infrastructure should set CORVIS_DATABASE_DSN. */
-  postgresDsn?: string;
 
   objectStoreBucket?: string;
   gcpAccessToken?: string;
@@ -107,7 +105,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   const environment = resolveEnvironment(env.NODE_ENV);
   const demoMode = truthy(env.CORVIS_DEMO_MODE);
   const exportArtifactTtlSeconds = Math.min(positiveInteger(env.CORVIS_EXPORT_ARTIFACT_TTL_SECONDS) ?? 24 * 60 * 60, 7 * 24 * 60 * 60);
-  const databaseDsn = env.CORVIS_DATABASE_DSN ?? env.CORVIS_POSTGRES_DSN;
+  const databaseDsn = env.CORVIS_DATABASE_DSN;
   const config: ServerConfig = {
     environment,
     demoMode,
@@ -117,8 +115,6 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     trustedAuthProxySecret: env.CORVIS_TRUSTED_AUTH_PROXY_SECRET,
     databaseDsn,
     databaseProvider: databaseProvider(env.CORVIS_DATABASE_PROVIDER),
-    // Preserve the old property until repository callers migrate to databaseDsn.
-    postgresDsn: databaseDsn,
     objectStoreBucket: env.CORVIS_OBJECT_STORE_BUCKET,
     gcpAccessToken: env.CORVIS_GCP_ACCESS_TOKEN,
     gcsChunkSizeBytes: positiveInteger(env.CORVIS_GCS_CHUNK_SIZE_BYTES) ?? 8 * 1024 * 1024,
@@ -158,7 +154,11 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       ["CORVIS_DATABASE_DSN", config.databaseDsn],
       ["CORVIS_OBJECT_STORE_BUCKET", config.objectStoreBucket],
     ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) throw new Error(`Missing production configuration: ${missing.join(", ")}`);
+    if (missing.length) {
+      // CORVIS_POSTGRES_DSN was renamed to CORVIS_DATABASE_DSN and is no longer read; say so instead of failing mysteriously.
+      const renamed = missing.includes("CORVIS_DATABASE_DSN") && env.CORVIS_POSTGRES_DSN ? " (CORVIS_POSTGRES_DSN is no longer read; rename it to CORVIS_DATABASE_DSN)" : "";
+      throw new Error(`Missing production configuration: ${missing.join(", ")}${renamed}`);
+    }
     // The required-configuration guard above establishes this invariant before
     // the production transport check; keep the runtime branch aligned with it.
     const productionDatabaseDsn = config.databaseDsn as string;

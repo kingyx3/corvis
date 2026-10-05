@@ -8,7 +8,7 @@ export async function GET(request:Request){
   try{
     const identity=await resolveAdminRequestIdentity(request);
     const operationsTenant=getServerConfig().operationsTenantId;if(!operationsTenant||identity.tenantId!==operationsTenant||!identity.roles.includes("admin"))return json({error:"operations_admin_required",correlationId:id},{status:403});
-    const db=postgres(getServerConfig().postgresDsn);
+    const db=postgres(getServerConfig().databaseDsn);
     const rows=await db.query(`select t.tenant_id::text,t.display_name,
       (select count(*)::int from corvis_control.workspace w where w.tenant_id=t.tenant_id and w.status='active') as workspace_count,
       (select count(distinct m.user_id)::int from corvis_control.membership m where m.tenant_id=t.tenant_id and m.role_name='tenant_admin' and m.status='active' and m.valid_from<=now() and (m.valid_until is null or m.valid_until>now())) as tenant_admin_count,

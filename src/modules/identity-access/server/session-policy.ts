@@ -279,7 +279,7 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
 }
 
 export const postgresSessionPolicyService: SessionPolicyService = createSessionPolicyService(
-  new PostgresSessionPolicyBackend(() => postgres(getServerConfig().postgresDsn), () => getServerConfig().authIssuer ?? null),
+  new PostgresSessionPolicyBackend(() => postgres(getServerConfig().databaseDsn), () => getServerConfig().authIssuer ?? null),
 );
 export const demoSessionPolicyService: SessionPolicyService = createSessionPolicyService(demoSessionPolicyStore());
 

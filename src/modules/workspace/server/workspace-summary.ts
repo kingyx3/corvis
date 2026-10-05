@@ -21,7 +21,7 @@ export type WorkspaceSummaryDependencies = {
   now?: Date;
 };
 
-function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 function text(row: PostgresRow, key: string): string | undefined {
   const value = row[key];
   if (value == null) return undefined;

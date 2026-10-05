@@ -8,7 +8,7 @@ register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), imp
 process.env.CORVIS_DEMO_MODE = "true";
 // withIdempotency builds its Postgres client eagerly; no request here sends an
 // idempotency key, so the fake DSN is never actually contacted.
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 
 const { GET: listGet, POST: assignPost } = await import("@/app/api/v1/company-sectors/route");
 const { GET: sectorsGet } = await import("@/app/api/v1/sectors/route");

@@ -8,7 +8,7 @@
 // that the MFA a token reported is shown, that "sign out everywhere" names a recorded end-session endpoint, and that a signed
 // OIDC back-channel logout token revokes the session immediately while a replayed, forged or expired one does nothing.
 // Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/tenant-identity-records.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/tenant-identity-records.mjs
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { register } from 'node:module';
@@ -23,8 +23,8 @@ const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../src/mo
 const { RateLimiter } = await import('../../../src/platform/http/rate-limit.ts');
 
 console.info = console.warn = () => undefined;
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const opsTenant = 'f9500000-0000-4000-8000-0000000000f0';
 const tenantId = 'f9500000-0000-4000-8000-000000000001';
@@ -157,7 +157,7 @@ try {
       if (url === `${token.tokenIssuer}/jwks` || url === 'https://login.example.test/keys') return new Response(JSON.stringify(jwks));
       return new Response('nope', { status: 404 });
     });
-    const config = { demoMode: false, authIssuer: 'https://login.example.test', authAudience: 'corvis-global', authJwksUrl: 'https://login.example.test/keys', postgresDsn: dsn };
+    const config = { demoMode: false, authIssuer: 'https://login.example.test', authAudience: 'corvis-global', authJwksUrl: 'https://login.example.test/keys', databaseDsn: dsn };
     const seconds = Math.floor(Date.now() / 1000);
     const logoutToken = (claims = {}, key = privateKey, iss = token.tokenIssuer, aud = token.tokenAudience) => {
       const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'bc-key', typ: 'logout+jwt' })).toString('base64url');

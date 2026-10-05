@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
     const token = typeof body?.token === "string" ? body.token : "";
     if (!token) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     const result = await acceptTenantInvitation(token, identity.authMethod, identity.subject, identity.authenticatedEmail, identity.emailVerified, id, db);
     // Acceptance already required this verified address to match the invitation.
     await recordAcceptedInvitationRecipient(db, result.tenantId, result.userId, identity.authenticatedEmail ?? "")

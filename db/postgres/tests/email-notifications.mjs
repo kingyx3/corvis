@@ -3,7 +3,7 @@
 // invitation outcome records. Runs src/modules/notifications/server/notifications.ts against a native
 // connection inside one transaction that is always rolled back. Run after the
 // full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/email-notifications.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/email-notifications.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
@@ -13,8 +13,8 @@ import {
   enqueuePinnedFundPublished, getNotificationSettings, processEmailDigests, processEmailOutbox, updateNotificationPreferences,
 } from '../../../src/modules/notifications/server/notifications.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'e2000000-0000-4000-8000-000000000001';
 const workspaceId = 'e2000000-0000-4000-8000-000000000002';

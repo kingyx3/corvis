@@ -12,7 +12,7 @@
 // dispatched through the outbox worker (send-time eligibility, opt-out, no reason or note in any email), the keyset-paged
 // request list, the sweep of expired artifacts and grants, and the operator view of failed builds. Run after the full
 // migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/tenant-data-export.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/tenant-data-export.mjs
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { register } from 'node:module';
@@ -28,8 +28,8 @@ const { sweepTenantExports } = await import('../../../src/modules/delivery/serve
 const { listTenantExportBuildIssues } = await import('../../../src/modules/delivery/server/tenant-export-operations.ts');
 const { readStoredZip } = await import('../../../src/test-support/zip-reader.ts');
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 process.env.CORVIS_OBJECT_STORE_BUCKET = 'ci-bucket';
 
 const id = (n) => `f1000000-0000-4000-8000-${String(n).padStart(12, '0')}`;

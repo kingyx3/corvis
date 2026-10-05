@@ -36,19 +36,17 @@ test("boolean and positive-integer settings cover accepted and fail-closed edge 
   assert.equal(config.rateLimitRequestsPerMinute, 600);
 });
 
-test("database binding is provider-neutral while the legacy Postgres env remains compatible", () => {
+test("database binding is provider-neutral and the retired Postgres env var is not read", () => {
   const current = getServerConfig({
     NODE_ENV: "test",
     CORVIS_DATABASE_DSN: "postgresql://new.example/postgres",
     CORVIS_DATABASE_PROVIDER: "gcp-cloud-sql",
   });
   assert.equal(current.databaseDsn, "postgresql://new.example/postgres");
-  assert.equal(current.postgresDsn, current.databaseDsn);
   assert.equal(current.databaseProvider, "gcp-cloud-sql");
 
-  const legacy = getServerConfig({ NODE_ENV: "test", CORVIS_POSTGRES_DSN: "postgresql://legacy.example/postgres" });
-  assert.equal(legacy.databaseDsn, "postgresql://legacy.example/postgres");
-  assert.equal(legacy.postgresDsn, legacy.databaseDsn);
+  const retired = getServerConfig({ NODE_ENV: "test", CORVIS_POSTGRES_DSN: "postgresql://legacy.example/postgres" });
+  assert.equal(retired.databaseDsn, undefined);
 });
 
 test("database provider values are normalized and unknown providers fail closed", () => {
@@ -108,12 +106,14 @@ test("production requires only authoritative cross-cutting auth, database and ob
   }
 });
 
-test("production accepts legacy CORVIS_POSTGRES_DSN during migration", () => {
+test("production no longer accepts CORVIS_POSTGRES_DSN and names the replacement", () => {
   const env = productionEnvironment();
   const dsn = env.CORVIS_DATABASE_DSN;
   delete env.CORVIS_DATABASE_DSN;
   env.CORVIS_POSTGRES_DSN = dsn;
-  assert.doesNotThrow(() => getServerConfig(env));
+  assert.throws(() => getServerConfig(env), /Missing production configuration: CORVIS_DATABASE_DSN \(CORVIS_POSTGRES_DSN is no longer read; rename it to CORVIS_DATABASE_DSN\)/);
+  env.CORVIS_DATABASE_DSN = dsn;
+  assert.doesNotThrow(() => getServerConfig(env), "the new name wins when both are present");
 });
 
 test("production requires a native PostgreSQL DSN because the HTTPS transport cannot run transactions", () => {

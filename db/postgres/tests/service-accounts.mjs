@@ -8,7 +8,7 @@
 // that same lookup within the organization's data rights (and are refused beyond them), that expiry notices are queued once
 // per window, sent in words only and suppressed for an admin who lost the role, and that tenants are isolated. Run after the full migration
 // chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/service-accounts.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/service-accounts.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
@@ -26,8 +26,8 @@ const { sweepServiceAccountExpiry } = await import('../../../src/modules/identit
 const { processEmailOutbox } = await import('../../../src/modules/notifications/server/notifications.ts');
 const { RecordingEmailSender } = await import('../../../src/modules/notifications/adapters/recording-email-sender.ts');
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const id = (n) => `f6000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const tenantId = id(1);

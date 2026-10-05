@@ -995,7 +995,7 @@ test("readiness reports every unconfigured binding as missing while orchestratio
 });
 
 test("research fails closed through the permissioned research service when no AI endpoint is configured", { concurrency: false }, async () => {
-  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "false", CORVIS_AI_ENDPOINT: undefined, CORVIS_POSTGRES_DSN: "postgres://corvis:secret@localhost:5432/corvis" }, async () => {
+  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "false", CORVIS_AI_ENDPOINT: undefined, CORVIS_DATABASE_DSN: "postgres://corvis:secret@localhost:5432/corvis" }, async () => {
     const phases: string[] = [];
     await assert.rejects(
       new PostgresProductionPlatform(new FakeDb()).research(identity, "What is NAV?", { onProgress: (phase) => phases.push(phase) }),
@@ -1007,7 +1007,7 @@ test("research fails closed through the permissioned research service when no AI
 });
 
 test("platform() selects the Postgres platform outside demo mode and memoises it", { concurrency: false }, async () => {
-  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "false", CORVIS_POSTGRES_DSN: "postgres://corvis:secret@localhost:5432/corvis" }, async () => {
+  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "false", CORVIS_DATABASE_DSN: "postgres://corvis:secret@localhost:5432/corvis" }, async () => {
     const selected = platform();
     assert.ok(selected instanceof PostgresProductionPlatform);
     assert.equal(platform(), selected);

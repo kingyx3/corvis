@@ -18,7 +18,7 @@ export async function POST(request:Request){
     const parsed=parseBulkInviteCsv(csv);if(parsed.rows.length>500)return json({error:"too_many_rows",correlationId:id},{status:400});
     // Tenant-admin rows grant organization-wide administration: they are only invited when the caller explicitly confirms it for this request.
     const confirmTenantAdmin=new URL(request.url).searchParams.get("confirmTenantAdmin")==="true";
-    const db=postgres(getServerConfig().postgresDsn);
+    const db=postgres(getServerConfig().databaseDsn);
     const {created,errors:rowErrors}=await createBulkInvitations(identity,parsed.rows,{confirmTenantAdmin,correlationId:id,db});const errors=[...parsed.errors,...rowErrors];
     return json({data:{created,errors,summary:{total:parsed.rows.length+parsed.errors.length,created:created.length,failed:errors.length}},correlationId:id},{status:errors.length&&created.length===0?422:201});
   }catch(error){return apiError(error,id);}

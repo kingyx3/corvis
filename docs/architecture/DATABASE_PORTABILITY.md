@@ -180,7 +180,7 @@ self-hosted
 unknown
 ```
 
-`CORVIS_POSTGRES_DSN` remains a compatibility fallback while deployment configuration and documentation migrate to `CORVIS_DATABASE_DSN`.
+`CORVIS_POSTGRES_DSN` is retired and no longer read. A deployment that still sets only the old name fails at startup with `Missing production configuration: CORVIS_DATABASE_DSN (CORVIS_POSTGRES_DSN is no longer read; rename it to CORVIS_DATABASE_DSN)`. The Secret Manager secret that holds the value keeps its name (`corvis-postgres-dsn-<environment>`); only the environment variable changed.
 
 ## What this architecture does not do
 

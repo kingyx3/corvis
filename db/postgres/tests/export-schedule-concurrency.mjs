@@ -2,13 +2,13 @@
 // run one trigger twice. Unlike the rolled-back export-schedules.mjs this needs committed data (a row lock only means
 // something across separate connections), so it uses its own tenant and removes every row it wrote at the end. Run after the
 // full migration chain on a disposable database as a role that may disable triggers (the CI role is a superuser):
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedule-concurrency.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/export-schedule-concurrency.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { PostgresExportScheduleBackend, processDueExportSchedules } from '../../../src/modules/delivery/server/export-schedule.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 console.info = () => undefined;
 
 const tenantId = 'f4c00000-0000-4000-8000-000000000001';

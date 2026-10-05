@@ -7,7 +7,7 @@ import { getServerConfig } from "../../../platform/config/config.ts";
 export class PreferenceError extends Error { readonly status: number; constructor(message: string, status = 400) { super(message); this.status = status; } }
 const params = (i: RequestIdentity) => [i.tenantId, i.workspaceId, i.authMethod, i.subject];
 const owner = "tenant_id=$1::uuid and workspace_id=$2::uuid and auth_method=$3 and subject=$4";
-const database = () => postgres(getServerConfig().postgresDsn);
+const database = () => postgres(getServerConfig().databaseDsn);
 const obj = (v: unknown): Record<string, string> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, string> : {};
 function views(raw: unknown): SavedView[] { return Array.isArray(raw) ? raw as SavedView[] : []; }
 export async function getUserPreferences(i: RequestIdentity, db: PostgresSqlApi = database()) {

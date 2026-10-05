@@ -29,7 +29,7 @@ export function assertWebhookId(webhookId: string): void {
   if (!UUID_PATTERN.test(webhookId)) throw new WebhookSubscriptionError("webhook_subscription_not_found");
 }
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 function newSigningSecret(): string { return randomBytes(32).toString("hex"); }
 

@@ -21,7 +21,7 @@ export type SessionActivitySweepOptions = {
  * Returns that number; a full batch means more remain for the next tick.
  */
 export async function sweepTenantSessionActivity(
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
   options: SessionActivitySweepOptions = {},
 ): Promise<number> {
   const retentionMinutes = sessionActivityRetentionMinutes(options.retentionMinutes);

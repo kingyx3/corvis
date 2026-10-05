@@ -83,7 +83,7 @@ export async function handleBackchannelLogout(request: Request, deps: Backchanne
     let issuer: string;
     try { issuer = unverifiedLogoutTokenIssuer(token); } catch { return rejected(id); }
 
-    const db = deps.db ?? postgres(config.postgresDsn);
+    const db = deps.db ?? postgres(config.databaseDsn);
     const sharedCandidate = sharedProvider(config);
     const shared = sharedCandidate?.issuer === issuer ? sharedCandidate : undefined;
     const recorded = await db.query(`select distinct audience from corvis_control.tenant_identity_provider

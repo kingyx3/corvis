@@ -85,7 +85,7 @@ export class PostgresHoldingInstrumentServingRepository {
 }
 
 let singleton: PostgresHoldingInstrumentServingRepository | undefined;
-export function holdingInstrumentServing(dsn = getServerConfig().postgresDsn): PostgresHoldingInstrumentServingRepository {
+export function holdingInstrumentServing(dsn = getServerConfig().databaseDsn): PostgresHoldingInstrumentServingRepository {
   if (!singleton) singleton = new PostgresHoldingInstrumentServingRepository(postgres(dsn));
   return singleton;
 }

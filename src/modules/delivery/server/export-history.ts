@@ -21,7 +21,7 @@ export type ListedExportStatus = ExportStatus & {
 export async function listPhysicalExportStatuses(
   identity: RequestIdentity,
   limit = 20,
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<ListedExportStatus[]> {
   assertRedistributionAllowed(identity);
   const boundedLimit = Math.max(1, Math.min(50, Math.trunc(limit)));

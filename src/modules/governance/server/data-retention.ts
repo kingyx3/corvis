@@ -94,7 +94,7 @@ export function createRetentionService(backend: { view(identity: RequestIdentity
   };
 }
 
-export const postgresRetentionService: RetentionService = createRetentionService(new PostgresRetentionBackend(() => postgres(getServerConfig().postgresDsn)));
+export const postgresRetentionService: RetentionService = createRetentionService(new PostgresRetentionBackend(() => postgres(getServerConfig().databaseDsn)));
 export const demoRetentionService: RetentionService = createRetentionService(demoRetentionStore());
 
 let override: RetentionService | undefined;

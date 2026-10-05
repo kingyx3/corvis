@@ -6,8 +6,8 @@ import { authenticateScim, ScimError } from '../../../src/modules/identity-acces
 import { RateLimiter } from '../../../src/platform/http/rate-limit.ts';
 import { createHash } from 'node:crypto';
 process.env.CORVIS_DEMO_MODE = 'false';
-if (!process.env.CORVIS_POSTGRES_DSN) throw new Error('CORVIS_POSTGRES_DSN is required');
-const db = new NativePostgresSqlApi(process.env.CORVIS_POSTGRES_DSN);
+if (!process.env.CORVIS_DATABASE_DSN) throw new Error('CORVIS_DATABASE_DSN is required');
+const db = new NativePostgresSqlApi(process.env.CORVIS_DATABASE_DSN);
 const tenantId='11111111-1111-4111-8111-111111111184', workspaceId='22222222-2222-4222-8222-222222222284';
 // All fixtures and mutations roll back; safe to run after the migration acceptance suites.
 const rollback = new Error('ROLLBACK_REVIEW_FIXTURES');

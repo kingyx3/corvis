@@ -77,7 +77,7 @@ export function createExportScheduleService(backend: ExportScheduleBackend): Exp
   };
 }
 
-export const postgresExportScheduleService: ExportScheduleService = createExportScheduleService(new PostgresExportScheduleBackend(() => postgres(getServerConfig().postgresDsn)));
+export const postgresExportScheduleService: ExportScheduleService = createExportScheduleService(new PostgresExportScheduleBackend(() => postgres(getServerConfig().databaseDsn)));
 export const demoExportScheduleService: ExportScheduleService = createExportScheduleService(demoExportScheduleStore());
 
 let override: ExportScheduleService | undefined;

@@ -6,7 +6,7 @@
 //
 // --dry-run validates the repository contract and prints the full replay plan
 // without contacting a database. --apply replays pending migrations against
-// CORVIS_POSTGRES_DSN and records every applied version in the ledger.
+// CORVIS_DATABASE_DSN and records every applied version in the ledger.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
@@ -39,8 +39,8 @@ async function run(): Promise<Record<string, unknown>> {
     const plan = await planFromDirectory(directory);
     return { ...plan, mode: "dry-run", directory, appliedBy };
   }
-  const dsn = process.env.CORVIS_POSTGRES_DSN;
-  if (!dsn) throw new Error("CORVIS_POSTGRES_DSN is required to apply Postgres migrations");
+  const dsn = process.env.CORVIS_DATABASE_DSN;
+  if (!dsn) throw new Error("CORVIS_DATABASE_DSN is required to apply Postgres migrations");
   // Native DSNs get a dedicated pool with migration-sized timeouts instead of
   // the shared API pool's 30s statement / 35s query caps.
   const native = /^postgres(?:ql)?:\/\//.test(dsn) ? new NativePostgresSqlApi(dsn, MIGRATION_CONNECTION_LIMITS) : undefined;

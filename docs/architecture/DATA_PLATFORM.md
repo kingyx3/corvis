@@ -77,7 +77,7 @@ migration's recorded checksum and its current repository content, and records
 every applied version in a runner-owned `corvis_migration.schema_migration`
 ledger inside the same transaction as the migration's own DDL. `--dry-run`
 produces the full replay plan without contacting a database; `--apply` replays
-only pending migrations against `CORVIS_POSTGRES_DSN` and is safe to re-run
+only pending migrations against `CORVIS_DATABASE_DSN` and is safe to re-run
 against an up-to-date database (it then executes no migration SQL). Deployment
 workflows are expected to call this tool rather than applying SQL by hand.
 
@@ -275,7 +275,7 @@ Before an activated Snowflake replica serves analytics/sharing:
 
 ### Native Postgres runtime transport
 
-`CORVIS_POSTGRES_DSN` accepts the provider's `postgresql://` (or `postgres://`)
+`CORVIS_DATABASE_DSN` accepts the provider's `postgresql://` (or `postgres://`)
 connection string. The application now uses the PostgreSQL wire protocol for
 these bindings, including the migration CLI; it does not POST them to an HTTP
 endpoint. Explicit HTTPS SQL gateway bindings remain accepted outside production

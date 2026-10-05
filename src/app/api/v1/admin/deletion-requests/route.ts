@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     // The request write and its audit event must commit or roll back
     // together, so a failed audit insert never leaves an unaudited deletion
     // request in place (and a retry cannot silently duplicate it).
-    const requestId=await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    const requestId=await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       const created=await createDeletionRequest(identity,body.scope,reason,tx);
       await new PostgresOperationsRepository(tx).audit({id:randomUUID(),occurredAt:new Date().toISOString(),tenantId:identity.tenantId,workspaceId:identity.workspaceId,actorSubject:identity.subject,sessionId:identity.sessionId,action:"deletion_request.create",targetType:"deletion_request",targetId:created,outcome:"success",correlationId:id});
       return created;

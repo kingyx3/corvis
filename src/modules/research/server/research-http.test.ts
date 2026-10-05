@@ -7,13 +7,13 @@ import test from "node:test";
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 
 const postgresStatements: string[] = [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql } = JSON.parse(String(init?.body ?? "{}")) as { sql: string };
   postgresStatements.push(sql);
   return new Response(JSON.stringify({ rows: [] }), { status: 200, headers: { "content-type": "application/json" } });

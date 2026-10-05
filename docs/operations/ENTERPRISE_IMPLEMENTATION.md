@@ -44,7 +44,7 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 
 **Repository migration state:** the Postgres-primary application migration is complete; Snowflake is not an application persistence dependency.
 
-- Production config requires `CORVIS_POSTGRES_DSN` and does not require Snowflake bindings to start.
+- Production config requires `CORVIS_DATABASE_DSN` and does not require Snowflake bindings to start.
 - `PostgresProductionPlatform` is the active production composition for workspace, review/publication and operations persistence.
 - `src/modules/research/server/research.ts` reads governed Postgres serving observations and records semantic-query logs in Postgres.
 - The obsolete Snowflake-primary DDL reference set and unused application Snowflake SQL API adapter have been removed.

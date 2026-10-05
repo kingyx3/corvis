@@ -67,7 +67,7 @@ function memberMap(subjectRows: PostgresRow[], identity: RequestIdentity): Map<s
  */
 export async function listTenantAccessMembers(
   identity: RequestIdentity,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<TenantAccessMember[]> {
   const [subjects, memberships, entitlements] = await Promise.all([
     db.query(`select user_id::text,auth_method,subject,
@@ -151,7 +151,7 @@ export async function deactivateTenantAccessMember(
   // Postgres returns canonical lower-case uuids while `::uuid` accepts any case, so the self-deactivation
   // check below would be bypassed by an upper-case spelling of the caller's own user id.
   const userId = requestedUserId.toLowerCase();
-  const db = dependencies.db ?? postgres(getServerConfig().postgresDsn);
+  const db = dependencies.db ?? postgres(getServerConfig().databaseDsn);
   const lifecycleFor = dependencies.lifecycleFor ?? ((tx: PostgresSqlApi) => new PostgresIdentityLifecycleRepository(tx));
   const rows = await db.query(`select user_id::text,auth_method,subject
     from corvis_control.identity_subject
@@ -203,7 +203,7 @@ export async function changeTenantMemberRole(
   identity: RequestIdentity,
   command: import("../../../shared/domain/workspace.ts").ChangeMemberRole,
   correlationId: string,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<import("../../../shared/domain/workspace.ts").MemberRoleReceipt> {
   if (identity.isTenantAdmin !== true || !["oidc", "saml"].includes(identity.authMethod)) throw new TenantAccessError("tenant_admin_required", 403);
   const roles = ["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"];

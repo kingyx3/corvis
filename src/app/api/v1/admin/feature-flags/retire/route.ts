@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const key = body.key;
     // Retirement is terminal and its audit event must commit together with
     // it, so a failed audit insert never leaves an unaudited retirement in place.
-    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       await retireFeatureFlag(identity, key, tx);
       await new PostgresOperationsRepository(tx).audit({
         id: randomUUID(), occurredAt: new Date().toISOString(), tenantId: identity.tenantId, workspaceId: identity.workspaceId,

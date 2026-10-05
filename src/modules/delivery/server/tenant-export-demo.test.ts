@@ -12,7 +12,7 @@ import { readStoredZip } from "../../../test-support/zip-reader.ts";
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
-delete process.env.CORVIS_POSTGRES_DSN;
+delete process.env.CORVIS_DATABASE_DSN;
 
 // Demo mode must never reach a database or an object store: any outbound request fails the test that made it.
 const originalFetch = globalThis.fetch;

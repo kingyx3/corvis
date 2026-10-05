@@ -13,7 +13,7 @@ export type ProcessingRetryResult =
 export async function retryProcessingJobCommand(
   identity: RequestIdentity,
   jobId: string,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<ProcessingRetryResult> {
   // job_id is a uuid column; a malformed id would otherwise reach Postgres as a cast failure (22P02), which has no
   // apiError() mapping and surfaces as a 500 instead of the 404 every other malformed-id route returns.

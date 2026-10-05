@@ -492,10 +492,10 @@ test("listWebhookSubscriptions defaults a row without status to active and witho
 });
 
 test("webhook functions default to the configured control-plane database", async () => {
-  const previousDsn = process.env.CORVIS_POSTGRES_DSN;
+  const previousDsn = process.env.CORVIS_DATABASE_DSN;
   const previousFetch = globalThis.fetch;
   const requests: Array<{ url: string; sql: string; parameters: unknown[] }> = [];
-  process.env.CORVIS_POSTGRES_DSN = "https://control-plane.example.test/sql";
+  process.env.CORVIS_DATABASE_DSN = "https://control-plane.example.test/sql";
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as { sql: string; parameters: unknown[] };
     requests.push({ url: String(url), sql: body.sql, parameters: body.parameters });
@@ -511,7 +511,7 @@ test("webhook functions default to the configured control-plane database", async
     assert.deepEqual(requests[0]!.parameters.slice(0, 3), [TENANT_A, HOOK_ID, 51]);
   } finally {
     globalThis.fetch = previousFetch;
-    if (previousDsn === undefined) delete process.env.CORVIS_POSTGRES_DSN;
-    else process.env.CORVIS_POSTGRES_DSN = previousDsn;
+    if (previousDsn === undefined) delete process.env.CORVIS_DATABASE_DSN;
+    else process.env.CORVIS_DATABASE_DSN = previousDsn;
   }
 });

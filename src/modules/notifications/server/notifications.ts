@@ -31,7 +31,7 @@ const EMAIL_RETRY_MAX_MS = 60 * 60_000;
 export const DIGEST_WINDOW_HOURS = 24;
 const SENDING_LEASE_MINUTES = 5;
 
-function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 function text(row: PostgresRow | undefined, key: string): string { return row?.[key] == null ? "" : String(row[key]); }
 function isHuman(identity: RequestIdentity): boolean { return identity.authMethod === "oidc" || identity.authMethod === "saml"; }
 function viewerOf(identity: RequestIdentity) { return { isAdmin: identity.roles.includes("admin"), isTenantAdmin: identity.isTenantAdmin === true }; }

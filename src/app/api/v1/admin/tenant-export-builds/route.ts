@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const config = getServerConfig();
     assertOperationsAdmin(identity, config.operationsTenantId);
     const params = new URL(request.url).searchParams;
-    const page = await listTenantExportBuildIssues(postgres(config.postgresDsn), {
+    const page = await listTenantExportBuildIssues(postgres(config.databaseDsn), {
       limit: parseLimit(params.get("limit")),
       cursor: params.get("cursor"),
       status: parseBuildIssueStatus(params.get("status")),

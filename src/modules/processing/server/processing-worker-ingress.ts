@@ -212,7 +212,7 @@ export function productionProcessingWorkerDependencies(db: PostgresSqlApi): Proc
 }
 
 export async function executeConfiguredProcessingWorkerRequest(request: Request): Promise<ProcessingStageWorkerResult> {
-  const db = postgres(getServerConfig().postgresDsn);
+  const db = postgres(getServerConfig().databaseDsn);
   return executeProcessingWorkerRequest(request, productionProcessingWorkerDependencies(db));
 }
 

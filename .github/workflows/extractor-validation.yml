@@ -39,7 +39,7 @@ jobs:
           grep -F 'document_interpretation_v1' services/extractor/server.mjs >/dev/null
           grep -F 'ifGenerationMatch' services/extractor/server.mjs >/dev/null
           grep -F 'CORVIS_ATLASSIAN_SKILL_READ_CREDENTIALS_JSON' services/extractor/server.mjs >/dev/null
-          if grep -Eq 'CORVIS_ATLASSIAN_SKILL_UPDATE|CORVIS_POSTGRES_DSN' services/extractor/server.mjs; then
+          if grep -Eq 'CORVIS_ATLASSIAN_SKILL_UPDATE|CORVIS_DATABASE_DSN|CORVIS_POSTGRES_DSN' services/extractor/server.mjs; then
             echo "::error::Ordinary extraction must not receive Confluence write or canonical Postgres authority."
             exit 1
           fi

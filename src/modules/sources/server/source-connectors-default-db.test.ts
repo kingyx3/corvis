@@ -52,8 +52,8 @@ function connectionRow(overrides: Record<string, unknown> = {}): Record<string, 
 function withGateway(respond: (call: Call) => unknown[]): { calls: Call[]; restore: () => void } {
   const calls: Call[] = [];
   const originalFetch = globalThis.fetch;
-  const originalDsn = process.env.CORVIS_POSTGRES_DSN;
-  process.env.CORVIS_POSTGRES_DSN = GATEWAY;
+  const originalDsn = process.env.CORVIS_DATABASE_DSN;
+  process.env.CORVIS_DATABASE_DSN = GATEWAY;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     assert.equal(url, GATEWAY, "the default database must be the configured DSN");
@@ -65,8 +65,8 @@ function withGateway(respond: (call: Call) => unknown[]): { calls: Call[]; resto
     calls,
     restore: () => {
       globalThis.fetch = originalFetch;
-      if (originalDsn === undefined) delete process.env.CORVIS_POSTGRES_DSN;
-      else process.env.CORVIS_POSTGRES_DSN = originalDsn;
+      if (originalDsn === undefined) delete process.env.CORVIS_DATABASE_DSN;
+      else process.env.CORVIS_DATABASE_DSN = originalDsn;
     },
   };
 }

@@ -17,7 +17,7 @@ import {
 } from "./webhook-endpoint-policy.ts";
 import { webhookHeaders, type WebhookEnvelope } from "./webhooks.ts";
 
-function db(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function db(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 /**
  * Capped exponential backoff with jitter for webhook redelivery.

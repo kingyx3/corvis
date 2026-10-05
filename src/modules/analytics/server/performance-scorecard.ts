@@ -339,7 +339,7 @@ export class PostgresPerformanceScorecardRepository {
 }
 
 let singleton: PostgresPerformanceScorecardRepository | undefined;
-export function performanceScorecard(dsn = getServerConfig().postgresDsn): PostgresPerformanceScorecardRepository {
+export function performanceScorecard(dsn = getServerConfig().databaseDsn): PostgresPerformanceScorecardRepository {
   if (!singleton) singleton = new PostgresPerformanceScorecardRepository(postgres(dsn));
   return singleton;
 }

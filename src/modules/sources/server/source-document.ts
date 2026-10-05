@@ -6,7 +6,7 @@ import { postgres, type PostgresSqlApi } from "../../../platform/database/postgr
 import { platform } from "../../../platform/data/platform.ts";
 export async function originalSourceDocument(identity: RequestIdentity, referenceId: string, dependencies: { correlationId?: string; db?: PostgresSqlApi; store?: Pick<ReturnType<typeof gcs>, "bucket" | "getObjectStream">; audit?: ReturnType<typeof platform>["audit"] } = {}) {
   assertPermission(identity, "sources:read");
-  const db = dependencies.db ?? postgres(getServerConfig().postgresDsn);
+  const db = dependencies.db ?? postgres(getServerConfig().databaseDsn);
   const row = (await db.query(`select r.document_id,r.object_uri,r.storage_generation,d.media_type,d.display_name,a.sha256
     from corvis_serving.source_references r
     join corvis_source.document d on d.tenant_id=r.tenant_id and d.document_id=r.document_id

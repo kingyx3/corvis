@@ -1275,7 +1275,7 @@ test("in production an upload must come from an explicitly allowed origin", { co
     CORVIS_DEMO_MODE: undefined,
     CORVIS_AUTH_ISSUER: "https://issuer.example",
     CORVIS_AUTH_AUDIENCE: "corvis",
-    CORVIS_POSTGRES_DSN: "postgres://user:secret@127.0.0.1:5432/corvis",
+    CORVIS_DATABASE_DSN: "postgres://user:secret@127.0.0.1:5432/corvis",
     CORVIS_OBJECT_STORE_BUCKET: "corvis-source-test",
     CORVIS_UPLOAD_ALLOWED_ORIGINS: "https://app.corvis.example",
   }, async () => {

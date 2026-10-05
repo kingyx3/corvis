@@ -178,7 +178,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts security-acceptance-evidence.json
+          CORVIS_DATABASE_DSN="${dsn}" node tools/dev/collect-control-evidence.ts security-acceptance-evidence.json
           unset dsn
 
   postgres-rls:
@@ -246,7 +246,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
+          CORVIS_DATABASE_DSN="${dsn}" node tools/dev/collect-control-evidence.ts postgres-rls-security-acceptance-evidence.json
           unset dsn
 
   control-loop:
@@ -352,7 +352,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" node tools/dev/collect-control-evidence.ts control-loop-runtime-acceptance-evidence.json
+          CORVIS_DATABASE_DSN="${dsn}" node tools/dev/collect-control-evidence.ts control-loop-runtime-acceptance-evidence.json
           unset dsn
 
   record-known-good-release:

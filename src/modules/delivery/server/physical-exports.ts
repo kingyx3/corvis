@@ -113,7 +113,7 @@ export async function createPhysicalExport(
   identity: RequestIdentity,
   format: ExportFormat,
   options: { scope?: ExportScope; source?: ExportSource } = {},
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<ExportManifest> {
   const { scope, source = "delivery" } = options;
   assertRedistributionAllowed(identity);
@@ -304,7 +304,7 @@ export async function exportStatusFromJob(
 export async function getPhysicalExportStatus(
   identity: RequestIdentity,
   exportId: string,
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<ExportStatus | null> {
   const rows = await store.query(`select ${EXPORT_STATUS_COLUMNS}
     from corvis_serving.export_job
@@ -330,7 +330,7 @@ export async function redeemPhysicalExportGrant(
   identity: RequestIdentity,
   exportId: string,
   token: string,
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<{ objectUri: string; format: ExportFormat; checksumSha256: string } | null> {
   if (!token || token.length > 256) return null;
   // Single use: the grant is consumed by the same statement that validates it, so a replayed
@@ -365,7 +365,7 @@ export async function restorePhysicalExportGrant(
   identity: RequestIdentity,
   exportId: string,
   token: string,
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<void> {
   if (!token || token.length > 256) return;
   await store.execute(`update corvis_serving.export_download_grant

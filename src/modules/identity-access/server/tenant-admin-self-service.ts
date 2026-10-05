@@ -53,7 +53,7 @@ export const TENANT_ACCESS_AUDIT_FILTER = `(
       or target_type in ('membership','tenant_invitation','support_access_grant','scim_configuration','source_connection','data_issue_case','tenant_export_request','export_schedule','service_account','session_policy','user_sessions')
     )`;
 
-export async function listTenantAccessAudit(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<TenantAccessAuditEvent[]> {
+export async function listTenantAccessAudit(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().databaseDsn)): Promise<TenantAccessAuditEvent[]> {
   requireTenantAdmin(identity);
   const rows = await db.query(`select audit_event_id::text,occurred_at,workspace_id::text,actor_subject,action,target_type,target_id,outcome,metadata
     from corvis_control.audit_event
@@ -85,7 +85,7 @@ export type TenantAccessNotification = {
   notificationId: string; kind: string; supportGrantId: string; title: string; message: string; createdAt: string; readAt?: string;
 };
 
-export async function tenantSupportAccessState(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)) {
+export async function tenantSupportAccessState(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().databaseDsn)) {
   requireTenantAdmin(identity);
   const [grants, notifications] = await Promise.all([
     db.query(`select support_grant_id::text,workspace_id::text,role_name,purpose,valid_from,valid_until,status,requires_tenant_ack,acknowledged_at,subject
@@ -101,7 +101,7 @@ export async function tenantSupportAccessState(identity: RequestIdentity, db: Po
   };
 }
 
-export async function markTenantAccessNotificationsRead(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<void> {
+export async function markTenantAccessNotificationsRead(identity: RequestIdentity, db: PostgresSqlApi = postgres(getServerConfig().databaseDsn)): Promise<void> {
   requireTenantAdmin(identity);
   await db.execute(`update corvis_control.tenant_access_notification set read_at=coalesce(read_at,now()) where tenant_id=$1::uuid and read_at is null`, [identity.tenantId]);
 }

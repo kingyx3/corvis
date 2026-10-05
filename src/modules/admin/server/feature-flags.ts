@@ -216,7 +216,7 @@ function safeParse(value: string): unknown {
   try { return JSON.parse(value); } catch { return undefined; }
 }
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 /**
  * Loads the tenant's authoritative flag state. Snapshots are never cached

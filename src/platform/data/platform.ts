@@ -213,7 +213,7 @@ export class PostgresProductionPlatform implements PlatformPort {
   private readonly operations: PostgresOperationsRepository;
 
   constructor(db?: PostgresSqlApi) {
-    this.db = db ?? postgres(getServerConfig().postgresDsn);
+    this.db = db ?? postgres(getServerConfig().databaseDsn);
     this.workspace = new PostgresWorkspaceRepository(this.db);
     this.reviewPublication = new PostgresReviewPublicationRepository(this.db);
     this.operations = new PostgresOperationsRepository(this.db);

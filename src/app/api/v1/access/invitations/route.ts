@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     if (!body) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
     const command = normalizeTenantInvitation({ ...body, tenantId: identity.tenantId });
     if (!command) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     const created = await withTransaction(db, (tx) => createTenantInvitation(identity, command, id, tx));
     // Sent only after the invitation committed; the one-time link is still returned for the manual fallback.
     const data = { ...created, emailDelivery: await deliverInvitationEmail(created.invitation, created.token, { db }) };

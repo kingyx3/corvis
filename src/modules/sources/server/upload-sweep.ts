@@ -42,7 +42,7 @@ export async function sweepUploadSessions(options: ScheduledUploadSweepOptions =
   const config = getServerConfig();
   if (config.demoMode && !options.sessions) return summary;
   const store = options.store ?? gcs();
-  const db = options.db ?? postgres(config.postgresDsn);
+  const db = options.db ?? postgres(config.databaseDsn);
   const sessions = options.sessions ?? uploads();
   const now = options.now ?? Date.now;
   const started = now();

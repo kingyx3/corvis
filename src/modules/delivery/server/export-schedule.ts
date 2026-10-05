@@ -523,7 +523,7 @@ async function runDueSchedule(
 export async function processDueExportSchedules(
   limit = 25,
   dependencies: ExportScheduleRunnerDependencies = {},
-  store: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<ExportScheduleRunSummary> {
   const resolved = { ...DEFAULT_RUNNER_DEPENDENCIES, ...dependencies };
   const summary: ExportScheduleRunSummary = { stopped: await stopSchedulesOfInactiveOwners(store), requested: 0, failed: 0, errors: 0 };

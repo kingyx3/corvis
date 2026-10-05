@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const identity = await resolveAuthorizedRequestIdentity(request);
     const memberships=identity.workspaceMemberships ?? [];
     if(identity.authMethod==="demo"||identity.authMethod==="service_account") return json({data:memberships,correlationId:id});
-    const db=postgres(getServerConfig().postgresDsn);
+    const db=postgres(getServerConfig().databaseDsn);
     const grants=await db.query(`select support_grant_id::text,workspace_id::text,role_name,purpose,valid_until
       from corvis_control.support_access_grant where tenant_id=$1::uuid and subject=$2 and status='active'
         and valid_from<=now() and valid_until>now() and revoked_at is null`,[identity.tenantId,identity.subject]);

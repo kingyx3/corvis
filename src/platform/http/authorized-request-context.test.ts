@@ -60,7 +60,7 @@ test("without an injected repository the shared Postgres repository is used, and
     return new Response(JSON.stringify({ rows: [] }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
-  await withEnv({ ...baseEnv, CORVIS_POSTGRES_DSN: "https://fake-postgres.test/sql" }, async () => {
+  await withEnv({ ...baseEnv, CORVIS_DATABASE_DSN: "https://fake-postgres.test/sql" }, async () => {
     const request = new Request("https://corvis.example/api/v1/me", { headers: { "x-corvis-identity-assertion": assertion() } });
     await assert.rejects(resolveAuthorizedRequestIdentity(request, { requireAuthoritative: true }), AuthenticationError);
     assert.ok(statements.some((sql) => sql.includes("tenant_identity_provider")), "the shared repository ran the membership lookup, token binding included");

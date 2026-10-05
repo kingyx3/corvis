@@ -19,7 +19,7 @@ const SHARED_ISSUER = "https://login.corvis.example";
 const SHARED_AUDIENCE = "corvis-api";
 const TENANT_ISSUER = "https://idp.acme.example/realms/acme";
 const TENANT_AUDIENCE = "corvis-acme";
-const config = { demoMode: false, authIssuer: SHARED_ISSUER, authAudience: SHARED_AUDIENCE, authJwksUrl: "https://login.corvis.example/keys", postgresDsn: "postgres://unused" } as unknown as ServerConfig;
+const config = { demoMode: false, authIssuer: SHARED_ISSUER, authAudience: SHARED_AUDIENCE, authJwksUrl: "https://login.corvis.example/keys", databaseDsn: "postgres://unused" } as unknown as ServerConfig;
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 class RecordingDb implements PostgresSqlApi {
@@ -259,7 +259,7 @@ test("a logout that names only a session, a verifier that fails with something t
   }) as typeof fetch;
   try {
     const seconds = Math.floor(Date.now() / 1000);
-    const live = await handleBackchannelLogout(form(logoutJwt({ iat: seconds, exp: seconds + 60 })), { config: { ...config, postgresDsn: dsn } as unknown as ServerConfig });
+    const live = await handleBackchannelLogout(form(logoutJwt({ iat: seconds, exp: seconds + 60 })), { config: { ...config, databaseDsn: dsn } as unknown as ServerConfig });
     assert.equal(live.status, 200);
     assert.equal(statements.length, 2, "the recorded providers are read, then the token is applied");
   } finally {

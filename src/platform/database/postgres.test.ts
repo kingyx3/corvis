@@ -93,8 +93,7 @@ test("database factory fails closed for missing and unsupported bindings", () =>
   assert.throws(
     () => postgres(),
     (error: unknown) => error instanceof Error
-      && error.message.includes("CORVIS_DATABASE_DSN")
-      && error.message.includes("CORVIS_POSTGRES_DSN"),
+      && error.message.includes("CORVIS_DATABASE_DSN"),
   );
   assert.throws(() => postgres("http://postgres.example.test/sql"), /Unsupported PostgreSQL transport/);
 });

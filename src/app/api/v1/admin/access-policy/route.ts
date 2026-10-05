@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     if (!reason) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
 
     const config = getServerConfig();
-    const db = postgres(config.postgresDsn);
+    const db = postgres(config.databaseDsn);
     if (kind === "resource_entitlement") {
       const operation = body.operation === "grant" || body.operation === "revoke" ? body.operation : undefined;
       const subjectUserId = requiredString(body.subjectUserId, 64);

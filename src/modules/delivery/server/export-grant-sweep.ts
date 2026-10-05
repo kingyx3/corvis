@@ -23,7 +23,7 @@ export type ExportGrantSweepOptions = {
  * Returns the number of rows deleted; a full batch means more remain for the next tick.
  */
 export async function sweepExpiredExportDownloadGrants(
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
   options: ExportGrantSweepOptions = {},
 ): Promise<number> {
   const retentionDays = Math.max(1, Math.floor(options.retentionDays ?? EXPORT_GRANT_RETENTION_DAYS));

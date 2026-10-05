@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   try {
     const identity = await resolveAdminRequestIdentity(request);
     const config = getServerConfig();
-    const data = config.demoMode ? [] : await listTransportDeadLetters(identity, postgres(config.postgresDsn));
+    const data = config.demoMode ? [] : await listTransportDeadLetters(identity, postgres(config.databaseDsn));
     return json({ data, correlationId: id });
   } catch (error) { return apiError(error, id); }
 }

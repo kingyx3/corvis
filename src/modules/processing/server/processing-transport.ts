@@ -269,7 +269,7 @@ export async function dispatchProcessingTransportBatch(input: {
 export async function dispatchConfiguredProcessingTransport(workerUrlOverride?: string): Promise<{ configured: boolean } & TransportBatchResult> {
   const config = processingTransportConfig(process.env, workerUrlOverride);
   if (!config) return { configured: false, claimed: 0, dispatched: 0, failed: 0, deferred: 0, deadLettered: 0 };
-  const repository = new PostgresProcessingTransportRepository(postgres(getServerConfig().postgresDsn));
+  const repository = new PostgresProcessingTransportRepository(postgres(getServerConfig().databaseDsn));
   const result = await dispatchProcessingTransportBatch({ repository, adapter: new GcpProcessingTransportAdapter(config) });
   return { configured: true, ...result };
 }

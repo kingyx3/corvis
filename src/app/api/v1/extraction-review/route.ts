@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     ].join(":"));
     const gate = await runAuditedMutation({
       mutate: (db) => recordCandidateReviewDecision({
-        db: db ?? postgres(getServerConfig().postgresDsn),
+        db: db ?? postgres(getServerConfig().databaseDsn),
         tenantId: identity.tenantId,
         documentId,
         extractionRunId,

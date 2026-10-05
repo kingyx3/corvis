@@ -76,7 +76,7 @@ export function createDataIssueService(backend: DataIssueBackend): DataIssueServ
   };
 }
 
-export const postgresDataIssueService: DataIssueService = createDataIssueService(new PostgresDataIssueBackend(() => postgres(getServerConfig().postgresDsn)));
+export const postgresDataIssueService: DataIssueService = createDataIssueService(new PostgresDataIssueBackend(() => postgres(getServerConfig().databaseDsn)));
 export const demoDataIssueService: DataIssueService = createDataIssueService(demoDataIssueStore());
 
 let override: DataIssueService | undefined;

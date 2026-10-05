@@ -148,7 +148,7 @@ export async function guardIdentityLifecycleCommand(
 
 let singleton: IdentityLifecycleRepository | undefined;
 
-export function identityLifecycleRepository(dsn = getServerConfig().postgresDsn): IdentityLifecycleRepository {
+export function identityLifecycleRepository(dsn = getServerConfig().databaseDsn): IdentityLifecycleRepository {
   if (!singleton) singleton = new PostgresIdentityLifecycleRepository(postgres(dsn));
   return singleton;
 }

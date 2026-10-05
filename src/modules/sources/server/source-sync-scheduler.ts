@@ -33,7 +33,7 @@ export type SourceSyncDependencies = {
   now?: () => number;
 };
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 /** Re-queues a connection after a fault the sync itself could not record, but only while this pass still holds its lease. */
 async function releaseAfterFault(db: PostgresSqlApi, tenantId: string, sourceConnectionId: string, lease: string, now: number): Promise<void> {

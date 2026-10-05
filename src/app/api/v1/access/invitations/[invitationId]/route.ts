@@ -11,7 +11,7 @@ export async function POST(request:Request,{params}:{params:Promise<{invitationI
   const id=correlationId(request);
   try{
     const identity=await resolveAuthorizedRequestIdentity(request);assertPermission(identity,"admin:manage");if(identity.isTenantAdmin!==true)return json({error:"tenant_admin_required",correlationId:id},{status:403});
-    const body=await readJsonObject(request) as Record<string,unknown>|undefined;const {invitationId}=await params;const reason=typeof body?.reason==="string"?body.reason.trim():"";const db=postgres(getServerConfig().postgresDsn);
+    const body=await readJsonObject(request) as Record<string,unknown>|undefined;const {invitationId}=await params;const reason=typeof body?.reason==="string"?body.reason.trim():"";const db=postgres(getServerConfig().databaseDsn);
     if(body?.action==="revoke"){await withTransaction(db,(tx)=>revokeTenantInvitation(identity,invitationId,reason,id,tx));return json({data:{invitationId,status:"revoked"},correlationId:id});}
     if(body?.action==="resend"){const resent=await withTransaction(db,(tx)=>resendTenantInvitation(identity,invitationId,reason,id,tx));const data={...resent,emailDelivery:await deliverInvitationEmail(resent.invitation,resent.token,{db})};return json({data,correlationId:id});}
     return json({error:"invalid_request",correlationId:id},{status:400});

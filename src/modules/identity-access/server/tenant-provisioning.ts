@@ -134,7 +134,7 @@ export class PostgresTenantProvisioningRepository {
 }
 
 let singleton: PostgresTenantProvisioningRepository | undefined;
-export function tenantProvisioningRepository(dsn = getServerConfig().postgresDsn): PostgresTenantProvisioningRepository {
+export function tenantProvisioningRepository(dsn = getServerConfig().databaseDsn): PostgresTenantProvisioningRepository {
   if (!singleton) singleton = new PostgresTenantProvisioningRepository(postgres(dsn));
   return singleton;
 }

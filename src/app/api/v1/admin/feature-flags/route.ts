@@ -25,7 +25,7 @@ export async function PUT(request: Request) {
     if (body.retireBy) metadata.retireBy = body.retireBy;
     // The rollout write and its audit event must commit or roll back together,
     // so a failed audit insert never leaves an unaudited flag change in place.
-    await withTransaction(postgres(getServerConfig().postgresDsn), async (tx) => {
+    await withTransaction(postgres(getServerConfig().databaseDsn), async (tx) => {
       await setFeatureFlag(identity,{key:body.key as string,enabled:body.enabled as boolean,config:body.config,owner:body.owner,retireBy:body.retireBy},tx);
       await new PostgresOperationsRepository(tx).audit({id:randomUUID(),occurredAt:new Date().toISOString(),tenantId:identity.tenantId,workspaceId:identity.workspaceId,actorSubject:identity.subject,sessionId:identity.sessionId,action:"feature_flag.update",targetType:"feature_flag",targetId:body.key as string,outcome:"success",correlationId:id,metadata});
     });

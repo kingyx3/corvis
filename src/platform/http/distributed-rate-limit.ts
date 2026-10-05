@@ -27,7 +27,7 @@ export async function enforceRequestRateLimit(
     enforceRateLimit(JSON.stringify([tenantId, subject]), options);
     return;
   }
-  const db = options.db ?? postgres(config.postgresDsn);
+  const db = options.db ?? postgres(config.databaseDsn);
   let rows;
   try {
     rows = await db.query(

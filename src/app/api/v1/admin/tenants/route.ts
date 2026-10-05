@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     const command = normalizeProvisionTenantCommand(body);
     if (!command) return json({ error: "invalid_request", correlationId: id }, { status: 400 });
 
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
     const data = await withTransaction(db, async (tx) => {
       const provisioned = await new PostgresTenantProvisioningRepository(tx).provision(identity, id, command);
       const invitation = await createTenantInvitation(identity, {

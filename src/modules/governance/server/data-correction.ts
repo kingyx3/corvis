@@ -111,7 +111,7 @@ export class PostgresDataCorrectionRepository {
 }
 
 let singleton: PostgresDataCorrectionRepository | undefined;
-export function dataCorrectionRepository(dsn = getServerConfig().postgresDsn): PostgresDataCorrectionRepository {
+export function dataCorrectionRepository(dsn = getServerConfig().databaseDsn): PostgresDataCorrectionRepository {
   if (!singleton) singleton = new PostgresDataCorrectionRepository(postgres(dsn));
   return singleton;
 }

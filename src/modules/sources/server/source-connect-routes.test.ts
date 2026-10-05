@@ -9,7 +9,7 @@ import { RateLimiter } from "../../../platform/http/rate-limit.ts";
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 process.env.CORVIS_DEMO_MODE = "true";
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 process.env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE = "1000000";
 delete process.env.CORVIS_PUBLIC_APP_URL;
 delete process.env.CORVIS_GCP_PROJECT_ID;
@@ -79,7 +79,7 @@ function handleSql(sql: string, parameters: unknown[]): Row[] {
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as { sql: string; parameters: unknown[] };
   const resultRows = handleSql(sql, parameters ?? []);
   return new Response(JSON.stringify({ rows: resultRows }), { status: 200, headers: { "content-type": "application/json" } });

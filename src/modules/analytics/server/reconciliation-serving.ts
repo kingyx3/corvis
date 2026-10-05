@@ -59,7 +59,7 @@ export class PostgresReconciliationServingRepository {
 }
 
 let singleton: PostgresReconciliationServingRepository | undefined;
-export function reconciliationServing(dsn = getServerConfig().postgresDsn): PostgresReconciliationServingRepository {
+export function reconciliationServing(dsn = getServerConfig().databaseDsn): PostgresReconciliationServingRepository {
   if (!singleton) singleton = new PostgresReconciliationServingRepository(postgres(dsn));
   return singleton;
 }

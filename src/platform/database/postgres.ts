@@ -99,7 +99,7 @@ const HTTPS_SQL_DSN = /^https:\/\//i;
 export function postgres(dsn?: string): PostgresSqlApi {
   if (!dsn) {
     throw new Error(
-      "A PostgreSQL database DSN is required for persistence. Set CORVIS_DATABASE_DSN (preferred); CORVIS_POSTGRES_DSN is required only for the legacy binding.",
+      "A PostgreSQL database DSN is required for persistence. Set CORVIS_DATABASE_DSN.",
     );
   }
   if (NATIVE_POSTGRES_DSN.test(dsn)) {

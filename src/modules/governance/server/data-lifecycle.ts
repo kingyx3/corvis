@@ -75,7 +75,7 @@ type Dependencies = {
   fetchImpl?: typeof fetch;
 };
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 function bearer(token?: string): Record<string, string> { return token ? { authorization: `Bearer ${token}` } : {}; }
 
 function text(row: PostgresRow, key: string): string {

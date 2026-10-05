@@ -202,7 +202,7 @@ const productionEnvironment = {
   CORVIS_AUTH_ISSUER: "https://idp.request-context.example",
   CORVIS_AUTH_AUDIENCE: "corvis",
   CORVIS_AUTH_JWKS_URL: undefined,
-  CORVIS_POSTGRES_DSN: "postgres://user:dummy@database.example.test/db",
+  CORVIS_DATABASE_DSN: "postgres://user:dummy@database.example.test/db",
   CORVIS_OBJECT_STORE_BUCKET: "bucket",
 };
 const tenantUuid = "11111111-1111-4111-8111-111111111111";

@@ -75,7 +75,7 @@ export async function applyTenantIdentityCommand(
   identity: RequestIdentity,
   command: TenantIdentityCommand,
   correlationId: string,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<TenantIdentityChange> {
   const actor = [identity.tenantId, identity.authMethod, identity.subject];
   const rows = command.kind === "verified_domain_add"

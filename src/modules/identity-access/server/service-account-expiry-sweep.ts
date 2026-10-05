@@ -19,7 +19,7 @@ export const SERVICE_ACCOUNT_EXPIRY_NOTICE_BATCH = 500;
  * number: never an account, a credential or a person.
  */
 export async function sweepServiceAccountExpiry(
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
   limit: number = SERVICE_ACCOUNT_EXPIRY_NOTICE_BATCH,
 ): Promise<number> {
   const bounded = Math.min(Math.max(1, Math.floor(limit)), SERVICE_ACCOUNT_EXPIRY_NOTICE_BATCH);

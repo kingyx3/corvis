@@ -4,7 +4,7 @@
 // labels, keyset paging, the open-assignments read behind the Overview attention list, the audit event round trip, the
 // notice and its send-time eligibility and preferences from the F2 outbox, and that discussion leaves dual control alone.
 // Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/review-item-discussion.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/review-item-discussion.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
@@ -13,8 +13,8 @@ import { PostgresOperationsRepository } from '../../../src/platform/data/platfor
 import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../src/modules/notifications/server/notifications.ts';
 import { mentionedUserIds } from '../../../src/modules/review/domain/review-discussion.ts';
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'f3000000-0000-4000-8000-000000000001';
 const otherTenantId = 'f3000000-0000-4000-8000-000000000009';

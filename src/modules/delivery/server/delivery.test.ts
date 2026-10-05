@@ -418,9 +418,9 @@ test("a delivery row with no recorded prior attempts starts at attempt 1", async
 
 test("without injected dependencies delivery reads from the configured SQL gateway, bounded by the caller's limit", async (t) => {
   const gateway = "https://sql-gateway.example.com/query";
-  const previous = process.env.CORVIS_POSTGRES_DSN;
-  process.env.CORVIS_POSTGRES_DSN = gateway;
-  t.after(() => { if (previous === undefined) delete process.env.CORVIS_POSTGRES_DSN; else process.env.CORVIS_POSTGRES_DSN = previous; });
+  const previous = process.env.CORVIS_DATABASE_DSN;
+  process.env.CORVIS_DATABASE_DSN = gateway;
+  t.after(() => { if (previous === undefined) delete process.env.CORVIS_DATABASE_DSN; else process.env.CORVIS_DATABASE_DSN = previous; });
   const requests: Array<{ url: string; sql: string; parameters: PostgresPrimitive[] }> = [];
   t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const payload = JSON.parse(String(init?.body)) as { sql: string; parameters: PostgresPrimitive[] };

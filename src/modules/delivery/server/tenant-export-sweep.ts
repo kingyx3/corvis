@@ -44,7 +44,7 @@ export type TenantExportSweepResult = {
 };
 
 export async function sweepTenantExports(dependencies: TenantExportSweepDependencies = {}): Promise<TenantExportSweepResult> {
-  const store = dependencies.store ?? postgres(getServerConfig().postgresDsn);
+  const store = dependencies.store ?? postgres(getServerConfig().databaseDsn);
   const expired = await store.query(`select tenant_id::text as tenant_id, request_id::text as request_id, object_uri
     from corvis_control.expired_tenant_export_artifacts($1)`, [dependencies.artifactLimit ?? TENANT_EXPORT_ARTIFACT_SWEEP_LIMIT]);
   let artifactsDeleted = 0;

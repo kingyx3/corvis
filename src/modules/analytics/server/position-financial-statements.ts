@@ -274,7 +274,7 @@ export class PostgresPositionFinancialStatementRepository {
 }
 
 let singleton: PostgresPositionFinancialStatementRepository | undefined;
-export function positionFinancialStatements(dsn = getServerConfig().postgresDsn): PostgresPositionFinancialStatementRepository {
+export function positionFinancialStatements(dsn = getServerConfig().databaseDsn): PostgresPositionFinancialStatementRepository {
   if (!singleton) singleton = new PostgresPositionFinancialStatementRepository(postgres(dsn));
   return singleton;
 }

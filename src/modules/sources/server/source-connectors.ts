@@ -254,7 +254,7 @@ function rowToConnection(row: PostgresRow): SourceConnection {
   };
 }
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 export type CreateConnectionInput = {
   workspaceId: string;

@@ -392,7 +392,7 @@ jobs:
           # must be a clean no-op.
           createdb corvis_runner_smoke
           PGDATABASE=corvis_runner_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
-          export CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_runner_smoke?sslmode=disable"
+          export CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_runner_smoke?sslmode=disable"
           node db/postgres/migrate.ts --apply > runner-first.json
           node db/postgres/migrate.ts --apply > runner-second.json
           node -e 'const r=require("fs");const a=JSON.parse(r.readFileSync("runner-first.json","utf8"));const b=JSON.parse(r.readFileSync("runner-second.json","utf8"));if(a.result!=="pass"||b.result!=="pass"||b.applied.length!==0||a.applied.length===0)process.exit(1)'
@@ -430,43 +430,43 @@ jobs:
           # Full tenant data export (F10): dual approval enforced in SQL, the build queue, data-rights selection, immutability, RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-data-export.sql
           # The same through the application backend and build worker: archive and checksum manifest verify, only redistributable data is exported, links are single-use, rights are re-checked at download. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
           # Customer deletion requests (F10e): an Organization Admin's own request with dual approval enforced in SQL, blocked by legal holds, the operator lifecycle unchanged, the mandatory approval notice. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/customer-deletion-requests.sql
           # The same through the application backends and the unchanged operator flow: the customer read never returns operator-only detail, the operator flow cannot execute a request before a different admin approved it and still blocks it under a legal hold. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/customer-deletion-requests.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/customer-deletion-requests.mjs
           # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
           # Service accounts (F6): only an Organization Admin acts, never an administrator role for a machine, hashed credentials with a rotation overlap and immediate revocation, deactivation everywhere, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/service-accounts.sql
           # The same through the application backend: the account resolves through the existing authorization lookup, the secret is shown once and stored nowhere, credential checks, access review and the tenant access audit. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/service-accounts.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/service-accounts.mjs
           # Scheduled exports (F4): idempotent per owner, calendar and publication triggers claimed once, owner-only changes, automatic stop for deactivated owners, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/export-schedules.sql
           # Scheduled exports through the application worker: owner re-authorization against real membership/entitlements/data rights, the governed export job, fail-closed refusals, audit, history label. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedules.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedules.mjs
           # Two workers ticking at once run each due trigger exactly once (committed scratch tenant, removed afterwards).
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedule-concurrency.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-schedule-concurrency.mjs
           # Review-item assignment and discussion (F3): eligibility (review access to the fund in the workspace), compare-and-set assignment, append-only comments, inert (no decision, no dual-control effect), tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/review-item-discussion.sql
           # Review-item discussion through the application repository: visibility, paging, open assignments, the assignee's and mentioned person's notice and send-time eligibility, audit round trip, dual control untouched. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/review-item-discussion.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/review-item-discussion.mjs
           # Organization session policy (F7): bounded idle/maximum session limits, Organization-Admin-only changes, compare-and-set, enforcement that ends sessions for good and fails closed, sign-out-everywhere revocation, Require SSO with its lock-out safeguard, IdP-reported MFA evidence, OIDC back-channel logout (replay ledger, tenant scope, revocation, rate bound), tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/session-policy.sql
           # The same through the application backend and authoritative lookup: a request is refused once its session passes a limit, sign-out-everywhere stops the next lookup (background re-authorization included), the view reads the real tables, and only Organization Admins are notified. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/session-policy.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/session-policy.mjs
           # Verified email domains and the per-tenant identity-provider record (F7b/F7e): operator-only, one tenant per domain, the domain check off until a domain is verified, token binding off by default and only for an active OIDC record, audited for the target tenant, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-identity-records.sql
           # The same through the application code: operator commands, the domain check, the read-only view, opt-in token binding and Require SSO refusing a request in the authoritative lookup, MFA evidence, the end-session record, and the back-channel logout receiver revoking a session (replayed, forged and expired tokens refused). Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-identity-records.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-identity-records.mjs
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
           # Email notifications: recipient capture, preferences, send-time eligibility, digests. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/email-notifications.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/email-notifications.mjs
           # Recorded research scopes and attack-mode SCIM caches cannot outlive revoked authority. Rolled back.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/authorization-cache-revocation.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/authorization-cache-revocation.mjs
           # Migration 073 corrects the audit rows 069 mislabelled; append-only audit means it is exercised in a rolled-back transaction.
-          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/migration-073-audit-correction.mjs
+          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/migration-073-audit-correction.mjs
       - name: Exercise RLS tenant-isolation negatives as a non-owner role
         shell: bash
         run: |
@@ -506,12 +506,12 @@ jobs:
         run: node db/postgres/tests/rate-limit-concurrency.mjs
       - run: npm ci --prefer-offline --no-audit
       - name: Verify user preference ownership and workspace sharing
-        run: CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/user-preferences.mjs
+        run: CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/user-preferences.mjs
       - name: Verify native application Postgres adapter
         env:
-          CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
+          CORVIS_DATABASE_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
         run: node db/postgres/tests/native-adapter.mjs
       - name: Verify Postgres adapter parity with the Convex reference semantics
         env:
-          CORVIS_POSTGRES_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
+          CORVIS_DATABASE_DSN: postgresql://postgres:ci-disposable-only@localhost:5432/postgres?sslmode=disable
         run: node db/postgres/tests/convex-parity.mjs

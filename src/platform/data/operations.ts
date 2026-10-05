@@ -5,7 +5,7 @@ import { parseDeletionScope } from "../../modules/governance/server/data-lifecyc
 import { platform } from "./platform.ts";
 import { postgres, type PostgresSqlApi } from "../database/postgres.ts";
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 type Readiness = Record<string, "configured" | "missing" | "demo">;
 type EvidenceDependencies = {

@@ -117,7 +117,7 @@ export class InvalidIdempotencyKeyError extends Error {
   }
 }
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 /**
  * How long a stored record remains available to satisfy a replay before it

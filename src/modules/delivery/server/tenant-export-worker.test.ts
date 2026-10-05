@@ -199,7 +199,7 @@ test("a failure with no object store configured still fails the request", async 
 });
 
 test("the default store, clock and randomness are used when none are injected", async () => {
-  process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+  process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
   const originalFetch = globalThis.fetch;
   const seen: string[] = [];
   globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
@@ -211,6 +211,6 @@ test("the default store, clock and randomness are used when none are injected", 
     assert.match(seen[0]!, /claim_next_tenant_export_build/);
   } finally {
     globalThis.fetch = originalFetch;
-    delete process.env.CORVIS_POSTGRES_DSN;
+    delete process.env.CORVIS_DATABASE_DSN;
   }
 });

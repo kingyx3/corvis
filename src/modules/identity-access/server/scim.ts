@@ -26,7 +26,7 @@ export type ScimConfiguration={tenantId:string;authMethod:HumanAuthMethod;defaul
  * row records who changed what and whether an earlier token was replaced,
  * never the token or its hash.
  */
-export async function configureScim(identity:RequestIdentity,authMethod:HumanAuthMethod,workspaceId:string,roleName:IdentityLifecycleRole,db:PostgresSqlApi=postgres(getServerConfig().postgresDsn),correlationId:string=randomUUID()):Promise<{configuration:ScimConfiguration;token:string}>{
+export async function configureScim(identity:RequestIdentity,authMethod:HumanAuthMethod,workspaceId:string,roleName:IdentityLifecycleRole,db:PostgresSqlApi=postgres(getServerConfig().databaseDsn),correlationId:string=randomUUID()):Promise<{configuration:ScimConfiguration;token:string}>{
   if(identity.isTenantAdmin!==true) throw new TenantInvitationError("tenant_admin_required", 403);if(!UUID.test(workspaceId)||!ROLES.has(roleName))throw new TenantInvitationError("invalid_scim_configuration", 400);
   return withTransaction(db,async(tx)=>{
     const workspace=await tx.query(`select 1 from corvis_control.workspace where tenant_id=$1::uuid and workspace_id=$2::uuid and status='active' limit 1`,[identity.tenantId,workspaceId]);if(!workspace.length)throw new TenantInvitationError("workspace_not_found", 404);
@@ -84,7 +84,7 @@ function rememberVerified(verified:VerifiedTokens,key:string,config:ScimConfigur
   verified.set(key,{config,expiresAt:now+VERIFIED_TOKEN_TTL_MS});
 }
 
-export async function authenticateScim(request:Request,db:PostgresSqlApi=postgres(getServerConfig().postgresDsn),limits:ScimRateLimits={}):Promise<ScimConfiguration>{
+export async function authenticateScim(request:Request,db:PostgresSqlApi=postgres(getServerConfig().databaseDsn),limits:ScimRateLimits={}):Promise<ScimConfiguration>{
   const shared=limits.clientLimiter&&limits.tenantLimiter?undefined:scimLimiters();
   const clientLimiter=limits.clientLimiter??shared!.client,tenantLimiter=limits.tenantLimiter??shared!.tenant,verified=limits.verifiedTokens??shared?.verified??new Map();
   const now=limits.now??Date.now();

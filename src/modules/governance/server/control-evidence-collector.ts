@@ -170,7 +170,7 @@ export function computePayloadDigest(evidence: SecurityAcceptanceEvidenceFile, p
   return createHash("sha256").update(previousDigest ?? "", "utf8").update(canonicalPayload, "utf8").digest("hex");
 }
 
-function controlDb(dsn = getServerConfig().postgresDsn): PostgresSqlApi {
+function controlDb(dsn = getServerConfig().databaseDsn): PostgresSqlApi {
   return postgres(dsn);
 }
 

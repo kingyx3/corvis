@@ -98,7 +98,7 @@ export function createTenantExportService(backend: TenantExportBackend): TenantE
 }
 
 export const postgresTenantExportService: TenantExportService = createTenantExportService(
-  new PostgresTenantExportBackend(() => postgres(getServerConfig().postgresDsn), gcs),
+  new PostgresTenantExportBackend(() => postgres(getServerConfig().databaseDsn), gcs),
 );
 export const demoTenantExportService: TenantExportService = createTenantExportService(demoTenantExportStore());
 

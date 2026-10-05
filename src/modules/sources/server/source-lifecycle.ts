@@ -45,7 +45,7 @@ export type SourceActivityConnection = {
 
 const LONG_RUNNING_ZERO_DISCOVERY_MS = 15 * 60 * 1000;
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 function text(row: PostgresRow, key: string): string { const value = row[key]; return value == null ? "" : value instanceof Date ? value.toISOString() : String(value); }
 function numberValue(row: PostgresRow, key: string): number { const value = Number(row[key] ?? 0); return Number.isFinite(value) ? value : 0; }
 function jsonIds(values: string[]): string { return JSON.stringify(values); }

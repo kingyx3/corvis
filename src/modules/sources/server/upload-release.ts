@@ -47,7 +47,7 @@ export async function releaseScannedUploads(options: UploadReleaseOptions = {}):
   const config = getServerConfig();
   if (config.demoMode) return summary;
   const store = options.store ?? gcs();
-  const db = options.db ?? postgres(config.postgresDsn);
+  const db = options.db ?? postgres(config.databaseDsn);
   const now = options.now ?? Date.now;
   const started = now();
   const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;

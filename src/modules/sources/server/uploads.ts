@@ -928,6 +928,6 @@ export class ProductionUploadSessions implements UploadSessionPort {
 
 let singleton: UploadSessionPort | undefined;
 export function uploads(): UploadSessionPort {
-  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(gcs(), postgres(getServerConfig().postgresDsn));
+  if (!singleton) singleton = getServerConfig().demoMode ? new DemoUploadSessions() : new ProductionUploadSessions(gcs(), postgres(getServerConfig().databaseDsn));
   return singleton;
 }

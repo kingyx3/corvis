@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     // Every mutation below and its audit event must commit or roll back
     // together, so a failed audit insert never leaves an unaudited data
     // correction command in place.
-    const db = postgres(getServerConfig().postgresDsn);
+    const db = postgres(getServerConfig().databaseDsn);
 
     if (action === "open") {
       const data = await withTransaction(db, async (tx) => {

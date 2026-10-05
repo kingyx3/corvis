@@ -145,7 +145,7 @@ const workspace = "22222222-2222-4222-8222-222222222222";
 const productionEnv = {
   NODE_ENV: "production", CORVIS_DEMO_MODE: "false", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined,
   CORVIS_AUTH_ISSUER: "https://idp.validation.example", CORVIS_AUTH_AUDIENCE: "corvis", CORVIS_AUTH_JWKS_URL: undefined,
-  CORVIS_POSTGRES_DSN: "postgres://user:dummy@database.example.test/db", CORVIS_OBJECT_STORE_BUCKET: "bucket",
+  CORVIS_DATABASE_DSN: "postgres://user:dummy@database.example.test/db", CORVIS_OBJECT_STORE_BUCKET: "bucket",
 };
 
 async function inProduction(run: () => Promise<void>, overrides: Record<string, string | undefined> = {}): Promise<void> {

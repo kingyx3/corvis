@@ -8,7 +8,7 @@ register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), imp
 
 process.env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE = "3";
 // Nothing listens here: a request that reaches the database fails fast with a connection error.
-process.env.CORVIS_POSTGRES_DSN = "postgres://scim:dummy@127.0.0.1:1/db?sslmode=disable";
+process.env.CORVIS_DATABASE_DSN = "postgres://scim:dummy@127.0.0.1:1/db?sslmode=disable";
 
 const { GET } = await import("@/app/api/v1/scim/v2/Users/route");
 const { resetScimRateLimiters } = await import("@/modules/identity-access/server/scim");

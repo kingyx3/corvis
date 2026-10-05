@@ -20,7 +20,7 @@ export class WorkspacePersonalizationError extends Error {
 
 const MAX_PINS = 100;
 
-function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function dbDefault(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 function iso(value: unknown): string | null {
   if (value == null) return null;
   if (value instanceof Date) return value.toISOString();

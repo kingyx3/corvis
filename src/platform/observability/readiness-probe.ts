@@ -31,7 +31,7 @@ async function evaluate(dbFactory?: () => PostgresSqlApi): Promise<ReadinessResu
     const config = getServerConfig();
     if (config.demoMode) return { ready: true };
     stage = "database";
-    const db = dbFactory ? dbFactory() : postgres(config.postgresDsn);
+    const db = dbFactory ? dbFactory() : postgres(config.databaseDsn);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), DATABASE_TIMEOUT_MS); });
     const healthy = await Promise.race([db.health(), timeout]).finally(() => clearTimeout(timer));

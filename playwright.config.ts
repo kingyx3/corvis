@@ -67,7 +67,7 @@ export default defineConfig({
         CORVIS_RUNTIME_SURFACE: "combined",
         CORVIS_AUTH_ISSUER: "https://issuer.invalid",
         CORVIS_AUTH_AUDIENCE: "corvis-e2e-smoke",
-        CORVIS_POSTGRES_DSN: "postgres://smoke:smoke@127.0.0.1:1/smoke",
+        CORVIS_DATABASE_DSN: "postgres://smoke:smoke@127.0.0.1:1/smoke",
         CORVIS_OBJECT_STORE_BUCKET: "corvis-e2e-smoke",
       } : {}),
     },

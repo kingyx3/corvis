@@ -152,7 +152,7 @@ export class PostgresClientPortfolioAttributionRepository {
 }
 
 let singleton: PostgresClientPortfolioAttributionRepository | undefined;
-export function clientPortfolioAttribution(dsn = getServerConfig().postgresDsn): PostgresClientPortfolioAttributionRepository {
+export function clientPortfolioAttribution(dsn = getServerConfig().databaseDsn): PostgresClientPortfolioAttributionRepository {
   if (!singleton) singleton = new PostgresClientPortfolioAttributionRepository(postgres(dsn));
   return singleton;
 }

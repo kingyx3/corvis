@@ -122,7 +122,7 @@ export function createServiceAccountService(backend: ServiceAccountBackend): Ser
   };
 }
 
-export const postgresServiceAccountService: ServiceAccountService = createServiceAccountService(new PostgresServiceAccountBackend(() => postgres(getServerConfig().postgresDsn)));
+export const postgresServiceAccountService: ServiceAccountService = createServiceAccountService(new PostgresServiceAccountBackend(() => postgres(getServerConfig().databaseDsn)));
 export const demoServiceAccountService: ServiceAccountService = createServiceAccountService(demoServiceAccountStore());
 
 let override: ServiceAccountService | undefined;

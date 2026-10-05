@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     const identity = await resolveAdminRequestIdentity(request);
     assertOperationsTenant(identity, getServerConfig());
     const tenantId = parseTargetTenant(new URL(request.url).searchParams.get("tenantId"));
-    const records = await readTenantIdentityRecords(postgres(getServerConfig().postgresDsn), tenantId);
+    const records = await readTenantIdentityRecords(postgres(getServerConfig().databaseDsn), tenantId);
     return json({ data: records, correlationId: id });
   } catch (error) {
     return validationResponse(error, id) ?? apiError(error, id);

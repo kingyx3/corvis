@@ -45,7 +45,7 @@ type ConnectionForSync = {
   consecutiveFailures: number;
 };
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 function jsonArray(value: unknown): SourceScope[] {
   const parsed = typeof value === "string" ? safeParse(value) : value;

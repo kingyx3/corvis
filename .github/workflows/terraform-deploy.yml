@@ -433,7 +433,7 @@ jobs:
           set -euo pipefail
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET}")"
           echo "::add-mask::${dsn}"
-          CORVIS_POSTGRES_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts --apply --applied-by="github-actions:${GITHUB_RUN_ID}" --evidence=migration-evidence.json
+          CORVIS_DATABASE_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts --apply --applied-by="github-actions:${GITHUB_RUN_ID}" --evidence=migration-evidence.json
           unset dsn
 
       - name: Upload migration evidence

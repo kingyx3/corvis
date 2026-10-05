@@ -282,7 +282,7 @@ export class PostgresPublicServingResourceRepository {
 
 let singleton: PostgresPublicServingResourceRepository | undefined;
 
-export function publicServingResources(dsn = getServerConfig().postgresDsn): PostgresPublicServingResourceRepository {
+export function publicServingResources(dsn = getServerConfig().databaseDsn): PostgresPublicServingResourceRepository {
   if (!singleton) singleton = new PostgresPublicServingResourceRepository(postgres(dsn));
   return singleton;
 }

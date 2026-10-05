@@ -55,7 +55,7 @@ function timestamp(input: string | undefined, name: string): string | undefined 
 export async function listAuditRecords(
   identity: RequestIdentity,
   query: AuditQuery = {},
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<AuditRecord[]> {
   const after = timestamp(query.after, "after");
   const before = timestamp(query.before, "before");

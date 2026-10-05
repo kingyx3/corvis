@@ -5,7 +5,7 @@
 // customer read never returns what only operators may see, and that the operator flow cannot execute a customer's request
 // before a different Organization Admin approved it, and still blocks it under a legal hold afterwards. Run after the full
 // migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/customer-deletion-requests.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/customer-deletion-requests.mjs
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
@@ -18,8 +18,8 @@ const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await
 const { createDeletionRequest } = await import('../../../src/platform/data/operations.ts');
 const { adminSqlErrorClassification } = await import('../../../src/platform/database/sql-application-errors.ts');
 
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 process.env.CORVIS_DATA_LIFECYCLE_ENDPOINT = 'https://lifecycle.invalid';
 
 const id = (n) => `f1100000-0000-4000-8000-${String(n).padStart(12, '0')}`;

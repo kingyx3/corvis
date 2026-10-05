@@ -178,15 +178,15 @@ test("marking notifications read touches only this tenant's unread rows and is a
 });
 
 test("read paths fail closed when no database is configured and none is injected", async () => {
-  const original = process.env.CORVIS_POSTGRES_DSN;
-  delete process.env.CORVIS_POSTGRES_DSN;
+  const original = process.env.CORVIS_DATABASE_DSN;
+  delete process.env.CORVIS_DATABASE_DSN;
   try {
-    const dsnMissing = (error: unknown) => error instanceof Error && /CORVIS_POSTGRES_DSN is required/.test(error.message);
+    const dsnMissing = (error: unknown) => error instanceof Error && /database DSN is required.*Set CORVIS_DATABASE_DSN/.test(error.message);
     await assert.rejects(listTenantAccessAudit(admin), dsnMissing);
     await assert.rejects(tenantSupportAccessState(admin), dsnMissing);
     await assert.rejects(markTenantAccessNotificationsRead(admin), dsnMissing);
   } finally {
-    if (original === undefined) delete process.env.CORVIS_POSTGRES_DSN; else process.env.CORVIS_POSTGRES_DSN = original;
+    if (original === undefined) delete process.env.CORVIS_DATABASE_DSN; else process.env.CORVIS_DATABASE_DSN = original;
   }
 });
 

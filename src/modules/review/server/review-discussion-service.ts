@@ -81,7 +81,7 @@ export function createReviewDiscussionService(backend: ReviewDiscussionBackend):
   };
 }
 
-export const postgresReviewDiscussionService: ReviewDiscussionService = createReviewDiscussionService(new PostgresReviewDiscussionBackend(() => postgres(getServerConfig().postgresDsn)));
+export const postgresReviewDiscussionService: ReviewDiscussionService = createReviewDiscussionService(new PostgresReviewDiscussionBackend(() => postgres(getServerConfig().databaseDsn)));
 export const demoReviewDiscussionService: ReviewDiscussionService = createReviewDiscussionService(demoReviewDiscussionStore());
 
 let override: ReviewDiscussionService | undefined;

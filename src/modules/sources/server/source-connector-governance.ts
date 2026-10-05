@@ -24,7 +24,7 @@ import {
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
 const MAX_CONNECTION_LABEL_LENGTH = 200;
 
-function controlDb(): PostgresSqlApi { return postgres(getServerConfig().postgresDsn); }
+function controlDb(): PostgresSqlApi { return postgres(getServerConfig().databaseDsn); }
 
 function requiredText(row: PostgresRow, key: string): string {
   const value = row[key];

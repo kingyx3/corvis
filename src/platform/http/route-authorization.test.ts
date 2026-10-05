@@ -20,7 +20,7 @@ const SOME_UUID = "8f3d2c1e-5b6a-4c7d-9e8f-0a1b2c3d4e5f";
 
 process.env.CORVIS_DEMO_MODE = "";
 process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = GATEWAY_SECRET;
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 process.env.CORVIS_WORKER_SECRET = WORKER_SECRET;
 process.env.CORVIS_OPERATIONS_TENANT_ID = TENANT;
 process.env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE = "1000000";
@@ -39,7 +39,7 @@ let respond: (query: Query) => unknown[] = () => [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as Query;
   const query = { sql: sql.trim(), parameters };
   queries.push(query);

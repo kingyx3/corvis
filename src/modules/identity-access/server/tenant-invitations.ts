@@ -76,7 +76,7 @@ export async function createTenantInvitation(
   identity: RequestIdentity,
   command: CreateTenantInvitation,
   correlationId: string,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<{ invitation: TenantInvitation; token: string }> {
   assertInvitationIssuer(identity, command);
   const workspace = (await db.query(`select w.display_name
@@ -134,7 +134,7 @@ export async function createTenantInvitation(
 
 export async function listTenantInvitations(
   identity: RequestIdentity,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn),
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<TenantInvitation[]> {
   if (identity.isTenantAdmin !== true) throw new AuthorizationError("admin:tenant_manage");
   const rows = await db.query(`select i.invitation_id::text,i.tenant_id::text,i.workspace_id::text,
@@ -154,7 +154,7 @@ export async function listTenantInvitations(
 }
 
 export async function acceptTenantInvitation(token: string, authMethod: "oidc" | "saml", subject: string, authenticatedEmail: string | undefined, emailVerified: boolean | undefined, correlationId: string,
-  db: PostgresSqlApi = postgres(getServerConfig().postgresDsn)): Promise<AcceptedInvitation> {
+  db: PostgresSqlApi = postgres(getServerConfig().databaseDsn)): Promise<AcceptedInvitation> {
   if (!/^[A-Za-z0-9_-]{40,60}$/.test(token) || !subject || subject.length > 1024
     || emailVerified !== true || !authenticatedEmail || !EMAIL.test(authenticatedEmail)) {
     if (emailVerified !== true || !authenticatedEmail) throw new TenantInvitationError("verified_email_required", 403);

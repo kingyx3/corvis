@@ -16,7 +16,7 @@ const GATEWAY_SECRET = "scorecard-route-gateway-secret";
 
 process.env.CORVIS_DEMO_MODE = "";
 process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = GATEWAY_SECRET;
-process.env.CORVIS_POSTGRES_DSN = "https://fake-postgres.test/sql";
+process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 process.env.CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE = "1000000";
 console.warn = () => undefined;
 console.info = () => undefined;
@@ -28,7 +28,7 @@ let respond: (query: Query) => unknown[] = () => [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== process.env.CORVIS_POSTGRES_DSN) return originalFetch(input, init);
+  if (url !== process.env.CORVIS_DATABASE_DSN) return originalFetch(input, init);
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as Query;
   queries.push({ sql: sql.trim(), parameters });
   return new Response(JSON.stringify({ rows: respond({ sql: sql.trim(), parameters }) }), { status: 200, headers: { "content-type": "application/json" } });

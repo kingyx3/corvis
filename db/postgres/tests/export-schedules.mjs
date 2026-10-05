@@ -8,7 +8,7 @@
 // the export job a run hands to the existing export worker, idempotency across ticks, fail-closed refusals recorded as
 // stable failed runs, the audit trail, the owner-only / Organization Admin views and the schedule label on delivery
 // history. Run after the full migration chain on a disposable database:
-//   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
+//   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { PostgresPerformanceScorecardRepository } from '../../../src/modules/analytics/server/performance-scorecard.ts';
@@ -20,8 +20,8 @@ import { processEmailOutbox } from '../../../src/modules/notifications/server/no
 import { processQueuedExports } from '../../../src/modules/delivery/server/delivery.ts';
 
 console.info = () => undefined;
-const dsn = process.env.CORVIS_POSTGRES_DSN;
-assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
+const dsn = process.env.CORVIS_DATABASE_DSN;
+assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
 
 const tenantId = 'f4000000-0000-4000-8000-000000000001';
 const otherTenantId = 'f4000000-0000-4000-8000-000000000009';
