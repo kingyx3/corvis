@@ -34,11 +34,6 @@ export class InvalidLimitError extends Error {
 
 const CURSOR_SCHEMA_VERSION = 1;
 
-/** Microsecond-precision UTC text of a timestamptz, the exact value a keyset cursor compares against (a JS Date would drop digits and skip or repeat rows). */
-export function keysetTimestampSql(column: string): string {
-  return `to_char(${column} at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-}
-
 export function encodeCursor(sortKey: string): string {
   const payload = JSON.stringify({ v: CURSOR_SCHEMA_VERSION, k: sortKey });
   return Buffer.from(payload, "utf8").toString("base64url");

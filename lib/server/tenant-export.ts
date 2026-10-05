@@ -16,7 +16,8 @@ import {
   type TenantExportState,
 } from "../../core/tenant-export.ts";
 import { DataGovernanceError } from "./data-governance.ts";
-import { decodeCursor, encodeCursor, InvalidCursorError, keysetTimestampSql } from "./pagination.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "./pagination.ts";
+import { keysetTimestampSql } from "./keyset-sql.ts";
 import type { GcsControlClient } from "./gcs.ts";
 import { exportObjectKey } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -65,7 +66,7 @@ export const TENANT_EXPORT_LINK_MINUTES = 10;
 // ---------------------------------------------------------------------------
 
 // Microsecond-precision UTC text of a timestamptz, the exact value a keyset compares against (a JS Date would drop digits
-// and skip or repeat rows). It lives in pagination.ts so the export build can use it without loading this module.
+// and skip or repeat rows). It lives in pagination.ts (keyset-sql.ts) so the export build can use it without loading this module.
 export { keysetTimestampSql };
 const CURSOR_TIMESTAMP = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 

@@ -19,7 +19,7 @@ import {
   tenantExportManifestBytes,
   tenantExportReadme,
 } from "./tenant-export-bundle.ts";
-import { keysetTimestampSql } from "./pagination.ts";
+import { keysetTimestampSql } from "./keyset-sql.ts";
 import { zipStream, type ZipEntryResult, type ZipSource } from "./zip-stream.ts";
 
 /**

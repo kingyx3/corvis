@@ -26,7 +26,7 @@ async function withUploadServer<T>(answer: (put: Put, index: number) => { status
     const put: Put = { range: new Headers(init?.headers).get("content-range")!, bytes: init?.body ? Buffer.from(init.body as Uint8Array) : Buffer.alloc(0) };
     script.puts.push(put);
     const reply = answer(put, script.puts.length - 1);
-    return new Response(null, { status: reply.status, headers: reply.range ? { range: reply.range } : {} });
+    return new Response("ack", { status: reply.status, headers: reply.range ? { range: reply.range } : {} });
   }) as typeof fetch;
   class ScriptedClient extends GcsControlClient {
     override async cancelResumableUpload(uploadUrl: string): Promise<void> { script.cancelled.push(uploadUrl); }

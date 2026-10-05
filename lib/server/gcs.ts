@@ -177,8 +177,8 @@ export class GcsControlClient implements UploadObjectStore {
     return location;
   }
 
-  async cancelResumableUpload(uploadUrl: string): Promise<void> {
-    const status = await deleteWithZeroContentLength(uploadUrl);
+  async cancelResumableUpload(uploadUrl: string, requestImpl?: typeof httpsRequest): Promise<void> {
+    const status = await deleteWithZeroContentLength(uploadUrl, requestImpl);
     if (![204, 404, 410, 499].includes(status)) {
       throw new Error(`GCS resumable upload cancellation failed (${status})`);
     }
