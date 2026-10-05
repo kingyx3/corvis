@@ -96,9 +96,9 @@ It fails closed when the selected transport cannot provide a native transaction.
 
 ## Convex reference model
 
-`db/convex-conformance/` runs against the official upstream Convex backend and verifies the reference behavior for concurrent compare-and-set and atomic rollback. Corvis's PostgreSQL tests remain responsible for proving the implementation exhibits the same externally relevant invariants.
+`db/convex-conformance/` runs against the official upstream Convex backend and verifies the reference behavior for concurrent compare-and-set, lost-update freedom and atomic rollback. `db/postgres/tests/convex-parity.mjs` asserts the same invariants against Corvis's PostgreSQL adapter in CI.
 
-PR CI is pinned to a known Convex backend release SHA and exact CLI version. A scheduled canary tracks upstream `latest`, so improvements or regressions in Convex's supported backend surface are detected without making ordinary PR CI nondeterministic.
+PR CI is pinned to a known Convex backend release SHA and exact CLI version (from `db/convex-conformance/package.json` and `run.sh`). A scheduled canary tracks upstream `latest`, so improvements or regressions in Convex's supported backend surface are detected without making ordinary PR CI nondeterministic.
 
 ## Convex-inspired schema state model
 
