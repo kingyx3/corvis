@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AuditEvent } from "../../../shared/domain/enterprise.ts";
 import { PostgresDriverError } from "../../../platform/database/postgres-native.ts";
 import type { SqlApplicationError } from "../../../platform/database/sql-application-errors.ts";
+import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 
 // Route handlers use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -69,16 +70,7 @@ function request(path: string, caller: Caller = {}): Request {
     method,
     headers: {
       "x-correlation-id": `corr-review-discussion-${sequence}`,
-      "x-corvis-gateway-secret": GATEWAY_SECRET,
-      "x-corvis-auth-subject": caller.subject ?? "idp|me",
-      "x-corvis-auth-tenant": TENANT,
-      "x-corvis-auth-workspace": WORKSPACE,
-      "x-corvis-auth-roles": caller.roles ?? "reviewer",
-      "x-corvis-entitled-funds": (caller.funds ?? ["fund-1"]).join(","),
-      "x-corvis-entitled-documents": (caller.documents ?? ["doc-1"]).join(","),
-      "x-corvis-source-access": "false",
-      "x-corvis-redistribution": "false",
-      ...(caller.authMethod ? { "x-corvis-auth-method": caller.authMethod } : {}),
+      ...trustedIdentityHeaders(GATEWAY_SECRET, { subject: caller.subject ?? "idp|me", tenantId: TENANT, workspaceId: WORKSPACE, roles: caller.roles ?? "reviewer", fundIds: caller.funds ?? ["fund-1"], documentIds: caller.documents ?? ["doc-1"], ...(caller.authMethod ? { authMethod: caller.authMethod } : {}) }),
       ...(hasBody ? { "content-type": "application/json" } : {}),
       ...caller.headers,
     },

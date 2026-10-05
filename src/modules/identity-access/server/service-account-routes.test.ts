@@ -3,6 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 import type { ServiceAccount, ServiceAccountCreated } from "../domain/service-account.ts";
 import { PostgresDriverError } from "../../../platform/database/postgres-native.ts";
+import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 
 // Route handlers use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -67,9 +68,7 @@ function request(path: string, caller: Caller = {}): Request {
     headers: {
       "x-correlation-id": `corr-service-account-${sequence}`,
       ...(caller.unauthenticated ? {} : {
-        "x-corvis-gateway-secret": GATEWAY_SECRET, "x-corvis-auth-subject": caller.subject ?? "idp|alex", "x-corvis-auth-tenant": TENANT, "x-corvis-auth-workspace": WORKSPACE,
-        "x-corvis-auth-roles": caller.roles ?? "admin", "x-corvis-entitled-funds": "", "x-corvis-entitled-documents": "", "x-corvis-source-access": "false", "x-corvis-redistribution": "false",
-        ...(caller.authMethod ? { "x-corvis-auth-method": caller.authMethod } : {}),
+        ...trustedIdentityHeaders(GATEWAY_SECRET, { subject: caller.subject ?? "idp|alex", tenantId: TENANT, workspaceId: WORKSPACE, roles: caller.roles ?? "admin", ...(caller.authMethod ? { authMethod: caller.authMethod } : {}) }),
       }),
       ...(hasBody ? { "content-type": "application/json" } : {}),
     },

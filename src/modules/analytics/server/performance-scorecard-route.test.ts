@@ -3,6 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 import type { ScorecardPage } from "../domain/performance-scorecard.ts";
 import { SCORECARD_MAX_FACTS } from "./performance-scorecard.ts";
+import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 
 // Production-mode behaviour of GET /performance-scorecard against a faked SQL gateway
 // (see src/platform/http/route-authorization.test.ts for the same injection technique).
@@ -38,15 +39,10 @@ const { GET } = await import("@/app/api/v1/performance-scorecard/route");
 function request(options: { funds?: string[]; documents?: string[]; roles?: string; credentials?: boolean; query?: string } = {}): Request {
   const headers: Record<string, string> = { "x-correlation-id": "corr-scorecard-prod" };
   if (options.credentials !== false) {
-    headers["x-corvis-gateway-secret"] = GATEWAY_SECRET;
-    headers["x-corvis-auth-subject"] = "analyst-1";
-    headers["x-corvis-auth-tenant"] = TENANT;
-    headers["x-corvis-auth-workspace"] = WORKSPACE;
-    headers["x-corvis-auth-roles"] = options.roles ?? "analyst";
-    headers["x-corvis-entitled-funds"] = (options.funds ?? []).join(",");
-    headers["x-corvis-entitled-documents"] = (options.documents ?? []).join(",");
-    headers["x-corvis-source-access"] = "true";
-    headers["x-corvis-redistribution"] = "true";
+    Object.assign(headers, trustedIdentityHeaders(GATEWAY_SECRET, {
+      subject: "analyst-1", tenantId: TENANT, workspaceId: WORKSPACE, roles: options.roles ?? "analyst",
+      fundIds: options.funds ?? [], documentIds: options.documents ?? [], sourceDocumentAccess: true, redistribution: true,
+    }));
   }
   return new Request(`https://corvis.test/api/v1/performance-scorecard${options.query ?? ""}`, { headers });
 }

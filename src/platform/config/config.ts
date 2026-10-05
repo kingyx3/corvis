@@ -87,7 +87,7 @@ function publicOrigin(value?: string): string | undefined {
 /**
  * Fails closed: only an unset NODE_ENV or exactly "development"/"test" is treated as non-production.
  * Any other value ("Production", "staging", a typo) gets production behavior, so it can never
- * select the header-trusting legacy gateway, the in-memory rate limiter or skip production checks.
+ * select the in-memory rate limiter, the shared-secret worker path or skip production checks.
  */
 function resolveEnvironment(nodeEnv?: string): ServerConfig["environment"] {
   if (!nodeEnv) return "development";

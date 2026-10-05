@@ -5,6 +5,7 @@ import type { DeletionRequestView } from "../domain/data-retention.ts";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { PostgresDriverError } from "../../../platform/database/postgres-native.ts";
 import type { PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
+import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 
 // Route handlers use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -62,15 +63,7 @@ function request(path: string, caller: Caller = {}): Request {
     headers: {
       "x-correlation-id": `corr-customer-deletion-${sequence}`,
       ...(caller.unauthenticated ? {} : {
-        "x-corvis-gateway-secret": GATEWAY_SECRET,
-        "x-corvis-auth-subject": caller.subject ?? "idp|alex",
-        "x-corvis-auth-tenant": TENANT,
-        "x-corvis-auth-workspace": WORKSPACE,
-        "x-corvis-auth-roles": caller.roles ?? "admin",
-        "x-corvis-entitled-funds": "",
-        "x-corvis-entitled-documents": "",
-        "x-corvis-source-access": "false",
-        "x-corvis-redistribution": "false",
+        ...trustedIdentityHeaders(GATEWAY_SECRET, { subject: caller.subject ?? "idp|alex", tenantId: TENANT, workspaceId: WORKSPACE, roles: caller.roles ?? "admin" }),
       }),
       ...(hasBody ? { "content-type": "application/json" } : {}),
     },

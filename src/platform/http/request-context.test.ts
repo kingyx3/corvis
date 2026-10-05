@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, sign } from "node:crypto";
+import { trustedIdentityAssertion } from "../../test-support/identity-assertion.ts";
 import { AuthenticationError, classifyOidcFailure, resolveRequestIdentity, verifyGatewayIdentityAssertion, type GatewayIdentityAssertion } from "./request-context.ts";
 
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;
@@ -27,18 +28,6 @@ const trustedEnvironment = {
   CORVIS_DEMO_MODE: "false",
   CORVIS_TRUSTED_AUTH_PROXY_SECRET: "trusted-secret",
 };
-
-function trustedHeaders(overrides: Record<string,string> = {}) {
-  return {
-    "x-corvis-gateway-secret": "trusted-secret",
-    "x-corvis-auth-subject": "user-1",
-    "x-corvis-auth-tenant": "tenant-a",
-    "x-corvis-auth-workspace": "workspace-a",
-    "x-corvis-auth-roles": "reviewer",
-    "x-corvis-entitled-workspaces": "workspace-a",
-    ...overrides,
-  };
-}
 
 function signedAssertion(overrides: Partial<GatewayIdentityAssertion> = {}, secret = "trusted-secret"): string {
   const payload: GatewayIdentityAssertion = {
@@ -72,9 +61,12 @@ test("unsigned business identity headers fail closed without trusted gateway sec
   });
 });
 
-test("incorrect trusted gateway secret is rejected on the non-production compatibility path", { concurrency: false }, async () => {
+test("business identity headers are not an identity source, even with the correct shared secret", { concurrency: false }, async () => {
   await withEnv(trustedEnvironment, async () => {
-    const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({ "x-corvis-gateway-secret": "wrong-secret" }) });
+    const request = new Request("https://corvis.example/api/v1/me", { headers: {
+      "x-corvis-gateway-secret": "trusted-secret", "x-corvis-auth-subject": "user-1", "x-corvis-auth-tenant": "tenant-a",
+      "x-corvis-auth-workspace": "workspace-a", "x-corvis-auth-roles": "admin", "x-corvis-entitled-workspaces": "workspace-a",
+    }});
     await assert.rejects(resolveRequestIdentity(request), AuthenticationError);
   });
 });
@@ -128,51 +120,48 @@ test("signed assertion rejects invalid roles and a workspace outside signed enti
   ), AuthenticationError);
 });
 
-test("legacy trusted gateway compatibility remains non-production only", { concurrency: false }, async () => {
+const caller = { subject: "user-1", tenantId: "tenant-a", workspaceId: "workspace-a", roles: ["reviewer"] };
+const assertionRequest = (assertion: string) => new Request("https://corvis.example/api/v1/me", { headers: { "x-corvis-identity-assertion": assertion } });
+
+test("a signed assertion resolves identity through the request boundary outside production", { concurrency: false }, async () => {
   await withEnv(trustedEnvironment, async () => {
-    const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
-      "x-corvis-auth-roles": "reviewer,unknown-role",
-      "x-corvis-entitled-documents": "doc-a,doc-b",
-      "x-corvis-source-access": "true",
-      "x-corvis-auth-method": "saml",
-    })});
-    const identity = await resolveRequestIdentity(request);
+    const identity = await resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("trusted-secret", {
+      ...caller, documentIds: ["doc-a", "doc-b"], sourceDocumentAccess: true, authMethod: "saml",
+    })));
     assert.equal(identity.tenantId, "tenant-a");
     assert.deepEqual(identity.roles, ["reviewer"]);
-    assert.deepEqual(identity.entitlements.documentIds, ["doc-a","doc-b"]);
+    assert.deepEqual(identity.entitlements.documentIds, ["doc-a", "doc-b"]);
     assert.equal(identity.entitlements.sourceDocumentAccessAllowed, true);
     assert.equal(identity.authMethod, "saml");
   });
 });
 
+test("an assertion signed with another secret is rejected", { concurrency: false }, async () => {
+  await withEnv(trustedEnvironment, async () => {
+    await assert.rejects(resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("wrong-secret", caller))), /Invalid identity assertion signature/);
+  });
+});
+
 test("workspace context cannot be selected outside the entitled workspace set", { concurrency: false }, async () => {
   await withEnv(trustedEnvironment, async () => {
-    const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
-      "x-corvis-auth-workspace": "workspace-b",
-      "x-corvis-entitled-workspaces": "workspace-a",
-    })});
-    await assert.rejects(resolveRequestIdentity(request), /Workspace context not entitled/);
+    const assertion = trustedIdentityAssertion("trusted-secret", { ...caller, workspaceId: "workspace-b", workspaceIds: ["workspace-a"] });
+    await assert.rejects(resolveRequestIdentity(assertionRequest(assertion)), /Workspace context not entitled/);
   });
 });
 
 test("unknown or empty roles cannot create an authenticated request context", { concurrency: false }, async () => {
   await withEnv(trustedEnvironment, async () => {
-    for (const roles of ["", "root,superuser"]) {
-      const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({ "x-corvis-auth-roles": roles }) });
-      await assert.rejects(resolveRequestIdentity(request), /Missing authenticated request context/);
-    }
+    await assert.rejects(resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("trusted-secret", { ...caller, roles: "" }))), /no roles/);
+    await assert.rejects(resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("trusted-secret", { ...caller, roles: "root,superuser" }))), /invalid role/);
   });
 });
 
-test("service-account authentication remains explicit and does not expand supplied roles", { concurrency: false }, async () => {
+test("service-account authentication is explicit and unknown roles are rejected rather than dropped", { concurrency: false }, async () => {
   await withEnv(trustedEnvironment, async () => {
-    const request = new Request("https://corvis.example/api/v1/me", { headers: trustedHeaders({
-      "x-corvis-auth-method": "service_account",
-      "x-corvis-auth-roles": "api_client,admin-ish",
-    })});
-    const identity = await resolveRequestIdentity(request);
+    const identity = await resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("trusted-secret", { ...caller, roles: "api_client", authMethod: "service_account" })));
     assert.equal(identity.authMethod, "service_account");
     assert.deepEqual(identity.roles, ["api_client"]);
+    await assert.rejects(resolveRequestIdentity(assertionRequest(trustedIdentityAssertion("trusted-secret", { ...caller, roles: "api_client,admin-ish", authMethod: "service_account" }))), /invalid role/);
   });
 });
 

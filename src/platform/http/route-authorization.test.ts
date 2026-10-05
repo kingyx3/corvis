@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { register } from "node:module";
 import test from "node:test";
+import { trustedIdentityHeaders } from "../../test-support/identity-assertion.ts";
 
 // Behavioural authorization tests. Every handler below is invoked directly with an injected
 // identity (the trusted-gateway header path, which is how non-production identities and their
@@ -81,16 +82,12 @@ function requestFor(path: string, caller: Caller = {}): Request {
   sequence += 1;
   const headers: Record<string, string> = { "x-correlation-id": `corr-authz-${sequence}`, ...(caller.headers ?? {}) };
   if (caller.roles !== null) {
-    headers["x-corvis-gateway-secret"] = GATEWAY_SECRET;
-    headers["x-corvis-auth-subject"] = caller.subject ?? `subject-${sequence}`;
-    headers["x-corvis-auth-tenant"] = caller.tenant ?? TENANT;
-    headers["x-corvis-auth-workspace"] = WORKSPACE;
-    headers["x-corvis-auth-roles"] = (caller.roles ?? ["admin"]).join(",");
-    headers["x-corvis-entitled-funds"] = (caller.funds ?? []).join(",");
-    headers["x-corvis-entitled-documents"] = (caller.documents ?? []).join(",");
-    headers["x-corvis-source-access"] = String(caller.sourceAccess ?? false);
-    headers["x-corvis-redistribution"] = String(caller.redistribution ?? false);
-    if (caller.authMethod) headers["x-corvis-auth-method"] = caller.authMethod;
+    Object.assign(headers, trustedIdentityHeaders(GATEWAY_SECRET, {
+      subject: caller.subject ?? `subject-${sequence}`, tenantId: caller.tenant ?? TENANT, workspaceId: WORKSPACE,
+      roles: caller.roles ?? ["admin"], fundIds: caller.funds ?? [], documentIds: caller.documents ?? [],
+      sourceDocumentAccess: caller.sourceAccess ?? false, redistribution: caller.redistribution ?? false,
+      ...(caller.authMethod ? { authMethod: caller.authMethod } : {}),
+    }));
   }
   const method = caller.method ?? "GET";
   const hasBody = (caller.body !== undefined || caller.rawBody !== undefined) && method !== "GET" && method !== "HEAD";

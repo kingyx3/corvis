@@ -28,10 +28,6 @@ function parseRoles(value: string | null): Role[] {
   return (value || "").split(",").map((x) => x.trim()).filter((x): x is Role => allowed.has(x as Role));
 }
 
-function parseAuthMethod(value: string | null): RequestIdentity["authMethod"] {
-  return value === "saml" || value === "service_account" ? value : "oidc";
-}
-
 function safeEqualBytes(actual: Buffer, expected: Buffer): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
@@ -130,36 +126,6 @@ export function verifyGatewayIdentityAssertion(assertion: string | null, secret?
     sessionId: verified.sessionId,
     ...(verified.email ? { authenticatedEmail: verified.email } : {}),
     ...(verified.emailVerified !== undefined ? { emailVerified: verified.emailVerified } : {}),
-  };
-}
-
-function legacyTrustedGatewayIdentity(request: Request, secret?: string): RequestIdentity {
-  const supplied = request.headers.get("x-corvis-gateway-secret");
-  if (!supplied || !secret || !safeEqualBytes(Buffer.from(supplied), Buffer.from(secret))) throw new AuthenticationError("Untrusted identity gateway");
-  const subject = request.headers.get("x-corvis-auth-subject");
-  const tenantId = request.headers.get("x-corvis-auth-tenant");
-  const workspaceId = request.headers.get("x-corvis-auth-workspace");
-  const roles = parseRoles(request.headers.get("x-corvis-auth-roles"));
-  if (!subject || !tenantId || !workspaceId || roles.length === 0) throw new AuthenticationError("Missing authenticated request context");
-  const split = (name: string) => (request.headers.get(name) || "").split(",").map((x) => x.trim()).filter(Boolean);
-  const workspaceIds = split("x-corvis-entitled-workspaces");
-  if (workspaceIds.length && !workspaceIds.includes(workspaceId)) throw new AuthenticationError("Workspace context not entitled");
-  return {
-    subject,
-    tenantId,
-    workspaceId,
-    roles,
-    entitlements: {
-      workspaceIds: workspaceIds.length ? workspaceIds : [workspaceId],
-      fundIds: split("x-corvis-entitled-funds"),
-      documentIds: split("x-corvis-entitled-documents"),
-      sourceDocumentAccessAllowed: request.headers.get("x-corvis-source-access") === "true",
-      internalAnalyticsAllowed: request.headers.get("x-corvis-internal-analytics") === "true",
-      modelTrainingAllowed: request.headers.get("x-corvis-model-training") === "true",
-      redistributionAllowed: request.headers.get("x-corvis-redistribution") === "true",
-    },
-    authMethod: parseAuthMethod(request.headers.get("x-corvis-auth-method")),
-    sessionId: request.headers.get("x-corvis-session-id") || `session-${randomUUID()}`,
   };
 }
 
@@ -291,11 +257,10 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
 
   const assertion = request.headers.get("x-corvis-identity-assertion");
   if (assertion) return verifyGatewayIdentityAssertion(assertion, config.trustedAuthProxySecret);
-  if (config.environment === "production") return directOidcIdentity(request, config);
-
-  // Temporary non-production compatibility path only. Production deliberately
-  // rejects independently mutable business-identity headers.
-  return legacyTrustedGatewayIdentity(request, config.trustedAuthProxySecret);
+  // Every environment authenticates the same way: a signed gateway assertion above, or the caller's own
+  // OIDC bearer token here. Business identity (subject, tenant, roles, entitlements) is never read from
+  // independently mutable request headers, so there is no environment in which a header alone grants access.
+  return directOidcIdentity(request, config);
 }
 
 export class AuthenticationError extends Error {

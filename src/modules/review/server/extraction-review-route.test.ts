@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
 import type { PostgresRow } from "../../../platform/database/postgres.ts";
+import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 
 // See src/modules/sources/server/source-connections-routes.test.ts for why this loader is
 // needed: route modules use the Next.js "@/..." path alias.
@@ -87,12 +88,7 @@ function request(body: unknown, options: { subject?: string; documents?: string;
     headers: {
       "content-type": "application/json",
       "idempotency-key": options.key ?? "key-1",
-      "x-corvis-gateway-secret": "route-test-secret",
-      "x-corvis-auth-subject": options.subject ?? "reviewer-1",
-      "x-corvis-auth-tenant": TENANT,
-      "x-corvis-auth-workspace": "77777777-7777-4777-8777-777777777777",
-      "x-corvis-auth-roles": "reviewer",
-      "x-corvis-entitled-documents": options.documents ?? DOCUMENT,
+      ...trustedIdentityHeaders("route-test-secret", { subject: options.subject ?? "reviewer-1", tenantId: TENANT, workspaceId: "77777777-7777-4777-8777-777777777777", roles: "reviewer", documentIds: [options.documents ?? DOCUMENT] }),
     },
     body: JSON.stringify(body),
   });
