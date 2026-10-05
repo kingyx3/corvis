@@ -375,7 +375,7 @@ begin
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'corvis_control' and c.relname in ('review_item_thread','review_item_comment') and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('review_item_thread','review_item_comment')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('review_item_thread','review_item_comment')) then
     raise exception 'review discussion tables are server-managed: no client policy may exist';
   end if;
 end $$;

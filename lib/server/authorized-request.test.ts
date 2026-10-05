@@ -105,6 +105,7 @@ test("authoritative Postgres roles, resource grants and data rights override sig
     assert.deepEqual(resolvedOptions, { enforceIdentityBinding: true });
     assert.equal(resolvedPrincipal?.tokenIssuer, undefined);
     assert.equal(resolvedPrincipal?.tokenAudience, undefined);
+    assert.equal(resolvedPrincipal?.mfaUsed, undefined, "a signed assertion reports nothing about how the person signed in");
     assert.deepEqual(identity.workspaceMemberships, [
       { workspaceId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", workspaceDisplayName: "Primary Workspace", roles: ["read_only"] },
       { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: "Secondary Workspace", roles: ["analyst"] },

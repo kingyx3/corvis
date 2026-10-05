@@ -8,6 +8,7 @@ import type { WorkspaceCapabilities, WorkspaceIdentity } from "@/core/workspace"
 import { comparePeriods, type AttentionTarget, type WorkspaceSummary } from "@/core/workspace-summary";
 import { NO_DEMO_FIXTURES, loadDemoUiFixtures, type DemoUiFixtures } from "@/runtime/demo-fixtures";
 import { SESSION_EXPIRED_EVENT, friendlyErrorMessage, isUnauthenticatedError, sessionExpiredCopy } from "@/lib/api-errors";
+import { SessionExpiryTracker } from "@/lib/session-expiry";
 import { OAUTH_RETURN_MARKER } from "@/core/source-connect-wizard";
 import { parseViewHash, viewHash } from "@/lib/view-hash";
 import { useDocumentTitle } from "@/components/ui/use-document-title";
@@ -90,6 +91,10 @@ export default function CorvisApp() {
   const [analyticsFocus, setAnalyticsFocus] = useState<PositionFinancialsFocusRequest | null>(null);
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // Every report of an expired session goes through `reportSessionExpired`, and a successful workspace load only clears the
+  // prompt when nothing reported one after it started (see lib/session-expiry.ts).
+  const [sessionExpiry] = useState(() => new SessionExpiryTracker());
+  const reportSessionExpired = useCallback(() => { sessionExpiry.report(); setSessionExpired(true); }, [sessionExpiry]);
   const [demoFixtures, setDemoFixtures] = useState<DemoUiFixtures>(NO_DEMO_FIXTURES);
   const [announcement, setAnnouncement] = useState("");
 
@@ -120,17 +125,19 @@ export default function CorvisApp() {
   useEffect(() => {
     let active = true;
     // An expired session is not a module failure: prompt re-authentication instead of degrading silently.
-    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch((reason: unknown) => { if (active && isUnauthenticatedError(reason)) setSessionExpired(true); });
-    const onExpired = () => setSessionExpired(true);
-    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
-    return () => { active = false; window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired); };
-  }, []);
+    void workspacePort.whoAmI().then((value) => { if (active) setIdentity(value); }).catch((reason: unknown) => { if (active && isUnauthenticatedError(reason)) reportSessionExpired(); });
+    window.addEventListener(SESSION_EXPIRED_EVENT, reportSessionExpired);
+    return () => { active = false; window.removeEventListener(SESSION_EXPIRED_EVENT, reportSessionExpired); };
+  }, [reportSessionExpired]);
 
   const applyWorkspaceResults = useCallback((results: [PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]) => {
     const [capabilitiesResult, documentsResult, snapshotsResult, observationsResult] = results;
     const nextErrors: ModuleErrors = {};
-    // A successful re-fetch (Retry after signing in again) clears the prompt.
-    setSessionExpired([capabilitiesResult, documentsResult, snapshotsResult, observationsResult].some((result) => result.status === "rejected" && isUnauthenticatedError(result.reason)));
+    // A module that answered 401 shows the prompt. A successful re-fetch (Retry after signing in again) clears it, but only a
+    // load that began after the last report of an expiry: one that was already in flight when, say, the notification
+    // preferences reported it must not undo that report just because its own response arrived later.
+    if ([capabilitiesResult, documentsResult, snapshotsResult, observationsResult].some((result) => result.status === "rejected" && isUnauthenticatedError(result.reason))) reportSessionExpired();
+    else if (sessionExpiry.loadMayClear()) setSessionExpired(false);
     if (documentsResult.status === "fulfilled") setDocs(documentsResult.value); else nextErrors.documents = errorMessage(documentsResult.reason);
     if (snapshotsResult.status === "fulfilled") setSnapshots(currentSnapshots(snapshotsResult.value)); else nextErrors.snapshots = errorMessage(snapshotsResult.reason);
     if (observationsResult.status === "fulfilled") setObservations(observationsResult.value); else nextErrors.observations = errorMessage(observationsResult.reason);
@@ -142,23 +149,26 @@ export default function CorvisApp() {
     // The summary loads on its own path; keep its error while the other modules are re-applied.
     setModuleErrors((current) => current.summary ? { ...nextErrors, summary: current.summary } : nextErrors);
     setLoading(false);
-  }, []);
+  }, [reportSessionExpired, sessionExpiry]);
   const applySummaryResult = useCallback((result: PromiseSettledResult<WorkspaceSummary>) => {
-    if (result.status === "rejected" && isUnauthenticatedError(result.reason)) setSessionExpired(true);
+    if (result.status === "rejected" && isUnauthenticatedError(result.reason)) reportSessionExpired();
     setSummary(result.status === "fulfilled" ? result.value : null);
     setModuleErrors((current) => {
       const next = { ...current };
       if (result.status === "fulfilled") delete next.summary; else next.summary = errorMessage(result.reason);
       return next;
     });
-  }, []);
+  }, [reportSessionExpired]);
 
-  const loadWorkspace = useCallback(() => Promise.allSettled([
-    workspacePort.capabilities(),
-    workspacePort.listDocuments(),
-    workspacePort.listSnapshots(),
-    workspacePort.listObservations(),
-  ]) as Promise<[PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]>, []);
+  const loadWorkspace = useCallback(() => {
+    sessionExpiry.beginLoad();
+    return Promise.allSettled([
+      workspacePort.capabilities(),
+      workspacePort.listDocuments(),
+      workspacePort.listSnapshots(),
+      workspacePort.listObservations(),
+    ]) as Promise<[PromiseSettledResult<WorkspaceCapabilities>, PromiseSettledResult<DocumentRecord[]>, PromiseSettledResult<FundSnapshot[]>, PromiseSettledResult<ObservationRecord[]>]>;
+  }, [sessionExpiry]);
 
   const loadSummary = useCallback(() => Promise.allSettled([workspacePort.workspaceSummary()]).then(([result]) => result), []);
 

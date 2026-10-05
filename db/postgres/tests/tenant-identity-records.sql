@@ -12,6 +12,9 @@
 --   * the identity-provider record is compare-and-set on its version, an OpenID Connect issuer must be an https URL
 --     without query, fragment or trailing slash, token binding defaults off and can only be on for an active OIDC
 --     record, the same values change and audit nothing;
+--   * (099) the record also stores the IdP-reported MFA enforcement (true, false or NULL = not reported) and an https end-session
+--     endpoint (refused when malformed, by the function and by the table), both audited with the previous values, and while the
+--     tenant's Require SSO is on the record cannot be weakened (binding off, disabled, SAML);
 --   * every change is audited for the TARGET tenant in the same transaction, with the actor's tenant in the metadata;
 --   * both tables have RLS enabled and forced with no client policy, so a role without BYPASSRLS reads nothing.
 --
@@ -243,6 +246,95 @@ begin
   if exists (select 1 from corvis_control.tenant_identity_provider where tenant_id='b0950000-0000-4000-8000-00000000000b') then raise exception 'records are per tenant'; end if;
 end $$;
 
+-- ---------------------------------------------------------------- IdP-reported MFA, end-session endpoint and Require SSO (migration 099, F7a #334, F7c #336)
+insert into corvis_control.tenant (tenant_id,slug,display_name)
+values ('f0990000-0000-4000-8000-00000000000f','identity-records-f','Identity Records F');
+insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name)
+values ('f0990000-0000-4000-8000-0000000000f1','f0990000-0000-4000-8000-00000000000f','primary','F primary');
+insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject,status)
+values ('f0990000-0000-4000-8000-00000000000f','f0990000-0000-4000-8000-0000000000e1','oidc','idp|f-admin','active');
+insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name)
+values ('f0990000-0000-4000-8000-00000000000f','f0990000-0000-4000-8000-0000000000f1','f0990000-0000-4000-8000-0000000000e1','tenant_admin');
+
+-- Invalid end-session endpoints are refused by the function and, independently, by the table.
+select pg_temp.expect_error($f$select corvis_control.set_tenant_identity_provider('f0990000-0000-4000-8000-00000000000f','c0950000-0000-4000-8000-0000000000f0','oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr',true,'http://idp.f.example/logout')$f$, 'identity provider record is invalid');
+select pg_temp.expect_error($f$select corvis_control.set_tenant_identity_provider('f0990000-0000-4000-8000-00000000000f','c0950000-0000-4000-8000-0000000000f0','oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr',true,'https://idp.f.example/log out')$f$, 'identity provider record is invalid');
+select pg_temp.expect_error($f$select corvis_control.set_tenant_identity_provider('f0990000-0000-4000-8000-00000000000f','c0950000-0000-4000-8000-0000000000f0','oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr',true,'https://idp.f.example/logout#frag')$f$, 'identity provider record is invalid');
+select pg_temp.expect_error($f$select corvis_control.set_tenant_identity_provider('f0990000-0000-4000-8000-00000000000f','c0950000-0000-4000-8000-0000000000f0','oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr',true,'https://user:pw@idp.f.example/logout')$f$, 'identity provider record is invalid');
+select pg_temp.expect_error($f$select corvis_control.set_tenant_identity_provider('f0990000-0000-4000-8000-00000000000f','c0950000-0000-4000-8000-0000000000f0','oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr',true,'https://idp.f.example/' || repeat('a',2048))$f$, 'identity provider record is invalid');
+select pg_temp.expect_error($f$insert into corvis_control.tenant_identity_provider (tenant_id,protocol,issuer,audience,status,end_session_endpoint,updated_by_subject) values ('f0990000-0000-4000-8000-00000000000f','oidc','https://idp.f.example','corvis-f','pending','http://idp.f.example/logout','x')$f$, 'tenant_identity_provider_end_session_endpoint_check');
+select pg_temp.expect_error($f$insert into corvis_control.tenant_identity_provider (tenant_id,protocol,issuer,audience,status,end_session_endpoint,updated_by_subject) values ('f0990000-0000-4000-8000-00000000000f','oidc','https://idp.f.example','corvis-f','pending','https://idp.f.example/a b','x')$f$, 'tenant_identity_provider_end_session_endpoint_check');
+do $$
+begin
+  if exists (select 1 from corvis_control.tenant_identity_provider where tenant_id = 'f0990000-0000-4000-8000-00000000000f') then raise exception 'a refused record must store nothing'; end if;
+end $$;
+
+do $$
+declare
+  f constant uuid := 'f0990000-0000-4000-8000-00000000000f';
+  op constant uuid := 'c0950000-0000-4000-8000-0000000000f0';
+  r jsonb;
+  rec corvis_control.tenant_identity_provider%rowtype;
+  meta jsonb;
+  pol corvis_control.tenant_session_policy%rowtype;
+begin
+  -- Recorded with the identity provider's MFA enforcement and an end-session endpoint; audited with both.
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,0,'Initial setup','corr-f1',true,'https://idp.f.example/logout?client=corvis');
+  if (r->>'changed')::boolean is not true or (r->>'version')::int <> 1 then raise exception 'first record: %', r; end if;
+  select * into rec from corvis_control.tenant_identity_provider where tenant_id = f;
+  if rec.idp_enforces_mfa is distinct from true or rec.end_session_endpoint <> 'https://idp.f.example/logout?client=corvis' then raise exception 'the new fields must be stored: %', rec; end if;
+  select metadata into meta from corvis_control.audit_event where tenant_id = f and action = 'access.identity_provider.configured' and correlation_id = 'corr-f1';
+  if meta->>'idpEnforcesMfa' <> 'true' or meta->>'endSessionEndpoint' <> 'https://idp.f.example/logout?client=corvis' then raise exception 'the audit event must carry the new fields: %', meta; end if;
+
+  -- The same values (new fields included) change and audit nothing.
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,1,'Again','corr-f2',true,'https://idp.f.example/logout?client=corvis');
+  if (r->>'changed')::boolean is not false or (r->>'version')::int <> 1 then raise exception 'unchanged record: %', r; end if;
+  if exists (select 1 from corvis_control.audit_event where correlation_id = 'corr-f2') then raise exception 'no change, no audit'; end if;
+  -- "Not reported" (NULL) is a value of its own: changing true to NULL is a change, with the previous value audited.
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,1,'No longer sure','corr-f3',null,'https://idp.f.example/logout?client=corvis');
+  if (r->>'changed')::boolean is not true or (r->>'version')::int <> 2 then raise exception 'mfa to not reported: %', r; end if;
+  select metadata into meta from corvis_control.audit_event where correlation_id = 'corr-f3';
+  if meta->>'previousIdpEnforcesMfa' <> 'true' or (meta->'idpEnforcesMfa') <> 'null'::jsonb then raise exception 'audit must show before and after: %', meta; end if;
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,2,'Drop endpoint','corr-f4',false,null);
+  if (r->>'changed')::boolean is not true or (r->>'version')::int <> 3 then raise exception 'endpoint removed: %', r; end if;
+  select * into rec from corvis_control.tenant_identity_provider where tenant_id = f;
+  if rec.idp_enforces_mfa is distinct from false or rec.end_session_endpoint is not null then raise exception 'false is not NULL and the endpoint was removed: %', rec; end if;
+  -- The old twelve-argument call (no new fields) keeps working and means "not reported", "no endpoint".
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,3,'Back to defaults','corr-f5');
+  select * into rec from corvis_control.tenant_identity_provider where tenant_id = f;
+  if rec.idp_enforces_mfa is not null or rec.end_session_endpoint is not null or rec.version <> 4 then raise exception 'defaults: %', rec; end if;
+
+  -- While Require SSO is on the record must keep SSO working. (An Organization Admin turns it on from a compliant session.)
+  select * into pol from corvis_control.set_tenant_session_policy(f,'oidc','idp|f-admin',null,null,0,true,'https://idp.f.example','corvis-f');
+  if not pol.require_sso then raise exception 'Require SSO must be on'; end if;
+  begin
+    perform corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',false,4,'Turn binding off','corr-f6',null,null);
+    raise exception 'binding must not be turned off while Require SSO is on';
+  exception when others then if position('identity provider change would weaken require sso' in sqlerrm) = 0 then raise; end if; end;
+  begin
+    perform corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','disabled',false,4,'Disable','corr-f7',null,null);
+    raise exception 'the provider must not be disabled while Require SSO is on';
+  exception when others then if position('identity provider change would weaken require sso' in sqlerrm) = 0 then raise; end if; end;
+  begin
+    perform corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','saml','urn:f','corvis-f','active',false,4,'Switch to SAML','corr-f8',null,null);
+    raise exception 'the provider must not become SAML while Require SSO is on';
+  exception when others then if position('identity provider change would weaken require sso' in sqlerrm) = 0 then raise; end if; end;
+  if (select version from corvis_control.tenant_identity_provider where tenant_id = f) <> 4 then raise exception 'refused changes store nothing'; end if;
+  -- Changes that keep SSO working are fine (the MFA note, the endpoint, even a new issuer and audience for a migration).
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',true,4,'Record MFA','corr-f9',true,'https://idp.f.example/logout');
+  if (r->>'changed')::boolean is not true then raise exception 'a harmless change must work: %', r; end if;
+  -- Once an Organization Admin turns Require SSO off the operator can change the record freely again.
+  select * into pol from corvis_control.set_tenant_session_policy(f,'oidc','idp|f-admin',null,null,1,false,null,null);
+  if pol.require_sso then raise exception 'Require SSO must be off'; end if;
+  r := corvis_control.set_tenant_identity_provider(f,op,'oidc','idp|ops-admin','oidc','https://idp.f.example','corvis-f','active',false,5,'Binding off','corr-f10',true,null);
+  if (r->>'changed')::boolean is not true then raise exception 'weakening is allowed once Require SSO is off: %', r; end if;
+  -- ... and enabling Require SSO again is then refused for lack of binding.
+  begin
+    perform * from corvis_control.set_tenant_session_policy(f,'oidc','idp|f-admin',null,null,2,true,'https://idp.f.example','corvis-f');
+    raise exception 'Require SSO needs token binding';
+  exception when others then if position('session policy sso needs token binding' in sqlerrm) = 0 then raise; end if; end;
+end $$;
+
 -- ---------------------------------------------------------------- RLS: enabled, forced, no client policy
 do $$
 declare
@@ -252,7 +344,7 @@ begin
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'corvis_control' and c.relname in ('tenant_verified_domain','tenant_identity_provider') and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('tenant_verified_domain','tenant_identity_provider')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('tenant_verified_domain','tenant_identity_provider')) then
     raise exception 'identity record tables are server-managed: no client policy may exist';
   end if;
 end $$;

@@ -1256,7 +1256,7 @@ test("an empty content type is treated as application/octet-stream and accepted"
 test("a degenerate tenant id never produces an empty object-key path segment", async () => {
   const { uploads, store } = harness();
   const session = await uploads.initiate(identity({ tenantId: "" }), initiateInput());
-  assert.ok(session.objectKey?.startsWith(`tenant=document/document=${session.documentId}/`), session.objectKey);
+  assert.ok(session.objectKey?.startsWith(`tenant=document/document=${session.documentId}/`), String(session.objectKey));
   assert.equal(store.resumable.get(session.resumableUploadUrl ?? "")?.key, session.objectKey);
 });
 

@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { RetentionView } from "@/core/data-retention";
+import {
+  DELETION_REQUEST_STATUS_LABEL,
+  deletionStatusSummary,
+  type DeletionRequestView,
+  type RetentionView,
+} from "@/core/data-retention";
 import {
   TENANT_EXPORT_MAX_TEXT_LENGTH,
   TENANT_EXPORT_MIN_REASON_LENGTH,
@@ -16,11 +21,13 @@ import { StatusPill } from "@/components/ui/status-pill";
 import {
   dataGovernanceErrorMessage,
   decideDataExport,
+  decideDeletion,
   getDataExport,
   getRetention,
   listDataExports,
   prepareDataExportDownload,
   requestDataExport,
+  requestDeletion,
 } from "@/features/access/data-governance-api";
 import { apiUrl } from "@/lib/api-url";
 import { displayDate } from "@/lib/display-format";
@@ -56,7 +63,7 @@ function RetentionSection() {
   const view = state.kind === "ready" ? state.value : null;
   return <section className="panel" aria-labelledby="retention-heading">
     <div className="panel-heading"><div><p className="eyebrow">Records obligations</p><h2 id="retention-heading">Data retention and legal holds</h2></div></div>
-    <p className="lede">How long Corvis keeps each class of your organization&apos;s data, and any legal hold that stops it being deleted. This is read-only: Corvis operations set and lift both. Contact Corvis support to ask about a period or a hold.</p>
+    <p className="lede">How long Corvis keeps each class of your organization&apos;s data, and any legal hold that stops it being deleted. Retention periods and legal holds are read-only: Corvis operations set and lift both. Contact Corvis support to ask about a period or a hold. Below them are the deletion requests that affect your organization, and you can ask for a deletion yourself.</p>
     {state.kind === "loading" && <p className="empty-cell" role="status">Loading retention settings…</p>}
     {state.kind === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Retention settings are unavailable</strong><span>Nothing was changed. <button type="button" className="text-button" onClick={() => { setState({ kind: "loading" }); setReloadKey((key) => key + 1); }}>Try again</button></span></div></div>}
     {view && <>
@@ -82,8 +89,122 @@ function RetentionSection() {
             <td>{day(hold.placedAt)}</td>
           </tr>)}</tbody></table></div>}
       <div className="lineage-note" role="note"><Icon name="shield"/><div><strong>A legal hold overrides retention</strong><span>While a hold applies, the data it covers is not deleted, even after its retention period ends or the contract ends.</span></div></div>
+      <DeletionRequests view={view} onChanged={() => setReloadKey((key) => key + 1)} />
     </>}
   </section>;
+}
+
+/**
+ * Deletion requests (F10e, #325), in the retention section: the requests that affect the organization (the ones Corvis
+ * operations made show what they cover, where they stand and their dates, nothing else), and an Organization Admin's own
+ * request for deletion. Like a full export, it needs a different Organization Admin to approve it, and a legal hold on the
+ * data stops it. Approving hands it to Corvis operations; nothing is deleted by approving.
+ */
+function DeletionRequests({ view, onChanged }: { view: RetentionView; onChanged: () => void }) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ requestId: string; kind: "approve" | "reject" } | null>(null);
+  const [note, setNote] = useState("");
+  const reasonId = useId();
+  const hintId = useId();
+  const noteId = useId();
+
+  const choices = view.policies.filter((policy) => policy.inEffect);
+  const onHold = (dataClass: string) => view.legalHolds.some((hold) => hold.dataClass === null || hold.dataClass === dataClass)
+    || view.policies.some((policy) => policy.dataClass === dataClass && policy.legalHold);
+  const items = view.deletionRequests;
+  const pending = items.find((item) => item.status === "pending_approval");
+  const trimmed = reason.trim();
+  const valid = selected.length > 0 && trimmed.length >= TENANT_EXPORT_MIN_REASON_LENGTH && trimmed.length <= TENANT_EXPORT_MAX_TEXT_LENGTH;
+
+  const run = async (key: string, action: () => Promise<string>, failure: string) => {
+    setBusy(key);
+    setMessage(null);
+    try {
+      setMessage({ tone: "success", text: await action() });
+    } catch (reasonForFailure) {
+      setMessage({ tone: "error", text: dataGovernanceErrorMessage(reasonForFailure, failure) });
+    } finally { setBusy(null); onChanged(); }
+  };
+
+  const submit = () => run("request", async () => {
+    await requestDeletion(selected, trimmed);
+    setSelected([]);
+    setReason("");
+    return "Deletion requested. A different Organization Admin must approve it before Corvis acts on it.";
+  }, "The deletion could not be requested. Try again.");
+
+  const decide = (item: DeletionRequestView, action: "approve" | "reject") => run(`${action}:${item.requestId}`, async () => {
+    await decideDeletion(item.requestId, action, { expectedStatus: "pending_approval", ...(action === "reject" ? { note: note.trim() } : {}) });
+    setConfirming(null);
+    setNote("");
+    return action === "approve" ? "Approved. Corvis operations will carry out the deletion." : "Rejected. Nothing will be deleted.";
+  }, "This request could not be updated. Try again.");
+
+  const withdraw = (item: DeletionRequestView) => run(`cancel:${item.requestId}`, async () => {
+    await decideDeletion(item.requestId, "cancel");
+    return "Request withdrawn.";
+  }, "This request could not be withdrawn. Try again.");
+
+  return <div className="deletion-requests" data-testid="deletion-requests">
+    <h3 className="retention-holds-heading" id="deletion-heading">Deletion requests</h3>
+    <p className="lede">Asking for data to be deleted needs two Organization Admins: one asks, a different one approves, and every step is audited. Corvis operations then carry it out. A legal hold on the data stops it.</p>
+    <form className="data-export-request" aria-labelledby="deletion-heading" onSubmit={(event) => { event.preventDefault(); if (valid && !pending && busy === null) void submit(); }}>
+      <fieldset className="form-field" disabled={busy !== null || Boolean(pending)}>
+        <legend>What should be deleted?</legend>
+        {choices.length === 0 && <p className="table-muted">No retention policy is recorded yet, so there is nothing to ask for.</p>}
+        {choices.map((policy) => {
+          const held = onHold(policy.dataClass);
+          return <label key={policy.dataClass} className="check-field">
+            <input type="checkbox" checked={selected.includes(policy.dataClass)} disabled={held}
+              onChange={(event) => setSelected((current) => event.target.checked ? [...current, policy.dataClass] : current.filter((item) => item !== policy.dataClass))} />
+            <span>{policy.label}{held ? " (under a legal hold, so it cannot be deleted)" : ""}</span>
+          </label>;
+        })}
+      </fieldset>
+      <label className="form-field" htmlFor={reasonId}><span>Why do you need this deletion?</span>
+        <textarea id={reasonId} className="input-control" rows={3} maxLength={TENANT_EXPORT_MAX_TEXT_LENGTH} required value={reason} disabled={busy !== null || Boolean(pending)} aria-describedby={hintId}
+          onChange={(event) => setReason(event.target.value)} placeholder="e.g. The contract has ended and we no longer need the data held" />
+      </label>
+      <p id={hintId} className="table-muted">{pending ? "Another deletion request is waiting for approval. Finish or withdraw it before starting a new one." : "Shown to the Organization Admin who approves it and kept in the audit trail. Whole kinds of data only; ask Corvis support to delete specific documents."}</p>
+      <button type="submit" className="primary-button" disabled={!valid || Boolean(pending) || busy !== null}>{busy === "request" ? "Requesting…" : "Request deletion"}</button>
+    </form>
+    <div className="data-issues-status" role="status" aria-live="polite">{message?.tone === "success" ? message.text : ""}</div>
+    {message?.tone === "error" && <div className="lineage-note tone-danger" role="alert"><Icon name="alert"/><div><strong>Something went wrong</strong><span>{message.text}</span></div></div>}
+    {items.length === 0
+      ? <p className="empty-cell">No deletion request affects your organization yet.</p>
+      : <ul className="data-issues-list" aria-label="Deletion requests">
+        {items.map((item) => {
+          const headingId = `deletion-request-${item.requestId}`;
+          const confirmingThis = confirming?.requestId === item.requestId ? confirming.kind : null;
+          const who = item.origin === "corvis" ? "by Corvis operations" : item.requestedByMe ? "by you" : `by ${item.requestedBy}`;
+          return <li key={item.requestId} className="data-issue-card" data-status={item.status} data-origin={item.origin} aria-labelledby={headingId}>
+            <div className="data-issue-head">
+              <div><h4 id={headingId}>{item.scopeLabel}</h4><span className="table-secondary">Requested {time(item.requestedAt)} {who}{item.status === "pending_approval" && item.approvalExpiresAt ? ` · approval open until ${time(item.approvalExpiresAt)}` : ""}</span></div>
+              <div className="data-issue-pills"><StatusPill status={DELETION_REQUEST_STATUS_LABEL[item.status]}/>{item.legalHoldBlocks && <StatusPill status="On hold"/>}</div>
+            </div>
+            {item.reason && <p className="data-issue-comment">{item.reason}</p>}
+            <p className="data-issue-summary">{deletionStatusSummary(item)}</p>
+            <p className="table-secondary">Requested {day(item.requestedAt)}{item.decidedAt ? ` · ${item.status === "rejected" ? "rejected" : "approved"} ${day(item.decidedAt)}` : ""}{item.executedAt ? ` · deleted ${day(item.executedAt)}` : ""}</p>
+            {confirmingThis === "approve" && <div className="lineage-note tone-warning" role="group" aria-label="Confirm approval"><Icon name="shield"/><div><strong>Approve this deletion?</strong><span>Corvis operations will permanently delete {item.scopeLabel.toLowerCase()} once you approve. Deletion cannot be undone, and a legal hold on the data stops it.</span></div></div>}
+            {confirmingThis === "reject" && <div className="form-field" role="group" aria-label="Confirm rejection">
+              <label htmlFor={noteId}><span>Why are you rejecting it?</span></label>
+              <textarea id={noteId} className="input-control" rows={2} maxLength={TENANT_EXPORT_MAX_TEXT_LENGTH} value={note} onChange={(event) => setNote(event.target.value)} />
+            </div>}
+            <div className="data-issue-actions">
+              {item.actions.canApprove && confirmingThis === null && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => { setConfirming({ requestId: item.requestId, kind: "approve" }); setNote(""); }}>Approve deletion</button>}
+              {item.actions.canReject && confirmingThis === null && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setConfirming({ requestId: item.requestId, kind: "reject" }); setNote(""); }}>Reject deletion</button>}
+              {confirmingThis === "approve" && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => void decide(item, "approve")}>{busy === `approve:${item.requestId}` ? "Approving…" : "Confirm deletion approval"}</button>}
+              {confirmingThis === "reject" && <button type="button" className="primary-button button-small" disabled={busy !== null || note.trim().length === 0} onClick={() => void decide(item, "reject")}>{busy === `reject:${item.requestId}` ? "Rejecting…" : "Confirm deletion rejection"}</button>}
+              {confirmingThis !== null && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setConfirming(null); setNote(""); }}>Back</button>}
+              {item.actions.canCancel && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => void withdraw(item)}>{busy === `cancel:${item.requestId}` ? "Withdrawing…" : "Withdraw deletion request"}</button>}
+            </div>
+          </li>;
+        })}
+      </ul>}
+  </div>;
 }
 
 /** Requests shown per page. Requests are rare (one is open at a time), so most organizations never see a second page. */

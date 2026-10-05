@@ -55,7 +55,7 @@ class RecordingDb implements PostgresSqlApi {
 }
 
 const policyRow = (overrides: PostgresRow = {}): PostgresRow => ({
-  idle_timeout_minutes: 30, max_session_minutes: 480, version: 2, updated_at: "2026-10-03 09:00:00+00", updated_by_subject: "idp|morgan", ...overrides,
+  idle_timeout_minutes: 30, max_session_minutes: 480, require_sso: false, version: 2, updated_at: "2026-10-03 09:00:00+00", updated_by_subject: "idp|morgan", ...overrides,
 });
 
 test("a policy change calls the SQL function as the caller, and queues a mandatory notice to Organization Admins only when something changed", async () => {
@@ -64,7 +64,7 @@ test("a policy change calls the SQL function as the caller, and queues a mandato
   const change = await backend.update(identity(), { ...update, expectedVersion: 1 }, db);
   assert.equal(change.changed, true);
   assert.deepEqual([change.previous.version, change.previous.idleTimeoutMinutes, change.policy.version, change.policy.idleTimeoutMinutes, change.policy.updatedBy], [1, 60, 2, 30, "idp|morgan"]);
-  assert.deepEqual(db.find(/set_tenant_session_policy/)!.parameters, [TENANT, "oidc", "idp|alex", 30, 480, 1], "the SQL function sees the real actor, tenant and the version the change is based on");
+  assert.deepEqual(db.find(/set_tenant_session_policy/)!.parameters, [TENANT, "oidc", "idp|alex", 30, 480, 1, null, null, null], "the SQL function sees the real actor, tenant and the version the change is based on; Require SSO left out keeps its stored value");
   const outbox = db.find(/insert into corvis_control\.email_outbox/)!;
   assert.ok(outbox, "a notice is queued");
   assert.equal(outbox.parameters[0], TENANT);
@@ -75,6 +75,21 @@ test("a policy change calls the SQL function as the caller, and queues a mandato
   assert.match(String(outbox.parameters[5]), /^security_policy:[0-9a-f-]{36}$/);
   assert.equal(db.count(/^savepoint corvis_notification/), 1, "the notice cannot abort the change");
   assert.equal(db.count(/^release savepoint corvis_notification/), 1);
+});
+
+test("F7a: Require SSO is passed with the actor's own verified issuer and audience so SQL can refuse a lock-out, and the change is announced like any other", async () => {
+  const db = new RecordingDb((sql) => (/from corvis_control\.set_tenant_session_policy/.test(sql) ? [policyRow({ require_sso: true, version: 2 })] : /from corvis_control\.tenant_session_policy/.test(sql) ? [policyRow({ version: 1 })] : []));
+  const backend = new PostgresSessionPolicyBackend(() => db, () => null);
+  const change = await backend.update(identity({ tokenIssuer: "https://idp.acme.com", tokenAudience: "corvis" }), { ...update, requireSso: true, expectedVersion: 1 }, db);
+  assert.deepEqual([change.changed, change.previous.requireSso, change.policy.requireSso], [true, false, true]);
+  assert.deepEqual(db.find(/set_tenant_session_policy/)!.parameters, [TENANT, "oidc", "idp|alex", 30, 480, 1, true, "https://idp.acme.com", "corvis"]);
+  assert.match(db.find(/set_tenant_session_policy/)!.sql, /\$7::boolean,\$8,\$9\)/);
+  assert.equal(db.count(/email_outbox/), 1);
+  // Turning it off is also stated, and a session without verified token claims passes nulls (which can only ever refuse an enable).
+  const off = new RecordingDb((sql) => (/from corvis_control\.set_tenant_session_policy/.test(sql) ? [policyRow({ require_sso: false, version: 3 })] : [policyRow({ require_sso: true, version: 2 })]));
+  const disabled = await new PostgresSessionPolicyBackend(() => off, () => null).update(identity(), { ...update, requireSso: false, expectedVersion: 2 }, off);
+  assert.deepEqual([disabled.changed, disabled.policy.requireSso], [true, false]);
+  assert.deepEqual(off.find(/set_tenant_session_policy/)!.parameters.slice(6), [false, null, null]);
 });
 
 test("setting the values the policy already has queues no notice", async () => {
@@ -109,9 +124,16 @@ test("the database refusing a change (not an admin, out of bounds, stale version
 test("signing a user out calls the SQL function as the caller, reports how many sessions ended and queues a notice", async () => {
   const db = new RecordingDb((sql) => (/sign_out_user_everywhere/.test(sql) ? [{ revoked: "3" }] : [{ label: "morgan.lee@example.test" }]));
   const result = await new PostgresSessionPolicyBackend(() => db, () => null).signOut(identity(), { userId: USER, reason: "Left the firm" }, db);
-  assert.deepEqual(result, { userId: USER, label: "morgan.lee@example.test", revokedSessions: 3 });
+  assert.deepEqual(result, { userId: USER, label: "morgan.lee@example.test", revokedSessions: 3, idpEndSessionEndpoint: null }, "no end-session endpoint recorded: nothing is said about the identity provider");
   assert.deepEqual(db.find(/sign_out_user_everywhere/)!.parameters, [TENANT, "oidc", "idp|alex", USER, "Left the firm"]);
   assert.deepEqual(JSON.parse(String(db.find(/email_outbox/)!.parameters[4])), { event: "user_signed_out" });
+});
+
+test("F7c: when Corvis support recorded the identity provider's end-session endpoint, the result carries it (it is never called)", async () => {
+  const db = new RecordingDb((sql) => (/sign_out_user_everywhere/.test(sql) ? [{ revoked: 1 }] : /end_session_endpoint/.test(sql) ? [{ end_session_endpoint: "https://idp.acme.com/logout" }] : [{ label: "morgan" }]));
+  const result = await new PostgresSessionPolicyBackend(() => db, () => null).signOut(identity(), { userId: USER, reason: "Left the firm" }, db);
+  assert.equal(result.idpEndSessionEndpoint, "https://idp.acme.com/logout");
+  assert.deepEqual(db.find(/end_session_endpoint/)!.parameters, [TENANT], "read for the caller's own tenant only");
 });
 
 test("a sign-out the database refuses queues no notice", async () => {
@@ -128,22 +150,23 @@ test("the view reads the identity provider, SCIM, sign-in methods, policy and se
     if (/tenant_identity_provider/.test(sql)) return [];
     if (/tenant_verified_domain/.test(sql)) return [{ domain: "example.test", verification_method: "dns_txt", verified_at: "2026-10-01 09:00:00+00" }];
     return [
-      { user_id: USER, label: "alex@example.test", is_current: "true", active_sessions: "2" },
-      { user_id: "00000000-0000-4000-8000-000000000002", label: "idp|morgan", is_current: false, active_sessions: 0 },
+      { user_id: USER, label: "alex@example.test", is_current: "true", active_sessions: "2", sessions_with_mfa: "1" },
+      { user_id: "00000000-0000-4000-8000-000000000002", label: "idp|morgan", is_current: false, active_sessions: 0, sessions_with_mfa: 0 },
     ];
   });
   const view = await new PostgresSessionPolicyBackend(() => db, () => "https://login.example.test").view(identity(), db);
-  assert.deepEqual(view.policy, { idleTimeoutMinutes: 30, maxSessionMinutes: null, version: 2, updatedAt: "2026-10-03 09:00:00+00", updatedBy: "idp|morgan" });
+  assert.deepEqual(view.policy, { idleTimeoutMinutes: 30, maxSessionMinutes: null, requireSso: false, version: 2, updatedAt: "2026-10-03 09:00:00+00", updatedBy: "idp|morgan" });
   assert.deepEqual(view.bounds, { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } });
   // No record for the tenant: the shared provider every organization uses, and nothing enforced.
-  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://login.example.test", audience: null, source: "global", status: null, tokenBindingEnforced: false });
+  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://login.example.test", audience: null, source: "global", status: null, tokenBindingEnforced: false, idpEnforcesMfa: null, endSessionEndpoint: null });
   assert.deepEqual(view.verifiedDomains, [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-10-01 09:00:00+00" }]);
   assert.deepEqual(view.scim, { configured: true, enabled: true, authMethod: "saml", defaultWorkspaceName: "Primary", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14 09:00:00+00" });
   assert.deepEqual(view.signInMethods, [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }]);
   assert.deepEqual(view.members, [
-    { userId: USER, label: "alex@example.test", isCurrentUser: true, activeSessions: 2 },
-    { userId: "00000000-0000-4000-8000-000000000002", label: "idp|morgan", isCurrentUser: false, activeSessions: 0 },
+    { userId: USER, label: "alex@example.test", isCurrentUser: true, activeSessions: 2, sessionsWithMfa: 1 },
+    { userId: "00000000-0000-4000-8000-000000000002", label: "idp|morgan", isCurrentUser: false, activeSessions: 0, sessionsWithMfa: 0 },
   ]);
+  assert.deepEqual(view.currentSession, { mfaUsed: null, authContext: null }, "no amr on the caller's token: not reported");
   for (const call of db.calls) {
     assert.equal(call.parameters[0], TENANT, `every query is scoped to the caller's tenant: ${call.sql.slice(0, 60)}`);
     assert.doesNotMatch(call.sql, /token_sha256/, "the SCIM token hash is never read");
@@ -151,20 +174,26 @@ test("the view reads the identity provider, SCIM, sign-in methods, policy and se
   const members = db.calls.find((call) => /make_interval/.test(call.sql))!;
   assert.deepEqual(members.parameters, [TENANT, "oidc", "idp|alex"], "the caller is marked from their own identity");
   assert.match(members.sql, /session_revocation/, "a signed-out session is not counted as active");
+  assert.match(members.sql, /and a\.mfa_used\)/, "the sessions with MFA are counted from what each session's token reported");
 });
 
 test("F7e: the view shows the tenant's own recorded identity provider, with its audience, status and whether binding is enforced", async () => {
   const db = new RecordingDb((sql) => /tenant_identity_provider/.test(sql)
-    ? [{ protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", status: "active", enforce_token_binding: true, version: 4, updated_at: "2026-10-02 09:00:00+00" }]
+    ? [{ protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", status: "active", enforce_token_binding: true, idp_enforces_mfa: true, end_session_endpoint: "https://idp.acme.com/logout", version: 4, updated_at: "2026-10-02 09:00:00+00" }]
     : []);
-  const view = await new PostgresSessionPolicyBackend(() => db, () => "https://login.example.test").view(identity(), db);
-  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", source: "tenant", status: "active", tokenBindingEnforced: true });
+  const view = await new PostgresSessionPolicyBackend(() => db, () => "https://login.example.test").view(identity({ mfaUsed: true, authContext: "urn:mfa" }), db);
+  assert.deepEqual(view.identityProvider, {
+    protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", source: "tenant", status: "active", tokenBindingEnforced: true,
+    idpEnforcesMfa: true, endSessionEndpoint: "https://idp.acme.com/logout",
+  });
+  assert.deepEqual(view.currentSession, { mfaUsed: true, authContext: "urn:mfa" }, "this session's evidence is what the administrator's own verified token reported");
+  assert.equal((await new PostgresSessionPolicyBackend(() => db, () => null).view(identity({ mfaUsed: false }), db)).currentSession.mfaUsed, false, "a reported single factor is not the same as not reported");
   assert.deepEqual(view.verifiedDomains, []);
   const saml = new RecordingDb((sql) => /tenant_identity_provider/.test(sql)
-    ? [{ protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", enforce_token_binding: false, version: 1, updated_at: "x" }]
+    ? [{ protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", enforce_token_binding: false, idp_enforces_mfa: null, end_session_endpoint: null, version: 1, updated_at: "x" }]
     : []);
   assert.deepEqual((await new PostgresSessionPolicyBackend(() => saml, () => null).view(identity(), saml)).identityProvider,
-    { protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", tokenBindingEnforced: false, source: "tenant" });
+    { protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", tokenBindingEnforced: false, source: "tenant", idpEnforcesMfa: null, endSessionEndpoint: null });
 });
 
 test("the view reports no SCIM, no policy, no issuer and a SAML default as such", async () => {
@@ -215,7 +244,7 @@ test("a policy change and a sign-out are each audited once, with who, why and th
     assert.deepEqual([events[0]!.action, events[0]!.actorSubject, events[0]!.targetType, events[0]!.targetId, events[0]!.correlationId, events[0]!.outcome],
       ["access.session_policy.updated", "idp|alex", "session_policy", "tenant-audit", "corr-1", "success"]);
     assert.deepEqual(events[0]!.metadata, {
-      previousIdleTimeoutMinutes: null, previousMaxSessionMinutes: null, idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 1, reason: "Align with our policy",
+      previousIdleTimeoutMinutes: null, previousMaxSessionMinutes: null, previousRequireSso: false, idleTimeoutMinutes: 30, maxSessionMinutes: 480, requireSso: false, version: 1, reason: "Align with our policy",
     });
 
     await service.update(admin, { ...update, expectedVersion: 1 }, "corr-2");
@@ -227,7 +256,8 @@ test("a policy change and a sign-out are each audited once, with who, why and th
     assert.equal(result.revokedSessions, colleague.activeSessions);
     assert.equal(events.length, 2);
     assert.deepEqual([events[1]!.action, events[1]!.targetType, events[1]!.targetId, events[1]!.metadata], [
-      "access.session.signed_out_everywhere", "user_sessions", colleague.userId, { revokedSessions: colleague.activeSessions, reason: "Lost laptop" },
+      "access.session.signed_out_everywhere", "user_sessions", colleague.userId,
+      { revokedSessions: colleague.activeSessions, idpSessionEndRequired: false, idpEndSessionEndpoint: null, reason: "Lost laptop" },
     ]);
     await service.signOut(admin, { userId: colleague.userId, reason: "Lost laptop" }, "corr-4");
     const myId = view.members.find((member) => member.isCurrentUser)!.userId;
@@ -281,7 +311,7 @@ test("the demo store signs people out the way SQL does: not yourself, not strang
   await assert.rejects(() => store.signOut(admin, { userId: "00000000-0000-4000-8000-00000000ffff", reason: "Stranger" }), refusal("member_not_found", 404));
   const other = view.members.find((member) => !member.isCurrentUser && member.activeSessions > 0)!;
   const result = await store.signOut(admin, { userId: other.userId, reason: "Lost laptop" });
-  assert.deepEqual(result, { userId: other.userId, label: other.label, revokedSessions: other.activeSessions });
+  assert.deepEqual(result, { userId: other.userId, label: other.label, revokedSessions: other.activeSessions, idpEndSessionEndpoint: null });
   assert.equal((await store.view(admin)).members.find((member) => member.userId === other.userId)!.activeSessions, 0);
   assert.equal((await store.signOut(admin, { userId: other.userId, reason: "Again" })).revokedSessions, 0);
   assert.equal((await store.view(identity({ tenantId: "tenant-other" }))).members.find((member) => member.userId === other.userId)!.activeSessions, other.activeSessions, "another tenant is untouched");
@@ -321,4 +351,48 @@ test("what the service audits is what an Organization Admin sees (and exports) i
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /action like 'access\.session\.%'/);
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /'session_policy'/);
   assert.match(TENANT_ACCESS_AUDIT_FILTER, /'user_sessions'/);
+});
+
+// ------------------------------------------------------------------ F7a Require SSO and F7c end-session, through the service and the demo store
+test("F7a: Require SSO is audited with the before and after, never changes silently and is refused without a bound provider or from a session SQL would refuse", async () => {
+  await withAuditCapture(async (events) => {
+    const service = createSessionPolicyService(new DemoSessionPolicyStore());
+    // An organization whose record binds nothing cannot require SSO.
+    const unbound = identity({ tenantId: "tenant-sso-unbound", authMethod: "demo" });
+    await assert.rejects(() => service.update(unbound, { ...update, requireSso: true }, "c"), refusal("sso_requires_token_binding", 409));
+    assert.equal((await service.view(unbound)).policy.version, 0, "nothing was saved");
+    assert.equal(events.length, 0);
+
+    const bound = identity({ tenantId: "sso-ready-tenant", authMethod: "demo" });
+    const on = await service.update(bound, { ...update, requireSso: true }, "c-on");
+    assert.deepEqual([on.requireSso, on.version], [true, 1]);
+    assert.deepEqual([events[0]!.metadata?.previousRequireSso, events[0]!.metadata?.requireSso], [false, true]);
+    // Leaving it out keeps the stored value: a limit change by a caller that does not state it can never weaken it.
+    const kept = await service.update(bound, { ...update, idleTimeoutMinutes: 60, expectedVersion: 1 }, "c-keep");
+    assert.deepEqual([kept.requireSso, kept.version], [true, 2]);
+    // Stating the same value changes nothing; turning it off is always allowed and audited.
+    assert.equal((await service.update(bound, { ...update, idleTimeoutMinutes: 60, requireSso: true, expectedVersion: 2 }, "c-same")).version, 2);
+    const off = await service.update(bound, { ...update, idleTimeoutMinutes: 60, requireSso: false, expectedVersion: 2 }, "c-off");
+    assert.deepEqual([off.requireSso, off.version], [false, 3]);
+    assert.deepEqual(events.map((event) => event.metadata?.requireSso), [true, true, false]);
+    // The view of a bound organization shows what Corvis support recorded about MFA and the end-session endpoint.
+    const view = await service.view(bound);
+    assert.deepEqual([view.identityProvider.tokenBindingEnforced, view.identityProvider.idpEnforcesMfa, view.identityProvider.endSessionEndpoint], [true, true, "https://login.meridian.example/demo/logout"]);
+    assert.deepEqual(view.currentSession, { mfaUsed: null, authContext: null });
+    assert.equal((await service.view(identity({ tenantId: "sso-ready-two", mfaUsed: true, authContext: "2" }))).currentSession.mfaUsed, true);
+    assert.equal(view.members.find((member) => member.activeSessions === 2)!.sessionsWithMfa, 1);
+  });
+});
+
+test("F7c: signing out in an organization with a recorded end-session endpoint says the identity provider session must be ended there, in the audit event and the result", async () => {
+  await withAuditCapture(async (events) => {
+    const service = createSessionPolicyService(new DemoSessionPolicyStore());
+    const admin = identity({ tenantId: "sso-ready-signout", authMethod: "demo", subject: "demo-user" });
+    const view = await service.view(admin);
+    const other = view.members.find((member) => !member.isCurrentUser && member.activeSessions > 0)!;
+    const result = await service.signOut(admin, { userId: other.userId, reason: "Lost laptop" }, "c-so");
+    assert.equal(result.idpEndSessionEndpoint, "https://login.meridian.example/demo/logout");
+    assert.deepEqual([events[0]!.metadata?.idpSessionEndRequired, events[0]!.metadata?.idpEndSessionEndpoint], [true, "https://login.meridian.example/demo/logout"]);
+    assert.equal((await service.view(admin)).members.find((member) => member.userId === other.userId)!.sessionsWithMfa, 0);
+  });
 });

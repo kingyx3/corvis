@@ -38,6 +38,10 @@ export type IdentityProviderRecord = {
   status: IdentityProviderStatus;
   /** Off unless an operator turned it on: when on, a token is accepted for the tenant only if its verified issuer and audience equal this record. */
   enforceTokenBinding: boolean;
+  /** Whether the identity provider enforces MFA, as Corvis support recorded it (F7a, #334): true, false, or null when it is not reported. */
+  idpEnforcesMfa: boolean | null;
+  /** The OIDC end-session (RP-initiated logout) endpoint Corvis support recorded (F7c, #336), or null when none is. */
+  endSessionEndpoint: string | null;
   version: number;
   updatedAt: string;
 };
@@ -94,6 +98,21 @@ export function normalizeIssuer(protocol: IdentityProtocol, value: unknown): str
   return normalized.length > 2048 || normalized.endsWith("/") ? fail("invalid_issuer") : normalized;
 }
 
+/**
+ * An OIDC end-session endpoint in the form Corvis stores: an https URL without credentials or fragment (a query is allowed,
+ * some providers need one). It is only ever shown to an administrator, never called by Corvis.
+ */
+export function normalizeEndSessionEndpoint(value: unknown): string {
+  if (typeof value !== "string") return fail("invalid_end_session_endpoint");
+  const trimmed = value.trim();
+  if (trimmed.length < 1 || trimmed.length > 2048 || IDENTIFIER_FORBIDDEN.test(trimmed)) return fail("invalid_end_session_endpoint");
+  let url: URL;
+  try { url = new URL(trimmed); } catch { return fail("invalid_end_session_endpoint"); }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) return fail("invalid_end_session_endpoint");
+  const normalized = url.toString();
+  return normalized.length > 2048 ? fail("invalid_end_session_endpoint") : normalized;
+}
+
 function audience(value: unknown): string {
   if (typeof value !== "string") return fail("invalid_audience");
   const trimmed = value.trim();
@@ -120,7 +139,8 @@ export type TenantIdentityCommand =
   | { kind: "verified_domain_remove"; tenantId: string; domain: string; reason: string }
   | {
     kind: "identity_provider_set"; tenantId: string; protocol: IdentityProtocol; issuer: string; audience: string;
-    status: IdentityProviderStatus; enforceTokenBinding: boolean; expectedVersion: number; reason: string;
+    status: IdentityProviderStatus; enforceTokenBinding: boolean; idpEnforcesMfa: boolean | null; endSessionEndpoint: string | null;
+    expectedVersion: number; reason: string;
   };
 
 /** The tenant an operator command targets; always stated, never inferred from the operator's own tenant. */
@@ -150,11 +170,16 @@ export function parseTenantIdentityCommand(body: unknown): TenantIdentityCommand
     if (!oneOf(IDENTITY_PROVIDER_STATUSES, body.status)) return fail("invalid_status");
     if (typeof body.enforceTokenBinding !== "boolean") return fail("invalid_binding");
     if (body.enforceTokenBinding && (body.protocol !== "oidc" || body.status !== "active")) return fail("invalid_binding");
+    // Both are stated every time (null: not reported / none recorded), so a command never silently keeps or clears them.
+    if (body.idpEnforcesMfa !== null && typeof body.idpEnforcesMfa !== "boolean") return fail("invalid_idp_mfa");
+    const endSessionEndpoint = body.endSessionEndpoint === null ? null : normalizeEndSessionEndpoint(body.endSessionEndpoint);
+    if (endSessionEndpoint !== null && body.protocol !== "oidc") return fail("invalid_end_session_endpoint");
     const expectedVersion = body.expectedVersion;
     if (typeof expectedVersion !== "number" || !Number.isInteger(expectedVersion) || expectedVersion < 0) return fail("invalid_version");
     return {
       kind: body.kind, tenantId, protocol: body.protocol, issuer: normalizeIssuer(body.protocol, body.issuer), audience: audience(body.audience),
-      status: body.status, enforceTokenBinding: body.enforceTokenBinding, expectedVersion, reason: reasonText(body.reason),
+      status: body.status, enforceTokenBinding: body.enforceTokenBinding, idpEnforcesMfa: body.idpEnforcesMfa, endSessionEndpoint,
+      expectedVersion, reason: reasonText(body.reason),
     };
   }
   return fail("invalid_kind");

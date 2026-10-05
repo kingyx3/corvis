@@ -17,6 +17,7 @@ Technical implementation of backlog story F2 (#258). The Confluence *Customer We
 | `security_policy` | An Organization Admin changes the organization's session policy, or signs a user out of every session (F7) | Every `tenant_admin` | No: always sent immediately |
 | `tenant_export_approval` | An Organization Admin requests a full tenant data export, which a different Organization Admin must approve (F10d) | Every other active `tenant_admin` | No: always sent immediately |
 | `tenant_export_outcome` | The requester's full export is approved, rejected, ready to download, or could not be built (F10d) | The requester (an Organization Admin) | On/off, immediate or daily digest (default: on, immediate) |
+| `deletion_request_approval` | An Organization Admin requests deletion of some of the organization's data, which a different Organization Admin must approve (F10e) | Every other active human `tenant_admin` | No: always sent immediately |
 | `service_account_expiry` | A service account, or the API credential it uses, enters its 14-day (then 3-day) expiry window (F6d) | Every active human `tenant_admin` | No: always sent immediately |
 | `role_changed` | Tenant admin changes or removes a member's role | The affected member | No: always sent immediately |
 | `digest` | Oldest deferred item for a person is 24 hours old | That person | Follows the categories it bundles |
@@ -36,6 +37,14 @@ The email says only that a data issue the person reported moved to a status ("Da
 `security_policy` is the mandatory security notice for Organization Admins: it is queued by `lib/server/session-policy.ts` (through `bestEffortNotification` and `enqueueForRoleAudience`, inside the same transaction as the change, so a notification fault never blocks it) when the session policy actually changes (saving the values it already has queues nothing) and when an Organization Admin signs a user out of every session. Recipients are every active `tenant_admin` of the tenant, including the admin who made the change, resolved from membership when it is queued and re-checked at send time (`required_roles = ['tenant_admin']`, tenant-wide, no workspace). Each change gets its own `dedupe_key` (`security_policy:<uuid>`), so two changes are two emails. Like `support_access` and `role_changed` it is mandatory: it ignores any stored preference, is always immediate, is not a preference category (the `notification_preference` check does not list it and the preference API refuses it) and its email has no "change your settings" footer.
 
 The email says only that the policy changed ("An Organization Admin changed the sign-in and session policy") or that a user was signed out of every session, and links to `/access-self-service`, where the access audit trail shows who did it, why and the before and after values. It never names the people involved or states the new limits. Migration 087 adds the category to the `email_outbox` check.
+
+### F10e deletion request approval
+
+`deletion_request_approval` follows the customer deletion request (`API_CONVENTIONS.md`, "Deletion requests (F10e)"), queued by `corvis_control.request_customer_deletion` (migration 098) in the same transaction as the request, to every *other* active human Organization Admin (never the requester, a revoked admin or a service identity), once per request and recipient (`dedupe_key = deletion_request_approval:<requestId>:<userId>`). A failure to queue it is a warning and never fails the request.
+
+**Mandatory, and why.** Like `tenant_export_approval` it is the notice that lets the four-eyes control work: a deletion needs a *different* Organization Admin to approve it, so an admin who could opt out of being asked would weaken the control, and an unexpected request is itself a security signal. It is not a stored preference (`notification_preference_category_check` is unchanged), and the rows carry `required_roles = {tenant_admin}`, so an admin demoted after it was queued is suppressed as `not_eligible` when it is sent. There is deliberately no outcome category: the requester sees the decision in the request list, and the audit trail records it.
+
+**Content.** Words only: that an Organization Admin asked for deletion of some of the organization's data, that a different Organization Admin must approve it before Corvis acts on it, and a link to `/access-self-service` (the Deletion requests list, where the request can be approved or rejected). It never names the requester, the reason or the data classes.
 
 ### F10d full tenant export approval and outcome
 

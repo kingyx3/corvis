@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { accessibilityBudget } from "./quality-budgets.ts";
 import { openSurface, surfaces } from "./support/surfaces.ts";
+import { warmApiRoutes } from "./support/warm.ts";
 
 // Source connections (B5 #252, B8 #253). The demo composition serves /api/v1/source-connections from an
 // in-memory store seeded per demo tenant, so every test below pins its own tenant: a pause, revoke or
@@ -19,6 +20,22 @@ async function blockingViolations(page: Page, include?: string): Promise<Violati
 function describe(violations: Violation[]): string {
   return violations.map((violation) => `${violation.impact}/${violation.id}: ${violation.help} (${violation.nodes.length} node(s), first: ${JSON.stringify(violation.nodes[0]?.target)})`).join("\n");
 }
+
+// The dev server compiles each API route the first time it is requested, which on a cold server can outlast an assertion's
+// 10 s (the attention banner waits for the first call to the activity route). Request each route this file depends on once
+// up front, under a tenant no test uses, so a test asserts on behavior and not on compile time.
+test.beforeAll(async ({ request }) => {
+  test.setTimeout(240_000);
+  const missing = "00000000-0000-4000-8000-000000000000";
+  await warmApiRoutes(request, [
+    { path: "/api/v1/source-connections" },
+    { path: "/api/v1/source-connections/activity" },
+    { path: "/api/v1/source-connections/providers" },
+    { method: "POST", path: `/api/v1/source-connections/${missing}`, data: { action: "pause" } },
+    { method: "POST", path: `/api/v1/source-connections/${missing}/reauthorize`, data: {} },
+    { method: "POST", path: `/api/v1/source-connections/${missing}/test`, data: {} },
+  ]);
+});
 
 const sources = surfaces.find((surface) => surface.id === "sources")!;
 const connectionId = (slot: number) => `00000000-0000-4000-8000-${String(slot).padStart(12, "d")}`;

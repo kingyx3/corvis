@@ -186,6 +186,16 @@ test("demo identity is available only when explicitly enabled outside production
   });
 });
 
+test("a demo caller can illustrate what a provider's amr would show, and nothing else sets it", { concurrency: false }, async () => {
+  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "true", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined }, async () => {
+    const mfa = async (value: string | null) => (await resolveRequestIdentity(new Request("https://localhost/api/v1/me", { headers: value === null ? {} : { "x-corvis-demo-mfa": value } }))).mfaUsed;
+    assert.equal(await mfa("true"), true);
+    assert.equal(await mfa("false"), false);
+    assert.equal(await mfa("maybe"), undefined, "anything else is not reported");
+    assert.equal(await mfa(null), undefined);
+  });
+});
+
 test("demo tenant/workspace display names can be overridden by header, e.g. for e2e coverage", { concurrency: false }, async () => {
   await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "true", CORVIS_TRUSTED_AUTH_PROXY_SECRET: undefined }, async () => {
     const identity = await resolveRequestIdentity(new Request("https://localhost/api/v1/me", {
@@ -267,6 +277,16 @@ test("production OIDC verifies the caller token API Gateway forwards in X-Forwar
       // F7e: the issuer and audience the token was verified against travel with the identity, for a tenant's token binding.
       assert.equal(identity.tokenIssuer, issuer);
       assert.equal(identity.tokenAudience, "corvis");
+      // F7a: a provider that sends no amr or acr has told Corvis nothing about how the person signed in.
+      assert.equal(identity.mfaUsed, undefined);
+      assert.equal(identity.authContext, undefined);
+      // ... and one that does is carried as reported (validated and bounded by the verifier).
+      const mfaClaims = encode({ iss: issuer, aud: "corvis", sub: "user-gw", sid: "session-gw", iat: nowSeconds - 10, exp: nowSeconds + 300, amr: ["pwd", "otp"], acr: "urn:mfa" });
+      const mfaToken = `${header}.${mfaClaims}.${sign("RSA-SHA256", Buffer.from(`${header}.${mfaClaims}`), privateKey).toString("base64url")}`;
+      const withMfa = await resolveRequestIdentity(new Request("https://corvis.example/api/v1/me", { headers: {
+        authorization: `Bearer ${mfaToken}`, "x-corvis-tenant": tenantUuid, "x-corvis-workspace": workspaceUuid,
+      }}));
+      assert.deepEqual([withMfa.mfaUsed, withMfa.authContext], [true, "urn:mfa"]);
 
       const direct = new Request("https://corvis.example/api/v1/me", { headers: {
         authorization: `Bearer ${userToken}`, "x-corvis-tenant": tenantUuid, "x-corvis-workspace": workspaceUuid,

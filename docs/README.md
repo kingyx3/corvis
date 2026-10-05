@@ -48,6 +48,7 @@ When the same subject appears in both systems:
 - [`RUNTIME_SECRETS.md`](RUNTIME_SECRETS.md) — runtime secret lifecycle.
 - [`RUNTIME_SURFACES.md`](RUNTIME_SURFACES.md) — runtime surface isolation.
 - [`SECTOR_TAXONOMY.md`](SECTOR_TAXONOMY.md) — sector taxonomy.
+- [`RUNTIME_DATABASE_ROLE.md`](RUNTIME_DATABASE_ROLE.md) — the least-privilege `corvis_runtime` database role: grants, RLS, `PUBLIC` revocation, guard rails for future migrations and the per-environment rollout/rollback plan.
 - [`SECURITY_ACCEPTANCE.md`](SECURITY_ACCEPTANCE.md) — security acceptance for edge, gateway and tenant isolation.
 - [`SERVICE_IDENTITY_HARDENING.md`](SERVICE_IDENTITY_HARDENING.md) — service identity authorization and lifecycle.
 - [`SERVICE_ACCOUNTS.md`](SERVICE_ACCOUNTS.md) — customer self-service service accounts and API credentials (F6): design, assumptions and the open credential-verification decision.

@@ -1,11 +1,12 @@
 import { assertPermission, type RequestIdentity } from "../../core/enterprise.ts";
+import { DeletionRequestValidationError } from "../../core/data-retention.ts";
 import { TenantExportValidationError } from "../../core/tenant-export.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
 import { apiError, json } from "./http.ts";
 
 /**
- * Shared by the customer-facing data governance surface (F10, #266): the retention view and the full tenant export.
- * Both are for Organization Admins (`tenant_admin`) only.
+ * Shared by the customer-facing data governance surface (F10, #266): the retention view and the full tenant export, and (F10e, #325) deletion requests.
+ * All of it is for Organization Admins (`tenant_admin`) only.
  */
 
 /** A request the caller cannot make (403), names nothing visible (404) or lost a race and is safe to retry (409). */
@@ -38,7 +39,7 @@ export async function resolveOrganizationAdmin(request: Request): Promise<Reques
 
 /** Typed failures keep their stable code and status; everything else goes through the shared API error mapper. */
 export function dataGovernanceErrorResponse(error: unknown, correlationId: string): Response {
-  if (error instanceof DataGovernanceError || error instanceof TenantExportValidationError) {
+  if (error instanceof DataGovernanceError || error instanceof TenantExportValidationError || error instanceof DeletionRequestValidationError) {
     return json({ error: error.code, correlationId }, { status: error.status });
   }
   return apiError(error, correlationId);

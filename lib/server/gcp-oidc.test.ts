@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import test from "node:test";
 import { GoogleOidcVerifier } from "./gcp-oidc.ts";
 
@@ -8,7 +8,7 @@ function encode(value: unknown): string {
 }
 
 function token(input: {
-  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"];
+  privateKey: KeyObject;
   kid: string;
   audience: string;
   email: string;
@@ -182,4 +182,144 @@ test("GoogleOidcVerifier throttles cold-start JWKS failures and shares the in-fl
   failing = false;
   await verifyAt(now + 31);
   assert.equal(fetches, 2);
+});
+
+const REJECT_NOW = 1_800_000_000;
+const REJECT_AUDIENCE = "https://worker.example/api/internal/processing-stage";
+const REJECT_EMAIL = "corvis-worker-prod@example.iam.gserviceaccount.com";
+
+function unsignedToken(header: unknown, claims: Record<string, unknown>): string {
+  const base = {
+    iss: "https://accounts.google.com",
+    aud: REJECT_AUDIENCE,
+    sub: "109876543210987654321",
+    email: REJECT_EMAIL,
+    email_verified: true,
+    iat: REJECT_NOW - 10,
+    exp: REJECT_NOW + 600,
+  };
+  return `${encode(header)}.${encode({ ...base, ...claims })}.c2ln`;
+}
+
+test("GoogleOidcVerifier rejects malformed credentials and unapproved claims before any JWKS fetch", async () => {
+  let fetches = 0;
+  const verifier = new GoogleOidcVerifier(async () => {
+    fetches += 1;
+    throw new Error("JWKS must not be fetched for a token that fails claim validation");
+  });
+  const header = { alg: "RS256", typ: "JWT", kid: "k" };
+  const cases: Array<[string, string | null, RegExp]> = [
+    ["no header", null, /missing GCP OIDC bearer token/],
+    ["non-bearer scheme", "Basic abc", /malformed GCP OIDC bearer token/],
+    ["two segments", "Bearer a.b", /malformed GCP OIDC token/],
+    ["empty segment", "Bearer a..c", /malformed GCP OIDC token/],
+    ["non-JSON header", "Bearer !!!.e30.c2ln", /malformed GCP OIDC header/],
+    ["non-JSON claims", `Bearer ${encode(header)}.!!!.c2ln`, /malformed GCP OIDC claims/],
+    ["wrong alg", `Bearer ${unsignedToken({ ...header, alg: "HS256" }, {})}`, /unsupported GCP OIDC signing header/],
+    ["missing kid", `Bearer ${unsignedToken({ alg: "RS256" }, {})}`, /unsupported GCP OIDC signing header/],
+    ["non-numeric exp", `Bearer ${unsignedToken(header, { exp: "soon" })}`, /invalid GCP OIDC token timestamps/],
+    ["string iat", `Bearer ${unsignedToken(header, { iat: "yesterday" })}`, /invalid GCP OIDC token timestamps/],
+    ["fractional iat",`Bearer ${unsignedToken(header, { iat: 1.5 })}`, /invalid GCP OIDC token timestamps/],
+    ["expired", `Bearer ${unsignedToken(header, { exp: REJECT_NOW - 60, iat: REJECT_NOW - 600 })}`, /expired GCP OIDC token/],
+    ["issued in the future", `Bearer ${unsignedToken(header, { iat: REJECT_NOW + 120 })}`, /invalid GCP OIDC token lifetime/],
+    ["exp not after iat", `Bearer ${unsignedToken(header, { iat: REJECT_NOW, exp: REJECT_NOW })}`, /invalid GCP OIDC token lifetime/],
+    ["wrong issuer", `Bearer ${unsignedToken(header, { iss: "https://evil.example" })}`, /invalid GCP OIDC token issuer/],
+    ["wrong audience", `Bearer ${unsignedToken(header, { aud: "https://other.example" })}`, /invalid GCP OIDC token audience/],
+    ["empty subject", `Bearer ${unsignedToken(header, { sub: "" })}`, /no immutable subject/],
+    ["other service account", `Bearer ${unsignedToken(header, { email: "other@example.iam.gserviceaccount.com" })}`, /service identity is not approved/],
+    ["unverified email", `Bearer ${unsignedToken(header, { email_verified: false })}`, /service identity is not approved/],
+  ];
+  for (const [name, authorization, expected] of cases) {
+    await assert.rejects(
+      () => verifier.verify({ authorization, audience: REJECT_AUDIENCE, serviceAccountEmail: REJECT_EMAIL, now: new Date(REJECT_NOW * 1000) }),
+      expected,
+      name,
+    );
+  }
+  assert.equal(fetches, 0);
+});
+
+test("GoogleOidcVerifier validates the JWKS document, key selection, signature and cache lifetime", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const other = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: "jwk" });
+  let body: unknown;
+  let cacheControl: string | null = null;
+  let fetches = 0;
+  const verifier = new GoogleOidcVerifier(async () => {
+    fetches += 1;
+    const headers = cacheControl === null ? undefined : { "cache-control": cacheControl };
+    return new Response(JSON.stringify(body), { status: 200, headers });
+  });
+  const kid = "worker-key";
+  const verifyAt = (seconds: number, signer: { key?: typeof privateKey; kid?: string } = {}) => verifier.verify({
+    authorization: `Bearer ${token({ privateKey: signer.key ?? privateKey, kid: signer.kid ?? kid, audience: REJECT_AUDIENCE, email: REJECT_EMAIL, now: seconds })}`,
+    audience: REJECT_AUDIENCE,
+    serviceAccountEmail: REJECT_EMAIL,
+    now: new Date(seconds * 1000),
+  });
+
+  let at = REJECT_NOW;
+  for (const invalid of [null, [], { keys: "nope" }]) {
+    body = invalid;
+    at += 100;
+    await assert.rejects(() => verifyAt(at), /invalid Google JWKS response/);
+  }
+
+  body = {
+    keys: [
+      null,
+      [],
+      { kid, kty: "RSA", n: 1, e: "AQAB" },
+      { ...jwk, kid, kty: "EC" },
+      { ...jwk, kid, alg: "RS384" },
+      { ...jwk, kid, use: "enc" },
+    ],
+  };
+  at += 100;
+  await assert.rejects(() => verifyAt(at), /contained no usable signing keys/);
+
+  body = { keys: [{ ...jwk, kid }, { ...jwk, kid: "other-key", alg: "RS256", use: "sig" }] };
+  cacheControl = "max-age=0";
+  at += 100;
+  const refreshedAt = at;
+  assert.equal((await verifyAt(refreshedAt)).email, REJECT_EMAIL);
+  const afterFirstRefresh = fetches;
+  assert.equal((await verifyAt(refreshedAt + 299)).email, REJECT_EMAIL);
+  assert.equal(fetches, afterFirstRefresh, "a non-positive max-age falls back to the 300 second default");
+
+  await assert.rejects(() => verifyAt(refreshedAt + 100, { kid: "missing-key" }), /signing key is unknown/);
+
+  await assert.rejects(() => verifyAt(refreshedAt + 100, { key: other.privateKey }), /invalid GCP OIDC token signature/);
+
+  cacheControl = "max-age=999999999";
+  at = refreshedAt + 400;
+  assert.equal((await verifyAt(at)).email, REJECT_EMAIL);
+  const afterLongRefresh = fetches;
+  assert.equal((await verifyAt(at + 86_399)).email, REJECT_EMAIL);
+  assert.equal(fetches, afterLongRefresh, "keys stay cached for the capped 24 hour lifetime");
+});
+
+test("GoogleOidcVerifier defaults to the current time and aborts a hung JWKS request after its timeout", async (t) => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: "jwk" });
+  const kid = "worker-key";
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const authorization = `Bearer ${token({ privateKey, kid, audience: REJECT_AUDIENCE, email: REJECT_EMAIL, now: nowSeconds })}`;
+
+  const working = new GoogleOidcVerifier(async () => new Response(JSON.stringify({ keys: [{ ...jwk, kid }] }), { status: 200 }));
+  const identity = await working.verify({ authorization, audience: REJECT_AUDIENCE, serviceAccountEmail: REJECT_EMAIL });
+  assert.equal(identity.email, REJECT_EMAIL);
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const hung = new GoogleOidcVerifier((_url, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new Error("aborted by JWKS timeout")));
+  }));
+  const pending = assert.rejects(
+    () => hung.verify({ authorization, audience: REJECT_AUDIENCE, serviceAccountEmail: REJECT_EMAIL }),
+    /aborted by JWKS timeout/,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(5_000);
+  await pending;
 });

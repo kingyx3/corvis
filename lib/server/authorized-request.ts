@@ -104,6 +104,7 @@ export async function resolveAuthorizedRequestIdentity(
     sessionId: authenticated.sessionId,
     tokenIssuer: authenticated.tokenIssuer,
     tokenAudience: authenticated.tokenAudience,
+    mfaUsed: authenticated.mfaUsed,
   }, { enforceIdentityBinding: true });
   if (!authorized) throw new AuthenticationError("No active authoritative authorization context");
 

@@ -1,6 +1,18 @@
 \set ON_ERROR_STOP on
 \set QUIET 1
 
+-- #227: once the application connects as a login role that is a member of the least-privilege `corvis_runtime` role (and is
+-- not a superuser), this probe cannot run as written (it grants to and SETs ROLE to `authenticated`, which needs owner-level
+-- privileges). Hand over to the equivalent probe that runs entirely as the runtime role, so the acceptance workflow keeps one
+-- entry point before and after the DSN switch. For the owner/service role used today nothing changes.
+select case when exists (select from pg_roles where rolname = 'corvis_runtime')
+  then pg_has_role(current_user, 'corvis_runtime', 'member') and not (select rolsuper from pg_roles where rolname = current_user)
+  else false end as connected_as_runtime \gset
+\if :connected_as_runtime
+\ir runtime_security_acceptance.sql
+\q
+\endif
+
 begin;
 
 -- Synthetic identifiers live only for this transaction. The entire acceptance

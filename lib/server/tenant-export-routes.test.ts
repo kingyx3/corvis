@@ -139,7 +139,7 @@ test("an Organization Admin sees the tenant's policies and active holds, in plai
   assert.match(queries.find((query) => /from corvis_control\.legal_hold/.test(query.sql))!.sql, /released_at is null/);
   assert.equal(queries.some(isAudit), false, "reading retention is not a mutation");
   seed();
-  assert.deepEqual((await body(await retentionGet(request("/access/retention")))).data, { policies: [], legalHolds: [] });
+  assert.deepEqual((await body(await retentionGet(request("/access/retention")))).data, { policies: [], legalHolds: [], deletionRequests: [] });
 });
 
 test("requesting writes the request and its audit event together, attributed to the caller, with the reason", async () => {

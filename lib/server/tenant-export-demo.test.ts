@@ -255,7 +255,7 @@ test("a link for an export that expired in between redeems nothing", async () =>
 });
 
 test("the retention view is the same read-only policy for every demo tenant", async () => {
-  const view = await new DemoRetentionStore().view();
+  const view = await new DemoRetentionStore().view(identity());
   assert.deepEqual(view.policies.map((policy) => [policy.dataClass, policy.retentionLabel, policy.legalHold, policy.deleteOnTermination]), [
     ["financials", "7 years", false, false],
     ["published_data", "No fixed retention period", false, true],
@@ -264,6 +264,7 @@ test("the retention view is the same read-only policy for every demo tenant", as
   ]);
   assert.deepEqual(view.legalHolds.map((hold) => [hold.matterReference, hold.label, hold.scopeLabel]), [["MATTER-2026-014", "Source documents", "3 documents within source documents"]]);
   assert.equal(view.policies.every((policy) => policy.inEffect), true);
+  assert.deepEqual(view.deletionRequests.map((item) => [item.origin, item.status, item.legalHoldBlocks]), [["customer", "pending_approval", false], ["corvis", "blocked", true], ["corvis", "completed", false]], "deletion requests are listed newest first, with whether a legal hold blocks each");
 });
 
 // ------------------------------------------------------------------ service
@@ -345,10 +346,10 @@ test("the service and the retention view are selected by mode and can be pinned 
   assert.notEqual(demoRetentionService, postgresRetentionService);
   const pinned = createTenantExportService(store());
   overrideTenantExportService(pinned);
-  overrideRetentionService(createRetentionService({ view: async () => ({ policies: [], legalHolds: [] }) }));
+  overrideRetentionService(createRetentionService({ view: async () => ({ policies: [], legalHolds: [], deletionRequests: [] }) }));
   try {
     assert.equal(tenantExportService(), pinned);
-    assert.deepEqual(await retentionService().view(identity()), { policies: [], legalHolds: [] });
+    assert.deepEqual(await retentionService().view(identity()), { policies: [], legalHolds: [], deletionRequests: [] });
   } finally {
     overrideTenantExportService();
     overrideRetentionService();

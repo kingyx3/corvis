@@ -431,6 +431,10 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-data-export.sql
           # The same through the application backend and build worker: archive and checksum manifest verify, only redistributable data is exported, links are single-use, rights are re-checked at download. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-data-export.mjs
+          # Customer deletion requests (F10e): an Organization Admin's own request with dual approval enforced in SQL, blocked by legal holds, the operator lifecycle unchanged, the mandatory approval notice. Rolled back.
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/customer-deletion-requests.sql
+          # The same through the application backends and the unchanged operator flow: the customer read never returns operator-only detail, the operator flow cannot execute a request before a different admin approved it and still blocks it under a legal hold. Rolled back.
+          CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/customer-deletion-requests.mjs
           # Data-issue reports through the application repository: visibility, paging, the reporter's notice and send-time eligibility, the governed-correction link. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/data-issue-reports.mjs
           # Service accounts (F6): only an Organization Admin acts, never an administrator role for a machine, hashed credentials with a rotation overlap and immediate revocation, deactivation everywhere, tenant/RLS. Rolled back.
@@ -447,13 +451,13 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/review-item-discussion.sql
           # Review-item discussion through the application repository: visibility, paging, open assignments, the assignee's and mentioned person's notice and send-time eligibility, audit round trip, dual control untouched. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/review-item-discussion.mjs
-          # Organization session policy (F7): bounded idle/maximum session limits, Organization-Admin-only changes, compare-and-set, enforcement that ends sessions for good and fails closed, sign-out-everywhere revocation, tenant/RLS. Rolled back.
+          # Organization session policy (F7): bounded idle/maximum session limits, Organization-Admin-only changes, compare-and-set, enforcement that ends sessions for good and fails closed, sign-out-everywhere revocation, Require SSO with its lock-out safeguard, IdP-reported MFA evidence, OIDC back-channel logout (replay ledger, tenant scope, revocation, rate bound), tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/session-policy.sql
           # The same through the application backend and authoritative lookup: a request is refused once its session passes a limit, sign-out-everywhere stops the next lookup (background re-authorization included), the view reads the real tables, and only Organization Admins are notified. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/session-policy.mjs
           # Verified email domains and the per-tenant identity-provider record (F7b/F7e): operator-only, one tenant per domain, the domain check off until a domain is verified, token binding off by default and only for an active OIDC record, audited for the target tenant, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/tenant-identity-records.sql
-          # The same through the application code: operator commands, the domain check, the read-only view and opt-in token binding refusing a request in the authoritative lookup. Rolled back.
+          # The same through the application code: operator commands, the domain check, the read-only view, opt-in token binding and Require SSO refusing a request in the authoritative lookup, MFA evidence, the end-session record, and the back-channel logout receiver revoking a session (replayed, forged and expired tokens refused). Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/tenant-identity-records.mjs
           # Export download grants are subject-, tenant-, token- and expiry-bound in the real redemption SQL. Rolled back.
           CORVIS_POSTGRES_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/export-grant-redemption.mjs
@@ -478,6 +482,21 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if; end \$\$;"
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql | tee security-acceptance.out
           grep -q POSTGRES_RLS_SECURITY_ACCEPTANCE_PASS security-acceptance.out
+      # Least-privilege runtime role (#227, migration 100). A clean database is rebuilt because several suites above
+      # commit scratch data. The harness (see its header) runs the grant manifest and the tenant-isolation negatives as
+      # corvis_runtime (no owner bypass), then the existing SQL and application suites connected as login roles that are
+      # members of corvis_runtime. The owner-role runs above stay unchanged.
+      - name: Postgres runtime-role acceptance (corvis_runtime, no owner bypass)
+        shell: bash
+        run: |
+          set -euo pipefail
+          createdb corvis_runtime_smoke
+          PGDATABASE=corvis_runtime_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
+          for migration in db/postgres/migrations/*.sql; do
+            PGDATABASE=corvis_runtime_smoke psql -X -q -v ON_ERROR_STOP=1 -f "${migration}" > /dev/null
+          done
+          PGDATABASE=corvis_runtime_smoke db/postgres/tests/run-as-runtime.sh | tee runtime-role-acceptance.log
+          grep -q RUNTIME_ROLE_ACCEPTANCE_PASS runtime-role-acceptance.log
       - name: Apply isolated rate-limit migration and acceptance checks
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql

@@ -849,7 +849,7 @@ begin
   where n.nspname = 'corvis_control' and c.relname in ('service_account','service_account_credential')
     and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('service_account','service_account_credential')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('service_account','service_account_credential')) then
     raise exception 'service account tables are server-managed and secret-bearing: no client policy may exist';
   end if;
 end $$;
