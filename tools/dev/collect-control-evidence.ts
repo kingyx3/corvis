@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   collectSecurityAcceptanceEvidence,
   parseSecurityAcceptanceEvidence,
-} from "../../lib/server/control-evidence-collector.ts";
+} from "../../src/lib/server/control-evidence-collector.ts";
 
 /**
  * CI entry point that turns a security-acceptance JSON evidence artifact

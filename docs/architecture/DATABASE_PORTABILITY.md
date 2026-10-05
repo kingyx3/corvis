@@ -34,7 +34,7 @@ Supabase | GCP Cloud SQL | RDS | Azure | self-hosted
 
 Product/domain code must not import a provider SDK, provider-specific auth helper, connection object, schema API or generated database client.
 
-`lib/server/database.ts` owns the low-level provider-neutral contract. `lib/server/postgres.ts` is the PostgreSQL adapter and retains compatibility aliases while existing repository implementations migrate naming gradually.
+`src/lib/server/database.ts` owns the low-level provider-neutral contract. `src/lib/server/postgres.ts` is the PostgreSQL adapter and retains compatibility aliases while existing repository implementations migrate naming gradually.
 
 ## Portability target
 
@@ -88,11 +88,11 @@ A connection adapter must not advertise a capability it cannot actually provide.
 
 ## Atomicity rule
 
-New multi-statement mutation code should use `requireTransaction` from `lib/server/database.ts`.
+New multi-statement mutation code should use `requireTransaction` from `src/lib/server/database.ts`.
 
 It fails closed when the selected transport cannot provide a native transaction. This avoids the dangerous compatibility behavior where a business mutation commits but its audit/event/outbox statement fails separately.
 
-`withTransaction` in `lib/server/postgres.ts` remains temporarily as a compatibility alias to the legacy optional behavior. Existing call sites can migrate incrementally; security- or audit-sensitive mutation paths should move first.
+`withTransaction` in `src/lib/server/postgres.ts` remains temporarily as a compatibility alias to the legacy optional behavior. Existing call sites can migrate incrementally; security- or audit-sensitive mutation paths should move first.
 
 ## Convex reference model
 

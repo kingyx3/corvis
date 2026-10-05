@@ -5,7 +5,7 @@
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/migration-073-audit-correction.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

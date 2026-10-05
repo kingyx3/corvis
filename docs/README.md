@@ -34,7 +34,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 - [`SECTOR_TAXONOMY.md`](./architecture/SECTOR_TAXONOMY.md) — sector taxonomy.
 - [`STAGE_WORKER_IDEMPOTENCY.md`](./architecture/STAGE_WORKER_IDEMPOTENCY.md) — processing stage worker idempotency contract.
 
-### Product capabilities (`features/`)
+### Product capabilities (`src/features/`)
 
 - [`CLIENT_PORTFOLIO_ATTRIBUTION.md`](./features/CLIENT_PORTFOLIO_ATTRIBUTION.md) — client portfolio attribution.
 - [`NOTIFICATIONS.md`](./features/NOTIFICATIONS.md) — email notifications: categories, recipient addresses, outbox delivery and provider activation.

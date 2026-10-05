@@ -72,7 +72,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports src/lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
@@ -198,7 +198,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports src/lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation
@@ -267,7 +267,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # tools/dev/collect-control-evidence.ts imports lib/server/postgres.ts -> pg.
+      # tools/dev/collect-control-evidence.ts imports src/lib/server/postgres.ts -> pg.
       - name: Install control evidence runtime
         run: npm ci --ignore-scripts
       - name: Authenticate to GCP with Workload Identity Federation

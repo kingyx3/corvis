@@ -17,7 +17,7 @@ import type { Watermark } from "./types.ts";
 test("isDocumentationPath accepts docs/ markdown and top-level markdown, rejects nested non-docs markdown", () => {
   assert.equal(isDocumentationPath("docs/README.md"), true);
   assert.equal(isDocumentationPath("README.md"), true);
-  assert.equal(isDocumentationPath("app/README.md"), false);
+  assert.equal(isDocumentationPath("src/app/README.md"), false);
   assert.equal(isDocumentationPath("docs/README.ts"), false);
 });
 
@@ -70,7 +70,7 @@ test("a line that asserts GitHub owns technical truth is not treated as deferral
 });
 
 test("non-documentation files are never scanned for authority findings", () => {
-  assert.deepEqual(scanDocumentationAuthority([file("lib/server/config.ts", "pricing pricing pricing")]), []);
+  assert.deepEqual(scanDocumentationAuthority([file("src/lib/server/config.ts", "pricing pricing pricing")]), []);
 });
 
 // ---- internal-links ----
@@ -128,25 +128,25 @@ test("percent-encoded link targets are still decoded before resolving", () => {
 
 // ---- architecture-drift ----
 
-test("core/ importing a server or adapter module is a critical finding", () => {
-  const findings = scanArchitectureDrift([file("core/workspace.ts", `import { x } from "@/lib/server/config";`)]);
+test("src/core/ importing a server or adapter module is a critical finding", () => {
+  const findings = scanArchitectureDrift([file("src/core/workspace.ts", `import { x } from "@/lib/server/config";`)]);
   assert.equal(findings.length, 1);
   assert.equal(findings[0]?.ruleId, "CL-ARCH-001");
   assert.equal(findings[0]?.severity, "critical");
 });
 
-test("features/ importing a server module is flagged, but importing core/ is not", () => {
-  const mixed = scanArchitectureDrift([file("features/review/view.ts", `import { a } from "@/core/enterprise";\nimport { b } from "@/lib/server/operations";`)]);
+test("src/features/ importing a server module is flagged, but importing src/core/ is not", () => {
+  const mixed = scanArchitectureDrift([file("src/features/review/view.ts", `import { a } from "@/core/enterprise";\nimport { b } from "@/lib/server/operations";`)]);
   assert.equal(mixed.length, 1);
   assert.equal(mixed[0]?.ruleId, "CL-ARCH-002");
 });
 
 test("a .test.ts file is never scanned for architecture drift", () => {
-  assert.deepEqual(scanArchitectureDrift([file("core/workspace.test.ts", `import { x } from "@/lib/server/config";`)]), []);
+  assert.deepEqual(scanArchitectureDrift([file("src/core/workspace.test.ts", `import { x } from "@/lib/server/config";`)]), []);
 });
 
 test("a boundary violation is reported once per forbidden prefix even with multiple offending imports", () => {
-  const findings = scanArchitectureDrift([file("core/workspace.ts", `import { a } from "@/lib/server/config";\nimport { b } from "@/lib/server/platform";`)]);
+  const findings = scanArchitectureDrift([file("src/core/workspace.ts", `import { a } from "@/lib/server/config";\nimport { b } from "@/lib/server/platform";`)]);
   assert.equal(findings.length, 1);
 });
 

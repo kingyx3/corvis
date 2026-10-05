@@ -19,7 +19,7 @@
 --      listed as due for them again, and no run is recorded for them: the owner never learns that an unentitled fund published.
 --      The list of due schedules (085) stays the coarse hint it always was; the claim is what decides, under the row lock.
 --
--- Run-time re-authorization is not new SQL: the worker (lib/server/export-schedule.ts) re-resolves the owner's membership,
+-- Run-time re-authorization is not new SQL: the worker (src/lib/server/export-schedule.ts) re-resolves the owner's membership,
 -- entitlements and data rights for every claimed trigger and requests the export through the same governed path as an interactive
 -- request, so a scorecard run re-resolves "all funds" from what the owner holds at that moment, and is recorded as failed with a
 -- stable reason when they hold none. Nothing in the notification category checks (086/090) is touched.

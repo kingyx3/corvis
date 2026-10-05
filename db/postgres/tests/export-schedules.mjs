@@ -2,7 +2,7 @@
 // for every fund the owner holds *now* and re-authorized at each run.)
 // (F4b, #328: also the owner's per-schedule notification switch, the run webhook events and the refusal email, end to end.)
 // Real-Postgres acceptance for scheduled exports (F4, #260), through the application code: the backend and the worker in
-// lib/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
+// src/lib/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
 // (createPhysicalExport) inside one transaction that is always rolled back. Covers what the pure-SQL test
 // (export-schedules.sql) cannot: the owner's real re-authorization (membership, entitlements, contractual data rights),
 // the export job a run hands to the existing export worker, idempotency across ticks, fail-closed refusals recorded as
@@ -10,14 +10,14 @@
 // history. Run after the full migration chain on a disposable database:
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { PostgresPerformanceScorecardRepository } from '../../../lib/server/performance-scorecard.ts';
-import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../lib/server/export-schedule.ts';
-import { listPhysicalExportStatuses } from '../../../lib/server/export-history.ts';
-import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
-import { notifyScheduledExportOutcome } from '../../../lib/server/export-schedule-notifications.ts';
-import { processEmailOutbox } from '../../../lib/server/notifications.ts';
-import { processQueuedExports } from '../../../lib/server/delivery.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { PostgresPerformanceScorecardRepository } from '../../../src/lib/server/performance-scorecard.ts';
+import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../src/lib/server/export-schedule.ts';
+import { listPhysicalExportStatuses } from '../../../src/lib/server/export-history.ts';
+import { RecordingEmailSender } from '../../../src/adapters/email/recording-email-sender.ts';
+import { notifyScheduledExportOutcome } from '../../../src/lib/server/export-schedule-notifications.ts';
+import { processEmailOutbox } from '../../../src/lib/server/notifications.ts';
+import { processQueuedExports } from '../../../src/lib/server/delivery.ts';
 
 console.info = () => undefined;
 const dsn = process.env.CORVIS_POSTGRES_DSN;

@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for service accounts (F6, #262), through the application code: the Postgres backend in
-// lib/server/service-account.ts, the credential record check in lib/server/service-account-credential.ts and the
-// existing authorization lookup (lib/server/authorization.ts) drive the SQL of migration 088 inside one transaction that
+// src/lib/server/service-account.ts, the credential record check in src/lib/server/service-account-credential.ts and the
+// existing authorization lookup (src/lib/server/authorization.ts) drive the SQL of migration 088 inside one transaction that
 // is always rolled back. Covers what the pure-SQL test (service-accounts.sql) cannot: that a created account resolves
 // through the EXISTING membership/lifecycle-grant authorization (and stops resolving when disabled), that the secret is
 // shown once and stored nowhere, that verification enforces rotation overlap / immediate revocation / expiry, that the
@@ -12,19 +12,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
 
-// lib/server/http.ts (reached through the tenant-admin self-service module) uses the Next.js "@/..." alias.
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../lib/server/service-account.ts');
-const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../lib/server/service-account-credential.ts');
-const { PostgresMembershipAuthorizationRepository } = await import('../../../lib/server/authorization.ts');
-const { PostgresOperationsRepository } = await import('../../../lib/server/platform-repositories.ts');
-const { listTenantAccessAudit } = await import('../../../lib/server/tenant-admin-self-service.ts');
-const { listTenantAccessMembers } = await import('../../../lib/server/tenant-access.ts');
-const { sweepServiceAccountExpiry } = await import('../../../lib/server/service-account-expiry-sweep.ts');
-const { processEmailOutbox } = await import('../../../lib/server/notifications.ts');
-const { RecordingEmailSender } = await import('../../../adapters/email/recording-email-sender.ts');
+// src/lib/server/http.ts (reached through the tenant-admin self-service module) uses the Next.js "@/..." alias.
+register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../src/lib/server/service-account.ts');
+const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../src/lib/server/service-account-credential.ts');
+const { PostgresMembershipAuthorizationRepository } = await import('../../../src/lib/server/authorization.ts');
+const { PostgresOperationsRepository } = await import('../../../src/lib/server/platform-repositories.ts');
+const { listTenantAccessAudit } = await import('../../../src/lib/server/tenant-admin-self-service.ts');
+const { listTenantAccessMembers } = await import('../../../src/lib/server/tenant-access.ts');
+const { sweepServiceAccountExpiry } = await import('../../../src/lib/server/service-account-expiry-sweep.ts');
+const { processEmailOutbox } = await import('../../../src/lib/server/notifications.ts');
+const { RecordingEmailSender } = await import('../../../src/adapters/email/recording-email-sender.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');
@@ -200,7 +200,7 @@ try {
     assert.equal(code(await refused(tx, () => backend.get(adminIdentity, 'not-a-uuid', tx))), 'service_account_not_found');
 
     // ---- Access review and the human member list.
-    const reviewSource = readFileSync(new URL('../../../app/api/v1/admin/access-review/route.ts', import.meta.url), 'utf8');
+    const reviewSource = readFileSync(new URL('../../../src/app/api/v1/admin/access-review/route.ts', import.meta.url), 'utf8');
     const reviewSql = /db\.query\(`(select s\.subject,s\.auth_method[^`]*)`, \[identity\.tenantId\]\)/.exec(reviewSource)?.[1];
     assert.ok(reviewSql, 'the access review membership query is found');
     const review = await tx.query(reviewSql, [tenantId]);

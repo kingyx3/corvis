@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for customer deletion requests (F10e, #325), through the application code: the customer backend in
-// lib/server/customer-deletion.ts, the retention view in lib/server/data-retention.ts and the unchanged operator flow in
-// lib/server/data-lifecycle.ts drive migration 098 inside one transaction that is always rolled back. Covers what the pure-SQL
+// src/lib/server/customer-deletion.ts, the retention view in src/lib/server/data-retention.ts and the unchanged operator flow in
+// src/lib/server/data-lifecycle.ts drive migration 098 inside one transaction that is always rolled back. Covers what the pure-SQL
 // test (customer-deletion-requests.sql) cannot: that the application's statements run against the real schema, that the
 // customer read never returns what only operators may see, and that the operator flow cannot execute a customer's request
 // before a different Organization Admin approved it, and still blocks it under a legal hold afterwards. Run after the full
@@ -8,15 +8,15 @@
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/customer-deletion-requests.mjs
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
 
-// lib/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresCustomerDeletionBackend, createCustomerDeletionService } = await import('../../../lib/server/customer-deletion.ts');
-const { PostgresRetentionBackend } = await import('../../../lib/server/data-retention.ts');
-const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await import('../../../lib/server/data-lifecycle.ts');
-const { createDeletionRequest } = await import('../../../lib/server/operations.ts');
-const { adminSqlErrorClassification } = await import('../../../lib/server/sql-application-errors.ts');
+// src/lib/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
+register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresCustomerDeletionBackend, createCustomerDeletionService } = await import('../../../src/lib/server/customer-deletion.ts');
+const { PostgresRetentionBackend } = await import('../../../src/lib/server/data-retention.ts');
+const { executeDeletionRequest, LegalHoldError, DeletionExecutionError } = await import('../../../src/lib/server/data-lifecycle.ts');
+const { createDeletionRequest } = await import('../../../src/lib/server/operations.ts');
+const { adminSqlErrorClassification } = await import('../../../src/lib/server/sql-application-errors.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test:unit": "node --test \"**/*.test.ts\"",
-    "test": "rm -rf .coverage && mkdir -p .coverage && node --test --experimental-test-coverage --test-coverage-include='core/**/*.ts' --test-coverage-include='lib/**/*.ts' --test-coverage-include='services/control-loop/**/*.ts' --test-coverage-include='adapters/upload/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-exclude='**/test-support/**' --test-coverage-lines=92.82 --test-coverage-branches=82.03 --test-coverage-functions=89.35 --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=.coverage/lcov.info \"**/*.test.ts\" && node tools/dev/check-changed-coverage.mjs .coverage/lcov.info",
+    "test": "rm -rf .coverage && mkdir -p .coverage && node --test --experimental-test-coverage --test-coverage-include='src/core/**/*.ts' --test-coverage-include='src/lib/**/*.ts' --test-coverage-include='services/control-loop/**/*.ts' --test-coverage-include='src/adapters/upload/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-exclude='**/test-support/**' --test-coverage-lines=92.82 --test-coverage-branches=82.03 --test-coverage-functions=89.35 --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=.coverage/lcov.info \"**/*.test.ts\" && node tools/dev/check-changed-coverage.mjs .coverage/lcov.info",
     "test:coverage": "npm test",
     "test:e2e": "playwright test",
     "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/content-security-policy.spec.ts",

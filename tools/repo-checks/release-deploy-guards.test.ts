@@ -73,7 +73,7 @@ test("release guard passes when only unrelated paths changed after the release",
   withRepo((repo) => {
     const release = commit(repo, "release");
     write(repo, "docs/README.md", "v2\n");
-    write(repo, "app/page.tsx", "export {};\n");
+    write(repo, "src/app/page.tsx", "export {};\n");
     commit(repo, "docs and app only");
     const result = runReleaseGuard(repo, release);
     assert.equal(result.status, 0, result.output);

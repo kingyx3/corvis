@@ -14,14 +14,14 @@ export interface ModuleBoundary {
 export const MODULE_BOUNDARIES: readonly ModuleBoundary[] = [
   {
     ruleId: "CL-ARCH-001",
-    from: "core/",
-    forbidden: ["adapters/", "runtime/", "lib/server/"],
-    expectation: "domain contracts in core/ must not import provider adapters or server runtime",
+    from: "src/core/",
+    forbidden: ["src/adapters/", "src/runtime/", "src/lib/server/"],
+    expectation: "domain contracts in src/core/ must not import provider adapters or server runtime",
   },
   {
     ruleId: "CL-ARCH-002",
-    from: "features/",
-    forbidden: ["lib/server/", "adapters/"],
+    from: "src/features/",
+    forbidden: ["src/lib/server/", "src/adapters/"],
     expectation: "feature code must depend on typed ports and runtime composition, not server or provider modules",
   },
 ];
@@ -44,7 +44,7 @@ export function importSpecifiers(text: string): string[] {
 }
 
 export function resolveSpecifier(fromPath: string, specifier: string): string | null {
-  if (specifier.startsWith("@/")) return specifier.slice(2);
+  if (specifier.startsWith("@/")) return `src/${specifier.slice(2)}`;
   if (specifier.startsWith(".")) return resolveRelative(fromPath, specifier);
   return null;
 }

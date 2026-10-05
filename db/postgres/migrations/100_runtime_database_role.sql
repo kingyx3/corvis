@@ -18,7 +18,7 @@
 --   3. The runtime role gets USAGE on the eight corvis_* schemas and explicit SELECT/INSERT/UPDATE/DELETE on exactly the
 --      tables the application reaches, EXECUTE on exactly the functions it calls, SELECT on the serving views it reads and
 --      USAGE on the four sequences those tables draw from. Each list was derived from the application's SQL
---      (lib/server, app/api, core) and the bodies of the SECURITY INVOKER functions and trigger functions it fires. A
+--      (src/lib/server, src/app/api, core) and the bodies of the SECURITY INVOKER functions and trigger functions it fires. A
 --      table, view or function that is not listed is deliberately denied. Tables are never granted through ALTER DEFAULT
 --      PRIVILEGES: every future table needs a deliberate decision, enforced by db/postgres/tests/runtime-role-privileges.sql.
 --      Append-only tables get no UPDATE/DELETE grant, so their triggers stay a second line of defence, not the only one.

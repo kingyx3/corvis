@@ -9,7 +9,7 @@
 -- This has no effect on the running application: server-side requests use
 -- a service-role-equivalent connection that already bypasses RLS by design
 -- (see the comment on corvis_control.current_user_id in migration 001) and
--- rely on the explicit tenant_id predicates in lib/server/platform-repositories.ts
+-- rely on the explicit tenant_id predicates in src/lib/server/platform-repositories.ts
 -- for isolation, not RLS. FORCE only closes the owner/ad hoc-connection gap.
 --
 -- corvis_identity.company/fund/entity_* and corvis_semantic.metric_definition

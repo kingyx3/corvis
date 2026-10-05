@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for the organization session policy (F7, #263), through the application code: the backend in
-// lib/server/session-policy.ts and the authoritative lookup in lib/server/authorization.ts drive the SQL functions of
+// src/lib/server/session-policy.ts and the authoritative lookup in src/lib/server/authorization.ts drive the SQL functions of
 // migration 087 inside one transaction that is always rolled back. Covers what the pure-SQL test (session-policy.sql)
 // cannot: that a request is really refused once its session passes a limit, that "sign out everywhere" really stops
 // the next authoritative lookup, the view's queries against the real tables, and the security notice reaching every
@@ -8,10 +8,10 @@
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/session-policy.mjs
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { PostgresMembershipAuthorizationRepository } from '../../../lib/server/authorization.ts';
-import { SessionEndedByPolicyError } from '../../../lib/server/request-context.ts';
-import { sweepTenantSessionActivity } from '../../../lib/server/session-activity-sweep.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { PostgresMembershipAuthorizationRepository } from '../../../src/lib/server/authorization.ts';
+import { SessionEndedByPolicyError } from '../../../src/lib/server/request-context.ts';
+import { sweepTenantSessionActivity } from '../../../src/lib/server/session-activity-sweep.ts';
 
 // A session the policy ended is told apart from a refused one (F7c): the lookup raises SessionEndedByPolicyError with the reason.
 async function ended(lookup, reason, message) {
@@ -19,9 +19,9 @@ async function ended(lookup, reason, message) {
   assert.ok(error instanceof SessionEndedByPolicyError && error.reason === reason, message);
 }
 
-// lib/server/session-policy.ts reaches the Next.js "@/..." alias through http.ts.
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresSessionPolicyBackend } = await import('../../../lib/server/session-policy.ts');
+// src/lib/server/session-policy.ts reaches the Next.js "@/..." alias through http.ts.
+register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresSessionPolicyBackend } = await import('../../../src/lib/server/session-policy.ts');
 
 console.info = console.warn = () => undefined;
 const dsn = process.env.CORVIS_POSTGRES_DSN;

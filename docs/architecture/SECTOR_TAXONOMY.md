@@ -4,9 +4,9 @@ Corvis classifies portfolio companies into one of eleven sectors of the **Corvis
 
 ## Source of truth
 
-- `core/sector-taxonomy.ts` defines the sectors, their descriptions, and the GP-label aliases.
+- `src/core/sector-taxonomy.ts` defines the sectors, their descriptions, and the GP-label aliases.
 - Migration `055_sector_taxonomy.sql` seeds the same rows into `corvis_semantic.sector` and `corvis_semantic.sector_alias`.
-- `core/sector-taxonomy.test.ts` fails if the two ever drift.
+- `src/core/sector-taxonomy.test.ts` fails if the two ever drift.
 
 To change the taxonomy, add a **new taxonomy version**. Never edit an existing version in place: every classification records the version it was made under.
 

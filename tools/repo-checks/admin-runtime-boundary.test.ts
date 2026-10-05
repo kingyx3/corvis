@@ -19,10 +19,10 @@ async function routeFiles(root: string): Promise<string[]> {
 }
 
 function isEdgeAllowlistedAdminRoute(filePath: string): boolean {
-  if (filePath.startsWith("app/api/v1/admin/")) return true;
-  if (filePath.startsWith("app/api/v1/access/")) return true;
-  if (filePath.startsWith("app/api/v1/source-connections/")) return true;
-  return /^app\/api\/v1\/jobs\/\[jobid\]\/(?:retry|recover)\/route\.ts$/i.test(filePath);
+  if (filePath.startsWith("src/app/api/v1/admin/")) return true;
+  if (filePath.startsWith("src/app/api/v1/access/")) return true;
+  if (filePath.startsWith("src/app/api/v1/source-connections/")) return true;
+  return /^src\/app\/api\/v1\/jobs\/\[jobid\]\/(?:retry|recover)\/route\.ts$/i.test(filePath);
 }
 
 function requiresAdminManage(source: string): boolean {
@@ -45,7 +45,7 @@ test("admin edge exposes only audited privileged API route families", async () =
 
 test("every route requiring admin:manage is represented by the admin edge allowlist", async () => {
   const privilegedRoutes: string[] = [];
-  for (const filePath of await routeFiles("app/api/v1")) {
+  for (const filePath of await routeFiles("src/app/api/v1")) {
     const source = await read(filePath);
     if (requiresAdminManage(source)) privilegedRoutes.push(filePath.toLowerCase());
   }
@@ -71,8 +71,8 @@ test("admin presentation runtime has a distinct identity and no data-plane grant
 
 test("admin application surface uses only allowlisted privileged APIs", async () => {
   const surface = [
-    await read("app/admin/page.tsx"),
-    await read("features/admin/governance-forms.tsx"),
+    await read("src/app/admin/page.tsx"),
+    await read("src/features/admin/governance-forms.tsx"),
   ].join("\n");
 
   for (const endpoint of [

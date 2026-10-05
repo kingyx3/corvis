@@ -7,7 +7,7 @@
 -- event delivered through a fresh event_inbox row, so inbox.attempt is always
 -- 1 when a retry fails and the delay was always one second. That delay becomes
 -- payload.nextAttemptAt (the Cloud Tasks schedule time in
--- lib/server/processing-transport.ts) and the retry event itself carried no
+-- src/lib/server/processing-transport.ts) and the retry event itself carried no
 -- next_attempt_at, so a provider outage longer than a few seconds burned all
 -- five job attempts and dead-lettered the job.
 --

@@ -8,7 +8,7 @@ Run `npm run dev` and open `/design-system`. The route renders the real typed pr
 
 ## Tokens
 
-Tokens live in `app/globals.css`; dark-theme overrides live in `app/design-system.css`. Feature code must consume tokens instead of hard-coded presentation colors.
+Tokens live in `src/app/globals.css`; dark-theme overrides live in `src/app/design-system.css`. Feature code must consume tokens instead of hard-coded presentation colors.
 
 | Group | Tokens | Use |
 | --- | --- | --- |
@@ -29,22 +29,22 @@ Dark mode is automatic through `prefers-color-scheme: dark`; the token names do 
 
 | Primitive | File | Use |
 | --- | --- | --- |
-| `PageHeading` | `components/ui/page-heading.tsx` | Every customer surface H1, eyebrow, lede and heading actions |
-| `MetricCard` | `components/ui/metric-card.tsx` | Dashboard/analytics KPI; renders a native button only when actionable and accepts a trend node |
-| `SidebarNavItem` | `components/ui/sidebar-nav-item.tsx` | Workspace primary navigation with active/current state and optional badge |
-| `StatusPill` | `components/ui/status-pill.tsx` | Governed state labels; use the exported vocabulary when a status is known. Unknown strings render neutral, never a fabricated semantic color |
-| `SortableDataTable` | `components/ui/sortable-data-table.tsx` | Dense tabular data. Sorting is a native header button and `aria-sort` is announced on the column header |
-| `TableDensityToggle` | `components/ui/table-density-toggle.tsx` | Compact/comfortable density control for dense financial tables |
-| `Modal` | `components/ui/modal.tsx` | Dialogs; includes focus trapping/restoration |
-| `Icon` | `components/ui/icon.tsx` | Shared icon vocabulary |
-| `TimeSeriesChart` | `components/ui/charts/time-series-chart.tsx` | Time trends with explicit status semantics and table fallback |
-| `CompositionChart` | `components/ui/charts/composition-chart.tsx` | Allocation/composition views with fixed palette and table fallback |
-| `Sparkline` | `components/ui/charts/sparkline.tsx` | Inline KPI trend; includes textual delta and full value disclosure |
-| `ChartFigure` | `components/ui/charts/chart-figure.tsx` | Required chart wrapper with caption and native table-view disclosure |
+| `PageHeading` | `src/components/ui/page-heading.tsx` | Every customer surface H1, eyebrow, lede and heading actions |
+| `MetricCard` | `src/components/ui/metric-card.tsx` | Dashboard/analytics KPI; renders a native button only when actionable and accepts a trend node |
+| `SidebarNavItem` | `src/components/ui/sidebar-nav-item.tsx` | Workspace primary navigation with active/current state and optional badge |
+| `StatusPill` | `src/components/ui/status-pill.tsx` | Governed state labels; use the exported vocabulary when a status is known. Unknown strings render neutral, never a fabricated semantic color |
+| `SortableDataTable` | `src/components/ui/sortable-data-table.tsx` | Dense tabular data. Sorting is a native header button and `aria-sort` is announced on the column header |
+| `TableDensityToggle` | `src/components/ui/table-density-toggle.tsx` | Compact/comfortable density control for dense financial tables |
+| `Modal` | `src/components/ui/modal.tsx` | Dialogs; includes focus trapping/restoration |
+| `Icon` | `src/components/ui/icon.tsx` | Shared icon vocabulary |
+| `TimeSeriesChart` | `src/components/ui/charts/time-series-chart.tsx` | Time trends with explicit status semantics and table fallback |
+| `CompositionChart` | `src/components/ui/charts/composition-chart.tsx` | Allocation/composition views with fixed palette and table fallback |
+| `Sparkline` | `src/components/ui/charts/sparkline.tsx` | Inline KPI trend; includes textual delta and full value disclosure |
+| `ChartFigure` | `src/components/ui/charts/chart-figure.tsx` | Required chart wrapper with caption and native table-view disclosure |
 
 ## Reusable global classes
 
-These are the supported global styling hooks in `app/globals.css` and `app/design-system.css`. Feature-specific classes must be prefixed with the feature name (for example `position-financials-*`) and are not general-purpose primitives.
+These are the supported global styling hooks in `src/app/globals.css` and `src/app/design-system.css`. Feature-specific classes must be prefixed with the feature name (for example `position-financials-*`) and are not general-purpose primitives.
 
 - Shell/navigation: `.app-shell`, `.sidebar`, `.sidebar-section`, `.sidebar-bottom`, `.main-area`, `.topbar`, `.breadcrumb`, `.top-actions`, `.global-search`, `.content`, `.skip-link`, `.visually-hidden`.
 - Headings/layout: `.hero-row`, `.page-heading`, `.eyebrow`, `.lede`, `.heading-actions`, `.two-column`.
@@ -71,17 +71,17 @@ Filters and paging (F1c): a `scorecard-filters` row (reusing `position-financial
 
 ## Help and support
 
-`HelpDialog` (`components/help/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
+`HelpDialog` (`src/components/help/help-dialog.tsx`) is the Help menu: a modal listing Contact support, Documentation, Service status and Release notes, plus the exact identifiers a support request carries. It is opened from the top-bar `.help-button` (icon-only at 720px and below), from the `Help: …` command-palette commands and, on phones, from **Help and support** in the Workspace dialog that the bottom navigation's Workspace tab opens. Each row is one link whose accessible name is its label; the description is attached with `aria-describedby`, and the focus ring is drawn around the whole row. External links open in a new tab and say so to assistive technology.
 
-Error states use `ContactSupportLink` (`components/help/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](../features/SUPPORT.md).
+Error states use `ContactSupportLink` (`src/components/help/contact-support-link.tsx`) rather than hand-built `mailto:` links, and `src/app/global-error.tsx` (no CSS) calls the same `useSupportRequest` hook with inline styles. Phones also hide the fund and period text of the fund-period chip so the top bar's actions fit; its accessible name still carries them. Configuration and the data allow-list are in [`SUPPORT.md`](../features/SUPPORT.md).
 
 ## Status vocabulary
 
-Source connections (stories B5/B8) added `Paused` and `Revoked` (neutral), `Retrying` (info), and `Suspended` and `Needs reauthorization` (danger) so a blocked connection never shares a label or tone with a transient failure; `Stale` and `Needs attention` (warning) and `Healthy` (success) already existed. The connection list also pairs each state with an icon (`Icon` gained `pause`, `refresh` and `lock`) and a distinct border treatment on its notice (solid, double, dashed, dotted), so no state is carried by colour alone. The classes are `source-connection-*` in `app/design-system.css`.
+Source connections (stories B5/B8) added `Paused` and `Revoked` (neutral), `Retrying` (info), and `Suspended` and `Needs reauthorization` (danger) so a blocked connection never shares a label or tone with a transient failure; `Stale` and `Needs attention` (warning) and `Healthy` (success) already existed. The connection list also pairs each state with an icon (`Icon` gained `pause`, `refresh` and `lock`) and a distinct border treatment on its notice (solid, double, dashed, dotted), so no state is carried by colour alone. The classes are `source-connection-*` in `src/app/design-system.css`.
 
-Data issues (story F5) added `Received` and `No change` (neutral), `Investigating` and `Updated` (info) and `Corrected` (success). `Updated` marks a case whose status changed since its reporter last looked; the case card also gets a leading bar, so the signal is never colour alone. The classes are `data-issue-*` and `data-issues-*` in `app/design-system.css`.
+Data issues (story F5) added `Received` and `No change` (neutral), `Investigating` and `Updated` (info) and `Corrected` (success). `Updated` marks a case whose status changed since its reporter last looked; the case card also gets a leading bar, so the signal is never colour alone. The classes are `data-issue-*` and `data-issues-*` in `src/app/design-system.css`.
 
-Assigning and discussing review items (story F3) states the assignee in words ("Assigned to you", "Assigned to <person>", "Unassigned"), never by colour alone; the person's own assignment is also bold. A mention in a comment is bold and tinted (`.review-mention`). The Overview attention filter reuses the segmented `table-density-toggle` control with `aria-pressed`. The classes are `review-*` and `attention-filter` in `app/design-system.css`.
+Assigning and discussing review items (story F3) states the assignee in words ("Assigned to you", "Assigned to <person>", "Unassigned"), never by colour alone; the person's own assignment is also bold. A mention in a comment is bold and tinted (`.review-mention`). The Overview attention filter reuses the segmented `table-density-toggle` control with `aria-pressed`. The classes are `review-*` and `attention-filter` in `src/app/design-system.css`.
 
 `STATUS_PILL_VOCABULARY` is the source of truth. Known states map to `success`, `warning`, `danger`, `info`, or `neutral`. `StatusPill` intentionally accepts future server-provided strings, but an unknown value uses the neutral fallback and keeps its original label. This prevents a new backend state from accidentally inheriting a misleading color through class-name construction.
 
@@ -97,4 +97,4 @@ Assigning and discussing review items (story F3) states the assignee in words ("
 
 The Playwright accessibility matrix runs customer surfaces under both light and dark OS color schemes. Semantic state always has text/icon support; focus uses `--focus`; chart identity is never color-only; charts retain a keyboard-reachable table representation.
 
-Scheduled exports (story F4) reuse the existing vocabulary: `Active`, `Paused` and `Failed` pills, plus `Stopped` (neutral fallback) for a schedule whose owner was deactivated, and the run state (`Queued`, `Complete`) of the export a run produced. Schedules are cards (`export-schedule-*` in `app/design-system.css`) so they stay readable on a phone; their runs use the shared history table. Pause, resume and the two-step delete are plain buttons named with the schedule (`Pause <name>`).
+Scheduled exports (story F4) reuse the existing vocabulary: `Active`, `Paused` and `Failed` pills, plus `Stopped` (neutral fallback) for a schedule whose owner was deactivated, and the run state (`Queued`, `Complete`) of the export a run produced. Schedules are cards (`export-schedule-*` in `src/app/design-system.css`) so they stay readable on a phone; their runs use the shared history table. Pause, resume and the two-step delete are plain buttons named with the schedule (`Pause <name>`).

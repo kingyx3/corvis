@@ -35,7 +35,7 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
-    // Dialogs/drawers animate in over ~150-180ms (see app/globals.css
+    // Dialogs/drawers animate in over ~150-180ms (see src/app/globals.css
     // `dialog-in`/`fade-in`/`drawer-in`). `toBeVisible()` passes as soon as the
     // element has a box and isn't display:none — well before that animation
     // finishes — so an axe scan run right after can catch every element

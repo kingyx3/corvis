@@ -3,7 +3,7 @@
 -- notification outbox and its category check, 084 `tenant_export_admin_user` and the four-eyes pattern this follows).
 --
 -- Deletion requests were operator-only: Corvis operations create a `corvis_control.deletion_request` and execute it from
--- the admin console (`lib/server/data-lifecycle.ts`, default-deny on retention coverage and legal holds). This migration
+-- the admin console (`src/lib/server/data-lifecycle.ts`, default-deny on retention coverage and legal holds). This migration
 -- lets an Organization Admin (`tenant_admin`) see the requests that affect their tenant (a read the application does
 -- over safe columns; nothing here exposes an operator identity or note) and ask for one themselves, WITHOUT touching the
 -- operator flow:

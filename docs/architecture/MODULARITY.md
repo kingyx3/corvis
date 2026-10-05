@@ -35,10 +35,10 @@ Corvis therefore follows a **bounded modular-monolith first, independently deplo
 
 ## Dependency rules
 
-1. Domain contracts in `core/` must not import provider adapters.
-2. Feature/UI code in `features/` depends on typed ports/runtime composition, not direct provider SDKs or SQL.
+1. Domain contracts in `src/core/` must not import provider adapters.
+2. Feature/UI code in `src/features/` depends on typed ports/runtime composition, not direct provider SDKs or SQL.
 3. Application use cases depend on ports, not concrete adapters.
-4. Provider adapters may depend inward on contracts; core/application code must not depend outward on provider implementations.
+4. Provider adapters may depend inward on contracts; src/core/application code must not depend outward on provider implementations.
 5. Cross-module writes are never hidden side effects. Use an explicit use case or durable event/job.
 6. No application dual writes between Postgres and optional Snowflake.
 7. Customer-visible reads use serving/read contracts; they do not query provider-specific canonical tables directly from UI code.
@@ -110,7 +110,7 @@ Each module must define:
 
 ### Scope of kill switches and the emergency stop
 
-Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/feature-flags/kill-switch` and `/emergency-stop`) are **module switches, not a tenant-wide stop**. They deny only the code paths that call `assertFeatureEnabled` / `isFeatureEnabled` in `lib/server/feature-flags.ts`, which today are:
+Feature-flag kill switches and the tenant **emergency stop** (`/api/v1/admin/feature-flags/kill-switch` and `/emergency-stop`) are **module switches, not a tenant-wide stop**. They deny only the code paths that call `assertFeatureEnabled` / `isFeatureEnabled` in `src/lib/server/feature-flags.ts`, which today are:
 
 | Flag | Gated paths |
 | --- | --- |

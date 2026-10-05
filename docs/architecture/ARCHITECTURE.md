@@ -13,14 +13,14 @@ ________________________________________________________________________________
 |                                                                                                    |
 |  PRODUCT / HTTP ENTRY                                                                              |
 |  ________________________________________________________________________________________________  |
-|  | app/                 | components/           | features/                 | proxy.ts          |  |
+|  | src/app/                 | src/components/           | src/features/                 | src/proxy.ts          |  |
 |  | Next.js pages + APIs | shared UI components | product feature UI/state | request boundary  |  |
 |  |______________________|_______________________|___________________________|___________________|  |
 |                                      |                                                             |
 |                                      v                                                             |
 |  APPLICATION + SERVER COMPOSITION                                                                  |
 |  ________________________________________________________________________________________________  |
-|  | application/         | runtime/              | lib/server/                                   |  |
+|  | application/         | src/runtime/              | src/lib/server/                                   |  |
 |  | use cases            | dependency wiring     | auth, config, repositories, processing,       |  |
 |  |                      | + adapter selection   | evidence, flags, persistence helpers          |  |
 |  |______________________|_______________________|_______________________________________________|  |
@@ -29,7 +29,7 @@ ________________________________________________________________________________
 |            v                           v                         v                    v              |
 |  DOMAIN CONTRACTS             PROVIDER ADAPTERS           ASYNC / CONTROL       DATA CONTRACTS     |
 |  _______________________       _______________________     __________________    __________________  |
-|  | core/                |       | adapters/            |     | services/control-loop/  |    | db/           |  |
+|  | src/core/                |       | src/adapters/            |     | services/control-loop/  |    | db/           |  |
 |  | typed domain ports,  |       | HTTP/GCS/demo/etc.   |     | scanners,      |    | migrations,   |  |
 |  | workspace/delivery   |       | provider boundaries  |     | fingerprints,  |    | RLS, DB       |  |
 |  | contracts            |       |                     |     | health checks  |    | contracts     |  |
@@ -60,14 +60,14 @@ The intended dependency direction is inward: UI and API routes call application/
 
 | Path | Responsibility |
 | --- | --- |
-| `app/` | Next.js application shell, customer-facing pages, and HTTP/API route handlers. |
-| `components/` | Reusable presentation components shared across product surfaces. |
-| `features/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
+| `src/app/` | Next.js application shell, customer-facing pages, and HTTP/API route handlers. |
+| `src/components/` | Reusable presentation components shared across product surfaces. |
+| `src/features/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
 | `application/` | Application use cases that coordinate domain ports without owning provider-specific implementation. |
-| `core/` | Stable domain contracts and typed ports for workspace, delivery, enterprise rules, and module boundaries. |
-| `runtime/` | Runtime composition: selects/wires concrete implementations for domain ports. |
-| `adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
-| `lib/server/` | Server-side authorization, configuration, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
+| `src/core/` | Stable domain contracts and typed ports for workspace, delivery, enterprise rules, and module boundaries. |
+| `src/runtime/` | Runtime composition: selects/wires concrete implementations for domain ports. |
+| `src/adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
+| `src/lib/server/` | Server-side authorization, configuration, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
 | `services/control-loop/` | Automated repository/business-control scanning, fingerprints, watermarks, and health/control-loop logic. |
 | `db/` | Reviewed database migrations and Postgres-side security/data contracts, including RLS-related implementation. |
 | `openapi/` | Public/controlled API contracts. |
@@ -99,9 +99,9 @@ ________________________________________________________________________________
 | Cloud Run: API runtime                                                                             |
 | IAM: gateway service account only | no allUsers invoker | scale-to-zero                           |
 |        |                                                                                           |
-|        |----> signed application identity + authorization       [app/api + lib/server]             |
+|        |----> signed application identity + authorization       [src/app/api + src/lib/server]             |
 |        |----> application/domain service composition            [application + runtime + core]      |
-|        |----> provider adapter                                  [adapters + lib/server]             |
+|        |----> provider adapter                                  [adapters + src/lib/server]             |
 |        |                                                                                           |
 |        |______________________________     ______________________________                           |
 |                                       |   |                                                         |
@@ -146,11 +146,11 @@ The sidebar lists only the workspaces returned by the authenticated `my-workspac
 
 ### Browser response security headers and CSP
 
-`proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `proxy.ts` (`lib/server/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
+`src/proxy.ts` and `next.config.ts` set the response security headers for every route (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, and `Strict-Transport-Security` in production). Content-Security-Policy is generated per-request in `src/proxy.ts` (`src/lib/server/content-security-policy.ts`), not as a static header, because `script-src` carries a fresh nonce on every response:
 
 - `script-src 'self' 'nonce-<random>' 'strict-dynamic'` — no `unsafe-inline`; the framework runtime, page bundles and RSC flight-data scripts all receive the matching `nonce` attribute automatically (verified in production output — see `e2e/content-security-policy.spec.ts`, run via `npm run test:e2e:csp` against a real `npm run build`/`npm run start`, and required in CI's `e2e` job). This closes the constraint tracked in issue #159: production Next.js 16.3.5 App Router output supports hydration-safe nonces.
 - `style-src 'self' 'unsafe-inline'` stays as-is: inline `style="..."` attributes (used throughout for computed widths/colors) cannot carry a nonce, so this is an accepted, unrelated tradeoff — only `script-src` dropped `unsafe-inline`.
-- the nonce requires dynamic rendering; `app/layout.tsx` calls `connection()` so every route renders per-request (consistent with `proxy.ts` already sending `cache-control: no-store` on every response — nothing here was cacheable before this change either).
+- the nonce requires dynamic rendering; `src/app/layout.tsx` calls `connection()` so every route renders per-request (consistent with `src/proxy.ts` already sending `cache-control: no-store` on every response — nothing here was cacheable before this change either).
 
 ## 4. Infrastructure modules and deployed topology
 

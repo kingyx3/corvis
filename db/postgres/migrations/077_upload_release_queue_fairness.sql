@@ -1,4 +1,4 @@
--- Fair, indexed ordering for the scheduled upload release (lib/server/upload-release.ts).
+-- Fair, indexed ordering for the scheduled upload release (src/lib/server/upload-release.ts).
 -- Depends on migrations 001-076.
 --
 -- The release poll took the 50 oldest quarantined/pending artifacts. A row that stays pending (the

@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for verified email domains and the per-tenant identity-provider record (F7b #335, F7e #338),
-// through the application code: the operator commands and domain check in lib/server/identity-records.ts, the view in
-// lib/server/session-policy.ts and the authoritative lookup in lib/server/authorization.ts drive the SQL of migration 095
+// through the application code: the operator commands and domain check in src/lib/server/identity-records.ts, the view in
+// src/lib/server/session-policy.ts and the authoritative lookup in src/lib/server/authorization.ts drive the SQL of migration 095
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-identity-records.sql) cannot:
 // that token binding really refuses a request through the authoritative lookup, only when an operator turned it on and
 // only for OIDC, and that the view reads the real tables; (migration 099, F7a #334, F7c #336) that Require SSO really refuses
@@ -12,15 +12,15 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { PostgresMembershipAuthorizationRepository } from '../../../lib/server/authorization.ts';
-import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../lib/server/identity-records.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { PostgresMembershipAuthorizationRepository } from '../../../src/lib/server/authorization.ts';
+import { applyTenantIdentityCommand, emailDomainAllowed, readTenantIdentityRecords } from '../../../src/lib/server/identity-records.ts';
 
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresSessionPolicyBackend } = await import('../../../lib/server/session-policy.ts');
-const { handleBackchannelLogout } = await import('../../../lib/server/backchannel-logout.ts');
-const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../lib/server/oidc.ts');
-const { RateLimiter } = await import('../../../lib/server/rate-limit.ts');
+register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresSessionPolicyBackend } = await import('../../../src/lib/server/session-policy.ts');
+const { handleBackchannelLogout } = await import('../../../src/lib/server/backchannel-logout.ts');
+const { BACKCHANNEL_LOGOUT_EVENT, OidcVerifier } = await import('../../../src/lib/server/oidc.ts');
+const { RateLimiter } = await import('../../../src/lib/server/rate-limit.ts');
 
 console.info = console.warn = () => undefined;
 const dsn = process.env.CORVIS_POSTGRES_DSN;

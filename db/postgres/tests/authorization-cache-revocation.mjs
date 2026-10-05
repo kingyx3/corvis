@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { computedRowsDigest } from '../../../lib/server/research-grounding.ts';
-import { pinResearchAnswer, listResearchPins } from '../../../lib/server/research-pins.ts';
-import { authenticateScim, ScimError } from '../../../lib/server/scim.ts';
-import { RateLimiter } from '../../../lib/server/rate-limit.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { computedRowsDigest } from '../../../src/lib/server/research-grounding.ts';
+import { pinResearchAnswer, listResearchPins } from '../../../src/lib/server/research-pins.ts';
+import { authenticateScim, ScimError } from '../../../src/lib/server/scim.ts';
+import { RateLimiter } from '../../../src/lib/server/rate-limit.ts';
 import { createHash } from 'node:crypto';
 process.env.CORVIS_DEMO_MODE = 'false';
 if (!process.env.CORVIS_POSTGRES_DSN) throw new Error('CORVIS_POSTGRES_DSN is required');

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // The App Router only applies a CSP nonce to framework/page scripts during a real production,
-// dynamically-rendered response (see lib/server/content-security-policy.ts and proxy.ts). `next
+// dynamically-rendered response (see src/lib/server/content-security-policy.ts and src/proxy.ts). `next
 // dev` never sends the header at all, so this regression only means something against a real
 // production server: `npm run build && CORVIS_E2E_TARGET=production npm run test:e2e:csp`.
 test.skip(process.env.CORVIS_E2E_TARGET !== "production", "requires the production server (npm run test:e2e:csp)");

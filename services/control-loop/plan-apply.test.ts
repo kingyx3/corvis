@@ -28,7 +28,7 @@ test("an auto-fix rule with no suggested edit blocks rather than guessing", () =
 });
 
 test("an auto-fix rule whose edit path falls outside the rule's allowlist blocks", () => {
-  const [plan] = planActions([finding({ path: "app/README.md", suggestion: { path: "app/README.md", before: "x", after: "y" } })]);
+  const [plan] = planActions([finding({ path: "src/app/README.md", suggestion: { path: "src/app/README.md", before: "x", after: "y" } })]);
   assert.equal(plan?.disposition, "blocked");
   assert.equal(plan?.blockedReason, "edit_path_not_allowlisted");
 });

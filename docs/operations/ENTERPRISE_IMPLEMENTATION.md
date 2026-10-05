@@ -8,21 +8,21 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 
 ### Identity and tenant authorization
 
-- `core/enterprise.ts` defines roles, permissions, entitlements and source-access separation.
-- `lib/server/request-context.ts` verifies production end-user OIDC bearer tokens directly (signature, issuer, audience and lifetime), taking the caller token from `X-Forwarded-Authorization` behind API Gateway. Optional signed gateway assertions support brokered SAML/service identities.
+- `src/core/enterprise.ts` defines roles, permissions, entitlements and source-access separation.
+- `src/lib/server/request-context.ts` verifies production end-user OIDC bearer tokens directly (signature, issuer, audience and lifetime), taking the caller token from `X-Forwarded-Authorization` behind API Gateway. Optional signed gateway assertions support brokered SAML/service identities.
 - Production configuration requires issuer/audience and fails closed when required bindings are missing.
-- `lib/server/authorized-request.ts` independently resolves active Postgres membership, workspace roles, fund/document rights, service-identity lifecycle and session revocation on protected requests. Tenant-wide control paths require authoritative tenant-admin scope.
+- `src/lib/server/authorized-request.ts` independently resolves active Postgres membership, workspace roles, fund/document rights, service-identity lifecycle and session revocation on protected requests. Tenant-wide control paths require authoritative tenant-admin scope.
 - OIDC JWKS refreshes are single-flight and throttled even on cold-start failures. Unexpired keys survive a failed refresh; expired keys fail closed.
 - Provider-backed identity/access/RLS evidence remains a launch gate in GitHub issues #8/#10; implemented code alone does not establish live control effectiveness.
 
 ### Source ingestion
 
-- `lib/server/gcs.ts` implements GCS control operations and native resumable upload sessions.
-- `lib/server/uploads.ts` implements tenant-scoped sessions, idempotent initiate/complete behavior, exact object-size verification, GCS generation/checksum capture, file-signature validation and quarantine.
-- `adapters/upload/http-gcs-resumable-upload.ts` sends browser bytes directly to GCS in resumable chunks and can query/resume committed offsets.
+- `src/lib/server/gcs.ts` implements GCS control operations and native resumable upload sessions.
+- `src/lib/server/uploads.ts` implements tenant-scoped sessions, idempotent initiate/complete behavior, exact object-size verification, GCS generation/checksum capture, file-signature validation and quarantine.
+- `src/adapters/upload/http-gcs-resumable-upload.ts` sends browser bytes directly to GCS in resumable chunks and can query/resume committed offsets.
 - Artifacts remain quarantined until the approved scanner records a clean disposition; only clean artifacts may progress to `DocumentRegistered`.
-- Release is not tied to a browser session: the private worker's scheduled `POST /api/internal/delivery` tick runs `releaseScannedUploads` (`lib/server/upload-release.ts`), which finds artifacts still quarantined with a landed scanner verdict, re-verifies the object generation and size, and releases clean ones (threats are recorded and never released). It is database-driven and needs only read access to the source bucket. `GET /uploads/{id}` still releases opportunistically; both paths are idempotent.
-- Before release, `sealArtifactIntegrity` (`lib/server/upload-integrity.ts`) streams the stored bytes (pinned to the verified GCS generation), records their SHA-256 on `document_artifact_version`, and quarantines the artifact as `integrity_failed` if the bytes contradict a digest declared at initiate. The `registered` stage requires this digest, so a client that sends no checksum still produces SHA-256 lineage.
+- Release is not tied to a browser session: the private worker's scheduled `POST /api/internal/delivery` tick runs `releaseScannedUploads` (`src/lib/server/upload-release.ts`), which finds artifacts still quarantined with a landed scanner verdict, re-verifies the object generation and size, and releases clean ones (threats are recorded and never released). It is database-driven and needs only read access to the source bucket. `GET /uploads/{id}` still releases opportunistically; both paths are idempotent.
+- Before release, `sealArtifactIntegrity` (`src/lib/server/upload-integrity.ts`) streams the stored bytes (pinned to the verified GCS generation), records their SHA-256 on `document_artifact_version`, and quarantines the artifact as `integrity_failed` if the bytes contradict a digest declared at initiate. The `registered` stage requires this digest, so a client that sends no checksum still produces SHA-256 lineage.
 - Cloudflare and Corvis application services do not proxy ordinary large source-document bodies.
 - Initial GCP Terraform provisions the first private/versioned/CMEK GCS source foundation in `dev`.
 - Provider-integrated interruption/quarantine/UAT evidence remains tracked in issue #3.
@@ -32,10 +32,10 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 
 - **Transport dead letters.** After 8 failed publishes `fail_processing_transport_event` dead-letters the outbox event and the document stays `registered`. The dispatcher now emits the `processing.transport.dead_letter` count metric and a `processing.transport.dead_lettered` error log; alert on either. A tenant admin lists dead-lettered events with `GET /api/v1/admin/processing-transport/dead-letters` and requeues one with an audited `POST` to the same path (`ops/RUNBOOK.md`); recovery of an individual job goes through `recoverDeadLetterProcessingJob`.
 - **Lease budget.** The transport batch stops starting events once `TRANSPORT_BATCH_BUDGET_MS` (35s of the 60s lease) has elapsed and hands the remainder back through `release_processing_transport_event` (which refunds the attempt), and a failure in `fail` no longer aborts the remaining events.
-- **Stage timeouts.** `lib/server/processing-stage-http.ts` keeps each call's timeout armed through `response.text()/json()/arrayBuffer()`, and every represented/extracted handler runs under one 27s budget (`withStageBudget`), strictly under the router's 30s. Configured provider timeouts are capped at 20s.
+- **Stage timeouts.** `src/lib/server/processing-stage-http.ts` keeps each call's timeout armed through `response.text()/json()/arrayBuffer()`, and every represented/extracted handler runs under one 27s budget (`withStageBudget`), strictly under the router's 30s. Configured provider timeouts are capped at 20s.
 - **Deletion requests** carry `execution_lease_expires_at` (10 minutes). A request stuck in `executing` with an expired or null lease is reclaimed by the next independent, authorized execute call; four-eyes, retention-coverage and legal-hold checks are unchanged. The adapter keeps receiving the stable `idempotency-key` (`tenant:request`). Since migration 098 (F10e) an Organization Admin can also ask for a deletion from `/access-self-service`: that request waits in `pending_customer_approval`, which `EXECUTABLE_DELETION_STATES` does not include, until a different Organization Admin approves it (then it is `approved` and executes through this same flow, with this flow's checks). The admin console list (`GET /api/v1/admin/deletion-requests`) shows such requests like any other, with their `origin`.
 - **Delivery tick** (`POST /api/internal/delivery`) settles every task independently and reports per-task results; any failed task makes the response 500 (with the other results still in the body) so the scheduler retries and alerts.
-- **`last_error`** is written through `safeErrorText` (`lib/server/processing-error-text.ts`): a stable error class plus a redacted (bearer tokens, JWTs, URL credentials/query strings, secret-named key/value pairs, opaque tokens, embedded JSON bodies), 500-character message.
+- **`last_error`** is written through `safeErrorText` (`src/lib/server/processing-error-text.ts`): a stable error class plus a redacted (bearer tokens, JWTs, URL credentials/query strings, secret-named key/value pairs, opaque tokens, embedded JSON bodies), 500-character message.
 - **Exports.** Object keys are deterministic per attempt (`exports/<tenant>/<export>/attempt-<n>/...`); a failed attempt deletes its own object and a successful one deletes its predecessors. Retries back off exponentially with jitter (1m, 2m, 4m, 8m, capped 15m) via `export_job.delivery_next_attempt_at`. `numeric(38,10)` values stay decimal strings end to end (CSV exact; XLSX numeric only when a double holds it exactly, otherwise exact text; Parquet `DECIMAL(38,10)`). Exports are capped at `EXPORT_MAX_ROWS` (200,000) with a typed, non-retryable `ExportRowLimitError`. Renderers still buffer in memory; a streaming rewrite is not done. Download grants are single use (`export_download_grant.consumed_at`); a failed download must request a fresh grant from the single-export read.
 
 ### Structured data plane
@@ -46,7 +46,7 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 
 - Production config requires `CORVIS_POSTGRES_DSN` and does not require Snowflake bindings to start.
 - `PostgresProductionPlatform` is the active production composition for workspace, review/publication and operations persistence.
-- `lib/server/research.ts` reads governed Postgres serving observations and records semantic-query logs in Postgres.
+- `src/lib/server/research.ts` reads governed Postgres serving observations and records semantic-query logs in Postgres.
 - The obsolete Snowflake-primary DDL reference set and unused application Snowflake SQL API adapter have been removed.
 - Issue #28 is complete. Remaining data-plane work is provider-backed UAT/RLS/recovery/performance evidence and bounded decomposition where justified, not an application persistence migration.
 
@@ -75,13 +75,13 @@ Technical target rules are in [`DATA_PLATFORM.md`](../architecture/DATA_PLATFORM
 - The demo/E2E harness is stateful across the product seams: an uploaded source creates a review-scoped snapshot and structured observations, review decisions unlock publication, and published snapshots can be requested through the delivery module.
 - Playwright covers the representative seam `upload → structured observations → review → publish → structured delivery` and an injected Observations-module outage that leaves unrelated customer surfaces available.
 - These tests prove product contracts and blast-radius behavior in CI; they are **not** production/provider activation evidence. Production-equivalent `uat` must repeat the journey against real Postgres/GCS/processing/delivery bindings and fault-inject representative module/dependency failures.
-- `lib/server/platform.ts` remains a broad service composition boundary. Further decomposition should be driven by concrete failure/scaling/security boundaries; its production persistence paths are already Postgres-backed.
+- `src/lib/server/platform.ts` remains a broad service composition boundary. Further decomposition should be driven by concrete failure/scaling/security boundaries; its production persistence paths are already Postgres-backed.
 
 See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 
 ### Retrieval and AI
 
-- `lib/server/research.ts` keeps structured facts and source retrieval conceptually separate.
+- `src/lib/server/research.ts` keeps structured facts and source retrieval conceptually separate.
 - Retrieval carries tenant/workspace/document/fund filters before search execution.
 - Source text is treated as untrusted data and responses carry source-reference citations.
 - Semantic-query ID/hash foundations exist.
@@ -99,7 +99,7 @@ See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 - The `reviewed` production handler consumes only finalized `ready` extraction runs and exact predecessor candidate-set lineage. It records immutable policy requirements and evaluates append-only attributable review decisions. Pending human review is a durable `blocked` state, not a technical retry; a ready review gate re-queues the same deterministic reviewed-stage effect. A persistence trigger prevents the next canonicalization job until the exact candidate set has a zero-blocker ready gate.
 - Canonicalization/reconciliation/consolidation/publication handlers, operator dead-letter/replay/status controls and governed correction replay are implemented. Issue #79 now owns production-like execution and retained provider/recovery evidence rather than implementation of those paths.
 - Merging authenticated ingress, representation, extraction or review-stage code does **not** prove real Pub/Sub/Cloud Tasks IAM, representation/extraction providers, UAT GCS/Postgres bindings, Data Operations Reviewer operations or production-like recovery behavior. Those remain activation/evidence work.
-- `lib/server/telemetry.ts` provides structured telemetry hooks.
+- `src/lib/server/telemetry.ts` provides structured telemetry hooks.
 - Export job/manifest/checksum and webhook-signing/replay foundations exist.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
 - Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.

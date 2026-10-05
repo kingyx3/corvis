@@ -241,7 +241,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Every fixture string from adapters/demo/catalog.ts, plus the demo failure-injection marker.
+          # Every fixture string from src/adapters/demo/catalog.ts, plus the demo failure-injection marker.
           node tools/dev/check-bundle-demo-free.ts .next/static
           if grep -rl "corvis:demo:fail:" .next/static; then
             echo "::error::demo fixtures were bundled into a non-demo build (see files above)"

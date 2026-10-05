@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for the full tenant export (F10, #266), through the application code: the Postgres backend in
-// lib/server/tenant-export.ts and the build worker in lib/server/tenant-export-worker.ts drive the SQL of migration 084
+// src/lib/server/tenant-export.ts and the build worker in src/lib/server/tenant-export-worker.ts drive the SQL of migration 084
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
@@ -16,17 +16,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
-import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
+import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { RecordingEmailSender } from '../../../src/adapters/email/recording-email-sender.ts';
 
-// lib/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
-register(new URL('../../../lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresTenantExportBackend } = await import('../../../lib/server/tenant-export.ts');
-const { processApprovedTenantExports } = await import('../../../lib/server/tenant-export-worker.ts');
-const { processEmailOutbox } = await import('../../../lib/server/notifications.ts');
-const { sweepTenantExports } = await import('../../../lib/server/tenant-export-sweep.ts');
-const { listTenantExportBuildIssues } = await import('../../../lib/server/tenant-export-operations.ts');
-const { readStoredZip } = await import('../../../lib/server/test-support/zip-reader.ts');
+// src/lib/server/data-governance.ts reaches the Next.js "@/..." alias through http.ts.
+register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresTenantExportBackend } = await import('../../../src/lib/server/tenant-export.ts');
+const { processApprovedTenantExports } = await import('../../../src/lib/server/tenant-export-worker.ts');
+const { processEmailOutbox } = await import('../../../src/lib/server/notifications.ts');
+const { sweepTenantExports } = await import('../../../src/lib/server/tenant-export-sweep.ts');
+const { listTenantExportBuildIssues } = await import('../../../src/lib/server/tenant-export-operations.ts');
+const { readStoredZip } = await import('../../../src/lib/server/test-support/zip-reader.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

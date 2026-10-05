@@ -6,7 +6,7 @@
 -- expired rows and there is no index to support that sweep: a bounded
 -- `delete ... where expires_at <= now() limit N` would otherwise need a full
 -- table scan to find its candidates. This index supports that sweep
--- (lib/server/idempotency.ts's `sweepExpiredIdempotencyKeys`).
+-- (src/lib/server/idempotency.ts's `sweepExpiredIdempotencyKeys`).
 --
 -- The runner applies each migration in one transaction, so this index is
 -- built without CONCURRENTLY.

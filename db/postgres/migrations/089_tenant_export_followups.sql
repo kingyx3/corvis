@@ -14,7 +14,7 @@
 --   tenant_export_outcome   OPTIONAL   The requester's export was approved, rejected, is ready, or could not be built.
 --                                      A preference category (default on, immediate) like export_ready.
 -- Rows carry only the recipient, the role to re-check at send time and a words-only `event` parameter: never a reason,
--- a note, a name or any data. The dispatcher (lib/server/notifications.ts) re-checks the identity and the Organization
+-- a note, a name or any data. The dispatcher (src/lib/server/notifications.ts) re-checks the identity and the Organization
 -- Admin membership when it sends, so a person demoted in between is suppressed.
 --
 -- Hygiene (F10f). A swept artifact is recorded (`artifact_deleted_at`) instead of clearing `object_uri`, because the

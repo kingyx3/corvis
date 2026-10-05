@@ -6,7 +6,7 @@ import { openSurface, surfaces } from "./support/surfaces.ts";
 type Violation = { id: string; impact?: string | null; help: string; nodes: Array<{ target: unknown[] }> };
 
 // `reducedMotion: "reduce"` (playwright.config.ts) is meant to collapse every CSS transition to ~0 via the
-// `prefers-reduced-motion` media query (app/globals.css), but WebKit's emulation of that media feature is
+// `prefers-reduced-motion` media query (src/app/globals.css), but WebKit's emulation of that media feature is
 // unreliable, so a scan run immediately after a state change (e.g. the Reauthorize button swapping between
 // primary/secondary as connection health updates) can sample a color mid-transition and report a transient,
 // never-actually-rendered contrast violation. Waiting for in-flight animations/transitions to settle first

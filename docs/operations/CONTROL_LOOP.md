@@ -70,7 +70,7 @@ Before #27 enables GitHub/Confluence writes, one scheduler must become authorita
 
 ## Still open under issue #27
 
-The runtime/scheduler infrastructure is no longer the primary code gap, but #27 remains open because the business-control loop is not yet fully operational:
+The src/runtime/scheduler infrastructure is no longer the primary code gap, but #27 remains open because the business-control loop is not yet fully operational:
 
 1. live Confluence read/reconciliation is not wired into the scheduled runtime;
 2. GitHub issue create/update/close/reopen is not implemented;

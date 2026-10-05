@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const COVERAGE_ROOTS = ["core/", "lib/", "services/control-loop/", "adapters/upload/"];
+const COVERAGE_ROOTS = ["src/core/", "src/lib/", "services/control-loop/", "src/adapters/upload/"];
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 function git(args, options = {}) {

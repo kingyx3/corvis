@@ -151,7 +151,7 @@ Database rollback remains forward-safe: routine release rollback never silently 
 
 `gcp-decommission.yml` is the only normal teardown path:
 
-- `idle` removes runtime/public-edge resources while retaining durable foundations, data and Terraform state;
+- `idle` removes src/runtime/public-edge resources while retaining durable foundations, data and Terraform state;
 - `full` explicitly removes Terraform-managed data/resources and deletes remote state last while retaining the recoverable KMS/bootstrap trust anchors defined by the lifecycle contract.
 
 `gcp-bootstrap.yml` shares the `terraform-<environment>` concurrency group with deploys and decommission, so the three can never race on one state. Bootstrap plans blank runtime inputs (no API image, no Cloudflare zone), which would destroy a live runtime; after planning, `tools/ci/assert-no-runtime-destroy.sh` inspects `terraform show -json` and fails the run, listing every address, if any resource would be deleted or replaced. The `allow_destroy` dispatch input acknowledges this for `dev` and `uat` only and is refused for `prod`.

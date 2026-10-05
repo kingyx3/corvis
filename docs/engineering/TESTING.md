@@ -8,10 +8,10 @@ A pull request is not merge-ready until the repository's required quality, build
 
 The unit-test coverage scope is the executable TypeScript under:
 
-- `core/`
-- `lib/`
+- `src/core/`
+- `src/lib/`
 - `services/control-loop/`
-- `adapters/upload/`
+- `src/adapters/upload/`
 
 Test files and `test-support` infrastructure are excluded from numerical production coverage. Production exclusions must not be added merely to make a percentage pass.
 
@@ -43,9 +43,9 @@ Do not rely on a single percentage to prove correctness. Coverage proves executi
 
 ## Browser storage invariant
 
-Web Storage is best-effort browser state and may throw when site data is blocked, storage is unavailable or privacy/quota controls intervene. Production code must access `localStorage` and `sessionStorage` only through `lib/safe-storage.ts`.
+Web Storage is best-effort browser state and may throw when site data is blocked, storage is unavailable or privacy/quota controls intervene. Production code must access `localStorage` and `sessionStorage` only through `src/lib/safe-storage.ts`.
 
-`core/browser-storage-boundary.test.ts` scans production browser code and fails on a direct Web Storage bypass. Workspace-context tests cover server rendering, malformed/incomplete state, blocked storage and per-page context pinning. Playwright retains end-to-end coverage for blocked browser storage on real customer/admin surfaces.
+`src/core/browser-storage-boundary.test.ts` scans production browser code and fails on a direct Web Storage bypass. Workspace-context tests cover server rendering, malformed/incomplete state, blocked storage and per-page context pinning. Playwright retains end-to-end coverage for blocked browser storage on real customer/admin surfaces.
 
 This combination would have surfaced the failure class fixed in PR #301 before merge.
 

@@ -3,12 +3,12 @@
 //   npm run build            # NEXT_PUBLIC_CORVIS_DEMO_MODE unset or "false" (the production setting)
 //   node tools/dev/check-bundle-demo-free.ts [dir]   # default: .next/static
 //
-// The needles are derived from adapters/demo/catalog.ts itself, so new fixtures are covered
+// The needles are derived from src/adapters/demo/catalog.ts itself, so new fixtures are covered
 // automatically. Run it only against a build made with the demo flag off; a demo build is
 // expected to contain them.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { documents, fundSnapshots, observations, recentActivity, researchSuggestions } from "../../adapters/demo/catalog.ts";
+import { documents, fundSnapshots, observations, recentActivity, researchSuggestions } from "../../src/adapters/demo/catalog.ts";
 
 export function demoNeedles(): string[] {
   const values = [

@@ -39,7 +39,7 @@ CORVIS_EXTRACTION_ENDPOINT
        extraction candidates -> reviewer gate -> canonical facts
 ```
 
-`CORVIS_EXTRACTION_ENDPOINT` is **not** a raw model endpoint and is **not** the LiteLLM URL. It must implement the Corvis `/v1/extractions` contract already enforced by `lib/server/processing-extracted-stage.ts`.
+`CORVIS_EXTRACTION_ENDPOINT` is **not** a raw model endpoint and is **not** the LiteLLM URL. It must implement the Corvis `/v1/extractions` contract already enforced by `src/lib/server/processing-extracted-stage.ts`.
 
 ## Why LiteLLM is inside, not around, Corvis
 

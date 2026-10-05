@@ -48,7 +48,7 @@ See [`docs/operations/GITHUB_ENVIRONMENTS.md`](./docs/operations/GITHUB_ENVIRONM
 
 ## Repository ownership
 
-Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `app/`, `lib/`, `core/`, `adapters/`, `features/` and `infra/terraform/modules/` today; see [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) for the current map.
+Target monorepo boundaries. This is the **target state**: none of `apps/`, `services/`, `packages/` or the listed Terraform module names exist yet. The code lives in `src/app/`, `src/lib/`, `src/core/`, `src/adapters/`, `src/features/` and `infra/terraform/modules/` today; see [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) for the current map.
 
 ```text
 apps/

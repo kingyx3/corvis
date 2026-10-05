@@ -3,7 +3,7 @@
 --
 -- 1. The deliveries diagnostics endpoint now lists a subscription's deliveries newest first, ordered and
 --    keyset-paged by (created_at desc, delivery_id desc) instead of by the random v4 delivery_id
---    (lib/server/webhook-subscriptions.ts). This index covers exactly that predicate and order so a page
+--    (src/lib/server/webhook-subscriptions.ts). This index covers exactly that predicate and order so a page
 --    request reads one page of the subscription's deliveries rather than sorting all of them.
 --
 -- 2. apply_identity_lifecycle (latest prior definition: 048) let a 'sync' whose memberships name a
