@@ -327,7 +327,11 @@ begin
   if offenders is not null then
     raise exception 'a superuser or BYPASSRLS role is a member of corvis_runtime (RLS would not bind it): %', offenders;
   end if;
-  if exists (select 1 from pg_shdepend where refclassid = 'pg_authid'::regclass and refobjid = rt and deptype = 'o') then
+  if exists (
+    select 1 from pg_shdepend
+    where refclassid = 'pg_authid'::regclass and refobjid = rt and deptype = 'o'
+      and dbid in (0, (select oid from pg_database where datname = current_database()))
+  ) then
     raise exception 'corvis_runtime must own no objects';
   end if;
   if has_database_privilege(rt, current_database(), 'CREATE') then
