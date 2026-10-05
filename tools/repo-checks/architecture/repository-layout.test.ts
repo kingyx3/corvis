@@ -25,8 +25,8 @@ const isFile = (entries: string[]) => entries.every((entry) => entry === "");
 
 test("the repository root holds only known files and directories", () => {
   const allowed = new Set([
-    ".dockerignore", ".env.example", ".github", ".gitignore", ".gitleaksignore", ".nvmrc",
-    "AGENTS.md", "CLAUDE.md", "Dockerfile", "README.md", "SECURITY.md",
+    ".dockerignore", ".editorconfig", ".env.example", ".gitattributes", ".github", ".gitignore", ".gitleaksignore", ".nvmrc",
+    "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "Dockerfile", "README.md", "SECURITY.md",
     "db", "docs", "e2e", "eslint.config.mjs", "infra", "next.config.ts", "openapi", "ops",
     "package-lock.json", "package.json", "playwright.config.ts", "services", "src", "tools", "tsconfig.json",
   ]);
@@ -76,4 +76,16 @@ test("documents live in a topic folder and every one is listed in the docs index
 test("the legacy top-level application directories do not come back", () => {
   const present = tracked.filter((file) => /^(?:app|components|features|lib|core|adapters|runtime|application|scripts)\//.test(file));
   assert.deepEqual(present.slice(0, 5), []);
+});
+
+test("no directory in the code areas grows past the size a reader can scan", () => {
+  const LIMIT = 35;
+  const sizes = new Map<string, number>();
+  for (const file of tracked) {
+    if (!/^(?:src|tools|services|e2e)\//.test(file)) continue;
+    const directory = file.slice(0, file.lastIndexOf("/"));
+    sizes.set(directory, (sizes.get(directory) ?? 0) + 1);
+  }
+  const oversized = [...sizes].filter(([, count]) => count > LIMIT).map(([directory, count]) => `${directory} (${count} files)`);
+  assert.deepEqual(oversized, [], `group the files into feature folders; limit is ${LIMIT} files per directory (tests included)`);
 });

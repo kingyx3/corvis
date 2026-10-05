@@ -1,0 +1,13 @@
+# Normalise line endings so a checkout on any platform produces the same bytes (hashes, checksums and
+# the SQL migration runner's drift check all depend on that).
+* text=auto eol=lf
+
+# Generated files: collapse in pull-request diffs and exclude from language statistics.
+package-lock.json -diff linguist-generated=true
+*.lock.hcl linguist-generated=true
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
