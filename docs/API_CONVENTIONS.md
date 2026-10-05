@@ -284,6 +284,23 @@ Organization Admin only (`tenant_admin`; `admin:manage` alone is not enough), cl
 
 **Refusals** (stable codes): `tenant_admin_required` (403, also enforced in SQL), `invalid_request`, `invalid_version`, `invalid_reason`, `invalid_user`, `invalid_idle_timeout`, `invalid_max_session`, `idle_exceeds_max_session`, `session_policy_out_of_bounds` (400); `member_not_found` (404); `session_policy_version_conflict`, `session_not_measurable`, `cannot_sign_out_current_user` (409). `session_not_measurable` is the lock-out safeguard: a limit cannot be saved from a session whose id is not stable (the caller's identity provider sends neither `sid` nor `jti`), because every such session would then be refused, the saving admin's included. Clearing both limits is always allowed.
 
+### Verified email domains and identity-provider records (F7b #335, F7e #338)
+
+`GET|POST /api/v1/admin/tenant-identity` is the Corvis-operator surface (classified `tenant_control`, `admin/**`: `tenant_admin` plus `admin:manage`, and the configured operations tenant, otherwise `403 forbidden`). Initial identity-provider and domain setup stays Corvis-assisted (#78); an Organization Admin only reads the result in `GET /api/v1/access/session-policy` (`identityProvider: { protocol, issuer, audience, source: "tenant"|"global", status, tokenBindingEnforced }` and `verifiedDomains: [{ domain, verificationMethod, verifiedAt }]`).
+
+| Method | Body | Purpose |
+| --- | --- | --- |
+| `GET ?tenantId=` | - | `{ identityProvider, verifiedDomains }` of the named tenant. |
+| `POST` | `{ kind: "verified_domain_add", tenantId, domain, verificationMethod: "dns_txt"\|"operator_attested", evidence, reason }` | Verifies a domain for the tenant. One tenant per domain; at most 20. |
+| `POST` | `{ kind: "verified_domain_remove", tenantId, domain, reason }` | Removes it. Nobody is locked out: the domain check applies only to NEW invitations and SCIM users. |
+| `POST` | `{ kind: "identity_provider_set", tenantId, protocol, issuer, audience, status, enforceTokenBinding, expectedVersion, reason }` | Sets the record (`expectedVersion` 0 for the first). `enforceTokenBinding` defaults to nothing: it must be stated, and is accepted only for an active OIDC record. |
+
+Responses are `{ data: { kind, tenantId, changed, version }, correlationId }`; setting what is already stored changes and audits nothing. **Audit** (in the customer's tenant access audit, written in SQL in the same transaction): `access.verified_domain.added|removed` and `access.identity_provider.configured` (previous and new values, the reason, the operator's tenant). **Errors**: 400 `invalid_request`, `invalid_kind`, `invalid_tenant`, `invalid_domain`, `invalid_verification_method`, `invalid_evidence`, `invalid_protocol`, `invalid_issuer`, `invalid_audience`, `invalid_status`, `invalid_binding`, `invalid_version`, `invalid_reason`; 403 `operations_admin_required`; 404 `tenant_not_found`, `verified_domain_not_found`; 409 `verified_domain_taken`, `verified_domain_limit_reached`, `identity_provider_version_conflict`.
+
+**Domain check.** While a tenant has at least one verified domain, `POST /api/v1/access/invitations` (and bulk and the operator invitation routes) refuse an address outside them with `422 email_domain_not_verified`, and SCIM user creation with `400 invalidValue`; with none the check is off. **Token binding.** Off by default; when an operator enables it, an OIDC request whose verified token issuer/audience differ from the active record (or carries none) is refused with the generic `401 authentication_required`. See `tenant-self-service.md` for what this does and does not guarantee.
+
+**Session ended by policy (F7c #336).** Any authenticated route answers `401 { error: "session_ended_by_policy" }` (instead of `authentication_required`) when the organization's idle timeout or maximum session length ended the session. It is returned only after the token verified and the person's membership resolved; revoked, unknown, foreign and unmeasurable sessions keep `authentication_required`.
+
 ## Service accounts (F6)
 
 Implementation tracker: GitHub issue #262; design, assumptions and the open decision are in [`SERVICE_ACCOUNTS.md`](SERVICE_ACCOUNTS.md). Organization Admins (`tenant_admin`, held by a person; `accountadmin` and any service account are refused with `403 tenant_admin_required`) manage non-human identities under `/api/v1/access/service-accounts` (classified `tenant_control`, not a stable data-integration API). A service account is a normal identity subject with one role in one workspace under the existing RBAC, entitlement and data-rights model: there is no separate API-scope plane.
