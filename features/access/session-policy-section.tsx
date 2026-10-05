@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { idpMfaEnforcementLabel, mfaEvidenceLabel } from "@/core/authentication-evidence";
 import {
   parseSessionPolicyUpdate,
   SESSION_ACTIVITY_RETENTION_MINUTES,
@@ -8,6 +9,7 @@ import {
   SESSION_POLICY_MIN_REASON_LENGTH,
   sessionLimitLabel,
   SessionPolicyValidationError,
+  ssoCanBeRequired,
   type SessionPolicyView,
 } from "@/core/session-policy";
 import { Icon } from "@/components/ui/icon";
@@ -37,18 +39,20 @@ export function SessionPolicySection() {
   const [reloadKey, setReloadKey] = useState(0);
   const [idle, setIdle] = useState<Field>({ none: true, minutes: "" });
   const [max, setMax] = useState<Field>({ none: true, minutes: "" });
+  const [requireSso, setRequireSso] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [signingOut, setSigningOut] = useState<string | null>(null);
   const [signOutReason, setSignOutReason] = useState("");
-  const ids = { idle: useId(), idleHint: useId(), max: useId(), maxHint: useId(), reason: useId(), signOutReason: useId(), error: useId() };
+  const ids = { sso: useId(), ssoHint: useId(), idle: useId(), idleHint: useId(), max: useId(), maxHint: useId(), reason: useId(), signOutReason: useId(), error: useId() };
   const latest = useRef(0);
 
   const apply = useCallback((value: SessionPolicyView) => {
     setState({ kind: "ready", value });
     setIdle(fieldOf(value.policy.idleTimeoutMinutes));
     setMax(fieldOf(value.policy.maxSessionMinutes));
+    setRequireSso(value.policy.requireSso);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -76,13 +80,13 @@ export function SessionPolicySection() {
   let problem: string | null = null;
   if (policy) {
     try {
-      change = parseSessionPolicyUpdate({ idleTimeoutMinutes: valueOf(idle), maxSessionMinutes: valueOf(max), expectedVersion: policy.version, reason });
+      change = parseSessionPolicyUpdate({ idleTimeoutMinutes: valueOf(idle), maxSessionMinutes: valueOf(max), requireSso, expectedVersion: policy.version, reason });
     } catch (error) {
       problem = error instanceof SessionPolicyValidationError ? error.code : "invalid_request";
     }
   }
   const limitProblem = problem === "invalid_idle_timeout" || problem === "invalid_max_session" || problem === "idle_exceeds_max_session" ? problem : null;
-  const changed = Boolean(policy && change && (change.idleTimeoutMinutes !== policy.idleTimeoutMinutes || change.maxSessionMinutes !== policy.maxSessionMinutes));
+  const changed = Boolean(policy && change && (change.idleTimeoutMinutes !== policy.idleTimeoutMinutes || change.maxSessionMinutes !== policy.maxSessionMinutes || requireSso !== policy.requireSso));
 
   const save = async () => {
     if (!change || !changed || busy !== null) return;
@@ -99,6 +103,10 @@ export function SessionPolicySection() {
     } finally { setBusy(null); }
   };
 
+  // Require SSO can be turned on only for an organization whose own provider is recorded as active OpenID Connect with token
+  // binding; turning it off is always possible. (SQL enforces the same, and refuses it from a session it would itself refuse.)
+  const ssoAvailable = view ? ssoCanBeRequired(view.identityProvider) : false;
+
   const signOut = async (userId: string, label: string) => {
     setBusy(`signout:${userId}`);
     setMessage(null);
@@ -106,7 +114,7 @@ export function SessionPolicySection() {
       const result = await signOutEverywhere(userId, signOutReason.trim());
       setSigningOut(null);
       setSignOutReason("");
-      setMessage({ tone: "success", text: `${label} was signed out of every session (${result.revokedSessions} ended). They can sign in again. Every Organization Admin has been notified.` });
+      setMessage({ tone: "success", text: `${label} was signed out of every session (${result.revokedSessions} ended). They can sign in again. Every Organization Admin has been notified.${result.idpEndSessionEndpoint ? ` Their session at your identity provider has not been ended: Corvis cannot do that. End it there too (sign-out endpoint recorded for your organization: ${result.idpEndSessionEndpoint}).` : ""}` });
       await refresh();
     } catch (failure) {
       setMessage({ tone: "error", text: sessionPolicyErrorMessage(failure, "That person could not be signed out. Try again.") });
@@ -137,6 +145,9 @@ export function SessionPolicySection() {
           <tr><td><strong>Verified email domains</strong></td><td>{view.verifiedDomains.length
             ? <>{view.verifiedDomains.map((domain, index) => <span key={domain.domain}>{index > 0 ? ", " : ""}<code>{domain.domain}</code></span>)} · new invitations and provisioned users must use one of these</>
             : <span className="table-muted">None verified · new invitations are not restricted by email domain</span>}</td></tr>
+          <tr><td><strong>MFA enforced by your identity provider</strong></td><td>{idpMfaEnforcementLabel(view.identityProvider.idpEnforcesMfa)}<span className="table-secondary"> · Corvis cannot see your provider&apos;s own settings; this is what Corvis support recorded.</span></td></tr>
+          <tr><td><strong>This session</strong></td><td>{mfaEvidenceLabel(view.currentSession.mfaUsed)}{view.currentSession.authContext ? <span className="table-secondary"> · authentication context <code>{view.currentSession.authContext}</code></span> : null}</td></tr>
+          {view.identityProvider.source === "tenant" && <tr><td><strong>Identity provider sign-out endpoint</strong></td><td>{view.identityProvider.endSessionEndpoint ? <code>{view.identityProvider.endSessionEndpoint}</code> : <span className="table-muted">Not recorded</span>}</td></tr>}
           <tr><td><strong>Users by sign-in method</strong></td><td>{view.signInMethods.length ? view.signInMethods.map((method) => `${METHOD_LABEL[method.authMethod]}: ${method.users}`).join(" · ") : <span className="table-muted">No active users</span>}</td></tr>
           <tr><td><strong>SCIM provisioning</strong></td><td>{view.scim.configured
             ? <>{view.scim.enabled ? "Enabled" : "Disabled"} · {view.scim.activeUsers} active {view.scim.activeUsers === 1 ? "user" : "users"}{view.scim.defaultWorkspaceName ? ` · new users join ${view.scim.defaultWorkspaceName}` : ""}{view.scim.defaultRole ? ` as ${view.scim.defaultRole}` : ""}{view.scim.updatedAt ? ` · updated ${time(view.scim.updatedAt)}` : ""}</>
@@ -163,6 +174,13 @@ export function SessionPolicySection() {
           <label className="check-field"><input type="checkbox" checked={max.none} disabled={busy !== null} onChange={(event) => setMax(event.target.checked ? { none: true, minutes: "" } : { none: false, minutes: String(view.bounds.maxSessionMinutes.max) })} /><span>No maximum length</span></label>
           <small id={ids.maxHint}>{view.bounds.maxSessionMinutes.min} to {view.bounds.maxSessionMinutes.max} minutes. Now: {sessionLimitLabel(policy.maxSessionMinutes)}.</small>
         </fieldset>
+        <fieldset className="form-field" aria-describedby={ids.ssoHint}>
+          <legend>Require single sign-on (SSO)</legend>
+          <label className="check-field"><input id={ids.sso} type="checkbox" checked={requireSso} disabled={busy !== null || (!requireSso && !ssoAvailable)} onChange={(event) => setRequireSso(event.target.checked)} /><span>Only accept sign-ins through our identity provider</span></label>
+          <small id={ids.ssoHint}>{ssoAvailable || policy.requireSso
+            ? "While on, only sign-ins through your organization's OpenID Connect identity provider, with its token binding, are accepted. SAML and gateway-asserted sign-ins are refused. Service accounts and scheduled work are not affected. Corvis will not turn this on from a session that it would refuse itself."
+            : "Not available yet: it needs your identity provider to be recorded as an active OpenID Connect provider with token binding on. Contact Corvis support to set that up."} Now: {policy.requireSso ? "required" : "not required"}.</small>
+        </fieldset>
         {limitProblem && <p id={ids.error} className="lineage-note tone-warning" role="alert">{sessionPolicyErrorMessage({ code: limitProblem }, "")}</p>}
         <label className="form-field" htmlFor={ids.reason}><span>Why are you changing this?</span>
           <textarea id={ids.reason} className="input-control" rows={2} maxLength={SESSION_POLICY_MAX_REASON_LENGTH} value={reason} disabled={busy !== null} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Align with our information security policy" />
@@ -180,7 +198,7 @@ export function SessionPolicySection() {
           <thead><tr><th>Person</th><th>Active sessions</th><th>Action</th></tr></thead>
           <tbody>{view.members.map((member) => <tr key={member.userId}>
             <td>{member.label}{member.isCurrentUser && <span className="table-secondary"> (you)</span>}</td>
-            <td>{member.activeSessions}</td>
+            <td>{member.activeSessions}{member.sessionsWithMfa > 0 && <span className="table-secondary"> ({member.sessionsWithMfa} with MFA reported)</span>}</td>
             <td>{member.isCurrentUser
               ? <span className="table-muted">Use your own sign-out</span>
               : signingOut === member.userId

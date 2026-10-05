@@ -62,16 +62,19 @@ const dataExports = [
 ];
 
 const sessionPolicy = {
-  policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
+  policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, requireSso: true, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
   bounds: { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } },
   // F7e/F7b: the organization's own recorded provider (token binding on) and its verified email domains are part of the scan.
-  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true },
+  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true,
+    // F7a/F7c: what Corvis support recorded about the provider's MFA enforcement and sign-out endpoint are part of the scan too.
+    idpEnforcesMfa: true, endSessionEndpoint: "https://login.example.test/logout" },
+  currentSession: { mfaUsed: true, authContext: "urn:example:mfa" },
   verifiedDomains: [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-08-12T09:00:00.000Z" }, { domain: "example.org", verificationMethod: "operator_attested", verifiedAt: "2026-09-01T09:00:00.000Z" }],
   scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
   signInMethods: [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }],
   members: [
-    { userId: "00000000-0000-4000-8000-0000000000d1", label: "admin@example.test", isCurrentUser: true, activeSessions: 1 },
-    { userId: "00000000-0000-4000-8000-0000000000d2", label: "morgan.lee@example.test", isCurrentUser: false, activeSessions: 2 },
+    { userId: "00000000-0000-4000-8000-0000000000d1", label: "admin@example.test", isCurrentUser: true, activeSessions: 1, sessionsWithMfa: 1 },
+    { userId: "00000000-0000-4000-8000-0000000000d2", label: "morgan.lee@example.test", isCurrentUser: false, activeSessions: 2, sessionsWithMfa: 0 },
   ],
 };
 
