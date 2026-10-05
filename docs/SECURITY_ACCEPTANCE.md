@@ -97,6 +97,8 @@ Customer/admin edge checks are recorded as skipped until those distinct runtimes
 
 `db/postgres/security_acceptance.sql` connects using the runtime DSN retrieved from GCP Secret Manager and performs a transaction-scoped two-tenant test against the live database. It proves tenant-isolated reads and denied authenticated control mutations using actual RLS, then rolls back synthetic data and temporary grants.
 
+When the runtime DSN belongs to a login role that is a member of the least-privilege `corvis_runtime` role (#227, [`RUNTIME_DATABASE_ROLE.md`](RUNTIME_DATABASE_ROLE.md)), the same entry point still works: `security_acceptance.sql` detects a non-superuser runtime member and hands over to `db/postgres/runtime_security_acceptance.sql`, which runs the whole probe as that role with no owner bypass (service-context reads and granted writes, refused DDL/append-only mutation/ungranted objects, and subject-bound tenant isolation through base tables and the security-invoker serving views). CI runs it as a runtime login on every PR (`db/postgres/tests/run-as-runtime.sh`).
+
 ## Large-upload acceptance
 
 Source-document bytes must continue to follow the direct-upload contract:

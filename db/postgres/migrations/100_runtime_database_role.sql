@@ -94,6 +94,21 @@ begin
 end;
 $$;
 
+-- pgcrypto's digest() is resolved through the `extensions` schema on the Supabase layout (apply_identity_lifecycle pins
+-- `search_path = pg_catalog, corvis_control, extensions, public`; a schema the caller cannot USE is skipped silently and
+-- the call then fails as "function digest does not exist"). USAGE only; extension functions are already PUBLIC-executable.
+do $$
+begin
+  if to_regnamespace('extensions') is not null then
+    begin
+      execute 'grant usage on schema extensions to corvis_runtime';
+    exception when insufficient_privilege then
+      raise warning 'could not grant USAGE on schema extensions to corvis_runtime; grant it as the schema owner';
+    end;
+  end if;
+end;
+$$;
+
 -- Tables: explicit privileges, plus the service-context policy where the table has row level security.
 do $$
 declare

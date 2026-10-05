@@ -349,6 +349,15 @@ begin
       raise exception 'corvis_runtime must have no access to schema %', r.schema_name;
     end if;
   end loop;
+  -- Where pgcrypto lives in `extensions` (the Supabase layout), apply_identity_lifecycle needs USAGE on it to find digest().
+  if to_regnamespace('extensions') is not null
+     and (not has_schema_privilege(rt, 'extensions', 'USAGE') or has_schema_privilege(rt, 'extensions', 'CREATE')) then
+    raise exception 'corvis_runtime needs USAGE (never CREATE) on schema extensions: apply_identity_lifecycle resolves pgcrypto digest() through it';
+  end if;
+  -- Policy expressions run with the caller's privileges: the service-context policy and the RLS helpers call auth.uid().
+  if to_regprocedure('auth.uid()') is not null and not has_function_privilege(rt, 'auth.uid()', 'EXECUTE') then
+    raise exception 'corvis_runtime cannot execute auth.uid(), so no row level security policy could be evaluated for it';
+  end if;
   -- A new corvis_* schema needs a deliberate decision.
   select string_agg(n.nspname, ', ' order by n.nspname) into offenders
   from pg_namespace n

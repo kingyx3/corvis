@@ -64,6 +64,10 @@ Version-controlled SQL owns:
 
 Terraform may create/manage the Supabase project and provider-supported project settings, but SQL migrations are the authoritative database contract.
 
+### Runtime database role
+
+Migration 100 (#227) adds `corvis_runtime`, a NOLOGIN least-privilege group role (no DDL, ownership, `BYPASSRLS` or superuser) with explicit schema/table/view/sequence/function grants for exactly what the application reaches, revokes `EXECUTE` on every `corvis_*` function from `PUBLIC` (except the two RLS helpers), makes the ten older `corvis_serving` views `security_invoker` and pins `search_path = pg_catalog, pg_temp` on the `SECURITY DEFINER` functions. The migration role stays separate and owns the objects; a deployment's application login role is a member of `corvis_runtime`. `db/postgres/tests/runtime-role-privileges.sql` fails when a table, view, sequence or function is added without a deliberate grant decision, so every migration that adds one must also update the manifest and the grant lists. The application's connection has not been switched yet; see [`RUNTIME_DATABASE_ROLE.md`](RUNTIME_DATABASE_ROLE.md) for the design and the step-by-step rollout and rollback.
+
 ### Migration replay and lineage assurance
 
 `db/postgres/migrate.ts` (backed by `lib/server/postgres-migration-runner.ts`) is a
