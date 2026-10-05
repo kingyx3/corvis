@@ -320,10 +320,19 @@ begin
   if exists (select 1 from pg_auth_members where member = rt) then
     raise exception 'corvis_runtime must not be a member of any role (it would inherit that role''s privileges)';
   end if;
-  select string_agg(distinct m.member::regrole::text, ', ') into offenders
-  from pg_auth_members m
-  join pg_roles mr on mr.oid = m.member
-  where m.roleid = rt and (mr.rolsuper or mr.rolbypassrls);
+  -- A superuser/BYPASSRLS role that can act as corvis_runtime (inherits it or can SET ROLE to it) would not be bound by RLS.
+  -- (Postgres 16+ makes the creating, non-superuser administrator an ADMIN-only member with neither option: harmless.)
+  if current_setting('server_version_num')::integer >= 160000 then
+    execute $q$
+      select string_agg(distinct m.member::regrole::text, ', ')
+      from pg_auth_members m join pg_roles mr on mr.oid = m.member
+      where m.roleid = $1 and (mr.rolsuper or mr.rolbypassrls) and (m.inherit_option or m.set_option)
+    $q$ into offenders using rt;
+  else
+    select string_agg(distinct m.member::regrole::text, ', ') into offenders
+    from pg_auth_members m join pg_roles mr on mr.oid = m.member
+    where m.roleid = rt and (mr.rolsuper or mr.rolbypassrls);
+  end if;
   if offenders is not null then
     raise exception 'a superuser or BYPASSRLS role is a member of corvis_runtime (RLS would not bind it): %', offenders;
   end if;

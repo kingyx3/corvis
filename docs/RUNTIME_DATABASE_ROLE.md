@@ -63,7 +63,7 @@ create policy corvis_runtime_service on <table> for all to corvis_runtime
 - a view is not `security_invoker`, or a `SECURITY DEFINER` function has a mutable `search_path`;
 - a runtime-reachable RLS table lacks exactly the `corvis_runtime_service` policy, or any other policy names the role or is allow-all.
 
-So a new table is **denied by default**: the author must add it to the manifest *and* to the grant lists in a migration, with a reason. Rules of thumb: grant only the verbs the code issues; a table written only through a `SECURITY DEFINER` function gets `SELECT` at most; an append-only table never gets `UPDATE`/`DELETE`; a new view is `security_invoker`; a new function is granted only if the application (or an invoker function it calls) calls it.
+So a new table is **denied by default**: the author must add it to the manifest *and* to the grant lists in a migration, with a reason. A granted table with row level security also needs the `corvis_runtime_service` policy shown above (copy the `do` block of migration 100: grant, then `drop policy if exists` and `create policy`), otherwise the role sees and writes nothing in it. Rules of thumb: grant only the verbs the code issues; a table written only through a `SECURITY DEFINER` function gets `SELECT` at most; an append-only table never gets `UPDATE`/`DELETE`; a new view is `security_invoker`; a new function is granted only if the application (or an invoker function it calls) calls it.
 
 ## Acceptance as the runtime role
 

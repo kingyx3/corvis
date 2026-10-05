@@ -3,7 +3,9 @@
 -- the role owns nothing and has no BYPASSRLS -- no owner bypass anywhere in the checked phases.
 --
 -- Fixtures are written by the session's own (owner) role; everything after `set local role corvis_runtime` runs with the
--- runtime role's real privileges. Run after the full migration chain and supabase-auth-fixture.sql on an isolated
+-- runtime role's real privileges. The connecting role must be able to SET ROLE to corvis_runtime (a superuser, as in CI,
+-- or a member granted with SET): on Postgres 16+ a non-superuser administrator needs `grant corvis_runtime to <role> with set true`.
+-- To run the same probe as the runtime login itself (no SET ROLE), use db/postgres/runtime_security_acceptance.sql. Run after the full migration chain and supabase-auth-fixture.sql on an isolated
 -- disposable database. The whole probe rolls back.
 --
 -- Contract proved here:
