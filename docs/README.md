@@ -39,7 +39,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 - [`CLIENT_PORTFOLIO_ATTRIBUTION.md`](./features/CLIENT_PORTFOLIO_ATTRIBUTION.md) — client portfolio attribution.
 - [`NOTIFICATIONS.md`](./features/NOTIFICATIONS.md) — email notifications: categories, recipient addresses, outbox delivery and provider activation.
 - [`POSITION_FINANCIAL_STATEMENTS.md`](./features/POSITION_FINANCIAL_STATEMENTS.md) — position financial statements and client analytics.
-- [`SERVICE_ACCOUNTS.md`](./features/SERVICE_ACCOUNTS.md) — customer self-service service accounts and API credentials (F6): design, assumptions and the open credential-verification decision.
+- [`SERVICE_ACCOUNTS.md`](./features/SERVICE_ACCOUNTS.md) — customer self-service service accounts and API credentials (F6): design, assumptions and the shipped credential-verification mechanism (#350).
 - [`SOURCE_CONNECTORS.md`](./features/SOURCE_CONNECTORS.md) — authorized GP portal/data-room connectors, customer credential setup, secure secret handling and automated acquisition.
 - [`SUPPORT.md`](./features/SUPPORT.md) — in-app help and support: Help menu, Contact support context (no financial data), error-state entry points and the `NEXT_PUBLIC_CORVIS_*` support/docs/status/release-notes configuration.
 - [`TENANT_SELF_SERVICE.md`](./features/TENANT_SELF_SERVICE.md) — customer tenant self-service.
@@ -78,7 +78,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 ### Point-in-time reviews (`reviews/`)
 
 - [Review workflows and personal preferences](./reviews/REVIEW_WORKFLOWS_AND_PREFERENCES.md) — exception investigation, original documents, saved views, formatting and rollout.
-- [`REPO_STRUCTURE_REVIEW.md`](./reviews/REPO_STRUCTURE_REVIEW.md) — repository directory-structure review: current layout, best-practice gaps, recommended target tree and staged migration plan.
+- [`REPO_STRUCTURE_REVIEW.md`](./reviews/REPO_STRUCTURE_REVIEW.md) — repository directory-structure review: a historical record of the pre-restructure layout, the gaps it found and the migration plan that #363 then carried out in full.
 - [`REVIEW_2026_09_30.md`](./reviews/REVIEW_2026_09_30.md) — repository/Confluence review findings, fixes, validation scope and outstanding risks.
 
 ### Operational runbooks (`ops/`)
