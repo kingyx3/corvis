@@ -2,7 +2,7 @@
 
 This directory provides the provider-neutral model gateway used **behind** the governed Corvis extraction harness. It is not itself a `CORVIS_EXTRACTION_ENDPOINT`: LiteLLM exposes model APIs, while the Corvis endpoint implements `/v1/extractions`, acquires authorized skill/evidence, enforces orchestration policy and writes immutable GCS candidate output.
 
-See [`../../docs/AI_MODEL_GATEWAY.md`](../../docs/architecture/AI_MODEL_GATEWAY.md) and [`../extractor/README.md`](../extractor/README.md) for the end-to-end contract.
+See [`../../docs/architecture/AI_MODEL_GATEWAY.md`](../../docs/architecture/AI_MODEL_GATEWAY.md) and [`../extractor/README.md`](../extractor/README.md) for the end-to-end contract.
 
 ## Files
 

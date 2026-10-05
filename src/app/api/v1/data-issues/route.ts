@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { parseReportCommand } from "@/core/data-issue";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { dataIssueErrorResponse, listDataIssuesResponse } from "@/lib/server/data-issue-http";
-import { dataIssueService } from "@/lib/server/data-issue-service";
-import { correlationId, json } from "@/lib/server/http";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { parseReportCommand } from "@/modules/governance/domain/data-issue";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { dataIssueErrorResponse, listDataIssuesResponse } from "@/modules/governance/server/data-issue-http";
+import { dataIssueService } from "@/modules/governance/server/data-issue-service";
+import { correlationId, json } from "@/platform/http/http";
 
 /**
  * Data issues (F5): a customer reports a doubt about a published figure. The caller sees their own reports; an

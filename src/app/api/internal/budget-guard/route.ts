@@ -1,9 +1,9 @@
-import { correlationId, json } from "@/lib/server/http";
+import { correlationId, json } from "@/platform/http/http";
 import {
   BudgetGuardRequestError,
   executeConfiguredBudgetGuardRequest,
-} from "@/lib/server/gcp-cost-guard";
-import { logEvent } from "@/lib/server/telemetry";
+} from "@/platform/gcp/gcp-cost-guard";
+import { logEvent } from "@/platform/telemetry";
 
 export async function POST(request: Request): Promise<Response> {
   const id = correlationId(request);

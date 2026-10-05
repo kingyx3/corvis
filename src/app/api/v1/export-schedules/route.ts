@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { parseCreateScheduleCommand } from "@/core/export-schedule";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { exportScheduleErrorResponse, listExportSchedulesResponse } from "@/lib/server/export-schedule-http";
-import { exportScheduleService } from "@/lib/server/export-schedule-service";
-import { correlationId, json } from "@/lib/server/http";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { parseCreateScheduleCommand } from "@/modules/delivery/domain/export-schedule";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { exportScheduleErrorResponse, listExportSchedulesResponse } from "@/modules/delivery/server/export-schedule-http";
+import { exportScheduleService } from "@/modules/delivery/server/export-schedule-service";
+import { correlationId, json } from "@/platform/http/http";
 
 /**
  * Scheduled exports (F4): a saved "Export this view" scope that requests a governed export when a matching snapshot is

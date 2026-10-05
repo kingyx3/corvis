@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { ResearchPinError, unpinResearchAnswer } from "@/lib/server/research-pins";
-import { isUuid } from "@/lib/server/uuid";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { ResearchPinError, unpinResearchAnswer } from "@/modules/research/server/research-pins";
+import { isUuid } from "@/platform/database/uuid";
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ pinId: string }> }) {
   const id = correlationId(request);

@@ -16,9 +16,9 @@ import {
   MigrationContractError,
   applyMigrations,
   planFromDirectory,
-} from "../../src/lib/server/postgres-migration-runner.ts";
-import { NativePostgresSqlApi, PostgresDriverError } from "../../src/lib/server/postgres-native.ts";
-import { postgres } from "../../src/lib/server/postgres.ts";
+} from "../../src/platform/database/postgres-migration-runner.ts";
+import { NativePostgresSqlApi, PostgresDriverError } from "../../src/platform/database/postgres-native.ts";
+import { postgres } from "../../src/platform/database/postgres.ts";
 
 const { values } = parseArgs({
   options: {

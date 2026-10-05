@@ -1,8 +1,8 @@
-import { getServerConfig } from "@/lib/server/config";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
-import { assertOperationsTenant } from "@/lib/server/tenant-provisioning";
+import { getServerConfig } from "@/platform/config";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres } from "@/platform/database/postgres";
+import { assertOperationsTenant } from "@/modules/identity-access/server/tenant-provisioning";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RESOURCE_TYPES = new Set(["fund", "document"]);

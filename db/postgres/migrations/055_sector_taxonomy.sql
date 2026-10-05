@@ -3,8 +3,8 @@
 --
 -- corvis_semantic.sector / sector_alias are global, versioned reference data
 -- (like corvis_semantic.metric_definition: no tenant_id, not tenant-private).
--- The seed rows must match src/core/sector-taxonomy.ts exactly; the
--- src/core/sector-taxonomy.test.ts contract enforces it.
+-- The seed rows must match core/sector-taxonomy.ts exactly; the
+-- core/sector-taxonomy.test.ts contract enforces it.
 --
 -- corvis_facts.company_sector_classification is the tenant's governed
 -- assignment of a portfolio company to one sector. It is append-only history:

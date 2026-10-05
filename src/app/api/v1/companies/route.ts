@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { keysetPage, paginate, parseLimit } from "@/lib/server/pagination";
-import { publicServingResources } from "@/lib/server/public-serving-resources";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { keysetPage, paginate, parseLimit } from "@/platform/http/pagination";
+import { publicServingResources } from "@/platform/public-serving-resources";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

@@ -1,8 +1,8 @@
-import { parseDeletionRequest } from "@/core/data-retention";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { customerDeletionService } from "@/lib/server/customer-deletion";
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/lib/server/data-governance";
-import { correlationId, json } from "@/lib/server/http";
+import { parseDeletionRequest } from "@/modules/governance/domain/data-retention";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { customerDeletionService } from "@/modules/governance/server/customer-deletion";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { correlationId, json } from "@/platform/http/http";
 
 /**
  * An Organization Admin asks for deletion of whole data classes of their organization's data (F10e, #325). The request

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scanArchitectureDrift } from "./scanners/architecture-drift.ts";
+import { matchesPrefix, scanArchitectureDrift } from "./scanners/architecture-drift.ts";
 import { scanDocumentationAuthority } from "./scanners/documentation-authority.ts";
 import { dedupeFindings } from "./classifiers/fingerprint.ts";
 import { scanInternalLinks } from "./scanners/internal-links.ts";
@@ -70,7 +70,7 @@ test("a line that asserts GitHub owns technical truth is not treated as deferral
 });
 
 test("non-documentation files are never scanned for authority findings", () => {
-  assert.deepEqual(scanDocumentationAuthority([file("src/lib/server/config.ts", "pricing pricing pricing")]), []);
+  assert.deepEqual(scanDocumentationAuthority([file("src/platform/config.ts", "pricing pricing pricing")]), []);
 });
 
 // ---- internal-links ----
@@ -128,25 +128,41 @@ test("percent-encoded link targets are still decoded before resolving", () => {
 
 // ---- architecture-drift ----
 
-test("src/core/ importing a server or adapter module is a critical finding", () => {
-  const findings = scanArchitectureDrift([file("src/core/workspace.ts", `import { x } from "@/lib/server/config";`)]);
+test("a module's domain layer importing its server layer is a critical finding", () => {
+  const findings = scanArchitectureDrift([file("src/modules/review/domain/decision.ts", `import { x } from "@/modules/review/server/service";`)]);
   assert.equal(findings.length, 1);
   assert.equal(findings[0]?.ruleId, "CL-ARCH-001");
   assert.equal(findings[0]?.severity, "critical");
 });
 
-test("src/features/ importing a server module is flagged, but importing src/core/ is not", () => {
-  const mixed = scanArchitectureDrift([file("src/features/review/view.ts", `import { a } from "@/core/enterprise";\nimport { b } from "@/lib/server/operations";`)]);
-  assert.equal(mixed.length, 1);
-  assert.equal(mixed[0]?.ruleId, "CL-ARCH-002");
+test("the shared domain kernel importing platform infrastructure is flagged, importing another domain module is not", () => {
+  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { x } from "@/platform/config";\nimport { y } from "@/modules/review/domain/decision";`)]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.ruleId, "CL-ARCH-001");
+});
+
+test("a module's ui layer importing server or adapter code is flagged, importing domain or composition code is not", () => {
+  const mixed = scanArchitectureDrift([file("src/modules/review/ui/view.ts", `import { a } from "@/shared/domain/enterprise";\nimport { c } from "@/composition/services";\nimport { b } from "@/modules/delivery/server/delivery";\nimport { d } from "../adapters/demo-store";`)]);
+  assert.deepEqual(mixed.map((finding) => finding.ruleId), ["CL-ARCH-002", "CL-ARCH-002"]);
+});
+
+test("package and node: imports are not resolved against the repository layout", () => {
+  assert.deepEqual(scanArchitectureDrift([file("src/modules/review/domain/decision.ts", `import { createHash } from "node:crypto";\nimport React from "react";`)]), []);
+});
+
+test("boundary prefixes treat * as exactly one path segment", () => {
+  assert.equal(matchesPrefix("src/modules/review/domain/decision.ts", "src/modules/*/domain/"), true);
+  assert.equal(matchesPrefix("src/modules/review/nested/domain/decision.ts", "src/modules/*/domain/"), false);
+  assert.equal(matchesPrefix("src/platform/http/http.ts", "src/platform/"), true);
+  assert.equal(matchesPrefix("srcXplatform/http.ts", "src.platform/"), false);
 });
 
 test("a .test.ts file is never scanned for architecture drift", () => {
-  assert.deepEqual(scanArchitectureDrift([file("src/core/workspace.test.ts", `import { x } from "@/lib/server/config";`)]), []);
+  assert.deepEqual(scanArchitectureDrift([file("src/modules/review/domain/decision.test.ts", `import { x } from "@/platform/config";`)]), []);
 });
 
 test("a boundary violation is reported once per forbidden prefix even with multiple offending imports", () => {
-  const findings = scanArchitectureDrift([file("src/core/workspace.ts", `import { a } from "@/lib/server/config";\nimport { b } from "@/lib/server/platform";`)]);
+  const findings = scanArchitectureDrift([file("src/shared/domain/workspace.ts", `import { a } from "@/platform/config";\nimport { b } from "@/platform/platform";`)]);
   assert.equal(findings.length, 1);
 });
 

@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { deactivateTenantAccessMember, TenantAccessError } from "@/lib/server/tenant-access";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { deactivateTenantAccessMember, TenantAccessError } from "@/modules/identity-access/server/tenant-access";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

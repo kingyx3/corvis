@@ -1,22 +1,22 @@
 import { timingSafeEqual } from "crypto";
-import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/lib/server/delivery";
-import { getServerConfig } from "@/lib/server/config";
-import { sweepExpiredExportDownloadGrants } from "@/lib/server/export-grant-sweep";
-import { processDueExportSchedules } from "@/lib/server/export-schedule";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { sweepExpiredIdempotencyKeys } from "@/lib/server/idempotency";
-import { dispatchConfiguredProcessingTransport } from "@/lib/server/processing-transport";
-import { verifyConfiguredProcessingWorkerIdentity } from "@/lib/server/processing-worker-ingress";
-import { processEmailDigests, processEmailOutbox } from "@/lib/server/notifications";
-import { sweepServiceAccountExpiry } from "@/lib/server/service-account-expiry-sweep";
-import { sweepTenantExports } from "@/lib/server/tenant-export-sweep";
-import { sweepExpiredSourceSecrets } from "@/lib/server/source-connector-runtime";
-import { processDueSourceSyncs } from "@/lib/server/source-sync-scheduler";
-import { processApprovedTenantExports } from "@/lib/server/tenant-export-worker";
-import { logEvent } from "@/lib/server/telemetry";
-import { releaseScannedUploads } from "@/lib/server/upload-release";
-import { sweepTenantSessionActivity } from "@/lib/server/session-activity-sweep";
-import { sweepUploadSessions } from "@/lib/server/upload-sweep";
+import { processQueuedExports, processWebhookDeliveries, settleDeliveryTasks, sweepUnsubscribedWebhookFanoutEvents } from "@/modules/delivery/server/delivery";
+import { getServerConfig } from "@/platform/config";
+import { sweepExpiredExportDownloadGrants } from "@/modules/delivery/server/export-grant-sweep";
+import { processDueExportSchedules } from "@/modules/delivery/server/export-schedule";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { sweepExpiredIdempotencyKeys } from "@/platform/http/idempotency";
+import { dispatchConfiguredProcessingTransport } from "@/modules/processing/server/processing-transport";
+import { verifyConfiguredProcessingWorkerIdentity } from "@/modules/processing/server/processing-worker-ingress";
+import { processEmailDigests, processEmailOutbox } from "@/modules/notifications/server/notifications";
+import { sweepServiceAccountExpiry } from "@/modules/identity-access/server/service-account-expiry-sweep";
+import { sweepTenantExports } from "@/modules/delivery/server/tenant-export-sweep";
+import { sweepExpiredSourceSecrets } from "@/modules/sources/server/source-connector-runtime";
+import { processDueSourceSyncs } from "@/modules/sources/server/source-sync-scheduler";
+import { processApprovedTenantExports } from "@/modules/delivery/server/tenant-export-worker";
+import { logEvent } from "@/platform/telemetry";
+import { releaseScannedUploads } from "@/modules/sources/server/upload-release";
+import { sweepTenantSessionActivity } from "@/modules/identity-access/server/session-activity-sweep";
+import { sweepUploadSessions } from "@/modules/sources/server/upload-sweep";
 
 function safeEqual(actual:string|null,expected?:string){if(!actual||!expected)return false;const a=Buffer.from(actual),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b);}
 

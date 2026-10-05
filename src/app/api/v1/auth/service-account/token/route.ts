@@ -1,8 +1,8 @@
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
-import { AuthenticationError } from "@/lib/server/request-context";
-import { exchangeServiceAccountCredential, serviceAccountBearer } from "@/lib/server/service-account-exchange";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres } from "@/platform/database/postgres";
+import { AuthenticationError } from "@/platform/http/request-context";
+import { exchangeServiceAccountCredential, serviceAccountBearer } from "@/modules/identity-access/server/service-account-exchange";
 
 /**
  * Exchanges a Corvis-issued service-account credential for a five-minute signed identity assertion.

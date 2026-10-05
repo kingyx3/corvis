@@ -9,8 +9,8 @@ async function read(path: string): Promise<string> {
 
 /**
  * The scheduled /api/internal/delivery drain runs on the worker. It deletes and
- * overwrites objects in the source bucket (src/lib/server/upload-sweep.ts,
- * src/lib/server/uploads.ts purgeObject, src/lib/server/export-delivery.ts
+ * overwrites objects in the source bucket (src/modules/sources/server/upload-sweep.ts,
+ * src/modules/sources/server/uploads.ts purgeObject, src/modules/delivery/server/export-delivery.ts
  * deleteExportAttemptArtifacts), which needs storage.objects.delete: Viewer and
  * Creator are not enough, and an unbounded Object User/Admin grant is too much.
  */
@@ -37,9 +37,9 @@ test("the worker may mutate only the lifecycle object prefixes of the source buc
   assert.doesNotMatch(main, /role\s*=\s*"roles\/storage\.(objectAdmin|admin)"[\s\S]{0,120}google_service_account\.worker/);
 
   // The prefixes must match what the code really writes/deletes.
-  const uploads = await read("src/lib/server/uploads.ts");
-  const sweep = await read("src/lib/server/upload-sweep.ts");
-  const exportsSource = await read("src/lib/server/export-delivery.ts");
+  const uploads = await read("src/modules/sources/server/uploads.ts");
+  const sweep = await read("src/modules/sources/server/upload-sweep.ts");
+  const exportsSource = await read("src/modules/delivery/server/export-delivery.ts");
   assert.match(uploads, /`tenant=\$\{safeName\(identity\.tenantId\)\}\//);
   assert.match(uploads, /`_corvis\/upload-sessions\/tenant=/);
   assert.match(sweep, /`_corvis\/upload-sweep-cursors\/tenant=/);

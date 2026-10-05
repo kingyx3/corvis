@@ -1,7 +1,7 @@
-import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { parseLimit } from "@/lib/server/pagination";
-import { listWebhookDeliveries } from "@/lib/server/webhook-subscriptions";
+import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { parseLimit } from "@/platform/http/pagination";
+import { listWebhookDeliveries } from "@/modules/delivery/server/webhook-subscriptions";
 
 /**
  * Customer-visible delivery diagnostics for one subscription, newest first (created_at desc, delivery_id desc).

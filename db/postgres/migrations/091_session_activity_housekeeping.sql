@@ -3,14 +3,14 @@
 --
 -- tenant_session_activity (087) holds one row per session Corvis has seen and nothing ever removed one, so it grew with
 -- every sign-in for as long as the tenant existed. This migration adds the purge the delivery tick runs
--- (src/lib/server/session-activity-sweep.ts). What it must never do is touch a session that could still matter:
+-- (lib/server/session-activity-sweep.ts). What it must never do is touch a session that could still matter:
 --
 --   * Enforcement. A session is measured from the row's first_seen_at (maximum length, at most 10080 minutes) and
 --     last_seen_at (idle timeout, at most 480 minutes). A row whose last_seen_at is older than the longest maximum
 --     session has also been first seen longer ago than that, so under every policy the bounds allow it is already past
 --     both limits and has nothing left to decide. The function refuses any retention shorter than that longest session
 --     plus a day of margin (11520 minutes), so no caller, configuration or typo can purge a session a limit is still
---     measuring. The retention actually used is much longer (90 days, src/core/session-policy.ts): the longer the window, the
+--     measuring. The retention actually used is much longer (90 days, core/session-policy.ts): the longer the window, the
 --     longer a session that went quiet is still recognised as the same session rather than a new one.
 --   * Revocation. Sign-out-everywhere and revoked sessions live in corvis_control.session_revocation (008), which every
 --     authoritative request consults on its own, before the policy. This function never reads or writes it, so a revoked

@@ -1,7 +1,7 @@
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { getNotificationSettings, NotificationPreferenceError, updateNotificationPreferences } from "@/lib/server/notifications";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { getNotificationSettings, NotificationPreferenceError, updateNotificationPreferences } from "@/modules/notifications/server/notifications";
 
 /**
  * The signed-in person's own email notification settings. Any authenticated

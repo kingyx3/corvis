@@ -29,7 +29,7 @@ test.beforeAll(async ({ request }) => {
 });
 
 // A tenant whose id starts with "sso-ready-" illustrates an organization whose provider is recorded with token binding on, with
-// MFA enforcement and a sign-out endpoint recorded (src/adapters/demo/session-policy-store.ts); any other illustrates none of that.
+// MFA enforcement and a sign-out endpoint recorded (src/modules/identity-access/adapters/session-policy-store.ts); any other illustrates none of that.
 async function isolate(page: Page, roles = "admin", options: { ssoReady?: boolean; extraHeaders?: Record<string, string> } = {}): Promise<{ tenant: string; headers: Record<string, string> }> {
   const tenant = `${options.ssoReady ? "sso-ready-" : "e2e-"}${randomUUID()}`;
   const headers = { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": roles, ...options.extraHeaders };

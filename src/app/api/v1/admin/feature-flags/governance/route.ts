@@ -1,6 +1,6 @@
-import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { listFeatureFlagGovernance } from "@/lib/server/feature-flags";
-import { apiError, correlationId, json } from "@/lib/server/http";
+import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { listFeatureFlagGovernance } from "@/modules/admin/server/feature-flags";
+import { apiError, correlationId, json } from "@/platform/http/http";
 
 /**
  * Authoritative flag-governance report: every registered flag's rollout,

@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
-import { listTransportDeadLetters, requeueTransportDeadLetter, type TransportRequeueResult } from "@/lib/server/processing-transport-recovery";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres } from "@/platform/database/postgres";
+import { listTransportDeadLetters, requeueTransportDeadLetter, type TransportRequeueResult } from "@/modules/processing/server/processing-transport-recovery";
 
 /**
  * Processing outbox events the transport dead-lettered (#230). GET lists them for the tenant;

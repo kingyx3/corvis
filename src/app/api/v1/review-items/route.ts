@@ -1,9 +1,9 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { correlationId, json } from "@/lib/server/http";
-import { parseLimit } from "@/lib/server/pagination";
-import { reviewDiscussionErrorResponse } from "@/lib/server/review-discussion-http";
-import { reviewDiscussionService } from "@/lib/server/review-discussion-service";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { correlationId, json } from "@/platform/http/http";
+import { parseLimit } from "@/platform/http/pagination";
+import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
+import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";
 
 /**
  * Review items (F3) that have an assignee or a discussion in the caller's workspace, with who holds each and how many

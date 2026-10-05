@@ -1,7 +1,7 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { getPhysicalExportStatus } from "@/lib/server/physical-exports";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { getPhysicalExportStatus } from "@/modules/delivery/server/physical-exports";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

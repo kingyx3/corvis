@@ -1,14 +1,14 @@
-import { assertPermission, type ResearchStreamEvent } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
+import { assertPermission, type ResearchStreamEvent } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { platform } from "@/platform/platform";
 import {
   parseResearchQuestion,
   ResearchCancelledError,
   ResearchProviderError,
   ResearchTimeoutError,
-} from "@/lib/server/research";
-import { logEvent } from "@/lib/server/telemetry";
+} from "@/modules/research/server/research";
+import { logEvent } from "@/platform/telemetry";
 
 function errorEvent(error: unknown): ResearchStreamEvent {
   if (error instanceof ResearchTimeoutError) return { type: "error", code: "research_timeout" };

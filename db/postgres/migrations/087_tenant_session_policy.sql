@@ -29,7 +29,7 @@ begin;
 
 create table if not exists corvis_control.tenant_session_policy (
   tenant_id uuid primary key references corvis_control.tenant(tenant_id),
-  -- null: the organization sets no limit. The bounds are the Corvis-defined ones (src/core/session-policy.ts).
+  -- null: the organization sets no limit. The bounds are the Corvis-defined ones (core/session-policy.ts).
   idle_timeout_minutes integer check (idle_timeout_minutes between 15 and 480),
   max_session_minutes integer check (max_session_minutes between 60 and 10080),
   version integer not null default 1 check (version >= 1),
@@ -275,7 +275,7 @@ begin
 end;
 $$;
 
--- The F7 notification category (docs/features/NOTIFICATIONS.md): outbox rows may now name it. It is a mandatory security
+-- The F7 notification category (docs/NOTIFICATIONS.md): outbox rows may now name it. It is a mandatory security
 -- notice to Organization Admins, so it is deliberately not a preference category.
 alter table corvis_control.email_outbox drop constraint if exists email_outbox_category_check;
 alter table corvis_control.email_outbox add constraint email_outbox_category_check check (category in (

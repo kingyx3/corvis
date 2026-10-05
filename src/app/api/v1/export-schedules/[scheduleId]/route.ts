@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { parseSchedulePatch } from "@/core/export-schedule";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { exportScheduleErrorResponse } from "@/lib/server/export-schedule-http";
-import { exportScheduleService } from "@/lib/server/export-schedule-service";
-import { correlationId, json } from "@/lib/server/http";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { parseSchedulePatch } from "@/modules/delivery/domain/export-schedule";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { exportScheduleErrorResponse } from "@/modules/delivery/server/export-schedule-http";
+import { exportScheduleService } from "@/modules/delivery/server/export-schedule-service";
+import { correlationId, json } from "@/platform/http/http";
 
 /** One schedule, for its owner or an Organization Admin. Anyone else gets the same 404 as a missing schedule. */
 export async function GET(request: Request, context: { params: Promise<{ scheduleId: string }> }) {

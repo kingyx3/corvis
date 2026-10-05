@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
-import { PreferenceProvider } from "@/features/preferences/preference-provider";
+import { PreferenceProvider } from "@/modules/workspace/ui/preferences/preference-provider";
 import "./globals.css";
 import "./design-system.css";
 

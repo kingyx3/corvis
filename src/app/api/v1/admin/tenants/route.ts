@@ -1,14 +1,14 @@
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres, withTransaction } from "@/lib/server/postgres";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres, withTransaction } from "@/platform/database/postgres";
 import {
   assertOperationsTenant,
   normalizeProvisionTenantCommand,
   PostgresTenantProvisioningRepository,
-} from "@/lib/server/tenant-provisioning";
-import { createTenantInvitation } from "@/lib/server/tenant-invitations";
-import { deliverInvitationEmail } from "@/lib/server/notifications";
+} from "@/modules/identity-access/server/tenant-provisioning";
+import { createTenantInvitation } from "@/modules/identity-access/server/tenant-invitations";
+import { deliverInvitationEmail } from "@/modules/notifications/server/notifications";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

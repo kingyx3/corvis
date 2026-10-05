@@ -147,7 +147,7 @@ create trigger review_item_thread_no_truncate
   before truncate on corvis_control.review_item_thread
   for each statement execute function corvis_control.reject_review_item_thread_removal();
 
--- The F3 notification category (docs/features/NOTIFICATIONS.md): outbox rows and per-user preferences may now name it.
+-- The F3 notification category (docs/NOTIFICATIONS.md): outbox rows and per-user preferences may now name it.
 alter table corvis_control.email_outbox drop constraint if exists email_outbox_category_check;
 alter table corvis_control.email_outbox add constraint email_outbox_category_check check (category in (
   'invitation','export_ready','pinned_fund_published','source_attention',

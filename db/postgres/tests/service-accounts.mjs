@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for service accounts (F6, #262), through the application code: the Postgres backend in
-// src/lib/server/service-account.ts, the credential record check in src/lib/server/service-account-credential.ts and the
-// existing authorization lookup (src/lib/server/authorization.ts) drive the SQL of migration 088 inside one transaction that
+// src/modules/identity-access/server/service-account.ts, the credential record check in src/modules/identity-access/server/service-account-credential.ts and the
+// existing authorization lookup (src/modules/identity-access/server/authorization.ts) drive the SQL of migration 088 inside one transaction that
 // is always rolled back. Covers what the pure-SQL test (service-accounts.sql) cannot: that a created account resolves
 // through the EXISTING membership/lifecycle-grant authorization (and stops resolving when disabled), that the secret is
 // shown once and stored nowhere, that verification enforces rotation overlap / immediate revocation / expiry, that the
@@ -12,19 +12,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
-import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 
-// src/lib/server/http.ts (reached through the tenant-admin self-service module) uses the Next.js "@/..." alias.
-register(new URL('../../../src/lib/server/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
-const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../src/lib/server/service-account.ts');
-const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../src/lib/server/service-account-credential.ts');
-const { PostgresMembershipAuthorizationRepository } = await import('../../../src/lib/server/authorization.ts');
-const { PostgresOperationsRepository } = await import('../../../src/lib/server/platform-repositories.ts');
-const { listTenantAccessAudit } = await import('../../../src/lib/server/tenant-admin-self-service.ts');
-const { listTenantAccessMembers } = await import('../../../src/lib/server/tenant-access.ts');
-const { sweepServiceAccountExpiry } = await import('../../../src/lib/server/service-account-expiry-sweep.ts');
-const { processEmailOutbox } = await import('../../../src/lib/server/notifications.ts');
-const { RecordingEmailSender } = await import('../../../src/adapters/email/recording-email-sender.ts');
+// src/platform/http/http.ts (reached through the tenant-admin self-service module) uses the Next.js "@/..." alias.
+register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url), import.meta.url);
+const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../src/modules/identity-access/server/service-account.ts');
+const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../src/modules/identity-access/server/service-account-credential.ts');
+const { PostgresMembershipAuthorizationRepository } = await import('../../../src/modules/identity-access/server/authorization.ts');
+const { PostgresOperationsRepository } = await import('../../../src/platform/platform-repositories.ts');
+const { listTenantAccessAudit } = await import('../../../src/modules/identity-access/server/tenant-admin-self-service.ts');
+const { listTenantAccessMembers } = await import('../../../src/modules/identity-access/server/tenant-access.ts');
+const { sweepServiceAccountExpiry } = await import('../../../src/modules/identity-access/server/service-account-expiry-sweep.ts');
+const { processEmailOutbox } = await import('../../../src/modules/notifications/server/notifications.ts');
+const { RecordingEmailSender } = await import('../../../src/modules/notifications/adapters/recording-email-sender.ts');
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

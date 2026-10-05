@@ -1,16 +1,16 @@
 "use client";
-import { displayDate } from "@/lib/display-format";
-import { usePreferences } from "@/features/preferences/preference-provider";
+import { displayDate } from "@/shared/lib/display-format";
+import { usePreferences } from "@/modules/workspace/ui/preferences/preference-provider";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { bulkInviteErrorText, tenantAdminRows } from "@/lib/bulk-invite-csv";
-import { throwIfUnauthenticated } from "@/lib/api-errors";
-import { downloadText } from "@/lib/download";
-import { workspaceContextHeaders } from "@/lib/workspace-context";
-import { DataExportApprovalNotice, DataGovernanceSections } from "@/features/access/data-governance-section";
-import { SessionPolicySection } from "@/features/access/session-policy-section";
-import { ServiceAccountsSection } from "@/features/access/service-accounts-section";
+import { bulkInviteErrorText, tenantAdminRows } from "@/modules/identity-access/domain/bulk-invite-csv";
+import { throwIfUnauthenticated } from "@/shared/lib/api-errors";
+import { downloadText } from "@/shared/lib/download";
+import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
+import { DataExportApprovalNotice, DataGovernanceSections } from "@/modules/identity-access/ui/access/data-governance-section";
+import { SessionPolicySection } from "@/modules/identity-access/ui/access/session-policy-section";
+import { ServiceAccountsSection } from "@/modules/identity-access/ui/access/service-accounts-section";
 
 type AuditEvent={auditEventId:string;occurredAt:string;workspaceId?:string;actorSubject:string;action:string;targetType:string;targetId:string;outcome:string;metadata:Record<string,unknown>};
 type Grant={supportGrantId:string;workspaceId:string;roleName:string;purpose:string;validFrom:string;validUntil:string;status:"pending_ack"|"active";requiresTenantAck:boolean;subject:string};

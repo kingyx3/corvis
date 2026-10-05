@@ -72,7 +72,7 @@ test("admin presentation runtime has a distinct identity and no data-plane grant
 test("admin application surface uses only allowlisted privileged APIs", async () => {
   const surface = [
     await read("src/app/admin/page.tsx"),
-    await read("src/features/admin/governance-forms.tsx"),
+    await read("src/modules/admin/ui/governance-forms.tsx"),
   ].join("\n");
 
   for (const endpoint of [

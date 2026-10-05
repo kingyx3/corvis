@@ -1,9 +1,9 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { parseConnectRequest, parseSecret, redactedConnection } from "@/lib/server/source-connect-http";
-import { enforceSourceConnectAttemptLimit } from "@/lib/server/source-connect-limits";
-import { sourceConnectionService } from "@/lib/server/source-connection-service";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { parseConnectRequest, parseSecret, redactedConnection } from "@/modules/sources/server/source-connect-http";
+import { enforceSourceConnectAttemptLimit } from "@/modules/sources/server/source-connect-limits";
+import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
 
 /**
  * Connects an approved provider with a credential the administrator typed (the wizard's direct-credential path).

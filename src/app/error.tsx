@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { ContactSupportLink } from "@/components/help/contact-support-link";
-import { reportClientError } from "@/lib/client-error-report";
+import { ContactSupportLink } from "@/modules/support/ui/contact-support-link";
+import { reportClientError } from "@/shared/lib/client-error-report";
 
 export default function ErrorBoundary({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {

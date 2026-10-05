@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { workspaceContextHeaders } from "@/lib/workspace-context";
+import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
 
 type Health={tenantId:string;tenantName:string;workspaceCount:number;tenantAdminCount:number;activeSupportGrants:number;pendingSupportAcknowledgements:number;pendingInvitations:number};
 

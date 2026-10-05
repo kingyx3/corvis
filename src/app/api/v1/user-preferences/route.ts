@@ -1,7 +1,7 @@
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { getUserPreferences, saveDisplayPreferences, mutateSavedView, PreferenceError } from "@/lib/server/user-preferences";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { getUserPreferences, saveDisplayPreferences, mutateSavedView, PreferenceError } from "@/modules/workspace/server/user-preferences";
 export async function GET(request: Request) {
   const id = correlationId(request);
   try { const identity = await resolveAuthorizedRequestIdentity(request); return json({ data: await getUserPreferences(identity), correlationId: id }); } catch (error) { return apiError(error, id); }

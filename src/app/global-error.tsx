@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { useSupportRequest } from "@/components/help/use-support-request";
-import { reportClientError } from "@/lib/client-error-report";
+import { useSupportRequest } from "@/modules/support/ui/use-support-request";
+import { reportClientError } from "@/shared/lib/client-error-report";
 
 // Replaces the root layout when it (or the tree above src/app/error.tsx) fails, so it must render its
 // own document. globals.css is not loaded here, hence the self-contained inline styles; they
 // follow the OS color scheme like the built-in error page. "Contact support" is built by the same
-// helper as every other entry point (src/lib/support.ts) and quotes the error digest as the reference.
+// helper as every other entry point (src/modules/support/domain/support.ts) and quotes the error digest as the reference.
 export default function GlobalError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
     reportClientError("global-error", error);

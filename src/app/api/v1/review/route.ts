@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { assertPermission, type ReviewDecision } from "@/core/enterprise";
-import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { PostgresProductionPlatform, platform } from "@/lib/server/platform";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { isNonEmptyString, MAX_VERSION } from "@/lib/server/request-validation";
+import { assertPermission, type ReviewDecision } from "@/shared/domain/enterprise";
+import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
+import { PostgresProductionPlatform, platform } from "@/platform/platform";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { isNonEmptyString, MAX_VERSION } from "@/platform/http/request-validation";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

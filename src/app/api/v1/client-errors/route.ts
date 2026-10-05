@@ -1,13 +1,13 @@
-import { parseClientErrorEvent } from "@/lib/client-error-report";
-import { readBoundedRequestText, RequestBodyTooLargeError } from "@/lib/server/bounded-body";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { logEvent } from "@/lib/server/telemetry";
+import { parseClientErrorEvent } from "@/shared/lib/client-error-report";
+import { readBoundedRequestText, RequestBodyTooLargeError } from "@/platform/http/bounded-body";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { logEvent } from "@/platform/telemetry";
 
 const MAX_BODY_BYTES = 2048;
 
 /**
- * Client error ingest (#245). The browser posts the PII-free event built by `src/lib/client-error-report.ts`;
+ * Client error ingest (#245). The browser posts the PII-free event built by `src/shared/lib/client-error-report.ts`;
  * it is accepted only in that exact shape and written to the server log, attributed to the authenticated
  * tenant and workspace. Authentication (and so the per-subject rate limit) is required, so the endpoint
  * cannot be used to write into logs anonymously.

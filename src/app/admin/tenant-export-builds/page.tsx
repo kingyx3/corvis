@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { StatusPill } from "@/components/ui/status-pill";
-import { displayDate } from "@/lib/display-format";
-import { workspaceContextHeaders } from "@/lib/workspace-context";
+import { StatusPill } from "@/shared/ui/status-pill";
+import { displayDate } from "@/shared/lib/display-format";
+import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
 
 /**
  * Corvis operations (F10f, #326): full tenant data exports whose build failed or is being retried, across tenants. The

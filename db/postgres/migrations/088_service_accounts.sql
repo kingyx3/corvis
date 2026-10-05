@@ -3,7 +3,7 @@
 -- 040/078 resource_entitlement, 083/084 server-managed case/function template this follows).
 --
 -- A service account is a non-human identity under the EXISTING authorization model, with no parallel API-scope plane
--- (#11): creating one writes the rows the authorization lookup (src/lib/server/authorization.ts) already resolves for a
+-- (#11): creating one writes the rows the authorization lookup (lib/server/authorization.ts) already resolves for a
 -- `service_account` subject, in one statement -
 --   identity_subject (auth_method 'service_account', subject 'service-account:<id>', a fresh user id)
 --   membership       (one workspace, one role: reviewer | analyst | viewer; never an administrator role)
@@ -25,7 +25,7 @@
 -- predicates after request authorization has succeeded.
 --
 -- This migration does NOT define how a presented credential is accepted at the API edge (see
--- docs/features/SERVICE_ACCOUNTS.md, "Decision needed"): it stores and lifecycles credentials and nothing here authenticates
+-- docs/SERVICE_ACCOUNTS.md, "Decision needed"): it stores and lifecycles credentials and nothing here authenticates
 -- a request.
 
 begin;

@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { setFeatureFlagKillSwitch } from "@/lib/server/feature-flags";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
-import { postgres, withTransaction } from "@/lib/server/postgres";
+import { setFeatureFlagKillSwitch } from "@/modules/admin/server/feature-flags";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { postgres, withTransaction } from "@/platform/database/postgres";
 
 /**
  * Emergency single-flag stop. Engaging a kill switch denies the flag on every

@@ -1,6 +1,6 @@
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/lib/server/data-governance";
-import { correlationId, json } from "@/lib/server/http";
-import { tenantExportService } from "@/lib/server/tenant-export-service";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { correlationId, json } from "@/platform/http/http";
+import { tenantExportService } from "@/modules/delivery/server/tenant-export-service";
 
 /**
  * Redeems a single-use download link (issued by `POST /data-exports/{exportId}` with `prepare_download`) and streams the

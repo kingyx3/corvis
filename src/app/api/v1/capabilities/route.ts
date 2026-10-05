@@ -1,7 +1,7 @@
-import { hasPermission, type Permission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { isFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/lib/server/feature-flags";
-import { apiError, correlationId, json } from "@/lib/server/http";
+import { hasPermission, type Permission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { isFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/modules/admin/server/feature-flags";
+import { apiError, correlationId, json } from "@/platform/http/http";
 
 const PERMISSIONS: readonly Permission[] = [
   "documents:read",

@@ -1,7 +1,7 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { approvedSourceProviders, providerDescriptor } from "@/lib/server/source-providers";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { approvedSourceProviders, providerDescriptor } from "@/modules/sources/server/source-providers";
 
 /**
  * The approved providers the "Connect source" wizard may offer, each with the plain-language access description

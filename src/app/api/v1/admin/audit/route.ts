@@ -1,6 +1,6 @@
-import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { AuditQueryValidationError, listAuditRecords } from "@/lib/server/audit-query";
-import { apiError, correlationId, json } from "@/lib/server/http";
+import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { AuditQueryValidationError, listAuditRecords } from "@/modules/governance/server/audit-query";
+import { apiError, correlationId, json } from "@/platform/http/http";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { changeTenantMemberRole, TenantAccessError } from "@/lib/server/tenant-access";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { changeTenantMemberRole, TenantAccessError } from "@/modules/identity-access/server/tenant-access";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

@@ -143,7 +143,7 @@ create trigger data_issue_case_guard_update
   before update on corvis_control.data_issue_case
   for each row execute function corvis_control.guard_data_issue_case_update();
 
--- The F5 notification category (docs/features/NOTIFICATIONS.md): outbox rows and per-user preferences may now name it.
+-- The F5 notification category (docs/NOTIFICATIONS.md): outbox rows and per-user preferences may now name it.
 alter table corvis_control.email_outbox drop constraint if exists email_outbox_category_check;
 alter table corvis_control.email_outbox add constraint email_outbox_category_check check (category in (
   'invitation','export_ready','pinned_fund_published','source_attention',

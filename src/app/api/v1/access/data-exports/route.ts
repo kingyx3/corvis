@@ -1,9 +1,9 @@
-import { parseTenantExportRequest } from "@/core/tenant-export";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/lib/server/data-governance";
-import { correlationId, json } from "@/lib/server/http";
-import { parseLimit } from "@/lib/server/pagination";
-import { tenantExportService } from "@/lib/server/tenant-export-service";
+import { parseTenantExportRequest } from "@/modules/delivery/domain/tenant-export";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { correlationId, json } from "@/platform/http/http";
+import { parseLimit } from "@/platform/http/pagination";
+import { tenantExportService } from "@/modules/delivery/server/tenant-export-service";
 
 /**
  * Full tenant data export (F10, #266). An Organization Admin lists the organization's export requests and asks for a

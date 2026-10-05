@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { ReviewDiscussionValidationError, parseCommentCommand, parseSubjectRef } from "@/core/review-discussion";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { correlationId, json } from "@/lib/server/http";
-import { reviewDiscussionErrorResponse } from "@/lib/server/review-discussion-http";
-import { reviewDiscussionService } from "@/lib/server/review-discussion-service";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { ReviewDiscussionValidationError, parseCommentCommand, parseSubjectRef } from "@/modules/review/domain/review-discussion";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { correlationId, json } from "@/platform/http/http";
+import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
+import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";
 
 type Context = { params: Promise<{ subjectKind: string; subjectId: string }> };
 

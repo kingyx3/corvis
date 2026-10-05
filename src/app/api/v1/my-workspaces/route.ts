@@ -1,7 +1,7 @@
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres } from "@/platform/database/postgres";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

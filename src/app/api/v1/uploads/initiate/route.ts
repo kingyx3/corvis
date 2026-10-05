@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import { assertPermission } from "@/core/enterprise";
-import { uploadIdempotencyKey, uploads } from "@/lib/server/uploads";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { durationMetric } from "@/lib/server/telemetry";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { uploadIdempotencyKey, uploads } from "@/modules/sources/server/uploads";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { durationMetric } from "@/platform/telemetry";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

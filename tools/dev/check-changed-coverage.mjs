@@ -3,7 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const COVERAGE_ROOTS = ["src/core/", "src/lib/", "services/control-loop/", "src/adapters/upload/"];
+// Keep in step with the --test-coverage-include / --test-coverage-exclude globs in package.json.
+const COVERAGE_SCOPES = [
+  /^src\/modules\/[^/]+\/(?:domain|server)\//,
+  /^src\/platform\/(?!demo\/)/,
+  /^src\/shared\/(?:domain|lib)\//,
+  /^src\/modules\/sources\/adapters\/upload\//,
+  /^services\/control-loop\//,
+];
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 function git(args, options = {}) {
@@ -17,7 +24,7 @@ function normalizeRepoPath(value) {
 }
 
 function eligible(file) {
-  return COVERAGE_ROOTS.some((root) => file.startsWith(root))
+  return COVERAGE_SCOPES.some((scope) => scope.test(file))
     && file.endsWith(".ts")
     && !file.endsWith(".d.ts")
     && !TEST_FILE.test(file)
@@ -88,6 +95,8 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const MIN_MOVED_DIRECTORY_FILES = 5;
+
 // A directory is rewritten only when every file that lived in it at `base` moved together to one new
 // location, so a partial move can never make an unrelated path look like a rename.
 function movedDirectories(renames, baseFiles) {
@@ -110,7 +119,9 @@ function movedDirectories(renames, baseFiles) {
   for (const [directory, destinations] of targets) {
     if (destinations.size !== 1) continue;
     const inBase = baseFiles.filter((file) => file.startsWith(`${directory}/`)).length;
-    if (inBase > 0 && inBase === counts.get(directory)) directories.set(directory, [...destinations][0]);
+    // Small directories (one or two files) have names like `application` that also occur in unrelated strings
+    // such as the `application/json` media type, so only bulk directory moves are rewritten.
+    if (inBase >= MIN_MOVED_DIRECTORY_FILES && inBase === counts.get(directory)) directories.set(directory, [...destinations][0]);
   }
   return directories;
 }

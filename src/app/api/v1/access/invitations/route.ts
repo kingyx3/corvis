@@ -1,11 +1,11 @@
-import { assertPermission } from "@/core/enterprise";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { createTenantInvitation, listTenantInvitations, normalizeTenantInvitation, TenantInvitationError } from "@/lib/server/tenant-invitations";
-import { postgres, withTransaction } from "@/lib/server/postgres";
-import { deliverInvitationEmail } from "@/lib/server/notifications";
-import { getServerConfig } from "@/lib/server/config";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { createTenantInvitation, listTenantInvitations, normalizeTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenant-invitations";
+import { postgres, withTransaction } from "@/platform/database/postgres";
+import { deliverInvitationEmail } from "@/modules/notifications/server/notifications";
+import { getServerConfig } from "@/platform/config";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

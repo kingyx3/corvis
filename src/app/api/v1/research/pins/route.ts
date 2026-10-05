@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { listResearchPins, pinResearchAnswer, ResearchPinError } from "@/lib/server/research-pins";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { listResearchPins, pinResearchAnswer, ResearchPinError } from "@/modules/research/server/research-pins";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

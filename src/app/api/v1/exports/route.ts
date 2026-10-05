@@ -1,13 +1,13 @@
-import { assertPermission } from "@/core/enterprise";
-import type { ExportScope } from "@/core/delivery";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { assertFeatureEnabled } from "@/lib/server/feature-flags";
-import { withIdempotency } from "@/lib/server/idempotency";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { performanceScorecardScope } from "@/lib/server/performance-scorecard-export";
-import { createPhysicalExport } from "@/lib/server/physical-exports";
-import { listPhysicalExportStatuses } from "@/lib/server/export-history";
-import { isNonEmptyString } from "@/lib/server/request-validation";
+import { assertPermission } from "@/shared/domain/enterprise";
+import type { ExportScope } from "@/modules/delivery/domain/delivery";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { assertFeatureEnabled } from "@/modules/admin/server/feature-flags";
+import { withIdempotency } from "@/platform/http/idempotency";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { performanceScorecardScope } from "@/modules/analytics/server/performance-scorecard-export";
+import { createPhysicalExport } from "@/modules/delivery/server/physical-exports";
+import { listPhysicalExportStatuses } from "@/modules/delivery/server/export-history";
+import { isNonEmptyString } from "@/platform/http/request-validation";
 
 function exportScope(value: unknown): ExportScope | undefined | null {
   if (value === undefined) return undefined;

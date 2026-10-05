@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
-import type { RequestIdentity } from "@/core/enterprise";
-import { getServerConfig } from "@/lib/server/config";
-import { closeDataIssuesForCorrection } from "@/lib/server/data-issue";
-import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/lib/server/data-correction";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
-import { postgres, type PostgresSqlApi, withTransaction } from "@/lib/server/postgres";
+import type { RequestIdentity } from "@/shared/domain/enterprise";
+import { getServerConfig } from "@/platform/config";
+import { closeDataIssuesForCorrection } from "@/modules/governance/server/data-issue";
+import { DataCorrectionRequestError, dataCorrectionRepository, PostgresDataCorrectionRepository } from "@/modules/governance/server/data-correction";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { postgres, type PostgresSqlApi, withTransaction } from "@/platform/database/postgres";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

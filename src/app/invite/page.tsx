@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { safeGetItem, safeRemoveItem, safeSetItem } from "@/lib/safe-storage";
+import { safeGetItem, safeRemoveItem, safeSetItem } from "@/shared/lib/safe-storage";
 
 type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry?: () => void };
 

@@ -1,4 +1,4 @@
-import { json } from "@/lib/server/http";
+import { json } from "@/platform/http/http";
 
 // Unauthenticated liveness probe. It deliberately reports nothing about the
 // build (commit SHA, version) or the clock: callers only need status and the

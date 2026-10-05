@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "lastSuccessfulDailyRunAt": null,
+  "lastSuccessfulWeeklyRunAt": null,
+  "lastWeeklyScanComplete": false,
+  "consecutiveFailures": 1,
+  "lastRunId": "02c47933-4f21-4ea3-bc53-3b1b97228bf4",
+  "lastScannedCommit": null
+}

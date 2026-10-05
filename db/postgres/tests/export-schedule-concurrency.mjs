@@ -4,8 +4,8 @@
 // full migration chain on a disposable database as a role that may disable triggers (the CI role is a superuser):
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedule-concurrency.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
-import { PostgresExportScheduleBackend, processDueExportSchedules } from '../../../src/lib/server/export-schedule.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
+import { PostgresExportScheduleBackend, processDueExportSchedules } from '../../../src/modules/delivery/server/export-schedule.ts';
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

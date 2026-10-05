@@ -1,9 +1,9 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { clientPortfolioAttribution } from "@/lib/server/client-portfolio-attribution";
-import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/lib/server/feature-flags";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { keysetPage, paginate, parseLimit } from "@/lib/server/pagination";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { clientPortfolioAttribution } from "@/modules/analytics/server/client-portfolio-attribution";
+import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/modules/admin/server/feature-flags";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { keysetPage, paginate, parseLimit } from "@/platform/http/pagination";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

@@ -1,7 +1,7 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { workspaceSummary } from "@/lib/server/workspace-summary";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { workspaceSummary } from "@/modules/workspace/server/workspace-summary";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

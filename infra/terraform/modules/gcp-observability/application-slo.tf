@@ -1,6 +1,6 @@
 # Application-emitted SLO signals. These resources are intentionally separate
 # from main.tf so every log metric has a corresponding application event before
-# it becomes an alert. See src/lib/server/telemetry.ts and ops/slos.yaml.
+# it becomes an alert. See src/platform/telemetry.ts and ops/slos.yaml.
 
 resource "google_logging_metric" "upload_initiation_duration" {
   project = var.project_id
@@ -528,7 +528,7 @@ resource "google_monitoring_alert_policy" "delivery_task_failed" {
   }
 }
 
-# F7d (#337). src/lib/server/authorization.ts times every session policy check
+# F7d (#337). src/modules/identity-access/server/authorization.ts times every session policy check
 # (metric.duration "auth.session_policy", tagged with the verdict, so its count
 # is the denominator of the denial rate) and counts every denial
 # (metric.count "auth.session_policy_denied", tagged with the reason:

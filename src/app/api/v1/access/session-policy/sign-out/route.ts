@@ -1,8 +1,8 @@
-import { parseSignOutEverywhere } from "@/core/session-policy";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveOrganizationAdmin } from "@/lib/server/data-governance";
-import { correlationId, json } from "@/lib/server/http";
-import { sessionPolicyErrorResponse, sessionPolicyService } from "@/lib/server/session-policy";
+import { parseSignOutEverywhere } from "@/modules/identity-access/domain/session-policy";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { correlationId, json } from "@/platform/http/http";
+import { sessionPolicyErrorResponse, sessionPolicyService } from "@/modules/identity-access/server/session-policy";
 
 /**
  * "Sign out everywhere" for a named user (F7, #263): revokes every session Corvis has seen for that person, effective on

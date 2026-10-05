@@ -1,0 +1,731 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
+import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
+import {
+  ConnectorGovernanceError,
+  acquisitionKey,
+  createSourceConnection,
+  getSourceConnection,
+  isFailClosedErrorClass,
+  isRetryableErrorClass,
+  listSourceConnections,
+  nextAttemptDelayMs,
+  pauseSourceConnection,
+  reauthorizeSourceConnection,
+  resumeSourceConnection,
+  revokeSourceConnection,
+  statusAfterError,
+  testSourceConnection,
+  type ConnectorDriver,
+  type SecretPayload,
+  type SecretStore,
+} from "./source-connectors.ts";
+import { sourceConnectorSecretReference, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
+
+const TENANT = "00000000-0000-0000-0000-0000000000a1";
+const WORKSPACE = "00000000-0000-0000-0000-0000000000b1";
+
+function identity(overrides: Partial<RequestIdentity> = {}): RequestIdentity {
+  return {
+    subject: "oidc|admin-1",
+    tenantId: TENANT,
+    workspaceId: WORKSPACE,
+    roles: ["admin"],
+    entitlements: { workspaceIds: [WORKSPACE], sourceDocumentAccessAllowed: true },
+    authMethod: "oidc",
+    sessionId: "session-1",
+    ...overrides,
+  };
+}
+
+/** A tiny in-memory model of corvis_source.source_connection, enough to exercise the module's own SQL shapes. */
+class FakeConnectionDb implements PostgresSqlApi {
+  private readonly rows = new Map<string, PostgresRow>();
+  private counter = 0;
+  readonly writes: { sql: string; parameters: PostgresPrimitive[] }[] = [];
+
+  seed(row: Partial<PostgresRow> & { tenant_id: string; source_connection_id: string }): void {
+    this.rows.set(this.key(row.tenant_id, row.source_connection_id), { consecutive_failures: 0, ...row });
+  }
+
+  private key(tenantId: string, id: string): string { return `${tenantId}:${id}`; }
+
+  async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
+    if (sql.startsWith("insert into corvis_source.source_connection")) {
+      if (this.failNextInsert) { this.failNextInsert = false; throw new Error("Postgres query failed (SQLSTATE 23514)"); }
+      const id = `00000000-0000-0000-0000-${String(++this.counter).padStart(12, "0")}`;
+      const row: PostgresRow = {
+        source_connection_id: id, tenant_id: parameters[0], workspace_id: parameters[1],
+        provider_key: parameters[2], connection_label: parameters[3], credential_type: parameters[4],
+        source_scope: parameters[5], scope_confirmed_by: parameters[6], scope_confirmed_at: new Date().toISOString(),
+        secret_reference: parameters[7], connector_version: parameters[8], status: "pending_authorization",
+        consecutive_failures: 0,
+      };
+      this.rows.set(this.key(String(parameters[0]), id), row);
+      return [row];
+    }
+    if (sql.startsWith("update corvis_source.source_connection")) return this.applyUpdate(sql, parameters);
+    if (sql.includes("from corvis_source.source_connection") && sql.includes("source_connection_id=$2")) {
+      const row = this.rows.get(this.key(String(parameters[0]), String(parameters[1])));
+      if (!row) return [];
+      return sql.includes("'redacted' as secret_reference") ? [{ ...row, secret_reference: "redacted" }] : [row];
+    }
+    if (sql.includes("from corvis_source.source_connection") && sql.includes("order by")) {
+      // The real listing query never selects the real secret_reference column; simulate that redaction here too.
+      return [...this.rows.values()]
+        .filter((row) => row.tenant_id === parameters[0])
+        .map((row) => ({ ...row, secret_reference: "redacted" }));
+    }
+    return [];
+  }
+
+  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
+    await this.applyUpdate(sql, parameters);
+  }
+
+  /** Applies one module UPDATE, honoring its compare-and-set predicates; returns the updated row(s) like `returning`. */
+  private async applyUpdate(sql: string, parameters: PostgresPrimitive[]): Promise<PostgresRow[]> {
+    this.writes.push({ sql, parameters });
+    await this.beforeUpdate?.(sql);
+    const tenantId = String(parameters[0]);
+    const id = String(parameters[1]);
+    const row = this.rows.get(this.key(tenantId, id));
+    if (!row) return [];
+    if (sql.includes("and status=$4") && row.status !== parameters[3]) return [];
+    if (sql.includes("and status=$5") && row.status !== parameters[4]) return [];
+    if (sql.includes("and status='pending_authorization'") && row.status !== "pending_authorization") return [];
+    if (sql.includes("status<>'revoked'") && row.status === "revoked") return [];
+    if (sql.includes("secret_reference=$4") && row.secret_reference !== parameters[3]) return [];
+    if (sql.includes("status='revoked', revoked_at=now()") && sql.includes("secret_reference=$3") && row.secret_reference !== parameters[2]) return [];
+    if (sql.includes("set status=$3, updated_at=now(), revoked_at=now()")) { row.status = parameters[2]; row.revoked_at = new Date().toISOString(); }
+    else if (sql.includes("set status=$3, updated_at=now()") && !sql.includes("revoked_at")) { row.status = parameters[2]; }
+    else if (sql.includes("status='revoked', revoked_at=now()")) { row.status = "revoked"; row.revoked_at = new Date().toISOString(); }
+    else if (sql.includes("secret_reference=$3, status=case when status='paused' then 'paused' when status='pending_authorization' then 'pending_authorization' else 'active' end")) {
+      row.secret_reference = parameters[2];
+      row.status = row.status === "paused" || row.status === "pending_authorization" ? row.status : "active";
+      row.consecutive_failures = 0; row.last_error_class = null;
+    }
+    else if (sql.includes("status='active', last_authorized_at=now()")) { row.status = "active"; }
+    else if (sql.includes("set status=$3, last_error_class=$4, updated_at=now()")) { row.status = parameters[2]; row.last_error_class = parameters[3]; }
+    return [{ status: row.status }];
+  }
+
+  /** Test hook: runs just before any UPDATE is applied, to simulate a concurrent writer. */
+  beforeUpdate?: (sql: string) => Promise<void> | void;
+
+  /** Test hook: directly mutates a seeded row, as another request would. */
+  mutate(tenantId: string, id: string, patch: Partial<PostgresRow>): void {
+    const row = this.rows.get(this.key(tenantId, id));
+    if (row) Object.assign(row, patch);
+  }
+
+  failNextInsert = false;
+  async health() { return true; }
+}
+
+class FakeSecrets implements SecretStore {
+  readonly written: { tenantId: string; providerKey: string; secret: SecretPayload }[] = [];
+  readonly revoked: string[] = [];
+  private counter = 0;
+  async write(tenantId: string, providerKey: string, secret: SecretPayload): Promise<string> {
+    this.written.push({ tenantId, providerKey, secret });
+    return `projects/corvis-uat/secrets/corvis-src-${tenantId}-${providerKey}-${++this.counter}`;
+  }
+  async read(secretReference: string): Promise<SecretPayload> { return { secretReference }; }
+  async revoke(secretReference: string): Promise<void> { this.revoked.push(secretReference); }
+}
+
+function driver(overrides: Partial<ConnectorDriver> = {}): ConnectorDriver {
+  return {
+    providerKey: "acme-portal",
+    connectorVersion: "1.0.0",
+    testConnection: async () => ({ ok: true }),
+    discover: async () => [],
+    download: async () => ({ bytes: Buffer.from("x"), contentType: "application/pdf" }),
+    ...overrides,
+  };
+}
+
+test("acquisitionKey is stable for identical inputs and changes with remote version or content", () => {
+  const a = acquisitionKey("doc-1", "v1", "hash1");
+  const b = acquisitionKey("doc-1", "v1", "hash1");
+  const c = acquisitionKey("doc-1", "v2", "hash1");
+  const d = acquisitionKey("doc-1", "v1", "hash2");
+  assert.equal(a, b);
+  assert.notEqual(a, c);
+  assert.notEqual(a, d);
+});
+
+test("fail-closed and retryable error classes are disjoint and cover the full contract set", () => {
+  const classes = ["auth", "reauthorization", "permission", "provider_change", "network", "download", "validation", "rate_limit"] as const;
+  for (const errorClass of classes) {
+    const failClosed = isFailClosedErrorClass(errorClass);
+    const retryable = isRetryableErrorClass(errorClass);
+    assert.equal(failClosed && retryable, false, `${errorClass} cannot be both fail-closed and retryable`);
+  }
+});
+
+test("statusAfterError never reactivates a revoked connection", () => {
+  assert.equal(statusAfterError("revoked", "auth", 1), "revoked");
+});
+
+test("statusAfterError moves to reauthorization_required on an auth-class error", () => {
+  assert.equal(statusAfterError("active", "auth", 1), "reauthorization_required");
+  assert.equal(statusAfterError("active", "reauthorization", 1), "reauthorization_required");
+});
+
+test("statusAfterError suspends on a permission or provider-change error", () => {
+  assert.equal(statusAfterError("active", "permission", 1), "suspended");
+  assert.equal(statusAfterError("active", "provider_change", 1), "suspended");
+});
+
+test("statusAfterError suspends after repeated retryable failures even though each one alone would not", () => {
+  assert.equal(statusAfterError("active", "network", 4), "active");
+  assert.equal(statusAfterError("active", "network", 5), "suspended");
+});
+
+test("createSourceConnection requires an explicit non-empty source scope confirmation", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  await assert.rejects(
+    () => createSourceConnection(identity(), {
+      workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "Acme", credentialType: "scoped_api_token",
+      sourceScope: [], secret: { token: "shh" }, connectorVersion: "1.0.0",
+    }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "source_scope_confirmation_required",
+  );
+  assert.equal(secrets.written.length, 0, "credentials must never be written before scope is confirmed");
+});
+
+test("createSourceConnection rejects a malformed provider key before touching the secret store", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  await assert.rejects(
+    () => createSourceConnection(identity(), {
+      workspaceId: WORKSPACE, providerKey: "AB", connectionLabel: "Acme", credentialType: "scoped_api_token",
+      sourceScope: [{ label: "Reports" }], secret: {}, connectorVersion: "1.0.0",
+    }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_provider_key",
+  );
+  assert.equal(secrets.written.length, 0);
+});
+
+test("createSourceConnection writes the secret first and stores only the returned reference", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  const connection = await createSourceConnection(identity(), {
+    workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "Acme investor portal",
+    credentialType: "scoped_api_token", sourceScope: [{ label: "Quarterly reports" }],
+    secret: { token: "super-secret-value" }, connectorVersion: "1.0.0",
+  }, { db, secrets });
+
+  assert.equal(secrets.written.length, 1);
+  assert.equal(connection.status, "pending_authorization");
+  assert.ok(connection.secretReference.startsWith("projects/corvis-uat/secrets/corvis-src-"));
+  assert.equal(JSON.stringify(connection).includes("super-secret-value"), false, "the raw secret must never appear in the returned connection");
+});
+
+test("listSourceConnections never exposes the secret reference", async () => {
+  const db = new FakeConnectionDb();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [{ label: "x" }],
+    scope_confirmed_by: "u1", scope_confirmed_at: new Date().toISOString(), secret_reference: "projects/x/secrets/corvis-src-real-secret-name",
+    connector_version: "1.0.0", status: "active" });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.secretReference, "redacted");
+});
+
+test("pauseSourceConnection only transitions from active or reauthorization_required", async () => {
+  const db = new FakeConnectionDb();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "revoked" });
+  await assert.rejects(
+    () => pauseSourceConnection(identity(), "c1", db),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_transition_from_revoked",
+  );
+});
+
+test("pause then resume round-trips a connection back to active", async () => {
+  const db = new FakeConnectionDb();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "active" });
+  await pauseSourceConnection(identity(), "c1", db);
+  const [paused] = await listSourceConnections(identity(), db);
+  assert.equal(paused?.status, "paused");
+  await resumeSourceConnection(identity(), "c1", db);
+  const [resumed] = await listSourceConnections(identity(), db);
+  assert.equal(resumed?.status, "active");
+});
+
+test("revoking a connection destroys its secret and the transition is terminal", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "projects/x/secrets/corvis-src-real", connector_version: "1.0.0", status: "active" });
+
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-real"]);
+  const [revoked] = await listSourceConnections(identity(), db);
+  assert.equal(revoked?.status, "revoked");
+
+  // Revoking an already-revoked connection is a safe no-op, not a second secret destruction attempt.
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+  assert.equal(secrets.revoked.length, 1);
+});
+
+test("revoking while a reauthorization rotates the secret destroys the new credential too", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  // A reauthorization lands between the revoke's read and its terminal write: the connection now points at a new secret.
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { secret_reference: "projects/x/secrets/corvis-src-rotated", status: "active" }); db.beforeUpdate = undefined; };
+
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "revoked");
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old", "projects/x/secrets/corvis-src-rotated"], "no credential may stay live behind a revoked connection");
+});
+
+test("revoking gives up with a concurrent-change error when rotations keep landing", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+  let rotation = 0;
+  // Every terminal write finds the connection pointing at yet another secret.
+  db.beforeUpdate = () => { rotation += 1; db.mutate(TENANT, "c1", { secret_reference: `projects/x/secrets/corvis-src-rotated-${rotation}` }); };
+
+  await assert.rejects(
+    () => revokeSourceConnection(identity(), "c1", { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_transition_from_concurrent_change",
+  );
+  assert.equal(secrets.revoked.length, 3, "every credential that was current is destroyed, one per attempt");
+  assert.notEqual((await listSourceConnections(identity(), db))[0]?.status, "revoked", "the connection is not marked revoked while a credential may be live");
+});
+
+test("a failed secret destruction leaves the connection retryable instead of revoked with a live credential", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+  const revoke = secrets.revoke.bind(secrets);
+  secrets.revoke = async () => { throw new Error("secret manager unavailable"); };
+  await assert.rejects(() => revokeSourceConnection(identity(), "c1", { db, secrets }), /secret manager unavailable/);
+  assert.equal((await listSourceConnections(identity(), db))[0]?.status, "active");
+
+  secrets.revoke = revoke;
+  await revokeSourceConnection(identity(), "c1", { db, secrets });
+  assert.equal((await listSourceConnections(identity(), db))[0]?.status, "revoked");
+});
+
+test("reauthorization rotates the secret, reactivates the connection and clears the failure streak", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "projects/x/secrets/corvis-src-old", connector_version: "1.0.0",
+    status: "reauthorization_required", consecutive_failures: 3, last_error_class: "auth" });
+
+  await reauthorizeSourceConnection(identity(), "c1", { token: "new-token" }, { db, secrets });
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "active");
+  assert.equal(connection?.consecutiveFailures, 0);
+});
+
+test("reauthorizing a revoked connection is refused", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "revoked" });
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", {}, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_revoked",
+  );
+});
+
+test("testSourceConnection activates a pending connection on success and never logs the credential", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "pending_authorization" });
+
+  const drivers = new Map([["acme-portal", driver()]]);
+  const result = await testSourceConnection(identity(), "c1", { db, secrets, drivers });
+  assert.equal(result.ok, true);
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "active");
+});
+
+test("testSourceConnection moves the connection to reauthorization_required on an auth failure", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "active" });
+
+  const drivers = new Map([["acme-portal", driver({ testConnection: async () => ({ ok: false, errorClass: "auth", detail: "expired" }) })]]);
+  await testSourceConnection(identity(), "c1", { db, secrets, drivers });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "reauthorization_required");
+});
+
+test("testSourceConnection refuses a revoked connection outright", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "revoked" });
+  const drivers = new Map([["acme-portal", driver()]]);
+  await assert.rejects(
+    () => testSourceConnection(identity(), "c1", { db, secrets, drivers }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_revoked",
+  );
+});
+
+test("testSourceConnection fails closed for a provider with no registered driver", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "unknown-portal",
+    connection_label: "X", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "active" });
+  await assert.rejects(
+    () => testSourceConnection(identity(), "c1", { db, secrets, drivers: new Map() }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "unregistered_provider",
+  );
+});
+
+test("cross-tenant access to a connection is refused as not-found, never leaking existence", async () => {
+  const db = new FakeConnectionDb();
+  db.seed({ tenant_id: "other-tenant", source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "ref", connector_version: "1.0.0", status: "active" });
+  await assert.rejects(
+    () => pauseSourceConnection(identity(), "c1", db),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_not_found",
+  );
+});
+
+function seedConnection(db: FakeConnectionDb, overrides: Partial<PostgresRow> = {}): void {
+  db.seed({ tenant_id: TENANT, source_connection_id: "c1", workspace_id: WORKSPACE, provider_key: "acme-portal",
+    connection_label: "Acme", credential_type: "scoped_api_token", source_scope: [], scope_confirmed_by: "u1",
+    scope_confirmed_at: "now", secret_reference: "projects/x/secrets/corvis-src-old", connector_version: "1.0.0", status: "active",
+    ...overrides });
+}
+
+test("createSourceConnection rejects a label longer than the column constraint before touching the secret store", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  await assert.rejects(
+    () => createSourceConnection(identity(), {
+      workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "x".repeat(201), credentialType: "scoped_api_token",
+      sourceScope: [{ label: "Reports" }], secret: { token: "shh" }, connectorVersion: "1.0.0",
+    }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_label_too_long",
+  );
+  assert.equal(secrets.written.length, 0);
+});
+
+test("createSourceConnection destroys the just-written secret when the connection insert fails", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  db.failNextInsert = true;
+  await assert.rejects(() => createSourceConnection(identity(), {
+    workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "Acme", credentialType: "scoped_api_token",
+    sourceScope: [{ label: "Reports" }], secret: { token: "shh" }, connectorVersion: "1.0.0",
+  }, { db, secrets }));
+  assert.equal(secrets.written.length, 1);
+  assert.equal(secrets.revoked.length, 1, "an orphaned credential must not stay live in the secret store");
+});
+
+test("a pause racing a concurrent revoke does not overwrite the terminal revoked state", async () => {
+  const db = new FakeConnectionDb();
+  seedConnection(db);
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { status: "revoked", revoked_at: new Date().toISOString() }); db.beforeUpdate = undefined; };
+  await assert.rejects(
+    () => pauseSourceConnection(identity(), "c1", db),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_transition_from_concurrent_change",
+  );
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "revoked");
+});
+
+test("reauthorization racing a concurrent revoke is refused and destroys the new credential instead of reviving the connection", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { status: "revoked", revoked_at: new Date().toISOString() }); db.beforeUpdate = undefined; };
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_revoked",
+  );
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "revoked");
+  assert.equal(secrets.written.length, 1);
+  assert.deepEqual(secrets.revoked, [`projects/corvis-uat/secrets/corvis-src-${TENANT}-acme-portal-1`], "only the unused new credential is destroyed");
+});
+
+test("reauthorizing a paused connection rotates the credential but keeps it paused", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "paused" });
+  await reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "paused", "a credential rotation must not silently resume a paused connection");
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
+});
+
+test("reauthorizing a pending connection rotates the credential but does not activate it on an unverified test", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "pending_authorization" });
+  await reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "pending_authorization", "only a verified testSourceConnection call may activate a connection awaiting its first setup test");
+  assert.deepEqual(secrets.revoked, ["projects/x/secrets/corvis-src-old"]);
+});
+
+test("a slow connection test does not reactivate a connection revoked while the driver call was in flight", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "pending_authorization" });
+  const drivers = new Map([["acme-portal", driver({
+    testConnection: async () => { db.mutate(TENANT, "c1", { status: "revoked", revoked_at: new Date().toISOString() }); return { ok: true }; },
+  })]]);
+  await testSourceConnection(identity(), "c1", { db, secrets, drivers });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "revoked");
+});
+
+test("getSourceConnection reads one tenant-scoped row with the secret reference redacted, and 404s a malformed id", async () => {
+  const db = new FakeConnectionDb();
+  const id = "00000000-0000-0000-0000-00000000c0c1";
+  seedConnection(db, { source_connection_id: id });
+  const connection = await getSourceConnection(identity(), id, db);
+  assert.equal(connection.sourceConnectionId, id);
+  assert.equal(connection.secretReference, "redacted");
+  await assert.rejects(
+    () => getSourceConnection(identity({ tenantId: "00000000-0000-0000-0000-0000000000a2" }), id, db),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_not_found",
+  );
+  await assert.rejects(
+    () => getSourceConnection(identity(), "not-a-uuid", db),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_not_found",
+  );
+});
+
+test("the placeholder secret store emits references the migration 018 check constraint accepts for every valid provider key", async () => {
+  const constraint = new RegExp(`^projects/[a-z0-9][a-z0-9-]{4,28}[a-z0-9]/secrets/corvis-src-${TENANT}-[a-z0-9][a-z0-9-]{0,63}(/versions/(latest|[0-9]+))?$`);
+  for (const providerKey of ["acme-portal", "google_drive", `a${"b_".repeat(40)}`.slice(0, 64)]) {
+    const reference = sourceConnectorSecretReference(TENANT, providerKey, 12345);
+    assert.match(reference, constraint, `${providerKey} produced ${reference}`);
+  }
+  const reference = await sourceConnectorSecretStore().write(TENANT, "google_drive", { token: "t" });
+  assert.match(reference, constraint);
+});
+
+test("nextAttemptDelayMs backs off exponentially with jitter in [50%, 100%] of the bounded delay", (t) => {
+  const random = t.mock.method(Math, "random", () => 0);
+  // Lowest jitter is exactly half the bounded delay; the delay doubles per attempt from the 60s default base.
+  assert.equal(nextAttemptDelayMs(1), 30_000);
+  assert.equal(nextAttemptDelayMs(2), 60_000);
+  assert.equal(nextAttemptDelayMs(3), 120_000);
+  // A non-positive attempt is treated like the first attempt rather than shrinking the delay below the base.
+  assert.equal(nextAttemptDelayMs(0), 30_000);
+  assert.equal(nextAttemptDelayMs(-5), 30_000);
+  random.mock.mockImplementation(() => 0.999999);
+  assert.equal(nextAttemptDelayMs(1), 59_999);
+  random.mock.mockImplementation(() => 0.5);
+  assert.equal(nextAttemptDelayMs(1), 45_000);
+});
+
+test("nextAttemptDelayMs is capped so a stuck connector never backs off beyond the maximum", (t) => {
+  t.mock.method(Math, "random", () => 0.999999);
+  // Default cap is one hour: attempt 20 would be astronomically large uncapped.
+  assert.ok(nextAttemptDelayMs(20) <= 60 * 60_000);
+  assert.equal(nextAttemptDelayMs(20), Math.floor(60 * 60_000 * (0.5 + 0.999999 * 0.5)));
+  // Custom base and cap are honoured.
+  assert.equal(nextAttemptDelayMs(1, 1_000, 10_000), 999);
+  assert.equal(nextAttemptDelayMs(10, 1_000, 10_000), Math.floor(10_000 * (0.5 + 0.999999 * 0.5)));
+});
+
+test("nextAttemptDelayMs with real randomness always lands within the jitter window", () => {
+  for (let i = 0; i < 50; i += 1) {
+    const delay = nextAttemptDelayMs(3, 1_000, 100_000);
+    assert.ok(delay >= 2_000 && delay <= 4_000, `delay ${delay} outside [2000, 4000]`);
+  }
+});
+
+test("createSourceConnection rejects a whitespace-only label before touching the secret store", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  await assert.rejects(
+    () => createSourceConnection(identity(), {
+      workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "   \t ", credentialType: "scoped_api_token",
+      sourceScope: [{ label: "Reports" }], secret: { token: "shh" }, connectorVersion: "1.0.0",
+    }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_label_required",
+  );
+  assert.equal(secrets.written.length, 0);
+});
+
+test("createSourceConnection surfaces the insert failure even when destroying the orphaned secret also fails", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  const revokeAttempts: string[] = [];
+  secrets.revoke = async (reference: string) => { revokeAttempts.push(reference); throw new Error("secret store unavailable"); };
+  db.failNextInsert = true;
+  await assert.rejects(
+    () => createSourceConnection(identity(), {
+      workspaceId: WORKSPACE, providerKey: "acme-portal", connectionLabel: "Acme", credentialType: "scoped_api_token",
+      sourceScope: [{ label: "Reports" }], secret: { token: "shh" }, connectorVersion: "1.0.0",
+    }, { db, secrets }),
+    (error: unknown) => error instanceof Error && error.message.includes("SQLSTATE 23514"),
+  );
+  assert.equal(revokeAttempts.length, 1, "cleanup was attempted for the just-written credential");
+});
+
+test("reauthorization destroys the new credential and rethrows when the connection update fails", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  db.beforeUpdate = () => { db.beforeUpdate = undefined; throw new Error("Postgres query failed (SQLSTATE 57014)"); };
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets }),
+    (error: unknown) => error instanceof Error && error.message.includes("SQLSTATE 57014"),
+  );
+  assert.deepEqual(secrets.revoked, [`projects/corvis-uat/secrets/corvis-src-${TENANT}-acme-portal-1`], "only the unused new credential is destroyed; the live one is kept");
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "reauthorization_required");
+});
+
+test("reauthorization rethrows the update failure even when destroying the new credential also fails", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  const attempts: string[] = [];
+  secrets.revoke = async (reference: string) => { attempts.push(reference); throw new Error("secret store unavailable"); };
+  db.beforeUpdate = () => { db.beforeUpdate = undefined; throw new Error("Postgres query failed (SQLSTATE 57014)"); };
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets }),
+    (error: unknown) => error instanceof Error && error.message.includes("SQLSTATE 57014"),
+  );
+  assert.equal(attempts.length, 1);
+});
+
+test("reauthorization racing a second rotation is refused as a concurrent change and destroys only its own new credential", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  // Another rotation swaps the stored reference between this request's read and its compare-and-set write.
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { secret_reference: "projects/x/secrets/corvis-src-rotated-elsewhere" }); db.beforeUpdate = undefined; };
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "invalid_transition_from_concurrent_change",
+  );
+  assert.deepEqual(secrets.revoked, [`projects/corvis-uat/secrets/corvis-src-${TENANT}-acme-portal-1`]);
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "reauthorization_required", "a refused rotation must not change the connection status");
+});
+
+test("a lost reauthorization race still reports the refusal when destroying the new credential fails", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required" });
+  const attempts: string[] = [];
+  secrets.revoke = async (reference: string) => { attempts.push(reference); throw new Error("secret store unavailable"); };
+  db.beforeUpdate = () => { db.mutate(TENANT, "c1", { status: "revoked" }); db.beforeUpdate = undefined; };
+  await assert.rejects(
+    () => reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets }),
+    (error: unknown) => error instanceof ConnectorGovernanceError && error.code === "connection_revoked",
+  );
+  assert.equal(attempts.length, 1);
+});
+
+test("a failure destroying the superseded credential after a successful rotation does not fail the reauthorization", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "reauthorization_required", consecutive_failures: 4, last_error_class: "auth" });
+  const attempts: string[] = [];
+  secrets.revoke = async (reference: string) => { attempts.push(reference); throw new Error("secret store unavailable"); };
+  await reauthorizeSourceConnection(identity(), "c1", { token: "new" }, { db, secrets });
+  assert.deepEqual(attempts, ["projects/x/secrets/corvis-src-old"]);
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "active");
+  assert.equal(connection?.consecutiveFailures, 0);
+});
+
+test("testSourceConnection writes nothing for a successful test of an already-active connection or an unclassified failure", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+
+  const okResult = await testSourceConnection(identity(), "c1", { db, secrets, drivers: new Map([["acme-portal", driver()]]) });
+  assert.equal(okResult.ok, true);
+  const unclassified = await testSourceConnection(identity(), "c1", {
+    db, secrets, drivers: new Map([["acme-portal", driver({ testConnection: async () => ({ ok: false, detail: "flaky" }) })]]),
+  });
+  assert.deepEqual(unclassified, { ok: false, detail: "flaky" });
+  assert.equal(db.writes.length, 0, "neither outcome may change the stored connection state");
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "active");
+});
+
+test("a connection test failure does not overwrite a status changed while the driver call was in flight", async () => {
+  const db = new FakeConnectionDb();
+  const secrets = new FakeSecrets();
+  seedConnection(db, { status: "active" });
+  const drivers = new Map([["acme-portal", driver({
+    testConnection: async () => { db.mutate(TENANT, "c1", { status: "paused" }); return { ok: false, errorClass: "auth" as const }; },
+  })]]);
+  await testSourceConnection(identity(), "c1", { db, secrets, drivers });
+  const [connection] = await listSourceConnections(identity(), db);
+  assert.equal(connection?.status, "paused", "the stale auth failure must not clobber the concurrent pause");
+});
+
+test("rows are mapped defensively: Date columns become ISO strings and malformed numerics/scopes degrade safely", async () => {
+  const db = new FakeConnectionDb();
+  const id = "00000000-0000-0000-0000-00000000d0d1";
+  const confirmed = new Date("2026-01-02T03:04:05.000Z");
+  const lastSuccess = new Date("2026-02-03T04:05:06.000Z");
+  seedConnection(db, {
+    source_connection_id: id, scope_confirmed_at: confirmed, last_success_at: lastSuccess,
+    consecutive_failures: "not-a-number", source_scope: "{not valid json", last_error_class: "network",
+  });
+  const connection = await getSourceConnection(identity(), id, db);
+  assert.equal(connection.scopeConfirmedAt, "2026-01-02T03:04:05.000Z");
+  assert.equal(connection.lastSuccessAt, "2026-02-03T04:05:06.000Z");
+  assert.equal(connection.consecutiveFailures, 0, "a non-numeric failure count must not become NaN");
+  assert.deepEqual(connection.sourceScope, [], "an unparseable scope must read as empty, never as a wider scope");
+  assert.equal(connection.lastErrorClass, "network");
+  assert.equal(connection.lastAttemptAt, undefined);
+  assert.equal(connection.revokedAt, undefined);
+});
+
+test("source scope is parsed from a JSON string, passed through as an array, and a non-array value reads as empty", async () => {
+  const db = new FakeConnectionDb();
+  const ids = ["00000000-0000-0000-0000-00000000e0e1", "00000000-0000-0000-0000-00000000e0e2", "00000000-0000-0000-0000-00000000e0e3"];
+  seedConnection(db, { source_connection_id: ids[0]!, source_scope: JSON.stringify([{ label: "Reports", path: "/q" }]), consecutive_failures: "3" });
+  seedConnection(db, { source_connection_id: ids[1]!, source_scope: [{ label: "Direct" }] });
+  seedConnection(db, { source_connection_id: ids[2]!, source_scope: { label: "not-an-array" } });
+  const fromString = await getSourceConnection(identity(), ids[0]!, db);
+  assert.deepEqual(fromString.sourceScope, [{ label: "Reports", path: "/q" }]);
+  assert.equal(fromString.consecutiveFailures, 3, "a numeric string from the driver is accepted");
+  assert.deepEqual((await getSourceConnection(identity(), ids[1]!, db)).sourceScope, [{ label: "Direct" }]);
+  assert.deepEqual((await getSourceConnection(identity(), ids[2]!, db)).sourceScope, []);
+});
+
+test("a row missing a required column is a hard error rather than a silently partial connection", async () => {
+  const db = new FakeConnectionDb();
+  const id = "00000000-0000-0000-0000-00000000f0f1";
+  db.seed({ tenant_id: TENANT, source_connection_id: id });
+  await assert.rejects(
+    () => getSourceConnection(identity(), id, db),
+    (error: unknown) => error instanceof Error && !(error instanceof ConnectorGovernanceError) && error.message === "missing required column workspace_id",
+  );
+});

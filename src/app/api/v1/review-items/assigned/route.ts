@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { correlationId, json } from "@/lib/server/http";
-import { reviewDiscussionErrorResponse } from "@/lib/server/review-discussion-http";
-import { reviewDiscussionService } from "@/lib/server/review-discussion-service";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { correlationId, json } from "@/platform/http/http";
+import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
+import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";
 
 /**
  * The caller's own open assignments (observations still needing review, exceptions still open), blocking exceptions

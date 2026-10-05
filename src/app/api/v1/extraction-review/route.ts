@@ -1,15 +1,15 @@
 import { createHash, randomUUID } from "crypto";
-import { assertDocumentAccess, assertPermission } from "@/core/enterprise";
-import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { postgres } from "@/lib/server/postgres";
+import { assertDocumentAccess, assertPermission } from "@/shared/domain/enterprise";
+import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { postgres } from "@/platform/database/postgres";
 import {
   CandidateReviewRequestError,
   recordCandidateReviewDecision,
   type CandidateReviewDecision,
-} from "@/lib/server/processing-reviewed-stage";
+} from "@/modules/processing/server/processing-reviewed-stage";
 
 type CandidateReviewRequest = {
   documentId?: unknown;

@@ -3,7 +3,7 @@
 --
 -- claim_event_delivery (013) and claim_processing_stage_delivery (046) trust
 -- whatever event_id/event_type/payload a push request carries. Worker ingress
--- (src/app/api/internal/processing-stage/route.ts, GcpOidcVerifier) authenticates
+-- (app/api/internal/processing-stage/route.ts, GcpOidcVerifier) authenticates
 -- only the CALLER: OIDC proves Pub/Sub or Cloud Tasks delivered the HTTP
 -- request, never that Corvis itself published this event_id. Anyone with IAM
 -- publish rights on the configured topic/queue (not only this application)
@@ -11,7 +11,7 @@
 -- genuine, and stage handlers trust payload.predecessorResult from it.
 --
 -- Every legitimate delivery originates from a corvis_control.outbox_event row
--- (dispatchConfiguredProcessingTransport in src/lib/server/processing-transport.ts
+-- (dispatchConfiguredProcessingTransport in lib/server/processing-transport.ts
 -- is the only producer of a Pub/Sub message or Cloud Tasks task in this
 -- codebase, and it publishes exactly the outbox row's tenant_id/event_id/
 -- event_type/payload; retry_processing_job, fail_processing_stage_delivery's
@@ -21,7 +21,7 @@
 -- claiming a delivery. A request whose event_id/event_type/payload was never
 -- published by Corvis is rejected with a distinct exception
 -- ('event id has no matching outbox record') instead of being claimed. The
--- worker (src/lib/server/processing-stage-worker.ts) catches that exact message
+-- worker (lib/server/processing-stage-worker.ts) catches that exact message
 -- around the claim call and returns a terminal "rejected" outcome, which the
 -- ingress route acknowledges (2xx) like every other terminal outcome, so a
 -- forged delivery is dropped once instead of retried forever by the

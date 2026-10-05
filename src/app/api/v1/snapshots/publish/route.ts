@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
-import { assertPermission, type SnapshotPublication } from "@/core/enterprise";
-import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { PostgresProductionPlatform, platform } from "@/lib/server/platform";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { MAX_VERSION } from "@/lib/server/request-validation";
-import { logEvent } from "@/lib/server/telemetry";
-import { bestEffortNotification, enqueuePinnedFundPublished } from "@/lib/server/notifications";
+import { assertPermission, type SnapshotPublication } from "@/shared/domain/enterprise";
+import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
+import { PostgresProductionPlatform, platform } from "@/platform/platform";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { MAX_VERSION } from "@/platform/http/request-validation";
+import { logEvent } from "@/platform/telemetry";
+import { bestEffortNotification, enqueuePinnedFundPublished } from "@/modules/notifications/server/notifications";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

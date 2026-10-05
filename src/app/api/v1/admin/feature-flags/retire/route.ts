@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { retireFeatureFlag } from "@/lib/server/feature-flags";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
-import { postgres, withTransaction } from "@/lib/server/postgres";
+import { retireFeatureFlag } from "@/modules/admin/server/feature-flags";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { postgres, withTransaction } from "@/platform/database/postgres";
 
 /** Retirement is terminal: a retired flag can never be re-enabled or re-registered under the same key. */
 export async function POST(request: Request) {

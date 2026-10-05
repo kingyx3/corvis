@@ -1,11 +1,11 @@
 import { randomUUID } from "crypto";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { setFeatureFlag } from "@/lib/server/feature-flags";
-import { listFeatureFlags } from "@/lib/server/operations";
-import { PostgresOperationsRepository } from "@/lib/server/platform-repositories";
-import { postgres, withTransaction } from "@/lib/server/postgres";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { setFeatureFlag } from "@/modules/admin/server/feature-flags";
+import { listFeatureFlags } from "@/platform/operations";
+import { PostgresOperationsRepository } from "@/platform/platform-repositories";
+import { postgres, withTransaction } from "@/platform/database/postgres";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

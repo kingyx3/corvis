@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Icon } from "@/components/ui/icon";
-import { GovernanceForms, type AdminFeatureFlag } from "@/features/admin/governance-forms";
+import { Icon } from "@/shared/ui/icon";
+import { GovernanceForms, type AdminFeatureFlag } from "@/modules/admin/ui/governance-forms";
 
 type PanelState = { loading: boolean; status: number | null; data: unknown; error: string | null };
 const EMPTY: PanelState = { loading: true, status: null, data: null, error: null };

@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/lib/server/feature-flags";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { getServerConfig } from "@/lib/server/config";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { demoPositionFinancialStatements } from "@/lib/server/position-financial-statements-demo";
-import { positionFinancialStatements, type StatementPeriodicity } from "@/lib/server/position-financial-statements";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { assertFeatureEnabled, PORTFOLIO_ATTRIBUTION_FLAG } from "@/modules/admin/server/feature-flags";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { getServerConfig } from "@/platform/config";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { demoPositionFinancialStatements } from "@/modules/analytics/server/position-financial-statements-demo";
+import { positionFinancialStatements, type StatementPeriodicity } from "@/modules/analytics/server/position-financial-statements";
 
 const PERIODICITIES = new Set<StatementPeriodicity>(["reported","quarterly","annual"]);
 
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
       limit: rawLimit,
     };
     // Demo mode has no Postgres to query — serve the same synthetic dataset
-    // src/adapters/demo/catalog.ts's observations link back to, so the axe-core
+    // src/platform/demo/catalog.ts's observations link back to, so the axe-core
     // surface matrix and local dev actually exercise this page's real markup.
     const data = getServerConfig().demoMode ? demoPositionFinancialStatements(query) : await positionFinancialStatements().list(identity,query);
     return json({ data, nextCursor: null, correlationId: id });

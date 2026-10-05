@@ -1,7 +1,7 @@
-import { correlationId } from "@/lib/server/http";
-import { getServerConfig } from "@/lib/server/config";
-import { postgres, withTransaction } from "@/lib/server/postgres";
-import { authenticateScim, getScimUser, scimErrorResponse, ScimError, setScimUserActive } from "@/lib/server/scim";
+import { correlationId } from "@/platform/http/http";
+import { getServerConfig } from "@/platform/config";
+import { postgres, withTransaction } from "@/platform/database/postgres";
+import { authenticateScim, getScimUser, scimErrorResponse, ScimError, setScimUserActive } from "@/modules/identity-access/server/scim";
 
 export async function GET(request:Request,{params}:{params:Promise<{id:string}>}){try{const db=postgres(getServerConfig().postgresDsn);const config=await authenticateScim(request,db);const {id}=await params;const base=`${new URL(request.url).origin}/api/v1/scim/v2/Users`;const resource=await getScimUser(config,id,base,db);return Response.json({schemas:["urn:ietf:params:scim:schemas:core:2.0:User"],...resource},{headers:{"cache-control":"no-store"}});}catch(error){return scimErrorResponse(error,correlationId(request));}}
 

@@ -1,10 +1,10 @@
-import { assertPermission } from "@/core/enterprise";
-import { DataIssueValidationError } from "@/core/data-issue";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { dataIssueErrorResponse } from "@/lib/server/data-issue-http";
-import { dataIssueService } from "@/lib/server/data-issue-service";
-import { correlationId, json } from "@/lib/server/http";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { DataIssueValidationError } from "@/modules/governance/domain/data-issue";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { dataIssueErrorResponse } from "@/modules/governance/server/data-issue-http";
+import { dataIssueService } from "@/modules/governance/server/data-issue-service";
+import { correlationId, json } from "@/platform/http/http";
 
 /** One case with its status history, for its reporter or an Organization Admin. Anyone else gets the same 404 as a missing case. */
 export async function GET(request: Request, context: { params: Promise<{ caseId: string }> }) {

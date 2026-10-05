@@ -1,7 +1,7 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { exportScheduleErrorResponse, listExportScheduleRunsResponse } from "@/lib/server/export-schedule-http";
-import { correlationId } from "@/lib/server/http";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { exportScheduleErrorResponse, listExportScheduleRunsResponse } from "@/modules/delivery/server/export-schedule-http";
+import { correlationId } from "@/platform/http/http";
 
 /**
  * The scheduled part of delivery history: every run of the caller's schedules (every schedule in the tenant for an

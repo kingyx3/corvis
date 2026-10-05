@@ -1,7 +1,7 @@
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { captureVerifiedRecipient } from "@/lib/server/notifications";
-import { logEvent } from "@/lib/server/telemetry";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { captureVerifiedRecipient } from "@/modules/notifications/server/notifications";
+import { logEvent } from "@/platform/telemetry";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

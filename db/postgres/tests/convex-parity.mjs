@@ -4,7 +4,7 @@
 // needs no Corvis migrations:
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/convex-parity.mjs
 import assert from 'node:assert/strict';
-import { NativePostgresSqlApi } from '../../../src/lib/server/postgres-native.ts';
+import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 
 const dsn = process.env.CORVIS_POSTGRES_DSN;
 assert.ok(dsn, 'CORVIS_POSTGRES_DSN is required');

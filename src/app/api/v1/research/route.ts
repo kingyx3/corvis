@@ -1,8 +1,8 @@
-import { assertPermission } from "@/core/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
-import { parseResearchQuestion } from "@/lib/server/research";
+import { assertPermission } from "@/shared/domain/enterprise";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { platform } from "@/platform/platform";
+import { parseResearchQuestion } from "@/modules/research/server/research";
 
 export async function POST(request: Request) {
   const id = correlationId(request);

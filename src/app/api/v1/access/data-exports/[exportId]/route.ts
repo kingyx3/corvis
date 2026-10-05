@@ -1,8 +1,8 @@
-import { parseTenantExportCommand } from "@/core/tenant-export";
-import { readJsonObject } from "@/lib/server/admin-request";
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/lib/server/data-governance";
-import { correlationId, json } from "@/lib/server/http";
-import { tenantExportService } from "@/lib/server/tenant-export-service";
+import { parseTenantExportCommand } from "@/modules/delivery/domain/tenant-export";
+import { readJsonObject } from "@/platform/http/admin-request";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
+import { correlationId, json } from "@/platform/http/http";
+import { tenantExportService } from "@/modules/delivery/server/tenant-export-service";
 
 /** One request with its status history. */
 export async function GET(request: Request, context: { params: Promise<{ exportId: string }> }) {

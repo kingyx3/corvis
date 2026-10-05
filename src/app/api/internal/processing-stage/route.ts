@@ -1,9 +1,9 @@
-import { correlationId, json } from "@/lib/server/http";
+import { correlationId, json } from "@/platform/http/http";
 import {
   executeConfiguredProcessingWorkerRequest,
   ProcessingWorkerRequestError,
-} from "@/lib/server/processing-worker-ingress";
-import { logEvent } from "@/lib/server/telemetry";
+} from "@/modules/processing/server/processing-worker-ingress";
+import { logEvent } from "@/platform/telemetry";
 
 export async function POST(request: Request): Promise<Response> {
   const id = correlationId(request);

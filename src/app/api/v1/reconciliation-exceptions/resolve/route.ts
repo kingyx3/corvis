@@ -3,13 +3,13 @@ import {
   assertPermission,
   type ReconciliationResolutionCommand,
   type ReconciliationResolutionAction,
-} from "@/core/enterprise";
-import { runAuditedMutation } from "@/lib/server/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/lib/server/authorized-request";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { MAX_VERSION } from "@/lib/server/request-validation";
-import { withIdempotency } from "@/lib/server/idempotency";
-import { PostgresProductionPlatform, platform } from "@/lib/server/platform";
+} from "@/shared/domain/enterprise";
+import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { MAX_VERSION } from "@/platform/http/request-validation";
+import { withIdempotency } from "@/platform/http/idempotency";
+import { PostgresProductionPlatform, platform } from "@/platform/platform";
 
 const actions: ReconciliationResolutionAction[] = ["select_source", "mark_immaterial", "accept_reconciliation"];
 

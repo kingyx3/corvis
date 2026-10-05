@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import { resolveAdminRequestIdentity } from "@/lib/server/admin-request";
-import { executeDeletionRequest } from "@/lib/server/data-lifecycle";
-import { apiError, correlationId, json } from "@/lib/server/http";
-import { platform } from "@/lib/server/platform";
-import { logEvent } from "@/lib/server/telemetry";
+import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { executeDeletionRequest } from "@/modules/governance/server/data-lifecycle";
+import { apiError, correlationId, json } from "@/platform/http/http";
+import { platform } from "@/platform/platform";
+import { logEvent } from "@/platform/telemetry";
 
 export async function POST(request: Request, context: {params: Promise<{requestId:string}>}) {
   const id=correlationId(request);
@@ -13,7 +13,7 @@ export async function POST(request: Request, context: {params: Promise<{requestI
     // The deletion itself is irreversible and already committed by this point
     // (executeDeletionRequest calls an external retention adapter mid-flow, so
     // this audit write deliberately is not in the same transaction -- see
-    // src/lib/server/data-lifecycle.ts). If the audit insert fails, that must
+    // src/modules/governance/server/data-lifecycle.ts). If the audit insert fails, that must
     // never present a genuinely successful, irreversible deletion to the
     // caller as a request failure: log it loudly for reconciliation instead
     // of letting apiError() turn it into a 500 for a call that succeeded.
