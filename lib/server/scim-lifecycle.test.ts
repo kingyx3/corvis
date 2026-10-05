@@ -40,7 +40,7 @@ test("the SCIM client is identified by the edge address, then the forwarded addr
   const keys: string[] = [];
   const limiter = { consume(key: string) { keys.push(key); return { allowed: true, retryAfterSeconds: 0 }; }, peek() { return { allowed: true, retryAfterSeconds: 0 }; } } as unknown as RateLimiter;
   const limits = { clientLimiter: limiter, tenantLimiter: limiter, verifiedTokens: new Map() };
-  const headers = (extra: Record<string, string>) => ({ "x-corvis-tenant": config.tenantId, authorization: "Bearer short", ...extra });
+  const headers = (extra: Record<string, string | undefined>): Record<string, string> => ({ "x-corvis-tenant": config.tenantId, authorization: "Bearer short", ...extra });
   for (const extra of [{ "cf-connecting-ip": " 1.1.1.1 " }, { "x-forwarded-for": "2.2.2.2, 9.9.9.9" }, { "x-real-ip": "3.3.3.3" }, {}, { "x-real-ip": "4".repeat(100) }]) {
     await assert.rejects(authenticateScim(new Request(BASE, { headers: headers(extra) }), new ScriptedDb(), limits), (e) => e instanceof ScimError && e.status === 401);
   }
