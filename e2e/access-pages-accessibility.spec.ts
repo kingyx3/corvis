@@ -155,7 +155,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
     // F10d: a colleague's request is waiting for this admin, so the approval notice sits at the top of the page and is part of the scan.
     await expect(page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" })).toContainText("Review the request");
-    const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
+    const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").and(page.locator("[data-status=complete]"));
     await ready.getByText("Contents and checksums").click();
     await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations-0001.csv");
     await expect(ready).toContainText("3 source document files (3.3 MB) are in the archive");
