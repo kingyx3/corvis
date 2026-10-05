@@ -76,13 +76,13 @@ services/                 code that runs outside the web app, each with its own 
 tools/                    repository tooling
   ci/                     scripts called from GitHub Actions workflows
   dev/                    developer and operator utilities
-  repo-checks/            tests that assert repository-wide policy (workflows, Terraform, docs, boundaries)
+  repo-checks/            tests that assert repository-wide policy, by area: workflows/ infrastructure/ assurance/ architecture/
   convex-conformance/     isolated upstream database-semantics oracle
 db/postgres/              migrations (immutable once applied), RLS/security acceptance SQL and DB tests
 infra/terraform/          modules, environments and the shared Cloudflare root
 openapi/                  the public API contract, compatibility baseline and route classification
 ops/                      runbooks, SLOs, control catalogues and UAT/security assessment plans
-e2e/                      Playwright customer-journey, accessibility and performance suites
+e2e/                      Playwright suites: journeys/ admin/ quality/ smoke/ (plus support/)
 docs/                     technical documentation, grouped by kind (see docs/README.md)
 ```
 

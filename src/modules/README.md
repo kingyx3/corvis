@@ -29,4 +29,4 @@ Server and domain code use relative imports so `node --test` can run it without 
 | `support` | In-app help and support requests. |
 | `workspace` | Workspace summary and dashboard, display preferences, saved views and sector classification. |
 
-Code that more than one module needs and that belongs to no capability goes in `src/platform/` (server) or `src/shared/` (client-safe), not in a module.
+A layer that grows past a few dozen files is grouped into feature folders (for example `processing/server/stages/`, `delivery/server/exports/`); the layer rules apply to the whole folder tree. Code that more than one module needs and that belongs to no capability goes in `src/platform/` (server) or `src/shared/` (client-safe), not in a module.

@@ -16,11 +16,24 @@ The recommendations below were implemented in one restructuring change. This rev
 | Step 4: one home for scripts | Done: `tools/ci/` (was `.github/scripts/`) and `tools/dev/` (was `scripts/`). |
 | Step 5/6: split `lib/server/` and fold `core/`, `features/`, `adapters/` into modules | Done: 12 modules under `src/modules/<module>/{domain,server,adapters,ui}`, plus `src/platform/` (grouped into `config/ data/ database/ gcp/ http/ observability/ runtime/ demo/`), `src/shared/` and `src/composition/`. `application/` became `modules/sources/application/`. |
 | Step 7: `src/` | Done. Route groups were not introduced: URLs and layouts are unchanged and the admin and customer surfaces already share one root layout. |
-| Step 8: enforced boundaries | Done at pull-request time: `tools/repo-checks/module-boundaries.test.ts` runs the `architecture-drift` scanner (`CL-ARCH-001/002`) over the whole tree, and `tools/repo-checks/repository-layout.test.ts` pins the directory layout, the module layers and the docs index. An ESLint import rule set is not added: server code uses relative imports, which lint patterns cannot express per layer. |
+| Step 8: enforced boundaries | Done at pull-request time: `tools/repo-checks/architecture/module-boundaries.test.ts` runs the `architecture-drift` scanner (`CL-ARCH-001/002`) over the whole tree, and `tools/repo-checks/architecture/repository-layout.test.ts` pins the directory layout, the module layers and the docs index. An ESLint import rule set is not added: server code uses relative imports, which lint patterns cannot express per layer. |
 | Step 9: Convex harness | Moved to `tools/convex-conformance/`; kept, since its conformance workflow still runs. |
 | `db/postgres/migrations` flattening, `contracts/openapi/` | Not done, deliberately: `db/postgres/` and `openapi/` are already clear, and moving them would churn every workflow and test that names them for no gain. |
 
 Two things to know about the move itself. SQL migrations are immutable (the runner refuses checksum drift), so none were edited even where a comment mentions an old path. The changed-code coverage gate now treats a pure move as unchanged (see `docs/engineering/TESTING.md`); the coverage denominator was verified to be the same 224 files before and after.
+
+### Second pass
+
+A follow-up change took the layout to what is usual for a repository of this size:
+
+| Area | Outcome |
+| --- | --- |
+| Directories over about 35 files | The server layers of `processing`, `sources`, `identity-access`, `delivery` and `governance`, and `src/platform/http`, are grouped into feature folders (for example `processing/server/{orchestration,stages,materialization,transport,recovery}`). Tests stay beside the code. |
+| `e2e/` and `tools/repo-checks/` | Grouped by area (`journeys admin quality smoke`; `workflows infrastructure assurance architecture`). Playwright still lists the same 500 tests in 28 files. |
+| Contributor-facing files | `.editorconfig`, `.gitattributes`, `CONTRIBUTING.md`, a pull request template and issue forms. |
+| TypeScript projects | `tsconfig.json` covers `src/` (what `next build` checks); `tsconfig.tools.json` covers tooling, services, e2e and db. Together they cover the same 817 files as before. |
+| Enforcement | The layout check now also fails when one directory under `src`, `tools`, `services` or `e2e` holds more than 35 files. |
+| Left open on purpose | `CODEOWNERS` (needs named owners and changes merge rules), `LICENSE` (a legal decision for a repository that is public "for now"), and the Node version spread (`.nvmrc` and CI use 24, the images use 26, `engines` allows 22.18 and up). |
 
 ## 1. What the repo looks like today
 
