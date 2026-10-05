@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { displayDate, displayNumberFormatter } from "@/lib/display-format";
 import { usePreferences } from "@/features/preferences/preference-provider";
-import { workspaceContextHeaders } from "../../lib/workspace-context.ts";
+import { workspaceContextHeaders } from "@/lib/workspace-context";
 import {
   FUND_SCORECARD_METRICS,
   INVESTMENT_SCORECARD_METRICS,

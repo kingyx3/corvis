@@ -3223,7 +3223,10 @@ button.snapshot-row:focus-visible {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* Not a 0.01ms duration: WebKit still starts the transition and reports the
+       pre-change colours until its next frame, so an axe scan taken right after a
+       state change (disabled, primary -> secondary) reads stale colours. */
+    transition: none !important;
     scroll-behavior: auto !important;
   }
 }
