@@ -105,6 +105,23 @@ test("a stalled, failed or premature answer fails the write and cancels the sess
   });
 });
 
+test("a session that cannot be cancelled, and a response body that cannot be released, do not hide the original failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const failing = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(1)); }, cancel() { throw new Error("cancel failed"); } });
+  let puts = 0;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === "POST") return new Response(null, { status: 200, headers: { location: SESSION } });
+    puts += 1;
+    return new Response(puts === 1 ? failing : null, { status: 500 });
+  }) as typeof fetch;
+  class StubbornClient extends GcsControlClient {
+    override async cancelResumableUpload(): Promise<void> { throw new Error("cancel refused"); }
+  }
+  try {
+    await assert.rejects(new StubbornClient({ bucket: "bucket", accessToken: "token" }).putObjectStream("k", pieces([10]), "application/zip"), /resumable upload failed \(500\)/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("the upload chunk must be a positive multiple of 256 KiB, and a session with a declared size still sends it", async () => {
   const client = new GcsControlClient({ bucket: "bucket", accessToken: "token" });
   for (const chunkBytes of [0, -CHUNK, 1000, 1.5 * CHUNK]) {

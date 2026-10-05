@@ -167,6 +167,43 @@ test("a cancellation answer with no status code counts as status 0", async () =>
   assert.equal(await deleteWithZeroContentLength("https://s/1", fake), 0);
 });
 
+/** A body that fails when the consumer cancels it, to exercise the best-effort cleanup paths. */
+const cancelFails = (bytes = 1000) => new ReadableStream<Uint8Array>({
+  start(controller) { controller.enqueue(new Uint8Array(bytes)); },
+  cancel() { throw new Error("cancel failed"); },
+});
+
+test("a failure to release a response body never hides the real outcome", async () => {
+  await withFetch([new Response(cancelFails(), { status: 404 }), new Response(cancelFails(), { status: 500 })], async () => {
+    assert.equal(await client().getObjectStream("k"), null);
+    await assert.rejects(client().getObjectStream("k"), /object read failed \(500\)/);
+  });
+  await withFetch([new Response(cancelFails(), { status: 200 })], async () => {
+    assert.equal((await client().getObjectPrefix("k", 10)).length, 10);
+  });
+});
+
+test("waiting for response headers is bounded, and a stalled cancellation request is destroyed", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+  })) as typeof fetch;
+  try {
+    await assert.rejects(new GcsControlClient({ bucket: "bkt", accessToken: "t", requestTimeoutMs: 5 }).getObjectStream("k"), /aborted/);
+  } finally { globalThis.fetch = originalFetch; }
+
+  const { deleteWithZeroContentLength } = await import("./gcs.ts");
+  const handlers: Record<string, (value?: unknown) => void> = {};
+  let destroyed: Error | undefined;
+  const fake = (() => ({
+    on(event: string, handler: (value?: unknown) => void) { handlers[event] = handler; return this; },
+    destroy(error: Error) { destroyed = error; handlers.error?.(error); },
+    end() { handlers.timeout!(); },
+  })) as unknown as typeof httpsRequest;
+  await assert.rejects(deleteWithZeroContentLength("https://s/1", fake, 1), /timed out/);
+  assert.match(destroyed!.message, /timed out/);
+});
+
 test("object streams pin a generation, report the type and length, and treat a missing object as null", async () => {
   await withFetch([new Response("data", { status: 200, headers: { "content-type": "application/pdf", "content-length": "4" } }), status(200, "x"), status(404), status(500)], async (seen) => {
     const found = await client().getObjectStream("k", "3");
