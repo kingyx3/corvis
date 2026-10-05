@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature, type JsonWebKey } from "crypto";
+import { createPublicKey, verify as verifySignature, type webcrypto } from "crypto";
 
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const CLOCK_SKEW_SECONDS = 30;
@@ -164,7 +164,7 @@ export class GoogleOidcVerifier {
     if (claims.email !== input.serviceAccountEmail || claims.email_verified !== true) throw new Error("GCP OIDC service identity is not approved");
 
     const jwk = await this.key(header.kid, now.getTime());
-    const publicKey = createPublicKey({ key: jwk as JsonWebKey, format: "jwk" });
+    const publicKey = createPublicKey({ key: jwk as webcrypto.JsonWebKey, format: "jwk" });
     const signature = Buffer.from(encodedSignature, "base64url");
     const verified = verifySignature("RSA-SHA256", Buffer.from(`${encodedHeader}.${encodedClaims}`), publicKey, signature);
     if (!verified) throw new Error("invalid GCP OIDC token signature");

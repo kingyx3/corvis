@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify as verifySignature, type JsonWebKey } from "crypto";
+import { createHash, createPublicKey, verify as verifySignature, type webcrypto } from "crypto";
 
 const CLOCK_SKEW_SECONDS = 30;
 const DEFAULT_KEY_CACHE_SECONDS = 300;
@@ -229,7 +229,7 @@ export class OidcVerifier {
     if (typeof claims.sub !== "string" || !claims.sub) throw new Error("OIDC token has no immutable subject");
 
     const jwk = await this.key(header.kid, issuer, input.jwksUrl, now.getTime());
-    const publicKey = createPublicKey({ key: jwk as JsonWebKey, format: "jwk" });
+    const publicKey = createPublicKey({ key: jwk as webcrypto.JsonWebKey, format: "jwk" });
     const signature = Buffer.from(encodedSignature, "base64url");
     const verified = verifySignature("RSA-SHA256", Buffer.from(`${encodedHeader}.${encodedClaims}`), publicKey, signature);
     if (!verified) throw new Error("invalid OIDC token signature");
