@@ -5,6 +5,7 @@ import { TenantExportSourceIntegrityError } from "./tenant-export-archive.ts";
 import { TENANT_EXPORT_BUILD_LEASE_MINUTES, processApprovedTenantExports, tenantExportObjectKey } from "./tenant-export-worker.ts";
 import { readStoredZip } from "../../../test-support/zip-reader.ts";
 import { BUCKET, FakeObjects, FakeTenantDb, REQUEST, TENANT, auditRow, claimedRow, documentRow, observationRow, sha256, uuid, type Script } from "../../../test-support/tenant-export-fixtures.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 const NOW = Date.parse("2026-10-03T00:00:00.000Z");
 const PDF = Buffer.from("%PDF-1.7 the source document");

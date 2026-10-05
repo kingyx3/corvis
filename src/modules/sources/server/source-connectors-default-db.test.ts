@@ -14,12 +14,13 @@ import {
   type SecretPayload,
   type SecretStore,
 } from "./source-connectors.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 /**
  * Every exported operation accepts an injected database for tests, but in
  * production callers omit it and the module resolves the control database
  * from server config. These tests exercise that default path end to end
- * through the HTTPS SQL transport, with `fetch` standing in for the gateway.
+ * through the HTTP SQL test double, with `fetch` standing in for the database.
  */
 
 const TENANT = "00000000-0000-0000-0000-0000000000a1";

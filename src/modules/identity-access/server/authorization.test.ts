@@ -4,6 +4,7 @@ import { AuthenticationError, SessionEndedByPolicyError } from "../../../platfor
 import { membershipAuthorizationRepository, PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository, sessionRevocationRepository } from "./authorization.ts";
 import { PostgresOperationsRepository } from "../../../platform/data/platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 class FakeDb implements PostgresSqlApi {
   lastSql = "";

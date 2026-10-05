@@ -6,11 +6,12 @@ import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { PostgresDriverError } from "../../../platform/database/postgres-native.ts";
 import type { PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 // Route handlers use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
-// The Postgres path: a non-demo identity through the trusted gateway, with an HTTP SQL transport that records every
+// The Postgres path: a non-demo identity through the trusted gateway, with an HTTP SQL test double that records every
 // statement. Nothing here talks to a real database; db/postgres/tests/customer-deletion-requests.sql covers the SQL itself.
 const TENANT = "11111111-aaaa-4aaa-8aaa-111111111111";
 const WORKSPACE = "33333333-cccc-4ccc-8ccc-333333333333";

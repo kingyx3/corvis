@@ -3,6 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 import type { PostgresRow } from "../../../platform/database/postgres.ts";
 import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 // See src/modules/sources/server/source-connections-routes.test.ts for why this loader is
 // needed: route modules use the Next.js "@/..." path alias.

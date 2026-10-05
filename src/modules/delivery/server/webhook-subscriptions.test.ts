@@ -11,6 +11,7 @@ import {
   MAX_WEBHOOK_ENDPOINT_URL_LENGTH, MAX_WEBHOOK_SUBSCRIPTIONS_PER_TENANT,
   type WebhookDeliveryPage,
 } from "./webhook-subscriptions.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 const TENANT_A = "00000000-0000-0000-0000-0000000000a1";
 const TENANT_B = "00000000-0000-0000-0000-0000000000b2";

@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { register } from "node:module";
 import test from "node:test";
 import { trustedIdentityHeaders } from "../../test-support/identity-assertion.ts";
+import "../../test-support/http-sql-driver.ts";
 
 // Behavioural authorization tests. Every handler below is invoked directly with an injected
 // identity (the trusted-gateway header path, which is how non-production identities and their

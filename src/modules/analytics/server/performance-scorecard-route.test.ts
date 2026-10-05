@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ScorecardPage } from "../domain/performance-scorecard.ts";
 import { SCORECARD_MAX_FACTS } from "./performance-scorecard.ts";
 import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 // Production-mode behaviour of GET /performance-scorecard against a faked SQL gateway
 // (see src/platform/http/route-authorization.test.ts for the same injection technique).

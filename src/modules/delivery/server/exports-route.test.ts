@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
+import "../../../test-support/http-sql-driver.ts";
 
 // See src/modules/sources/server/source-connections-routes.test.ts for why this loader is
 // needed: route modules use the Next.js "@/..." path alias that plain

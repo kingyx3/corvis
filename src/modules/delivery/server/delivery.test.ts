@@ -14,6 +14,7 @@ import {
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { policyCheckedLookup, policyPinnedWebhookFetch } from "./webhook-endpoint-policy.ts";
 import { signWebhook } from "./webhooks.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 type RecordedStatement = { sql: string; parameters: PostgresPrimitive[] };
 

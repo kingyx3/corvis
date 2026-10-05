@@ -3,6 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { hashCredentialSecret, mintCredential } from "./service-account-credential.ts";
 import { verifyGatewayIdentityAssertion } from "../../../platform/http/request-context.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 

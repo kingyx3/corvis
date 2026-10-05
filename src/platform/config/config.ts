@@ -162,8 +162,8 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     // The required-configuration guard above establishes this invariant before
     // the production transport check; keep the runtime branch aligned with it.
     const productionDatabaseDsn = config.databaseDsn as string;
-    // Production mutations require a native PostgreSQL connection. The HTTPS
-    // compatibility transport cannot guarantee transaction atomicity.
+    // Production mutations require a native PostgreSQL connection: it is the only transport
+    // with transactions, and `postgres()` rejects every other scheme outside tests.
     if (!/^postgres(?:ql)?:\/\//i.test(productionDatabaseDsn)) {
       throw new Error("CORVIS_DATABASE_DSN must be a native postgres:// or postgresql:// URL in production");
     }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
+import "../../../test-support/http-sql-driver.ts";
 
 // See src/modules/sources/server/source-connections-routes.test.ts for why this loader is needed.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
+import "../../../test-support/http-sql-driver.ts";
 
 // Route modules live under src/app/api and use the Next.js "@/..." path alias
 // (tsconfig.json), which Next's bundler resolves at build/serve time but
@@ -16,7 +17,7 @@ process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 // Mirrors the equivalent in-memory model in src/modules/sources/server/source-connectors.test.ts,
 // dispatching on the same SQL fragments src/modules/sources/server/source-connectors.ts actually
 // issues, so this exercises the real production code path (route -> library ->
-// PostgresHttpSqlApi -> fetch) rather than a stand-in for the library itself.
+// the HTTP SQL test double -> fetch) rather than a stand-in for the library itself.
 type Row = Record<string, unknown>;
 const rows = new Map<string, Row>();
 let idCounter = 0;

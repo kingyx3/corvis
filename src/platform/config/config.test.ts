@@ -116,7 +116,7 @@ test("production no longer accepts CORVIS_POSTGRES_DSN and names the replacement
   assert.doesNotThrow(() => getServerConfig(env), "the new name wins when both are present");
 });
 
-test("production requires a native PostgreSQL DSN because the HTTPS transport cannot run transactions", () => {
+test("production requires a native PostgreSQL DSN because only the native client runs transactions", () => {
   for (const dsn of ["https://postgres.example.com/sql", "http://postgres.example.com/sql", "not-a-url"]) {
     assert.throws(
       () => getServerConfig({ ...productionEnvironment(), CORVIS_DATABASE_DSN: dsn }),

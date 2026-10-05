@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MODULE_BOUNDARIES, scanArchitectureDrift } from "../../services/control-loop/scanners/architecture-drift.ts";
+import { MODULE_BOUNDARIES, importSpecifiers, scanArchitectureDrift } from "../../services/control-loop/scanners/architecture-drift.ts";
 import { loadRepoSnapshot } from "../../services/control-loop/scanners/repo-snapshot.ts";
 
 // The control loop runs the same scan on a schedule; running it here makes a boundary violation fail the
@@ -16,4 +16,13 @@ test("no domain or UI file imports across the module layer boundaries", async ()
 
 test("both layer rules are active", () => {
   assert.deepEqual(MODULE_BOUNDARIES.map((boundary) => boundary.ruleId).sort(), ["CL-ARCH-001", "CL-ARCH-002"]);
+});
+
+test("production code never imports test support", async () => {
+  const snapshot = await loadRepoSnapshot(process.cwd());
+  const offenders = snapshot.files
+    .filter((file) => /^(?:src|services)\/.*\.tsx?$/.test(file.path) && !/\.(?:test|spec)\.tsx?$/.test(file.path) && !file.path.startsWith("src/test-support/"))
+    .filter((file) => importSpecifiers(file.text).some((specifier) => specifier.includes("test-support")))
+    .map((file) => file.path);
+  assert.deepEqual(offenders, []);
 });

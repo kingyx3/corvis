@@ -5,6 +5,7 @@ import test from "node:test";
 import type { ServerConfig } from "../../../platform/config/config.ts";
 import type { OidcLogoutToken } from "./oidc.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 

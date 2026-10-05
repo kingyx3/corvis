@@ -84,7 +84,7 @@ Current PostgreSQL baseline capabilities are:
 - extensions;
 - logical replication.
 
-A connection adapter must not advertise a capability it cannot actually provide. For example, the legacy HTTP SQL compatibility transport does not advertise native transactions/advisory-lock semantics and is not permitted for production mutation paths.
+A connection adapter must not advertise a capability it cannot actually provide. For example, the in-process HTTP SQL test double (`src/test-support/http-sql-driver.ts`) does not advertise native transactions or advisory-lock semantics. `postgres()` accepts only native `postgres://` and `postgresql://` DSNs; a test may register a driver for another scheme with `registerDatabaseDriver`, which throws in production.
 
 ## Atomicity rule
 

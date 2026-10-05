@@ -83,7 +83,8 @@ function ensureCommit(base) {
 //      replaced by a placeholder before comparing; and
 //   2. path strings that name a file (or a whole directory) the same diff moved, which are rewritten to
 //      their new location in the old text before comparing.
-// A file counts as unchanged only when the two normalised versions are identical.
+// A file counts as unchanged only when the two normalised versions are identical, or differ by one identifier
+// renamed consistently throughout (see isSingleIdentifierRename).
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\(\s*|\bnew URL\(\s*|\bregister\(\s*)(["'])[^"'\n]+\2/g;
 // A path starts at a boundary, or directly after an interpolated prefix such as `${root}/`.
 const PATH_START = "(?:(?<![\\w./@-])|(?<=\\}/))";
@@ -143,11 +144,34 @@ function normalize(source, rewritePaths) {
   return normalizeSpecifiers(rewritePaths(source.replace(/\r?\n$/, "")));
 }
 
+const WORD = /[A-Za-z0-9_$]/;
+
+/**
+ * True when `after` is `before` with exactly one identifier renamed everywhere it occurs: the kind of change an IDE
+ * rename makes. It adds no behaviour for a test to cover, so it is not held to the changed-code bar. A file with any
+ * other difference, or where the new name already existed, still is.
+ */
+function isSingleIdentifierRename(before, after) {
+  const limit = Math.min(before.length, after.length);
+  let index = 0;
+  while (index < limit && before[index] === after[index]) index += 1;
+  if (index === limit) return false;
+  let start = index;
+  while (start > 0 && WORD.test(before[start - 1] ?? "")) start -= 1;
+  const word = (text, from) => { let end = Math.max(from, index); while (end < text.length && WORD.test(text[end] ?? "")) end += 1; return text.slice(from, end); };
+  const oldName = word(before, start);
+  const newName = word(after, start);
+  if (!oldName || !newName || oldName === newName || !/^[A-Za-z_$]/.test(oldName) || !/^[A-Za-z_$]/.test(newName)) return false;
+  const boundary = (name) => new RegExp(`(?<![A-Za-z0-9_$])${escapeRegExp(name)}(?![A-Za-z0-9_$])`, "g");
+  if (boundary(newName).test(before)) return false;
+  return before.replace(boundary(oldName), newName) === after;
+}
+
 function isPureMove(base, previousPath, currentPath, rewritePaths) {
   try {
-    const before = git(["show", `${base}:${previousPath}`], { stdio: ["ignore", "pipe", "ignore"] });
-    const after = readFileSync(path.resolve(ROOT, currentPath), "utf8");
-    return normalize(before, rewritePaths) === normalizeSpecifiers(after.replace(/\r?\n$/, ""));
+    const before = normalize(git(["show", `${base}:${previousPath}`], { stdio: ["ignore", "pipe", "ignore"] }), rewritePaths);
+    const after = normalizeSpecifiers(readFileSync(path.resolve(ROOT, currentPath), "utf8").replace(/\r?\n$/, ""));
+    return before === after || isSingleIdentifierRename(before, after);
   } catch { return false; }
 }
 

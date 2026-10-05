@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { register } from "node:module";
 import test from "node:test";
 import { parseYaml, responseSchema, validateSchema, type Json, type OpenApiDocument } from "../../test-support/openapi-support.ts";
+import "../../test-support/http-sql-driver.ts";
 
 // Route modules use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
 register(new URL("../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);

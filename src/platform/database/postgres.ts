@@ -7,6 +7,7 @@ import {
   type DatabaseRow,
   type DatabaseRuntime,
 } from "./database.ts";
+import { isProductionEnvironment } from "../config/config.ts";
 import { NativePostgresSqlApi } from "./postgres-native.ts";
 
 /** Backwards-compatible aliases while callers migrate to the provider-neutral names. */
@@ -21,80 +22,32 @@ export type PostgresSqlApi = DatabaseApi;
  */
 export const withTransaction = withOptionalTransaction;
 
-type QueryResult = { rows: PostgresRow[] };
-
-type PostgresClientOptions = {
-  dsn: string;
-  fetchImpl?: typeof fetch;
-  timeoutMs?: number;
-};
-
-/**
- * Minimal HTTP SQL adapter retained for non-production compatibility.
- *
- * Product/domain modules must depend on their own repository ports rather than
- * this shared transport primitive. Provider SDK semantics must not leak through
- * this interface.
- */
-export class PostgresHttpSqlApi implements PostgresSqlApi {
-  private readonly dsn: string;
-  private readonly fetchImpl: typeof fetch;
-  private readonly timeoutMs: number;
-
-  constructor(options: PostgresClientOptions) {
-    this.dsn = options.dsn;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
-  }
-
-  async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
-    const result = await this.request(sql, parameters);
-    return result.rows;
-  }
-
-  async execute(sql: string, parameters: PostgresPrimitive[] = []): Promise<void> {
-    await this.request(sql, parameters);
-  }
-
-  async health(): Promise<boolean> {
-    try {
-      await this.query("select 1 as ok");
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async request(sql: string, parameters: PostgresPrimitive[]): Promise<QueryResult> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const response = await this.fetchImpl(this.dsn, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sql, parameters }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Postgres SQL request failed with status ${response.status}`);
-      }
-      const payload = (await response.json()) as Partial<QueryResult> | null;
-      if (!payload || !Array.isArray(payload.rows)) return { rows: [] };
-      return { rows: payload.rows };
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-}
-
 const nativeClients = new Map<string, NativePostgresSqlApi>();
 const NATIVE_POSTGRES_DSN = /^postgres(?:ql)?:\/\//i;
-const HTTPS_SQL_DSN = /^https:\/\//i;
 
-/** Native provider DSNs use the PostgreSQL wire protocol; explicit HTTPS SQL
- * gateway bindings remain supported for compatibility and are never inferred
- * from a failed native connection. URI schemes are case-insensitive by RFC,
- * so transport selection uses the same normalization as production config.
+/** A transport for a DSN scheme the native PostgreSQL client does not handle. */
+export type DatabaseDriver = {
+  accepts(dsn: string): boolean;
+  connect(dsn: string): PostgresSqlApi;
+};
+
+const additionalDrivers: DatabaseDriver[] = [];
+
+/**
+ * Extension point for tests that need an in-process database double behind a non-native DSN.
+ * It refuses to run in production, where `getServerConfig()` already requires a native
+ * `postgres://` or `postgresql://` DSN, so a deployed process can only ever speak the PostgreSQL
+ * wire protocol to its database.
+ */
+export function registerDatabaseDriver(driver: DatabaseDriver, nodeEnv: string | undefined = process.env.NODE_ENV): void {
+  if (isProductionEnvironment(nodeEnv)) throw new Error("Database drivers other than native PostgreSQL cannot be registered in production");
+  additionalDrivers.push(driver);
+}
+
+/**
+ * Native provider DSNs use the PostgreSQL wire protocol. Any other scheme is rejected unless a test
+ * registered a driver for it; a failed native connection never falls back to another transport.
+ * URI schemes are case-insensitive by RFC, so selection uses the same normalization as production config.
  */
 export function postgres(dsn?: string): PostgresSqlApi {
   if (!dsn) {
@@ -110,8 +63,9 @@ export function postgres(dsn?: string): PostgresSqlApi {
     }
     return client;
   }
-  if (!HTTPS_SQL_DSN.test(dsn)) throw new Error("Unsupported PostgreSQL transport");
-  return new PostgresHttpSqlApi({ dsn });
+  const driver = additionalDrivers.find((candidate) => candidate.accepts(dsn));
+  if (!driver) throw new Error("Unsupported PostgreSQL transport");
+  return driver.connect(dsn);
 }
 
 /**
@@ -127,8 +81,8 @@ export function postgresRuntime(dsn: string, provider: DatabaseProvider = "unkno
     capabilities: {
       ...POSTGRES_BASELINE_CAPABILITIES,
       nativeTransactions: Boolean(api.transaction),
-      // The legacy HTTPS SQL compatibility transport cannot safely advertise
-      // session-scoped PostgreSQL features even if the backend is PostgreSQL.
+      // Only a transport with real sessions (the native client) can hold session-scoped
+      // PostgreSQL features such as advisory locks.
       advisoryLocks: Boolean(api.transaction),
       logicalReplication: NATIVE_POSTGRES_DSN.test(dsn),
     },

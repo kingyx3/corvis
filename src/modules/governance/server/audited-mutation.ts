@@ -18,7 +18,7 @@ export type AuditedMutationOptions<T> = {
    * transaction; the mutation and audit join the caller's atomic unit.
    */
   joinExistingTransaction?: boolean;
-  /** Test seam. Production is strict by default; non-production compatibility transports are not production evidence. */
+  /** Test seam. Production is strict by default; a transaction-less test double is not production evidence. */
   strictTransactions?: boolean;
 };
 
@@ -64,8 +64,8 @@ export async function runAuditedMutation<T>(options: AuditedMutationOptions<T>):
       // callback to run: fail before the business mutation can execute.
       throw new Error("Database transport does not provide native transactions");
     }
-    // Non-production compatibility transports remain usable by route fakes and
-    // local adapters, but are deliberately not accepted as production evidence.
+    // Outside production a transaction-less test double (a route fake) is tolerated; no real
+    // database lacks transactions, and production never reaches here.
     return mutateAndAudit(db, options);
   }
 

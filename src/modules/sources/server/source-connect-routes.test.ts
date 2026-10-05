@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ConnectionTestResult, ConnectorDriver, SecretPayload } from "./source-connectors.ts";
 import type { SourceOAuthClient } from "./source-oauth.ts";
 import { RateLimiter } from "../../../platform/http/rate-limit.ts";
+import "../../../test-support/http-sql-driver.ts";
 
 // See src/modules/sources/server/source-connections-routes.test.ts for why this loader is needed (the "@/..." route alias).
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -18,7 +19,7 @@ delete process.env.CORVIS_GCP_PROJECT_ID;
 // Mirrors the equivalent in-memory model in src/modules/sources/server/source-connectors.test.ts,
 // dispatching on the same SQL fragments src/modules/sources/server/source-connectors.ts actually
 // issues, so this exercises the real production code path (route -> library ->
-// PostgresHttpSqlApi -> fetch) rather than a stand-in for the library itself.
+// the HTTP SQL test double -> fetch) rather than a stand-in for the library itself.
 type Row = Record<string, unknown>;
 const rows = new Map<string, Row>();
 let failSwap = false;

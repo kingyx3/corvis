@@ -278,10 +278,10 @@ Before an activated Snowflake replica serves analytics/sharing:
 `CORVIS_DATABASE_DSN` accepts the provider's `postgresql://` (or `postgres://`)
 connection string. The application now uses the PostgreSQL wire protocol for
 these bindings, including the migration CLI; it does not POST them to an HTTP
-endpoint. Explicit HTTPS SQL gateway bindings remain accepted outside production
-only: the HTTPS transport has no transactions, so `withTransaction` would run
-non-atomically (a mutation could commit without its audit row), and production
-startup fails unless the DSN is `postgres://` or `postgresql://`.
+endpoint. No other transport is available in application code: `postgres()` rejects any
+non-native scheme, and production startup fails unless the DSN is `postgres://` or
+`postgresql://`. Unit tests that need a database double register one with
+`registerDatabaseDriver` (see `src/test-support/http-sql-driver.ts`), which throws in production.
 
 Each process shares a five-connection pool per configured DSN (tunable with
 `CORVIS_POSTGRES_POOL_MAX`, 1-50; the provider's connection limit must cover
