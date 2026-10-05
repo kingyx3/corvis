@@ -3,7 +3,7 @@ import { displayDate } from "@/lib/display-format";
 import { usePreferences } from "@/features/preferences/preference-provider";
 
 import { copyToClipboard } from "@/lib/clipboard";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DeactivateTenantAccessResult, TenantAccessMembership, MemberRoleReceipt, TenantAccessMember, TenantInvitation, TenantInvitationCreated } from "@/core/workspace";
 import { workspacePort } from "@/runtime/workspace-services";
 import { Modal } from "@/components/ui/modal";
@@ -52,28 +52,32 @@ export function AccessAdminView() {
   const [createdInvitation, setCreatedInvitation] = useState<TenantInvitationCreated | null>(null);
   const [inviteUrl, setInviteUrl] = useState("");
   const [workspaces, setWorkspaces] = useState<Array<{ workspaceId: string; workspaceDisplayName?: string }>>([]);
+  const latest = useRef(0);
 
   const load = async () => {
+    const requestId = ++latest.current;
     setLoading(true);
     try {
       const [nextMembers, nextInvitations, nextWorkspaces] = await Promise.all([workspacePort.listAccessMembers(), workspacePort.listAccessInvitations(), workspacePort.listMyWorkspaces()]);
+      if (requestId !== latest.current) return;
       setMembers(nextMembers);
       setInvitations(nextInvitations);
       setWorkspaces(nextWorkspaces);
       setInviteWorkspace((current) => current || nextWorkspaces[0]?.workspaceId || "");
       setError(null);
     } catch (caught) {
+      if (requestId !== latest.current) return;
       setError(caught instanceof Error ? caught.message : "Access inventory could not be loaded");
     } finally {
-      setLoading(false);
+      if (requestId === latest.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    let active = true;
+    const requestId = ++latest.current;
     void Promise.all([workspacePort.listAccessMembers(), workspacePort.listAccessInvitations(), workspacePort.listMyWorkspaces()])
       .then(([items, nextInvitations, nextWorkspaces]) => {
-        if (!active) return;
+        if (requestId !== latest.current) return;
         setMembers(items);
         setInvitations(nextInvitations);
         setWorkspaces(nextWorkspaces);
@@ -81,11 +85,10 @@ export function AccessAdminView() {
         setError(null);
       })
       .catch((caught: unknown) => {
-        if (!active) return;
+        if (requestId !== latest.current) return;
         setError(caught instanceof Error ? caught.message : "Access inventory could not be loaded");
       })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .finally(() => { if (requestId === latest.current) setLoading(false); });
   }, []);
 
   const createInvitation = async () => {
