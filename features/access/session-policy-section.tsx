@@ -18,6 +18,7 @@ type Load = { kind: "loading" } | { kind: "error" } | { kind: "ready"; value: Se
 type Message = { tone: "success" | "error"; text: string };
 
 const METHOD_LABEL = { oidc: "OpenID Connect", saml: "SAML" } as const;
+const PROVIDER_STATUS_LABEL = { pending: "Setup in progress", active: "Active", disabled: "Disabled" } as const;
 
 function time(value: string): string { return displayDate(value, { timeStyle: "short" }); }
 
@@ -128,14 +129,21 @@ export function SessionPolicySection() {
         <thead><tr><th>Setting</th><th>Current value</th></tr></thead>
         <tbody>
           <tr><td><strong>Sign-in protocol</strong></td><td>{METHOD_LABEL[view.identityProvider.protocol]}</td></tr>
-          <tr><td><strong>Identity provider</strong></td><td>{view.identityProvider.issuer ? <code>{view.identityProvider.issuer}</code> : <span className="table-muted">Not configured</span>}</td></tr>
+          <tr><td><strong>Identity provider</strong></td><td>{view.identityProvider.issuer ? <code>{view.identityProvider.issuer}</code> : <span className="table-muted">Not configured</span>}{view.identityProvider.source === "global" && view.identityProvider.issuer ? <span className="table-muted"> · shared sign-in provider, not recorded for this organization</span> : null}</td></tr>
+          {view.identityProvider.source === "tenant" && <>
+            <tr><td><strong>Provider audience</strong></td><td>{view.identityProvider.audience ? <code>{view.identityProvider.audience}</code> : <span className="table-muted">Not set</span>}</td></tr>
+            <tr><td><strong>Provider status</strong></td><td>{view.identityProvider.status ? PROVIDER_STATUS_LABEL[view.identityProvider.status] : "Unknown"} · {view.identityProvider.tokenBindingEnforced ? "tokens are accepted only from this issuer and audience" : "tokens are not restricted to this issuer and audience"}</td></tr>
+          </>}
+          <tr><td><strong>Verified email domains</strong></td><td>{view.verifiedDomains.length
+            ? <>{view.verifiedDomains.map((domain, index) => <span key={domain.domain}>{index > 0 ? ", " : ""}<code>{domain.domain}</code></span>)} · new invitations and provisioned users must use one of these</>
+            : <span className="table-muted">None verified · new invitations are not restricted by email domain</span>}</td></tr>
           <tr><td><strong>Users by sign-in method</strong></td><td>{view.signInMethods.length ? view.signInMethods.map((method) => `${METHOD_LABEL[method.authMethod]}: ${method.users}`).join(" · ") : <span className="table-muted">No active users</span>}</td></tr>
           <tr><td><strong>SCIM provisioning</strong></td><td>{view.scim.configured
             ? <>{view.scim.enabled ? "Enabled" : "Disabled"} · {view.scim.activeUsers} active {view.scim.activeUsers === 1 ? "user" : "users"}{view.scim.defaultWorkspaceName ? ` · new users join ${view.scim.defaultWorkspaceName}` : ""}{view.scim.defaultRole ? ` as ${view.scim.defaultRole}` : ""}{view.scim.updatedAt ? ` · updated ${time(view.scim.updatedAt)}` : ""}</>
             : <span className="table-muted">Not set up</span>}</td></tr>
         </tbody>
       </table></div>
-      <p className="table-muted">Identity-provider and SCIM setup is done with Corvis support, so it is read-only here. Contact Corvis support to change it.</p>
+      <p className="table-muted">Identity-provider, verified-domain and SCIM setup is done with Corvis support, so it is read-only here. Contact Corvis support to change it.</p>
 
       <h3 className="retention-holds-heading">Session limits</h3>
       <form className="data-export-request" onSubmit={(event) => { event.preventDefault(); void save(); }} aria-describedby={limitProblem ? ids.error : undefined}>

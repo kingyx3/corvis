@@ -87,17 +87,28 @@ test("a second Organization Admin approves a colleague's request, the export is 
   await expect(waiting.getByRole("group", { name: "Confirm approval" })).toContainText("complete copy of your organization's data");
   await waiting.getByRole("button", { name: "Confirm approval" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Approved. The export is being prepared." })).toBeVisible();
-  await expect(waiting).toContainText("Ready");
+  // F10c: while it is built the request shows its size estimate and how far it has got, then settles by itself.
+  await expect(waiting).toContainText("Processing");
+  const progress = waiting.getByTestId("export-progress");
+  await expect(progress.getByRole("progressbar", { name: /^Export build progress/ })).toBeVisible();
+  await expect(progress).toContainText(/\d+% of an estimated \d/);
+  await expect(progress).toContainText(/of about [\d,]+ data rows · \d+ of 1 source files/);
+  await expect(waiting).toContainText("Ready", { timeout: 20_000 });
+  await expect(waiting.getByTestId("export-progress")).toHaveCount(0);
   await expect(waiting).toContainText("single-use and short-lived");
   await expect(waiting).toContainText("SHA-256");
 
   await waiting.getByText("Contents and checksums").click();
   const files = waiting.getByRole("region", { name: /^Files in the export requested/ });
-  await expect(files).toContainText("published-data/observations.csv");
-  await expect(files).toContainText("access-audit/access-audit.csv");
-  await expect(files).toContainText("source-documents/inventory.csv");
-  // Contractual data rights: what was left out is a count, and the files that are not delivered yet are said so.
+  await expect(files).toContainText("published-data/observations-0001.csv");
+  await expect(files).toContainText("access-audit/access-audit-0001.csv");
+  await expect(files).toContainText("source-documents/inventory-0001.csv");
+  // F10b: the source document file the organization may redistribute is in the archive, and is counted; the individual file is listed in the archive's own manifest.
+  await expect(waiting).toContainText("1 source document file (");
+  await expect(waiting).toContainText("in the archive, each listed with its size and SHA-256 in manifest.json");
+  // Contractual data rights: what was left out is a count, and the documents listed without their file are said so.
   await expect(waiting).toContainText("Funds: 2 included, 1 left out.");
+  await expect(waiting).toContainText("Source files: 1 included, 1 left out");
   await expect(waiting).toContainText("Not included: Source document files.");
   await waiting.getByText("History", { exact: true }).click();
   await expect(waiting.getByRole("listitem").filter({ hasText: /approved by demo-user/ })).toHaveCount(1);
@@ -108,6 +119,9 @@ test("a second Organization Admin approves a colleague's request, the export is 
   const path = await download.path();
   const bytes = await readFile(path!);
   expect(bytes.subarray(0, 2).toString()).toBe("PK");
+  // The archive names the source file it carries, and its manifest comes last.
+  expect(bytes.includes(Buffer.from("source-documents/files/doc-adv-viii-q2/"))).toBe(true);
+  expect(bytes.lastIndexOf(Buffer.from("manifest.json"))).toBeGreaterThan(bytes.indexOf(Buffer.from("source-documents/files/doc-adv-viii-q2/")));
   const shown = (await waiting.locator("code").first().innerText()).trim();
   expect(createHash("sha256").update(bytes).digest("hex")).toBe(shown);
 
@@ -150,7 +164,7 @@ test("the requester can never approve their own request: no control is offered, 
   const approved = await page.request.post(`/api/v1/access/data-exports/${id}`, { headers: { ...headers, "x-corvis-demo-subject": "second-admin" }, data: { action: "approve" } });
   expect(approved.status()).toBe(200);
   await page.reload();
-  await expect(card(page, "Records review at contract end")).toContainText("Ready");
+  await expect(card(page, "Records review at contract end")).toContainText("Ready", { timeout: 20_000 });
   await expect(card(page, "Records review at contract end")).toContainText("approved by second-admin");
 });
 

@@ -144,6 +144,8 @@ export async function createAuditedSourceConnection(
       const sourceConnectionId = requiredText(inserted[0]!, "source_connection_id");
       await writeAudit(tx, identity, correlationId, "source_connection.create", sourceConnectionId, "success", {
         providerKey: input.providerKey,
+        // How many of the provider's folders the administrator confirmed (the scope itself is stored on the connection).
+        scopeCount: input.sourceScope.length,
       });
       return getWorkspaceConnection(tx, identity, sourceConnectionId);
     });

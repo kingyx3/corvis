@@ -5,6 +5,7 @@ import { demoTestOutcome } from "../../adapters/demo/source-providers.ts";
 import { getServerConfig } from "./config.ts";
 import { auditSourceConnectionEvent, createAuditedSourceConnection, reauthorizeAuditedSourceConnection, testAuditedSourceConnection, transitionAuditedSourceConnection } from "./source-connector-governance.ts";
 import { sourceConnectorDrivers, sourceConnectorSecretStore } from "./source-connector-runtime.ts";
+import { uploadIngestSink } from "./source-ingest-sink.ts";
 import { approvedSourceProvider, credentialTypeOf, type ApprovedSourceProvider } from "./source-providers.ts";
 import { ConflictError, platform } from "./platform.ts";
 import { listSourceActivity, type SourceActivityConnection } from "./source-lifecycle.ts";
@@ -15,6 +16,7 @@ import {
   type ConnectorErrorClass,
   type SecretPayload,
   type SourceConnection,
+  type SourceScope,
 } from "./source-connectors.ts";
 import { logEvent } from "./telemetry.ts";
 
@@ -24,7 +26,13 @@ export type ConnectionTestOutcome = { ok: boolean; errorClass?: ConnectorErrorCl
 /** A newly created connection together with the result of the test that runs straight after authorization. */
 export type ConnectResult = { connection: SourceConnection; test: ConnectionTestOutcome };
 
-export type ConnectInput = { provider: ApprovedSourceProvider; connectionLabel: string; secret: SecretPayload };
+/** `scope` is what the connection reads when the administrator narrowed it (already validated against the provider, see resolveScopeSelection); omitted means everything the provider declares. */
+export type ConnectInput = { provider: ApprovedSourceProvider; connectionLabel: string; secret: SecretPayload; scope?: SourceScope[] };
+
+/** The scope a new connection is created with: the validated selection, else everything the provider declares, without the provider's internal ids. */
+function connectionScope(provider: ApprovedSourceProvider, scope: SourceScope[] | undefined): SourceScope[] {
+  return (scope ?? provider.scope).map(({ label, path }) => path ? { label, path } : { label });
+}
 
 function outcomeOf(result: { ok: boolean; errorClass?: ConnectorErrorClass }): ConnectionTestOutcome {
   return result.ok ? { ok: true } : { ok: false, ...(result.errorClass ? { errorClass: result.errorClass } : {}) };
@@ -113,14 +121,14 @@ export const postgresSourceConnectionService: SourceConnectionService = {
   activity(identity) {
     return listSourceActivity(identity);
   },
-  async connect(identity, { provider, connectionLabel, secret }, correlationId) {
+  async connect(identity, { provider, connectionLabel, secret, scope }, correlationId) {
     await postgresSourceConnectionService.assertNotConnected(identity, provider.providerKey);
     const created = await createAuditedSourceConnection(identity, {
       workspaceId: identity.workspaceId,
       providerKey: provider.providerKey,
       connectionLabel,
       credentialType: credentialTypeOf(provider),
-      sourceScope: provider.scope.map((item) => ({ ...item })),
+      sourceScope: connectionScope(provider, scope),
       secret,
       connectorVersion: provider.connectorVersion,
     }, correlationId, { secrets: sourceConnectorSecretStore() });
@@ -145,13 +153,21 @@ export const postgresSourceConnectionService: SourceConnectionService = {
   },
 };
 
+/**
+ * Demo mode has no scheduler process, so a workspace's due demo connections are collected when its connections or run
+ * history are read: the same loop the delivery tick runs in production, over the in-memory store (demo mode only).
+ */
+async function collectDemoDue(identity: RequestIdentity): Promise<void> {
+  await demoSourceConnectionStore().runDueSyncs({ ingest: uploadIngestSink(), identity });
+}
+
 export const demoSourceConnectionService: SourceConnectionService = {
-  async list(identity) { return demoSourceConnectionStore().list(identity); },
+  async list(identity) { await collectDemoDue(identity); return demoSourceConnectionStore().list(identity); },
   async get(identity, sourceConnectionId) { return demoSourceConnectionStore().get(identity, sourceConnectionId); },
   async transition(identity, sourceConnectionId, action) { return demoSourceConnectionStore().transition(identity, sourceConnectionId, action); },
   async reauthorize(identity, sourceConnectionId) { return demoSourceConnectionStore().reauthorize(identity, sourceConnectionId); },
-  async activity(identity) { return demoSourceConnectionStore().activity(identity); },
-  async connect(identity, { provider, connectionLabel, secret }) {
+  async activity(identity) { await collectDemoDue(identity); return demoSourceConnectionStore().activity(identity); },
+  async connect(identity, { provider, connectionLabel, secret, scope }) {
     await demoSourceConnectionService.assertNotConnected(identity, provider.providerKey);
     const store = demoSourceConnectionStore();
     // Only the non-secret test outcome is kept; the credential is dropped here, never stored.
@@ -159,7 +175,7 @@ export const demoSourceConnectionService: SourceConnectionService = {
       providerKey: provider.providerKey,
       connectionLabel,
       credentialType: credentialTypeOf(provider),
-      scope: provider.scope,
+      scope: connectionScope(provider, scope),
       connectorVersion: provider.connectorVersion,
       testOutcome: demoTestOutcome(provider.providerKey, secret),
     });

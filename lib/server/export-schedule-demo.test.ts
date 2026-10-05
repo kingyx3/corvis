@@ -81,6 +81,20 @@ test("creating a schedule is idempotent per owner, refuses a reused key with dif
   assert.equal((await demo.create(identity(), command("key-3", { trigger: "monthly" }))).item.nextRunAt, "2026-11-01T00:00:00.000Z");
 });
 
+test("a scorecard schedule is saved like any other, idempotent per owner and distinct per filter", async () => {
+  const demo = store();
+  const scorecard = command("sc-1", { scope: { performanceScorecard: true }, trigger: "on_publish" });
+  const first = await demo.create(identity(), scorecard);
+  assert.equal(first.created, true);
+  assert.equal(first.item.scopeLabel, "Performance scorecard · all entitled funds");
+  assert.deepEqual(first.item.scope, { performanceScorecard: true });
+  assert.equal(first.item.nextRunAt, null);
+  assert.equal((await demo.create(identity(), scorecard)).created, false);
+  await assert.rejects(demo.create(identity(), { ...scorecard, scope: { performanceScorecard: true, fundId: "fund-eqt-ix" } }), refusal("idempotency_key_reused", 409));
+  const filtered = await demo.create(identity(), command("sc-2", { scope: { performanceScorecard: true, fundId: "fund-eqt-ix", period: "Q1 2026" } }));
+  assert.equal(filtered.item.scopeLabel, "Performance scorecard · fund-eqt-ix · Q1 2026");
+});
+
 test("an owner holds at most 50 schedules that have not been deleted", async () => {
   const demo = store();
   const who = identity();

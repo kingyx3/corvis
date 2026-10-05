@@ -1,3 +1,5 @@
+// (F1c, #332: also the performance scorecard scope: real published figures read in fund pages with filters, scheduled on publish
+// for every fund the owner holds *now* and re-authorized at each run.)
 // (F4b, #328: also the owner's per-schedule notification switch, the run webhook events and the refusal email, end to end.)
 // Real-Postgres acceptance for scheduled exports (F4, #260), through the application code: the backend and the worker in
 // lib/server/export-schedule.ts drive the SQL functions of migration 085 and the *real* governed export request
@@ -9,6 +11,7 @@
 //   CORVIS_POSTGRES_DSN=postgres://... node db/postgres/tests/export-schedules.mjs
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../lib/server/postgres-native.ts';
+import { PostgresPerformanceScorecardRepository } from '../../../lib/server/performance-scorecard.ts';
 import { PostgresExportScheduleBackend, processDueExportSchedules, scheduleSessionId } from '../../../lib/server/export-schedule.ts';
 import { listPhysicalExportStatuses } from '../../../lib/server/export-history.ts';
 import { RecordingEmailSender } from '../../../adapters/email/recording-email-sender.ts';
@@ -308,6 +311,107 @@ try {
     assert.deepEqual((await runsOf(moved.item.scheduleId)).map((entry) => [entry.outcome, entry.failure_reason]), [['failed', 'owner_inactive']]);
     assert.equal((await tx.query(`select status from corvis_control.export_schedule where schedule_id=$1`, [moved.item.scheduleId]))[0].status, 'stopped');
     assert.deepEqual((await audits(moved.item.scheduleId)).map(([action, outcome]) => `${action}:${outcome}`).sort(), ['export_schedule.run:failure', 'export_schedule.stop:success']);
+
+    // ------------------------------------------------------------ F1c: the performance scorecard on a schedule
+    // Real published figures (the scorecard read joins facts, snapshots and source references; the foreign keys of that chain are
+    // not what is under test, so they are relaxed only while the fixture is seeded). Fund X and fund Z each report a NAV for Q2 2026;
+    // fund Y has published a snapshot with no figure and is never the owner's.
+    const scorecardDocument = 'f4000000-0000-4000-8000-0000000000d0';
+    const scoreSnap = { x: 'f4000000-0000-4000-8000-0000000000c1', y: 'f4000000-0000-4000-8000-0000000000c2', z: 'f4000000-0000-4000-8000-0000000000c3' };
+    const scoreFact = { x: 'f4000000-0000-4000-8000-0000000000f1', z: 'f4000000-0000-4000-8000-0000000000f3' };
+    await tx.execute(`update corvis_control.workspace set status='active' where workspace_id=$1`, [workspaceId]);
+    const grantOwnerFund = () => tx.execute(`insert into corvis_control.resource_entitlement (tenant_id,workspace_id,subject_user_id,resource_type,resource_id,permission) values ($1,$2,$3,'fund','fund-x','read')`, [tenantId, workspaceId, owner.userId]);
+    await grantOwnerFund();
+    await tx.execute(`insert into corvis_control.resource_entitlement (tenant_id,workspace_id,subject_user_id,resource_type,resource_id,permission) values ($1,$2,$3,'document',$4,'read')`, [tenantId, workspaceId, owner.userId, scorecardDocument]);
+    await tx.execute(`insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible) values ($1,'document',$2,true)`, [tenantId, scorecardDocument]);
+    await tx.execute(`set local session_replication_role = replica`);
+    await tx.execute(`insert into corvis_source.source_reference (tenant_id,source_reference_id,document_id,document_artifact_version_id,page_number) values ($1,'f4000000-0000-4000-8000-0000000000a5',$2,'f4000000-0000-4000-8000-0000000000a6',4)`, [tenantId, scorecardDocument]);
+    await tx.execute(`insert into corvis_facts.observation_source_reference (tenant_id,observation_id,source_reference_id,ordinal) values ($1,'f4000000-0000-4000-8000-0000000000a7','f4000000-0000-4000-8000-0000000000a5',1)`, [tenantId]);
+    const navValue = JSON.stringify({ number: '100.0000000000', currency: 'USD', semanticDimensions: { subjectLevel: 'fund', asOfDate: '2026-06-30', actuality: 'actual' } });
+    for (const [key, fund] of [['x', 'fund-x'], ['z', 'fund-z']]) {
+      await tx.execute(`insert into corvis_consolidated.consolidated_fact (tenant_id,consolidated_fact_id,fund_id,subject_type,subject_id,metric_code,economic_period,value,source_observation_ids,consolidation_rule_version)
+        values ($1,$2,$3,'fund',$3,'nav','Q2 2026',$4::jsonb,array['f4000000-0000-4000-8000-0000000000a7']::uuid[],'v1')`, [tenantId, scoreFact[key], fund, navValue]);
+    }
+    const publishScorecardSnapshot = (snapshotId, fund, version, secondsAgo, facts) => tx.execute(`insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version,published_at,fact_ids)
+      values ($1,$2,$3,'2026-Q2',$4,'published','1','1',now() - make_interval(secs => $5),$6::uuid[])`, [tenantId, snapshotId, fund, version, secondsAgo, `{${facts.join(',')}}`]);
+    await publishScorecardSnapshot(scoreSnap.x, 'fund-x', 1, 150, [scoreFact.x]);
+    await publishScorecardSnapshot(scoreSnap.z, 'fund-z', 1, 160, [scoreFact.z]);
+    await publishScorecardSnapshot(scoreSnap.y, 'fund-y', 1, 130, []);
+    await tx.execute(`set local session_replication_role = origin`);
+
+    // The read itself, against real data: filters narrow it, pages cover the funds once, a fund the caller does not hold is refused.
+    const scorecardRepository = new PostgresPerformanceScorecardRepository(tx);
+    const ownerReads = identity(owner, { entitlements: { workspaceIds: [workspaceId], fundIds: ['fund-x', 'fund-z'], documentIds: [scorecardDocument], sourceDocumentAccessAllowed: false, redistributionAllowed: true } });
+    const firstPage = await scorecardRepository.loadPage(ownerReads, {}, { limit: 1, periods: true });
+    assert.deepEqual([firstPage.payload.funds.map((fund) => fund.fundId), firstPage.payload.facts.map((fact) => [fact.fundId, fact.metricCode, fact.valueNumber, fact.period]), firstPage.periodOptions, firstPage.fundOptions.length],
+      [['fund-x'], [['fund-x', 'nav', '100.0000000000', 'Q2 2026']], ['Q2 2026'], 2], 'the first page is one whole fund; the periods and every fund option come with it');
+    assert.ok(firstPage.nextCursor);
+    const secondPage = await scorecardRepository.loadPage(ownerReads, {}, { cursor: firstPage.nextCursor, limit: 1 });
+    assert.deepEqual([secondPage.payload.funds.map((fund) => fund.fundId), secondPage.payload.facts.map((fact) => fact.fundId), secondPage.nextCursor, secondPage.periodOptions], [['fund-z'], ['fund-z'], null, []]);
+    assert.equal((await scorecardRepository.load(ownerReads, { period: 'Q2 2026' })).facts.length, 2);
+    assert.deepEqual(await scorecardRepository.load(ownerReads, { period: 'Q1 2026' }), { funds: [{ fundId: 'fund-x', fund: 'fund-x' }, { fundId: 'fund-z', fund: 'fund-z' }], facts: [] }, 'a period nothing was reported for has every fund and no figure');
+    assert.deepEqual((await scorecardRepository.load(ownerReads, { fundId: 'fund-z' })).facts.map((fact) => fact.fundId), ['fund-z']);
+    assert.equal((await refused(tx, () => scorecardRepository.load(ownerReads, { fundId: 'fund-y' }))).name, 'AuthorizationError', 'a fund filter never grants a fund');
+    assert.equal((await scorecardRepository.load(ownerReads, { snapshotIds: [scoreSnap.x] })).facts.length, 1, 'an export pins the snapshots it was requested for');
+
+    // Saving, then a publication run for an all-funds scorecard: Y (the newest publication of the three) is not the owner's, so the
+    // run is the owner's own newest publication, X; Y is consumed afterwards without a run and without telling the owner.
+    const scorecardOnPublish = await backend.create(identity(owner), command('sc-all', { scope: { performanceScorecard: true }, trigger: 'on_publish', label: 'Scorecard on publish' }), tx);
+    assert.deepEqual([scorecardOnPublish.item.scope, scorecardOnPublish.item.scopeLabel], [{ performanceScorecard: true }, 'Performance scorecard · all entitled funds']);
+    assert.equal((await refused(tx, () => backend.create(identity(owner), command('sc-y', { scope: { performanceScorecard: true, fundId: 'fund-y' } }), tx))).code, 'export_scope_not_entitled', 'a fund filter never grants a fund');
+    await tx.execute(`update corvis_control.export_schedule set publish_watermark = now() - interval '1 hour' where tenant_id=$1 and schedule_id=$2`, [tenantId, scorecardOnPublish.item.scheduleId]);
+    const scorecardJobs = await exportJobs();
+    await tick();
+    const scorecardRuns = () => runsOf(scorecardOnPublish.item.scheduleId);
+    assert.deepEqual((await scorecardRuns()).map((entry) => [entry.trigger_key, entry.outcome, entry.failure_reason]), [[`publish:${scoreSnap.x}:v1`, 'requested', null]], 'only a publication of a fund the owner holds triggers the scorecard');
+    assert.equal(await exportJobs(), scorecardJobs + 1);
+    const scorecardJob = (await tx.query(`select requested_by,format,snapshot_ids,manifest from corvis_serving.export_job where export_id=$1`, [(await scorecardRuns())[0].export_id]))[0];
+    assert.deepEqual([scorecardJob.requested_by, scorecardJob.format, scorecardJob.snapshot_ids, scorecardJob.manifest.scope, scorecardJob.manifest.scopeLabel, scorecardJob.manifest.rowCounts],
+      [owner.subject, 'csv', [scoreSnap.x], { performanceScorecard: true }, 'Performance scorecard · all entitled funds', { performanceScorecard: 6, snapshots: 1 }],
+      'the owner\'s entitled funds only (fund Z is not theirs here), pinned to the snapshot behind their figure, with six fund metrics (NAV and five Not reported)');
+    await tick();
+    assert.equal((await scorecardRuns()).length, 1, 'the publication of a fund the owner does not hold is consumed without a run');
+    assert.equal(await exportJobs(), scorecardJobs + 1);
+    assert.equal(await count(`select count(*)::int as n from corvis_control.export_schedule where tenant_id=$1 and schedule_id=$2 and publish_watermark >= now() - interval '131 seconds'`, [tenantId, scorecardOnPublish.item.scheduleId]), 1, 'and the schedule is not due for it again');
+
+    // Filters narrow the export: a scheduled monthly scorecard of fund X for Q2 2026 exports it with the filters on its manifest; the
+    // same for a period nothing was reported for resolves to nothing and is refused (never widened to what is there).
+    const filtered = await backend.create(identity(owner), command('sc-q2', { scope: { performanceScorecard: true, fundId: 'fund-x', period: 'Q2 2026' }, label: 'Scorecard X Q2' }), tx);
+    const emptyPeriod = await backend.create(identity(owner), command('sc-q1', { scope: { performanceScorecard: true, fundId: 'fund-x', period: 'Q1 2026' }, label: 'Scorecard X Q1' }), tx);
+    await forceDue(filtered.item.scheduleId);
+    await forceDue(emptyPeriod.item.scheduleId);
+    await tick();
+    const filteredRun = (await runsOf(filtered.item.scheduleId))[0];
+    assert.equal(filteredRun.outcome, 'requested');
+    const filteredJob = (await tx.query(`select snapshot_ids,manifest from corvis_serving.export_job where export_id=$1`, [filteredRun.export_id]))[0];
+    assert.deepEqual([filteredJob.manifest.scope, filteredJob.manifest.scopeLabel, filteredJob.manifest.rowCounts, filteredJob.snapshot_ids],
+      [{ performanceScorecard: true, fundId: 'fund-x', period: 'Q2 2026' }, 'Performance scorecard · fund-x · Q2 2026', { performanceScorecard: 6, snapshots: 1 }, [scoreSnap.x]], 'the manifest records the filters');
+    assert.deepEqual((await runsOf(emptyPeriod.item.scheduleId)).map((entry) => [entry.outcome, entry.failure_reason]), [['failed', 'scope_unavailable']]);
+
+    // The owner is re-authorized at every run: with no fund the all-funds scope is nothing, with redistribution withdrawn nothing is
+    // exported, and when they hold the fund again the next publication exports it.
+    const publishNewVersionOfX = async (version, secondsAgo) => {
+      await tx.execute(`update corvis_consolidated.fund_period_snapshot set status='superseded' where tenant_id=$1 and snapshot_id=$2 and version=$3`, [tenantId, scoreSnap.x, version - 1]);
+      await tx.execute(`set local session_replication_role = replica`);
+      await publishScorecardSnapshot(scoreSnap.x, 'fund-x', version, secondsAgo, [scoreFact.x]);
+      await tx.execute(`set local session_replication_role = origin`);
+    };
+    const jobsBeforeRevocation = await exportJobs();
+    await tx.execute(`delete from corvis_control.resource_entitlement where tenant_id=$1 and subject_user_id=$2 and resource_type='fund'`, [tenantId, owner.userId]);
+    await publishNewVersionOfX(2, 120);
+    await tick();
+    assert.deepEqual((await scorecardRuns()).map((entry) => [entry.trigger_key, entry.outcome, entry.failure_reason]).at(-1), [`publish:${scoreSnap.x}:v2`, 'failed', 'scope_not_entitled'], 'an owner who no longer holds any fund: "all funds" is nothing, and the owner can see why');
+    await grantOwnerFund();
+    await tx.execute(`update corvis_control.data_rights set redistribution_allowed=false where tenant_id=$1 and resource_type='workspace'`, [tenantId]);
+    await publishNewVersionOfX(3, 100);
+    await tick();
+    assert.deepEqual((await scorecardRuns()).map((entry) => [entry.trigger_key, entry.outcome, entry.failure_reason]).at(-1), [`publish:${scoreSnap.x}:v3`, 'failed', 'redistribution_not_permitted']);
+    assert.equal(await exportJobs(), jobsBeforeRevocation, 'refused runs export nothing');
+    await tx.execute(`update corvis_control.data_rights set redistribution_allowed=true where tenant_id=$1 and resource_type='workspace'`, [tenantId]);
+    await publishNewVersionOfX(4, 80);
+    await tick();
+    assert.deepEqual((await scorecardRuns()).map((entry) => [entry.trigger_key, entry.outcome]).at(-1), [`publish:${scoreSnap.x}:v4`, 'requested'], 'what the owner holds now is what is exported');
+    assert.equal(await exportJobs(), jobsBeforeRevocation + 1);
 
     throw ROLLBACK;
   }), (error) => error === ROLLBACK);

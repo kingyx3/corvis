@@ -465,6 +465,143 @@ test("the routes extend and transfer in the caller's tenant, and answer stable c
   for (const roles of ["analyst", "reviewer"]) assert.equal((await act(reader.serviceAccountId, { action: "extend", expiresInDays: 365 }, { roles })).status, 403, roles);
 });
 
+// ------------------------------------------------------------------ entitlement self-service (F6c)
+test("the demo organization offers only what it is licensed for, and seeded accounts show what they can read and what lapsed", async () => {
+  const demo = store();
+  const { serviceAccounts, grantable } = await demo.list(identity());
+  assert.deepEqual(grantable.map((resource) => [resource.resourceType, resource.resourceId, resource.label]), [
+    ["fund", "fund-advent-viii", "Advent International GPE VIII"],
+    ["fund", "fund-nordic-v", "Nordic Capital Fund V"],
+    ["fund", "fund-eqt-ix", "EQT IX"],
+    ["document", "doc-adv-viii-q2", "Advent International GPE VIII — Q2 2026.pdf"],
+    ["document", "doc-nordic-v-q2", "Nordic Capital Fund V — June 2026.pdf"],
+  ]);
+  assert.equal(grantable.some((resource) => resource.resourceId === "fund-hg-genesis-9"), false, "a fund the organization is not licensed for is not offered");
+  const nightly = serviceAccounts.find((account) => account.name === "Nightly reporting sync")!;
+  assert.deepEqual(nightly.entitlements.map((entitlement) => [entitlement.resourceId, entitlement.label, entitlement.permission, entitlement.withinDataRights]), [
+    ["fund-advent-viii", "Advent International GPE VIII", "read", true],
+    ["fund-eqt-ix", "EQT IX", "read", true],
+  ]);
+  assert.deepEqual(nightly.entitlementAccess, { canGrant: true, canRevoke: true });
+  const reader = serviceAccounts.find((account) => account.name === "Compliance export reader")!;
+  assert.deepEqual(reader.entitlements.map((entitlement) => [entitlement.resourceId, entitlement.withinDataRights]), [["fund-hg-genesis-9", false]], "on record, but the organization's right no longer covers it");
+  const feed = serviceAccounts.find((account) => account.name === "Partner data feed")!;
+  assert.deepEqual([feed.entitlements, feed.entitlementAccess], [[], { canGrant: true, canRevoke: false }], "a new account sees nothing until it is granted something");
+  assert.deepEqual(serviceAccounts.find((account) => account.status === "disabled")!.entitlementAccess, { canGrant: false, canRevoke: false });
+  assert.equal((await create(demo)).serviceAccount.entitlements.length, 0, "creating an account grants nothing");
+});
+
+test("an admin grants and revokes read access within the organization's data rights, and nothing beyond them", async () => {
+  const demo = store();
+  const created = (await create(demo)).serviceAccount;
+  const id = created.serviceAccountId;
+  const granted = await demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" });
+  assert.deepEqual(granted.serviceAccount.entitlements.map((entitlement) => [entitlement.resourceType, entitlement.resourceId, entitlement.permission, entitlement.withinDataRights]), [["fund", "fund-nordic-v", "read", true]]);
+  assert.equal(granted.serviceAccount.entitlementAccess.canRevoke, true);
+  await demo.grantEntitlement(identity(), id, { resourceType: "document", resourceId: "doc-adv-viii-q2" });
+  assert.deepEqual((await demo.get(identity(), id)).entitlements.map((entitlement) => entitlement.resourceType), ["document", "fund"], "listed by type then identifier");
+
+  // Beyond the organization's rights, or unknown: one refusal, nothing recorded.
+  for (const resource of [
+    { resourceType: "fund" as const, resourceId: "fund-hg-genesis-9" },
+    { resourceType: "fund" as const, resourceId: "fund-of-another-tenant" },
+    { resourceType: "document" as const, resourceId: "doc-hg-genesis-q2" },
+    { resourceType: "document" as const, resourceId: "fund-nordic-v" },
+  ]) {
+    await assert.rejects(demo.grantEntitlement(identity(), id, resource), refusal("entitlement_outside_data_rights", 422), JSON.stringify(resource));
+  }
+  await assert.rejects(demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_entitlement_exists", 409));
+  assert.equal((await demo.get(identity(), id)).entitlements.length, 2);
+
+  const revoked = await demo.revokeEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" });
+  assert.equal(revoked.endedEntitlements, 1);
+  assert.deepEqual(revoked.serviceAccount.entitlements.map((entitlement) => entitlement.resourceId), ["doc-adv-viii-q2"]);
+  await assert.rejects(demo.revokeEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_entitlement_not_found", 404));
+  await assert.rejects(demo.grantEntitlement(identity(), "nope", { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_not_found", 404));
+  await assert.rejects(demo.revokeEntitlement(identity(), "nope", { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_not_found", 404));
+  // Access that lapsed with the organization's right can still be removed.
+  const reader = (await demo.list(identity())).serviceAccounts.find((account) => account.name === "Compliance export reader")!;
+  assert.equal((await demo.revokeEntitlement(identity(), reader.serviceAccountId, { resourceType: "fund", resourceId: "fund-hg-genesis-9" })).serviceAccount.entitlements.length, 0);
+});
+
+test("the per-account bound holds, an expired account is granted nothing but can lose access, and deactivating ends everything", async () => {
+  const demo = store();
+  const id = (await create(demo)).serviceAccount.serviceAccountId;
+  // The demo has only five licensed resources, so reach the bound through the account's own list.
+  const stored = (demo as unknown as { tenants: Map<string, Array<{ serviceAccountId: string; entitlements: Array<{ resourceType: string; resourceId: string; grantedAt: string }> }>> }).tenants.get("tenant-store")!.find((account) => account.serviceAccountId === id)!;
+  for (let index = 0; index < 200; index += 1) stored.entitlements.push({ resourceType: "fund", resourceId: `operator-granted-${index}`, grantedAt: clock.toISOString() });
+  await assert.rejects(demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_entitlement_limit_reached", 409));
+  stored.entitlements.length = 0;
+
+  await demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" });
+  advance(366 * DAY);
+  await assert.rejects(demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-eqt-ix" }), refusal("service_account_not_active", 409));
+  const expired = await demo.get(identity(), id);
+  assert.deepEqual([expired.status, expired.entitlementAccess], ["expired", { canGrant: false, canRevoke: true }]);
+  assert.equal((await demo.revokeEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" })).serviceAccount.entitlements.length, 0, "access can be removed from an expired account");
+  advance(-366 * DAY);
+
+  await demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" });
+  const disabled = await demo.disable(identity(), id, "Integration retired");
+  assert.deepEqual([disabled.entitlements, disabled.entitlementAccess], [[], { canGrant: false, canRevoke: false }], "deactivating ends everything the account could read");
+  await assert.rejects(demo.grantEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_not_active", 409));
+  await assert.rejects(demo.revokeEntitlement(identity(), id, { resourceType: "fund", resourceId: "fund-nordic-v" }), refusal("service_account_entitlement_not_found", 404));
+});
+
+test("granting and revoking are audited by the service, and only an Organization Admin may do either", async () => {
+  const events: AuditEvent[] = [];
+  const demo = store();
+  const service = createServiceAccountService(demo);
+  const port = platform();
+  const original = port.audit.bind(port);
+  port.audit = async (event) => { events.push(event); await original(event); };
+  try {
+    const id = (await create(demo)).serviceAccount.serviceAccountId;
+    await service.act(identity(), id, { action: "grant_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Feeds the warehouse" }, "corr-grant");
+    const grant = events.find((event) => event.action === "service_account.entitlement_granted")!;
+    assert.deepEqual([grant.targetType, grant.targetId, grant.actorSubject, grant.correlationId], ["service_account", id, "demo-admin", "corr-grant"]);
+    assert.deepEqual(grant.metadata, { resourceType: "fund", resourceId: "fund-eqt-ix", permission: "read", reason: "Feeds the warehouse" });
+    const revoked = await service.act(identity(), id, { action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Not needed any more" }, "corr-revoke");
+    assert.equal(revoked.serviceAccount.entitlements.length, 0);
+    assert.deepEqual(events.find((event) => event.action === "service_account.entitlement_revoked")!.metadata, { resourceType: "fund", resourceId: "fund-eqt-ix", endedEntitlements: 1, reason: "Not needed any more" });
+
+    const before = events.length;
+    await assert.rejects(service.act(identity(), id, { action: "grant_entitlement", resourceType: "fund", resourceId: "fund-hg-genesis-9", reason: "Beyond our rights" }, "c"), refusal("entitlement_outside_data_rights", 422));
+    await assert.rejects(service.act(identity(), id, { action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Already gone" }, "c"), refusal("service_account_entitlement_not_found", 404));
+    assert.equal(events.length, before, "a refused command is not audited");
+    for (const who of [identity({ subject: "member", roles: ["analyst"], isTenantAdmin: false }), identity({ subject: "service-account:x", authMethod: "service_account" })]) {
+      await assert.rejects(service.act(who, id, { action: "grant_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Self service" }, "c"), refusal("tenant_admin_required", 403));
+      await assert.rejects(service.act(who, id, { action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Self service" }, "c"), refusal("tenant_admin_required", 403));
+    }
+  } finally { port.audit = original; }
+});
+
+test("the routes grant and revoke in the caller's tenant, refuse a grant beyond the data rights with a stable code, and are for Organization Admins only", async () => {
+  const tenant = `sa-entitlements-${Date.now()}`;
+  const { data: list } = await body(await listGet(request("/access/service-accounts", { tenant })));
+  assert.ok((list as unknown as { grantable: unknown[] }).grantable.length > 0);
+  const account = list.serviceAccounts.find((candidate) => candidate.name === "Partner data feed")!;
+  const act = (command: unknown, who: Caller = {}) => itemPost(request(`/access/service-accounts/${account.serviceAccountId}`, { tenant, method: "POST", body: command, ...who }), params(account.serviceAccountId));
+
+  const granted = await act({ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-nordic-v", reason: "Feeds the warehouse" });
+  assert.equal(granted.status, 200);
+  assert.deepEqual((await body(granted)).data.serviceAccount.entitlements.map((entitlement) => entitlement.resourceId), ["fund-nordic-v"]);
+  for (const [command, status, error] of [
+    [{ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-hg-genesis-9", reason: "Beyond our rights" }, 422, "entitlement_outside_data_rights"],
+    [{ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-nordic-v", reason: "Again" }, 409, "service_account_entitlement_exists"],
+    [{ action: "grant_entitlement", resourceType: "workspace", resourceId: "workspace-store", reason: "A workspace" }, 400, "invalid_resource_type"],
+    [{ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix" }, 400, "invalid_reason"],
+    [{ action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Never granted" }, 404, "service_account_entitlement_not_found"],
+  ] as const) {
+    const response = await act(command);
+    assert.deepEqual([response.status, (await body(response)).error], [status, error], JSON.stringify(command));
+  }
+  for (const roles of ["analyst", "reviewer"]) assert.equal((await act({ action: "grant_entitlement", resourceType: "fund", resourceId: "fund-eqt-ix", reason: "Self service" }, { roles })).status, 403, roles);
+  const revoked = await act({ action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-nordic-v", reason: "No longer needed" });
+  assert.equal(revoked.status, 200);
+  assert.equal((await body(revoked)).data.serviceAccount.entitlements.length, 0);
+});
+
 test("the demo store is one instance per module evaluation, not shared through globalThis", async () => {
   const { demoServiceAccountStore } = await import("../../adapters/demo/service-account-store.ts");
   const first = demoServiceAccountStore();

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuditEvent, RequestIdentity } from "../../core/enterprise.ts";
+import { emailDomainAllowed } from "./identity-records.ts";
 import { PostgresIdentityLifecycleRepository, type HumanAuthMethod, type IdentityLifecycleRole } from "./identity-lifecycle.ts";
 import { getServerConfig } from "./config.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
@@ -166,6 +167,8 @@ export async function createScimUser(config:ScimConfiguration,input:Record<strin
   const userName=typeof input.userName==="string"?input.userName.trim().toLowerCase():"";const externalId=typeof input.externalId==="string"?input.externalId.trim():"";const active=input.active!==false;if(!EMAIL.test(userName)||!externalId||externalId.length>1024)throw new ScimError(400,"invalidValue","userName email and externalId are required");
   return withTransaction(db,async(tx)=>{
     const existing=await tx.query(`select 1 from corvis_control.tenant_scim_identity where tenant_id=$1::uuid and (external_id=$2 or user_name=$3) limit 1`,[config.tenantId,externalId,userName]);if(existing.length)throw new ScimError(409,"uniqueness","SCIM user already exists");
+    // F7b (#335): off unless the tenant has a verified domain; only a NEW user is checked, so nobody who already exists is locked out.
+    if(!await emailDomainAllowed(tx,config.tenantId,userName))throw new ScimError(400,"invalidValue","userName domain is not verified for this organization");
     const scimUserId=randomUUID(),userId=randomUUID(),subject=externalId,eventKey=`scim:${scimUserId}:create`;
     const lifecycle=new PostgresIdentityLifecycleRepository(tx);
     try{await lifecycle.apply({tenantId:config.tenantId,eventKey,actorSubject:`scim:${config.tenantId}`,actorWorkspaceId:config.defaultWorkspaceId,correlationId,operation:"sync",authMethod:config.authMethod,subject,userId,memberships:[{workspaceId:config.defaultWorkspaceId,roleName:config.defaultRoleName}],reason:"SCIM provision"});

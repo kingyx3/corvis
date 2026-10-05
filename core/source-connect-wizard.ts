@@ -12,11 +12,17 @@
 import {
   CONNECTOR_ERROR_COPY,
   buildCredentialSecret,
+  describeUntil,
   type SecretBuildResult,
   type SourceConnectorErrorClass,
 } from "./source-connection-health.ts";
 
-export type ProviderScopeItem = { label: string; path?: string };
+export type ProviderScopeItem = {
+  label: string;
+  path?: string;
+  /** A stable identifier the provider declares for a folder the administrator may include or leave out (see {@link selectableScope}). */
+  id?: string;
+};
 
 /** How an administrator authorizes the provider: a redirect through the provider's consent page, or a minimum credential typed once. */
 export type ProviderConnect =
@@ -70,7 +76,40 @@ export function buildConnectSecret(credentialType: "scoped_api_token" | "service
   return buildCredentialSecret(credentialType, raw, "Enter the credential to continue.");
 }
 
-const GENERIC_TEST_FAILURE = "The provider did not accept the test, so Corvis could not confirm the connection.";
+// ---------------------------------------------------------------------------
+// Choosing which of a provider's folders to read (optional, before confirmation)
+// ---------------------------------------------------------------------------
+
+/**
+ * The scope items an administrator may include or leave out, or undefined when the provider does not offer a choice.
+ * A provider declares a choice by giving every scope item a distinct `id` (and having more than one item); anything else
+ * is read as a whole. The server applies the same rule against its registry and never trusts the browser's selection.
+ */
+export function selectableScope(scope: readonly ProviderScopeItem[]): ProviderScopeItem[] | undefined {
+  if (scope.length < 2) return undefined;
+  const ids = scope.map((item) => item.id);
+  if (ids.some((id) => typeof id !== "string" || id === "")) return undefined;
+  return new Set(ids).size === ids.length ? [...scope] : undefined;
+}
+
+export const SCOPE_SELECTION_REQUIRED = "Choose at least one folder for Corvis to read.";
+
+/** The scope items a set of chosen ids stands for, in the provider's order; ids the provider did not declare are ignored. */
+export function chosenScope(scope: readonly ProviderScopeItem[], selectedIds: ReadonlySet<string>): ProviderScopeItem[] {
+  return scope.filter((item) => item.id !== undefined && selectedIds.has(item.id));
+}
+
+/** The plain-language statement of what will be read, shown beside the confirmation so it is exactly what is stored. */
+export function describeScopeSelection(scope: readonly ProviderScopeItem[], selectedIds: ReadonlySet<string>): string {
+  const chosen = chosenScope(scope, selectedIds);
+  const left = scope.filter((item) => !chosen.includes(item));
+  const names = (items: readonly ProviderScopeItem[]) => items.map((item) => item.label).join(", ");
+  if (chosen.length === 0) return "No folder is chosen, so there is nothing for Corvis to read.";
+  if (left.length === 0) return `Corvis will read all ${scope.length} folders: ${names(chosen)}.`;
+  return `Corvis will read ${chosen.length} of ${scope.length} folders: ${names(chosen)}. It will not read: ${names(left)}.`;
+}
+
+const GENERIC_TEST_FAILURE ="The provider did not accept the test, so Corvis could not confirm the connection.";
 
 export type TestFailureText = { reason: string; nextStep: string };
 
@@ -90,7 +129,20 @@ export function describeTestFailure(errorClass: string | undefined): TestFailure
   return { reason: known.summary, nextStep: "Contact Corvis support and mention this connection's name." };
 }
 
-export const TEST_FAILURE_CONSEQUENCE = "Scheduled collection stays off for this connection until a test passes. Nothing is collected in the meantime.";
+/**
+ * What the success step says about collection, from the connection's own schedule rather than a fixed promise: that
+ * scheduled collection is on and when the next sync is due. Documents it collects pass Corvis's file checks first and
+ * then enter the normal review process.
+ */
+export function describeConnectedCollection(connection: { status: string; nextScheduledAt?: string }, now: Date): string {
+  const scheduled = connection.nextScheduledAt === undefined ? Number.NaN : Date.parse(connection.nextScheduledAt);
+  const when = Number.isFinite(scheduled) && scheduled > now.getTime()
+    ? `The next sync is due ${describeUntil(connection.nextScheduledAt, now)}.`
+    : "The first sync starts at the next collection run.";
+  return `The connection is active and scheduled collection is on. ${when} Documents it collects are checked first, then enter the normal Corvis review process.`;
+}
+
+export const TEST_FAILURE_CONSEQUENCE ="Scheduled collection stays off for this connection until a test passes. Nothing is collected in the meantime.";
 
 /** Plain-language outcome of a connection test run on demand from the connection list. */
 export function describeOnDemandTest(label: string, result: { ok: boolean; errorClass?: string }): { tone: "success" | "error"; text: string } {

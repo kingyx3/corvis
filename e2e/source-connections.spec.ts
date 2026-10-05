@@ -59,13 +59,18 @@ test("administrators see every connection with plain-language health, scope and 
   await expect(healthy).toContainText("Last successful sync");
   await expect(healthy).toContainText("3 hours ago");
   await expect(healthy).toContainText("Next sync");
-  await expect(healthy).toContainText("Scheduled sync is not enabled yet");
+  await expect(healthy).toContainText("Scheduled in 3 hours");
+  await expect(healthy).toContainText("Last run");
+  await expect(healthy).toContainText("3 found: 2 new, 1 already collected, 0 not accepted.");
   await expect(healthy).toContainText("API token");
   await expect(healthy).toContainText("No action needed");
 
   await expect(card(page, NORTHGATE)).toContainText("Not scheduled — resume the connection to restart the schedule");
   await expect(card(page, LEGACY)).toContainText("Never — this connection was revoked");
   await expect(card(page, ATLAS)).toContainText("Sync is stopped until the connection is reauthorized");
+  // A refused run reads as a refusal with the plain-language reason, not as a provider outage.
+  await expect(card(page, ATLAS)).toContainText("Stopped before collecting");
+  await expect(card(page, ATLAS)).toContainText("The provider rejected the saved credential");
 
   await healthy.getByText("Scope details").click();
   await expect(healthy.getByText("/Fund III/Quarterly")).toBeVisible();

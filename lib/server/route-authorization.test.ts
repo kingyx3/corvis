@@ -164,6 +164,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["admin/support-access/route.ts", { POST: ADMIN }],
   ["admin/tenant-export-builds/route.ts", { GET: ADMIN }],
   ["admin/tenant-health/route.ts", { GET: ADMIN }],
+  ["admin/tenant-identity/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["admin/tenants/invitations/route.ts", { POST: ADMIN }],
   ["admin/tenants/route.ts", { POST: ADMIN }],
   ["admin/webhooks/subscriptions/[webhookId]/deliveries/route.ts", { GET: ADMIN }],
@@ -355,6 +356,8 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "access/service-accounts/route.ts", method: "GET", role: "admin", expect: 200 },
     { file: "access/service-accounts/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_name" },
     { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },
+    { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: { action: "grant_entitlement" }, expect: 400, error: "invalid_resource_type" },
+    { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: { action: "revoke_entitlement", resourceType: "fund" }, expect: 400, error: "invalid_resource" },
     { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "GET", role: "admin", expect: 404, error: "service_account_not_found" },
     { file: "admin/tenants/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_request" },
     { file: "exports/route.ts", method: "POST", role: "analyst", body: {}, expect: 400, error: "invalid_export_format" },
@@ -401,6 +404,61 @@ test("admin/tenants provisioning is limited to the operations tenant even for an
   const response = await handlers.POST!(requestFor("/admin/tenants", { roles: ["admin"], tenant: OTHER_TENANT, method: "POST", body: {} }));
   assert.equal(response.status, 403);
   assert.equal(queries.length, 0);
+});
+
+test("admin/tenant-identity (verified domains, identity-provider record) is limited to the operations tenant and states its target tenant", async () => {
+  const handlers = await load("admin/tenant-identity/route.ts");
+  const add = { kind: "verified_domain_add", tenantId: OTHER_TENANT, domain: "Acme.com", verificationMethod: "dns_txt", evidence: "ticket-1", reason: "Customer asked" };
+  // A customer's Organization Admin can neither read nor change another tenant's records, or its own: initial setup is Corvis-assisted.
+  for (const tenant of [OTHER_TENANT, "44444444-dddd-4ddd-8ddd-444444444444"]) {
+    seedDatabase();
+    let denied = await handlers.POST!(requestFor("/admin/tenant-identity", { roles: ["admin"], tenant, method: "POST", body: { ...add, tenantId: tenant } }));
+    assert.equal(denied.status, 403);
+    denied = await handlers.GET!(requestFor(`/admin/tenant-identity?tenantId=${tenant}`, { roles: ["admin"], tenant }));
+    assert.equal(denied.status, 403);
+    assert.equal(queries.length, 0, "a refused caller reaches no data");
+  }
+
+  // The operations tenant's admin acts on the TARGET tenant it names, with itself recorded as the actor.
+  seedDatabase((query) => query.sql.includes("set_tenant_verified_domain") ? [{ changed: true, version: null }] : []);
+  let response = await handlers.POST!(requestFor("/admin/tenant-identity", { roles: ["admin"], subject: "operator-1", method: "POST", body: add }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(((await response.json()) as { data: unknown }).data, { kind: "verified_domain_add", tenantId: OTHER_TENANT, changed: true, version: null });
+  const call = queries.find((query) => query.sql.includes("set_tenant_verified_domain"));
+  assert.deepEqual(call?.parameters.slice(0, 6), [OTHER_TENANT, TENANT, "oidc", "operator-1", "acme.com", "dns_txt"]);
+
+  // Validation happens before any query, with a stable code.
+  for (const [body, error] of [
+    [{ ...add, tenantId: undefined }, "invalid_tenant"],
+    [{ ...add, domain: "*.acme.com" }, "invalid_domain"],
+    [{ ...add, reason: "no" }, "invalid_reason"],
+    [{ ...add, kind: "other" }, "invalid_kind"],
+  ] as const) {
+    seedDatabase();
+    response = await handlers.POST!(requestFor("/admin/tenant-identity", { roles: ["admin"], method: "POST", body }));
+    assert.equal(response.status, 400);
+    assert.equal(await errorOf(response), error);
+    assert.equal(queries.length, 0);
+  }
+  seedDatabase();
+  response = await handlers.POST!(requestFor("/admin/tenant-identity", { roles: ["admin"], method: "POST", rawBody: "[1]" }));
+  assert.equal(response.status, 400);
+  assert.equal(await errorOf(response), "invalid_request");
+
+  // The operator view names the tenant it reads.
+  seedDatabase((query) => query.sql.includes("tenant_identity_provider")
+    ? [{ protocol: "oidc", issuer: "https://idp.acme.com", audience: "corvis", status: "active", enforce_token_binding: false, version: 1, updated_at: "2026-10-01T00:00:00.000Z" }]
+    : [{ domain: "acme.com", verification_method: "dns_txt", verified_at: "2026-10-01T00:00:00.000Z" }]);
+  response = await handlers.GET!(requestFor(`/admin/tenant-identity?tenantId=${OTHER_TENANT}`, { roles: ["admin"] }));
+  assert.equal(response.status, 200);
+  const view = (await response.json() as { data: { identityProvider: { issuer: string }; verifiedDomains: unknown[] } }).data;
+  assert.equal(view.identityProvider.issuer, "https://idp.acme.com");
+  assert.equal(view.verifiedDomains.length, 1);
+  assert.ok(queries.every((query) => query.parameters[0] === OTHER_TENANT), "every read carries the target tenant predicate");
+  seedDatabase();
+  response = await handlers.GET!(requestFor("/admin/tenant-identity", { roles: ["admin"] }));
+  assert.equal(response.status, 400);
+  assert.equal(await errorOf(response), "invalid_tenant");
 });
 
 test("admin/audit only ever reads the caller's own tenant and rejects malformed filters", async () => {

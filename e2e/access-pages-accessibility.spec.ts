@@ -44,12 +44,19 @@ const dataExports = [
     ...exportBase, requestId: "x2", status: "complete", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decidedAt: "2026-09-30T11:00:00.000Z",
     artifact: {
       checksumSha256: "a".repeat(64), sizeBytes: 4694, expiresAt: "2026-10-04T10:00:00.000Z",
-      manifest: { manifestVersion: 1, requestId: "x2", tenantId: "tenant-1", generatedAt: "2026-09-30T11:05:00.000Z", requestedBy: "alex.chen@example.test", approvedBy: "admin@example.test",
-        files: [{ path: "published-data/observations.csv", description: "Approved observations", sha256: "b".repeat(64), sizeBytes: 702, rowCount: 5 }],
-        dataRights: { basis: "Only redistributable data.", funds: { included: 2, excluded: 1 }, documents: { included: 2, excluded: 2 } },
-        notIncluded: [{ item: "Source document files", reason: "Not included in this release." }] },
+      manifest: { manifestVersion: 2, requestId: "x2", tenantId: "tenant-1", generatedAt: "2026-09-30T11:05:00.000Z", requestedBy: "alex.chen@example.test", approvedBy: "admin@example.test",
+        files: [{ path: "published-data/observations-0001.csv", description: "Approved observations", sha256: "b".repeat(64), sizeBytes: 702, rowCount: 5, dataset: "observations" }],
+        fileCount: 6, sourceFiles: { included: 3, excluded: 1, totalBytes: 3_500_000 },
+        dataRights: { basis: "Only redistributable data.", funds: { included: 2, excluded: 1 }, documents: { included: 4, excluded: 2 } },
+        notIncluded: [{ item: "Source document files", reason: "1 document is listed in the inventory without its file." }] },
     },
     actions: { canApprove: false, canReject: false, canCancel: false, canDownload: true },
+  },
+  {
+    // F10c: a build in progress shows its size estimate and how far it has got.
+    ...exportBase, requestId: "x4", status: "building", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decidedAt: "2026-09-30T09:00:00.000Z",
+    progress: { phase: "documents", estimatedBytes: 1_500_000_000, bytesWritten: 600_000_000, estimatedRows: 450_000, rowsWritten: 450_000, estimatedDocuments: 40, documentsWritten: 16, percent: 40, updatedAt: "2026-09-30T09:10:00.000Z" },
+    actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false },
   },
   { ...exportBase, requestId: "x3", status: "rejected", requestedBy: "alex.chen@example.test", requestedByMe: false, decidedBy: "admin@example.test", decisionNote: "Not authorised.", actions: { canApprove: false, canReject: false, canCancel: false, canDownload: false } },
 ];
@@ -57,7 +64,9 @@ const dataExports = [
 const sessionPolicy = {
   policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
   bounds: { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } },
-  identityProvider: { protocol: "oidc", issuer: "https://login.example.test" },
+  // F7e/F7b: the organization's own recorded provider (token binding on) and its verified email domains are part of the scan.
+  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true },
+  verifiedDomains: [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-08-12T09:00:00.000Z" }, { domain: "example.org", verificationMethod: "operator_attested", verifiedAt: "2026-09-01T09:00:00.000Z" }],
   scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
   signInMethods: [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }],
   members: [
@@ -76,7 +85,13 @@ const serviceAccountFixture = (id: string, name: string, overrides: Record<strin
   ownerSubject: "admin@example.test", ownerAssignedAt: "2026-06-01T00:00:00.000Z", ownerActive: true, needsOwner: false,
   lastUsedAt: "2026-10-02T08:00:00.000Z", credentialExpiresAt: "2026-10-10T00:00:00.000Z", expiringSoon: true,
   credentials: [credentialFixture("c1c1c1c1-0000-4000-8000-000000000001"), credentialFixture("c0c0c0c0-0000-4000-8000-000000000002", { status: "rotating_out", endsAt: "2026-10-03T12:00:00.000Z", expiringSoon: false })],
-  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true }, ...overrides,
+  actions: { canIssue: false, canRotate: true, canRevoke: true, canDisable: true, canExtend: true, canTransfer: true },
+  // What the account can read (F6c): one fund within the organization's data rights, and one that lapsed with them.
+  entitlements: [
+    { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII", permission: "read", grantedAt: "2026-06-02T00:00:00.000Z", withinDataRights: true },
+    { resourceType: "document", resourceId: "doc-hg-genesis-q2", label: "Hg Genesis 9 - Investor Report Q2.pdf", permission: "read", grantedAt: "2026-06-02T00:00:00.000Z", withinDataRights: false },
+  ],
+  entitlementAccess: { canGrant: true, canRevoke: true }, ...overrides,
 });
 const serviceAccounts = {
   serviceAccounts: [
@@ -85,6 +100,7 @@ const serviceAccounts = {
       status: "disabled", expiringSoon: false, credentialExpiresAt: null, disabledAt: "2026-09-01T00:00:00.000Z", disabledBy: "admin@example.test", disableReason: "Integration retired",
       credentials: [credentialFixture("c3c3c3c3-0000-4000-8000-000000000003", { status: "revoked", revokedAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-09-01T00:00:00.000Z", expiringSoon: false })],
       actions: { canIssue: false, canRotate: false, canRevoke: false, canDisable: false, canExtend: false, canTransfer: false },
+      entitlements: [], entitlementAccess: { canGrant: false, canRevoke: false },
     }),
     // Owned by an administrator who has since been deactivated: it keeps working and needs a new owner.
     serviceAccountFixture("a4a4a4a4-0000-4000-8000-000000000004", "Partner data feed", {
@@ -94,6 +110,11 @@ const serviceAccounts = {
   ],
   workspaces: [{ workspaceId: "workspace-1", name: "Primary Workspace" }],
   owners: [{ subject: "admin@example.test" }, { subject: "second.admin@example.test" }],
+  grantable: [
+    { resourceType: "fund", resourceId: "fund-advent-viii", label: "Advent International GPE VIII" },
+    { resourceType: "fund", resourceId: "fund-nordic-v", label: "Nordic Capital Fund V" },
+    { resourceType: "document", resourceId: "doc-adv-viii-q2", label: "Advent International GPE VIII - Q2 2026.pdf" },
+  ],
 };
 
 async function mockAccessApi(page: Page, mode: "loaded" | "failed"): Promise<void> {
@@ -143,19 +164,30 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
     // The sign-in and session policy section (F7): identity provider, session limits and the sign-out confirmation are part of the scan.
-    await expect(page.getByRole("region", { name: "Identity provider and provisioning" })).toContainText("https://login.example.test");
+    const provider = page.getByRole("region", { name: "Identity provider and provisioning" });
+    await expect(provider).toContainText("https://login.example.test");
+    await expect(provider).toContainText("tokens are accepted only from this issuer and audience");
+    await expect(provider).toContainText("example.test, example.org");
     await page.getByRole("button", { name: "Sign out morgan.lee@example.test everywhere" }).click();
     await expect(page.getByRole("group", { name: "Confirm signing out morgan.lee@example.test" })).toBeVisible();
     // F10d: a colleague's request is waiting for this admin, so the approval notice sits at the top of the page and is part of the scan.
     await expect(page.getByRole("status").filter({ hasText: "A data export is awaiting your approval" })).toContainText("Review the request");
-    const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Ready" });
+    const ready = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").and(page.locator("[data-status=complete]"));
     await ready.getByText("Contents and checksums").click();
-    await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations.csv");
+    await expect(ready.getByRole("region", { name: /^Files in the export requested/ })).toContainText("published-data/observations-0001.csv");
+    await expect(ready).toContainText("3 source document files (3.3 MB) are in the archive");
+    // F10c: the running build shows its estimate and progress, and is part of the scan.
+    const building = page.getByRole("list", { name: "Data export requests" }).getByRole("listitem").filter({ hasText: "Copying source documents" });
+    await expect(building.getByRole("progressbar", { name: "Export build progress, 40%" })).toBeVisible();
+    await expect(building).toContainText("40% of an estimated 1.4 GB");
+    await expect(building).toContainText("450,000 of about 450,000 data rows · 16 of 40 source files");
     const violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });
 
   test(`service-account forms and the one-time credential panel pass axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    // One axe scan per panel across every form of the section: well over the default 45 s on a slow WebKit runner.
+    test.slow();
     await page.emulateMedia({ colorScheme });
     await mockAccessApi(page, "loaded");
     await page.goto("/access-self-service");
@@ -185,6 +217,20 @@ for (const colorScheme of ["light", "dark"] as const) {
     await nightly.getByRole("button", { name: "Back" }).click();
     await nightly.getByRole("button", { name: "Change owner" }).click();
     await expect(nightly.getByRole("group", { name: "Change the owner of Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    // The data-access list, the grant panel and the remove confirmation (F6c).
+    await expect(nightly.getByRole("group", { name: "Data access of Nightly reporting sync" })).toContainText("Not covered by your organization's data rights");
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Grant data access" }).click();
+    await expect(nightly.getByRole("group", { name: "Grant data access to Nightly reporting sync" })).toBeVisible();
+    violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
+    expect(violations, describe(violations)).toEqual([]);
+    await nightly.getByRole("button", { name: "Back" }).click();
+    await nightly.getByRole("button", { name: /Remove access to Advent International GPE VIII from Nightly reporting sync/ }).click();
+    await expect(nightly.getByText("Remove access to Advent International GPE VIII?")).toBeVisible();
     violations = await blockingViolations(page, "section[aria-labelledby='service-accounts-heading']");
     expect(violations, describe(violations)).toEqual([]);
     await nightly.getByRole("button", { name: "Back" }).click();

@@ -63,6 +63,13 @@ export type RequestIdentity = {
   authMethod: "oidc" | "saml" | "service_account" | "demo";
   sessionId: string;
   /**
+   * The issuer and audience a directly verified OIDC bearer token was checked against (F7e, #338). Present only when
+   * Corvis verified the token itself; absent for a signed gateway assertion, a service account and demo mode.
+   * Used only to compare with a tenant's recorded identity provider when an operator enabled token binding.
+   */
+  tokenIssuer?: string;
+  tokenAudience?: string;
+  /**
    * Whether the subject holds the raw `tenant_admin` database role (as
    * opposed to `accountadmin`, a workspace-scoped administrator): both map to
    * the `admin` application Role above, but only a tenant_admin may grant

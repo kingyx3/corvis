@@ -1,4 +1,5 @@
-import type { ScorecardFact, ScorecardFund, ScorecardPayload } from "../../core/performance-scorecard.ts";
+import { AuthorizationError } from "../../core/enterprise.ts";
+import { filterScorecardPayload, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../../core/performance-scorecard.ts";
 
 /**
  * Synthetic scorecard dataset for demo mode. Fund, company, holding, snapshot and document ids match
@@ -131,7 +132,11 @@ const DEMO_FIGURES: Figure[] = [
   { report: HG_Q1, fundId: HG, metricCode: "rvpi", value: "0.9300000000", isDerived: true, derivationFormula: "NAV / paid-in capital", page: 2 },
 ];
 
-/** The demo scorecard payload: Nordic Capital Fund V is entitled but has nothing published yet. */
-export function demoPerformanceScorecard(): ScorecardPayload {
-  return { funds: DEMO_SCORECARD_FUNDS.map((fund) => ({ ...fund })), facts: DEMO_FIGURES.map(fact) };
+/**
+ * The demo scorecard payload, narrowed by the filters like the Postgres read is (a fund filter names an entitled demo fund,
+ * a period filter keeps the figures stated for that period): Nordic Capital Fund V is entitled but has nothing published yet.
+ */
+export function demoPerformanceScorecard(filters: ScorecardFilters = {}): ScorecardPayload {
+  if (filters.fundId !== undefined && !DEMO_SCORECARD_FUNDS.some((fund) => fund.fundId === filters.fundId)) throw new AuthorizationError("performance_scorecard:fund");
+  return filterScorecardPayload({ funds: DEMO_SCORECARD_FUNDS.map((fund) => ({ ...fund })), facts: DEMO_FIGURES.map(fact) }, filters);
 }

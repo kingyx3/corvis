@@ -45,6 +45,12 @@ export function serviceAccountErrorMessage(reason: unknown, fallback: string): s
     service_account_needs_owner: "This account has no active owner, so it is not extended. Assign a new owner first, then extend it.",
     service_account_owner_invalid: "The new owner must be an active Organization Admin of your organization. Refresh the page and choose again.",
     service_account_owner_unchanged: "That person already owns this account. Choose someone else.",
+    invalid_resource_type: "Choose a fund or a document.",
+    invalid_resource: "Choose the fund or document from the list.",
+    entitlement_outside_data_rights: "Your organization is not licensed to share that fund or document, so it cannot be granted. Refresh the page to see what you can grant, or ask Corvis if one is missing.",
+    service_account_entitlement_exists: "This account can already read that. Refresh the page.",
+    service_account_entitlement_limit_reached: "This account has reached its limit of 200 funds and documents. Remove one it no longer needs.",
+    service_account_entitlement_not_found: "The account no longer has access to that. Refresh the page.",
   };
   return typeof code === "string" && known[code] ? known[code]! : friendlyErrorMessage(reason, fallback);
 }

@@ -81,6 +81,9 @@ const seed = (handler: (query: Query) => unknown[] = () => []) => { queries.leng
 type Json = { error?: string; data: ServiceAccountCreated & { serviceAccounts: ServiceAccount[] } & ServiceAccount & { serviceAccount: ServiceAccount; credential?: { secret: string; credentialId: string } } };
 const body = async (response: Response) => (await response.json()) as Json;
 
+/** The entitlement rows the account read returns; a test that needs some sets them. */
+let entitlementRows: unknown[] = [];
+
 /** Answers the reads of one account; the credential row carries whichever id the last write minted. */
 function world(): (query: Query) => unknown[] {
   let minted = "";
@@ -89,8 +92,10 @@ function world(): (query: Query) => unknown[] {
     if (/revoke_service_account_credentials/.test(query.sql)) return [{ revoked: 2 }];
     if (/extend_service_account/.test(query.sql)) return [{ previous_expires_at: "2027-01-01 08:00:00+00" }];
     if (/transfer_service_account_owner/.test(query.sql)) return [{ previous_owner: "idp|alex" }];
+    if (/revoke_service_account_entitlement/.test(query.sql)) return [{ ended: 1 }];
     if (/from corvis_control\.workspace/.test(query.sql)) return [{ workspace_id: WORKSPACE, display_name: "Primary Workspace" }];
-    if (/from corvis_control\.service_account a\b/.test(query.sql)) return [accountRow()];
+    if (/join corvis_control\.resource_entitlement e/.test(query.sql)) return entitlementRows;
+    if (/from corvis_control\.service_account a\s+join corvis_control\.workspace/.test(query.sql)) return [accountRow()];
     if (/from corvis_control\.service_account_credential c\b/.test(query.sql)) return [credentialRow(minted)];
     return [];
   };
@@ -227,6 +232,75 @@ test("the renewal and ownership refusals surface as stable codes, and a refused 
     seed(world());
     fail = (query) => /extend_service_account|transfer_service_account_owner/.test(query.sql) ? new PostgresDriverError("query", "P0001", message as never) : undefined;
     const response = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: action === "extend" ? { action, expiresInDays: 30 } : { action, ownerSubject: "idp|sam" } }), params(ACCOUNT));
+    assert.deepEqual([response.status, (await body(response)).error], [status, error], message);
+    assert.equal(queries.some(isAudit), false, `${message}: a refused command is not audited`);
+  }
+});
+
+test("granting and revoking data access are audited with the resource and a stated reason, attributed to the caller, and never name a user, a workspace or a permission (F6c)", async () => {
+  entitlementRows = [{ service_account_id: ACCOUNT, resource_type: "fund", resource_id: "fund-advent-viii", permission: "read", valid_from: "2026-10-01 08:00:00+00", label: "Advent International GPE VIII", within_data_rights: true }];
+  try {
+    seed(world());
+    const granted = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: {
+      action: "grant_entitlement", resourceType: "fund", resourceId: "fund-advent-viii", reason: "Feeds the warehouse",
+      tenantId: "someone-else", subjectUserId: "someone-else", workspaceId: "someone-else", permission: "admin",
+    } }), params(ACCOUNT));
+    assert.equal(granted.status, 200);
+    const result = await body(granted);
+    assert.equal(result.data.credential, undefined, "a grant issues no credential");
+    assert.equal(result.data.serviceAccount.entitlements[0]!.label, "Advent International GPE VIII");
+    const call = queries.find((query) => /grant_service_account_entitlement/.test(query.sql))!;
+    assert.deepEqual(call.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "fund", "fund-advent-viii", 200], "the tenant and actor come from the identity; the body names only the resource");
+    assert.equal(JSON.stringify(call.parameters).includes("someone-else"), false);
+    assert.equal(call.parameters.includes("admin"), false, "no permission can be requested: the SQL grants read");
+    const audit = queries.find(isAudit)!;
+    assert.ok(audit.parameters.includes("service_account.entitlement_granted"));
+    assert.ok(audit.parameters.includes("idp|alex"));
+    const detail = JSON.parse(String(audit.parameters.find((value) => typeof value === "string" && value.includes("resourceId")))) as Record<string, unknown>;
+    delete detail.sessionId;
+    assert.deepEqual(detail, { resourceType: "fund", resourceId: "fund-advent-viii", permission: "read", reason: "Feeds the warehouse" });
+    assert.ok(queries.indexOf(call) < queries.indexOf(audit), "the audit event is written with the grant, after it, in the same transaction");
+
+    seed(world());
+    const revoked = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: { action: "revoke_entitlement", resourceType: "fund", resourceId: "fund-advent-viii", reason: "No longer needed" } }), params(ACCOUNT));
+    assert.equal(revoked.status, 200);
+    assert.deepEqual(queries.find((query) => /revoke_service_account_entitlement/.test(query.sql))!.parameters, [TENANT, ACCOUNT, "oidc", "idp|alex", "fund", "fund-advent-viii"]);
+    const revokeAudit = queries.find(isAudit)!;
+    assert.ok(revokeAudit.parameters.includes("service_account.entitlement_revoked"));
+    const revokeDetail = JSON.parse(String(revokeAudit.parameters.find((value) => typeof value === "string" && value.includes("endedEntitlements")))) as Record<string, unknown>;
+    delete revokeDetail.sessionId;
+    assert.deepEqual(revokeDetail, { resourceType: "fund", resourceId: "fund-advent-viii", endedEntitlements: 1, reason: "No longer needed" });
+
+    // Bad input is a 400 before any SQL: a workspace is not a grantable resource, a reason is required, an identifier is bounded.
+    seed(world());
+    for (const bad of [
+      { action: "grant_entitlement", resourceType: "workspace", resourceId: WORKSPACE, reason: "Needed here" },
+      { action: "grant_entitlement", resourceType: "fund", resourceId: "", reason: "Needed here" },
+      { action: "grant_entitlement", resourceType: "fund", resourceId: "fund-advent-viii" },
+      { action: "revoke_entitlement", resourceType: "document", resourceId: "x".repeat(513), reason: "Needed here" },
+    ]) {
+      assert.equal((await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: bad }), params(ACCOUNT))).status, 400, JSON.stringify(bad));
+    }
+    assert.equal(queries.length, 0);
+  } finally { entitlementRows = []; }
+});
+
+test("a grant beyond the organization's data rights, and the other entitlement refusals, surface as stable codes and leave no audit event (F6c)", async () => {
+  const refusals: Array<[string, number, string]> = [
+    ["service account resource outside organization data rights", 422, "entitlement_outside_data_rights"],
+    ["service account entitlement already granted", 409, "service_account_entitlement_exists"],
+    ["service account entitlement limit reached", 409, "service_account_entitlement_limit_reached"],
+    ["service account entitlement not found", 404, "service_account_entitlement_not_found"],
+    ["service account resource type not allowed", 400, "invalid_resource_type"],
+    ["service account resource required", 400, "invalid_resource"],
+    ["service account is not active", 409, "service_account_not_active"],
+    ["service account requires an active organization admin", 403, "tenant_admin_required"],
+  ];
+  for (const [message, status, error] of refusals) {
+    seed(world());
+    fail = (query) => /(grant|revoke)_service_account_entitlement/.test(query.sql) ? new PostgresDriverError("query", "P0001", message as never) : undefined;
+    const action = message.includes("not found") ? "revoke_entitlement" : "grant_entitlement";
+    const response = await itemPost(request(`/access/service-accounts/${ACCOUNT}`, { method: "POST", body: { action, resourceType: "fund", resourceId: "fund-not-ours", reason: "Needed here" } }), params(ACCOUNT));
     assert.deepEqual([response.status, (await body(response)).error], [status, error], message);
     assert.equal(queries.some(isAudit), false, `${message}: a refused command is not audited`);
   }

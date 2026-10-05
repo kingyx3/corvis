@@ -1,7 +1,7 @@
 import { normalizeExportRequest, type DeliveryPort, type ExportRequest, type ExportScope as ExportRequestScope } from "@/core/delivery";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/adapters/demo/customer-journey-store";
 import type { ExportManifest } from "@/core/enterprise";
-import { buildScorecard, scorecardExportRows } from "@/core/performance-scorecard";
+import { buildScorecard, scorecardExportRows, scorecardScopeLabel } from "@/core/performance-scorecard";
 import { demoPerformanceScorecard } from "@/lib/server/performance-scorecard-demo";
 
 const history: import("@/core/delivery").ExportDeliveryStatus[] = [];
@@ -16,7 +16,12 @@ export function createDemoDeliveryPort(): DeliveryPort {
       const stored = demoCustomerJourneyStore.createExport(format, snapshotId, options.source);
       // The scorecard export lists exactly the rows the scorecard view shows (reported figures and explicit Not reported rows).
       const manifest: ExportManifest & { scope?: ExportRequestScope; scopeLabel?: string } = options.scope && "performanceScorecard" in options.scope
-        ? { ...stored, rowCounts: { performanceScorecard: scorecardExportRows(buildScorecard(demoPerformanceScorecard())).length, snapshots: stored.snapshotIds.length }, scope: options.scope, scopeLabel: "Performance scorecard · all entitled funds" }
+        ? {
+          ...stored,
+          rowCounts: { performanceScorecard: scorecardExportRows(buildScorecard(demoPerformanceScorecard(options.scope))).length, snapshots: stored.snapshotIds.length },
+          scope: options.scope,
+          scopeLabel: scorecardScopeLabel(options.scope),
+        }
         : stored;
       history.unshift({
         exportId: manifest.exportId,

@@ -62,6 +62,26 @@ test("the saved scope is exactly what an Export this view request carries", () =
   }
 });
 
+test("the performance scorecard is a schedulable scope: the marker, and at most a fund and a period filter", () => {
+  assert.deepEqual(parseExportScheduleScope({ performanceScorecard: true }), { performanceScorecard: true });
+  assert.deepEqual(
+    parseExportScheduleScope({ performanceScorecard: true, fundId: " fund-1 ", period: " Q1 2026 ", extra: 1 }),
+    { performanceScorecard: true, fundId: "fund-1", period: "Q1 2026" },
+    "filters are trimmed and unknown keys dropped",
+  );
+  assert.deepEqual(parseExportScheduleScope({ performanceScorecard: true, fundId: null, period: null }), { performanceScorecard: true }, "null is no filter");
+  for (const bad of [
+    { performanceScorecard: false }, { performanceScorecard: "true" }, { performanceScorecard: 1 }, { performanceScorecard: null },
+    { performanceScorecard: true, snapshotId: "snap-1" }, { performanceScorecard: true, ...position },
+    { performanceScorecard: true, fundId: "" }, { performanceScorecard: true, fundId: 7 }, { performanceScorecard: true, period: "  " },
+    { performanceScorecard: true, period: "Q1\n2026" }, { performanceScorecard: true, period: "x".repeat(65) }, { performanceScorecard: true, fundId: "x".repeat(513) },
+  ]) {
+    assert.throws(() => parseExportScheduleScope(bad), refusal("invalid_scope"), JSON.stringify(bad));
+  }
+  const command = parseCreateScheduleCommand({ ...body, scope: { performanceScorecard: true, period: "Q1 2026" }, trigger: "on_publish" });
+  assert.deepEqual(command.scope, { performanceScorecard: true, period: "Q1 2026" });
+});
+
 test("a new schedule is validated: scope, format, trigger, a bounded single-line label and one idempotency key", () => {
   assert.deepEqual(parseCreateScheduleCommand(body), { idempotencyKey: "key-1", label: "Monthly sparrow", scope: position, format: "csv", trigger: "monthly", notifyOnCompletion: true });
   for (const format of ["csv", "xlsx", "parquet"]) assert.equal(parseCreateScheduleCommand({ ...body, format }).format, format);
@@ -158,12 +178,20 @@ test("the scope reads the same in a schedule as in the delivery history of the e
   );
   assert.equal(scopeFundId(position), "fund-1");
   assert.equal(scopeFundId({ snapshotId: "snap-1" }), null);
+  // The scorecard's wording is the one the export's delivery-history scope label has (scorecardScopeLabel).
+  assert.equal(exportScopeSummary({ performanceScorecard: true }), "Performance scorecard · all entitled funds");
+  assert.equal(exportScopeSummary({ performanceScorecard: true, fundId: "fund-1" }), "Performance scorecard · fund-1");
+  assert.equal(exportScopeSummary({ performanceScorecard: true, period: "Q1 2026" }), "Performance scorecard · all entitled funds · Q1 2026");
+  assert.equal(exportScopeSummary({ performanceScorecard: true, fundId: "fund-1", period: "Q1 2026" }), "Performance scorecard · fund-1 · Q1 2026");
+  assert.equal(scopeFundId({ performanceScorecard: true, fundId: "fund-1" }), "fund-1");
+  assert.equal(scopeFundId({ performanceScorecard: true }), null, "an unfiltered scorecard follows every fund the owner is entitled to");
 });
 
 test("a suggested label names the cadence and the scope, and always fits the label limit", () => {
   assert.equal(defaultScheduleLabel({ snapshotId: "snap-1" }, "on_publish"), "On publish · Snapshot snap-1");
   assert.equal(defaultScheduleLabel(position, "monthly"), "Monthly · Position financials · company-1 · quarterly");
   assert.equal(defaultScheduleLabel(position, "quarterly"), "Quarterly · Position financials · company-1 · quarterly");
+  assert.equal(defaultScheduleLabel({ performanceScorecard: true }, "monthly"), "Monthly · Performance scorecard · all entitled funds");
   const long = defaultScheduleLabel({ snapshotId: "s".repeat(300) }, "monthly");
   assert.equal(long.length, MAX_SCHEDULE_LABEL_LENGTH);
   assert.doesNotThrow(() => parseCreateScheduleCommand({ ...body, label: long }));

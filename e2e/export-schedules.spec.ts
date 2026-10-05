@@ -112,6 +112,29 @@ test("Position financials: the schedule carries the exact position, portfolio sc
   await expect(page.getByRole("dialog", { name: "Schedule saved" })).toContainText("The first run is on");
 });
 
+test("Performance scorecard: the schedule carries the scorecard scope and its filters, and shows up under Data delivery with the scorecard scope", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/");
+  await openSurface(page, surfaces.find((surface) => surface.id === "scorecard")!);
+  const filters = page.getByRole("group", { name: /scorecard filters/i });
+  await filters.getByRole("combobox", { name: "Reporting period" }).selectOption("Q1 2026");
+  await page.getByRole("button", { name: "Schedule export" }).click();
+  const dialog = page.getByRole("dialog", { name: "Schedule this export" });
+  await expect(dialog.getByLabel("What will be exported")).toContainText("Performance scorecard · all entitled funds · Q1 2026");
+  await dialog.getByRole("combobox", { name: "Run" }).selectOption("on_publish");
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Scorecard Q1 on publish");
+  const violations = await blockingViolations(page, '[role="dialog"]');
+  expect(violations, describe(violations)).toEqual([]);
+  const posted = page.waitForRequest((request) => request.url().endsWith("/api/v1/export-schedules") && request.method() === "POST");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  expect((await posted).postDataJSON()).toMatchObject({ label: "Scorecard Q1 on publish", scope: { performanceScorecard: true, period: "Q1 2026" }, trigger: "on_publish" });
+  await page.getByRole("dialog", { name: "Schedule saved" }).getByRole("button", { name: "Close" }).click();
+  await page.getByRole("navigation", { name: /workspace sections/i }).getByRole("button", { name: /^data delivery$/i }).click();
+  const created = card(page, "Scorecard Q1 on publish");
+  await expect(created).toContainText("Performance scorecard · all entitled funds · Q1 2026 · CSV");
+  await expect(created).toContainText("When a matching snapshot is published");
+});
+
 test("Data delivery lists the seeded schedules and every run with its scope and schedule label, including a refused run and why", async ({ page }) => {
   await isolate(page);
   await page.goto("/");

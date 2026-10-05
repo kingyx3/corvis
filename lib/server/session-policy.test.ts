@@ -125,6 +125,8 @@ test("the view reads the identity provider, SCIM, sign-in methods, policy and se
     if (/from corvis_control\.tenant_session_policy where/.test(sql)) return [policyRow({ max_session_minutes: null })];
     if (/tenant_scim_configuration/.test(sql)) return [{ enabled: true, auth_method: "saml", default_role_name: "viewer", updated_at: "2026-08-14 09:00:00+00", workspace_name: "Primary", active_users: "12" }];
     if (/group by auth_method/.test(sql)) return [{ auth_method: "oidc", users: "7" }, { auth_method: "saml", users: "2" }];
+    if (/tenant_identity_provider/.test(sql)) return [];
+    if (/tenant_verified_domain/.test(sql)) return [{ domain: "example.test", verification_method: "dns_txt", verified_at: "2026-10-01 09:00:00+00" }];
     return [
       { user_id: USER, label: "alex@example.test", is_current: "true", active_sessions: "2" },
       { user_id: "00000000-0000-4000-8000-000000000002", label: "idp|morgan", is_current: false, active_sessions: 0 },
@@ -133,7 +135,9 @@ test("the view reads the identity provider, SCIM, sign-in methods, policy and se
   const view = await new PostgresSessionPolicyBackend(() => db, () => "https://login.example.test").view(identity(), db);
   assert.deepEqual(view.policy, { idleTimeoutMinutes: 30, maxSessionMinutes: null, version: 2, updatedAt: "2026-10-03 09:00:00+00", updatedBy: "idp|morgan" });
   assert.deepEqual(view.bounds, { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } });
-  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://login.example.test" });
+  // No record for the tenant: the shared provider every organization uses, and nothing enforced.
+  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://login.example.test", audience: null, source: "global", status: null, tokenBindingEnforced: false });
+  assert.deepEqual(view.verifiedDomains, [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-10-01 09:00:00+00" }]);
   assert.deepEqual(view.scim, { configured: true, enabled: true, authMethod: "saml", defaultWorkspaceName: "Primary", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14 09:00:00+00" });
   assert.deepEqual(view.signInMethods, [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }]);
   assert.deepEqual(view.members, [
@@ -147,6 +151,20 @@ test("the view reads the identity provider, SCIM, sign-in methods, policy and se
   const members = db.calls.find((call) => /make_interval/.test(call.sql))!;
   assert.deepEqual(members.parameters, [TENANT, "oidc", "idp|alex"], "the caller is marked from their own identity");
   assert.match(members.sql, /session_revocation/, "a signed-out session is not counted as active");
+});
+
+test("F7e: the view shows the tenant's own recorded identity provider, with its audience, status and whether binding is enforced", async () => {
+  const db = new RecordingDb((sql) => /tenant_identity_provider/.test(sql)
+    ? [{ protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", status: "active", enforce_token_binding: true, version: 4, updated_at: "2026-10-02 09:00:00+00" }]
+    : []);
+  const view = await new PostgresSessionPolicyBackend(() => db, () => "https://login.example.test").view(identity(), db);
+  assert.deepEqual(view.identityProvider, { protocol: "oidc", issuer: "https://idp.acme.com/realms/acme", audience: "corvis-acme", source: "tenant", status: "active", tokenBindingEnforced: true });
+  assert.deepEqual(view.verifiedDomains, []);
+  const saml = new RecordingDb((sql) => /tenant_identity_provider/.test(sql)
+    ? [{ protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", enforce_token_binding: false, version: 1, updated_at: "x" }]
+    : []);
+  assert.deepEqual((await new PostgresSessionPolicyBackend(() => saml, () => null).view(identity(), saml)).identityProvider,
+    { protocol: "saml", issuer: "urn:acme:idp", audience: "urn:corvis", status: "pending", tokenBindingEnforced: false, source: "tenant" });
 });
 
 test("the view reports no SCIM, no policy, no issuer and a SAML default as such", async () => {
@@ -163,7 +181,7 @@ test("the view reports no SCIM, no policy, no issuer and a SAML default as such"
 test("the view uses the default database when none is passed", async () => {
   const db = new RecordingDb();
   await new PostgresSessionPolicyBackend(() => db, () => null).view(identity());
-  assert.ok(db.calls.length >= 4);
+  assert.ok(db.calls.length >= 6);
 });
 
 // ------------------------------------------------------------------ the service: authorization and audit

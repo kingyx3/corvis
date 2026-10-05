@@ -21,6 +21,10 @@ export async function GET(request: Request, context: { params: Promise<{ service
  *   current one valid for the overlap, then not at all.
  * - `revoke` (`reason`) revokes every credential in use, effective immediately.
  * - `disable` (`reason`) deactivates the account everywhere: identity, memberships, entitlements and credentials.
+ * - `grant_entitlement` (`resourceType` `fund` or `document`, `resourceId`, `reason`) gives the account read access to one fund or
+ *   document in its own workspace, only when the organization owns it AND holds an effective client-visible data right for it
+ *   (`422 entitlement_outside_data_rights` otherwise, one code for every such case). `revoke_entitlement` (same fields) ends
+ *   everything the account holds on that resource, and is never refused for a data-right reason.
  * `issue` and `rotate` return `{ serviceAccount, credential }`, where `credential.secret` is shown ONCE; the others return
  * `{ serviceAccount }`.
  */

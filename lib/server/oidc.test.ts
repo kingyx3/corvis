@@ -48,7 +48,17 @@ test("OIDC verifier validates issuer, audience, signature and stable session ide
     audience,
     now: new Date(1_800_000_100_000),
   });
-  assert.deepEqual(identity, { subject: "user-1", sessionId: "session-1" });
+  // The issuer and audience the token was verified against are returned (F7e), so a tenant's binding compares what was proven.
+  assert.deepEqual(identity, { subject: "user-1", sessionId: "session-1", issuer, audience });
+});
+
+test("the verified issuer is returned in the normalised form it was compared in, whatever spelling the token and the configuration use", async () => {
+  const verifier = new OidcVerifier(fetchFixture());
+  const spelled = await verifier.verify({
+    authorization: `Bearer ${token({ iss: `${issuer}/` })}`,
+    issuer: "https://IDP.example.com/", audience, now: new Date(1_800_000_100_000),
+  });
+  assert.equal(spelled.issuer, issuer);
 });
 
 test("OIDC verifier carries a normalized email only from a signed, explicitly verified claim", async () => {
@@ -57,7 +67,7 @@ test("OIDC verifier carries a normalized email only from a signed, explicitly ve
     authorization: `Bearer ${token({ email: " First.Admin@Example.Test ", email_verified: true })}`,
     issuer, audience, now: new Date(1_800_000_100_000),
   });
-  assert.deepEqual(verified, { subject: "user-1", sessionId: "session-1", email: "first.admin@example.test", emailVerified: true });
+  assert.deepEqual(verified, { subject: "user-1", sessionId: "session-1", issuer, audience, email: "first.admin@example.test", emailVerified: true });
   const unverified = await verifier.verify({
     authorization: `Bearer ${token({ email: "admin@example.test", email_verified: false })}`,
     issuer, audience, now: new Date(1_800_000_100_000),

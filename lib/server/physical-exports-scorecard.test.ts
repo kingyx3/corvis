@@ -60,6 +60,26 @@ test("a performance scorecard export persists its scope and label, counts its ro
   assert.deepEqual(manifest.snapshotState, [{ snapshotId: "snap-a", version: 2, openExceptionCount: 0 }]);
 });
 
+test("a filtered scorecard export records its filters in the manifest scope and label, and reads only what they name", async () => {
+  const seen: PostgresPrimitive[][] = [];
+  const db = new FakeDb((sql, parameters) => {
+    if (sql.includes("corvis_identity.fund f")) return [{ fund_id: "fund-a", fund_name: "Alpha" }, { fund_id: "fund-b", fund_name: "Beta" }];
+    if (sql.includes("with current_snapshot")) { seen.push(parameters); return [scorecardFact()]; }
+    if (sql.includes("from corvis_serving.fund_period_snapshots")) {
+      assert.deepEqual(parameters[1], JSON.stringify(["fund-a"]), "the snapshot lookup only covers the filtered fund");
+      return [{ snapshot_id: "snap-a", fund_id: "fund-a", version: 2 }];
+    }
+    return [];
+  });
+  const scope: ExportScope = { performanceScorecard: true, fundId: "fund-a", period: "Q2 2026" };
+  const manifest = await createPhysicalExport(identity, "csv", { scope }, db) as Awaited<ReturnType<typeof createPhysicalExport>> & { scope?: ExportScope; scopeLabel?: string };
+  assert.deepEqual(manifest.scope, scope, "the manifest records the filters the export was requested with");
+  assert.equal(manifest.scopeLabel, "Performance scorecard · fund-a · Q2 2026");
+  assert.deepEqual(manifest.rowCounts, { performanceScorecard: 6, snapshots: 1 }, "one fund's six fund-level metrics");
+  assert.deepEqual([JSON.parse(String(seen[0]![1])), seen[0]![4]], [["fund-a"], "Q2 2026"]);
+  await assert.rejects(createPhysicalExport(identity, "csv", { scope: { performanceScorecard: true, fundId: "fund-z" } }, db), AuthorizationFailure, "a fund outside the entitlement is refused, never widened to the entitled funds");
+});
+
 test("a scorecard export with nothing reported fails closed", async () => {
   const db = new FakeDb((sql) => sql.includes("corvis_identity.fund f") ? [{ fund_id: "fund-a", fund_name: "Alpha" }] : []);
   await assert.rejects(createPhysicalExport(identity, "csv", { scope: { performanceScorecard: true } }, db), AuthorizationFailure);

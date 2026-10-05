@@ -11,7 +11,7 @@ import { oauthProviderForConnection, type ApprovedSourceProvider } from "@/lib/s
 
 /**
  * Starts the OAuth authorization-code leg, either for a new connection (`providerKey`, `connectionLabel`,
- * `scopeConfirmed: true`) or to renew an existing one (`sourceConnectionId`, which is all that is sent: provider and
+ * `scopeConfirmed: true`, and optionally `selectedScopeIds`, the folders to read, checked against the provider's declaration and kept with the pending attempt) or to renew an existing one (`sourceConnectionId`, which is all that is sent: provider and
  * scope were confirmed and recorded when it was created). State and the PKCE verifier are generated and kept
  * server-side; the browser receives only the provider consent URL and an HttpOnly cookie pointing at the pending
  * attempt. Nothing is created or changed until the provider redirects back and the attempt is completed. Each attempt
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const service = sourceConnectionService();
 
     let provider: ApprovedSourceProvider;
-    let attempt: { providerKey: string; connectionLabel: string; reauthorizeConnectionId?: string };
+    let attempt: { providerKey: string; connectionLabel: string; reauthorizeConnectionId?: string; scopeIds?: string[] };
     if (parsed.kind === "reauthorize") {
       const connection = await service.get(identity, parsed.sourceConnectionId);
       if (connection.status === "revoked") throw new ConnectorGovernanceError("connection_revoked");
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     } else {
       provider = parsed.parsed.provider;
       await service.assertNotConnected(identity, provider.providerKey);
-      attempt = { providerKey: provider.providerKey, connectionLabel: parsed.parsed.connectionLabel };
+      attempt = { providerKey: provider.providerKey, connectionLabel: parsed.parsed.connectionLabel, ...(parsed.parsed.scopeIds ? { scopeIds: parsed.parsed.scopeIds } : {}) };
     }
     const started = await startOAuthAttempt(identity, { ...attempt, client: provider.oauth!, redirectUri: oauthRedirectUri(request) }, { secrets: sourceConnectorSecretStore() });
     await service.auditOAuth(identity, { action: "source_connection.oauth_start", targetId: attempt.reauthorizeConnectionId ?? attempt.providerKey, providerKey: attempt.providerKey }, id);

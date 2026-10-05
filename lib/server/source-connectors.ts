@@ -63,6 +63,11 @@ export type SourceConnection = {
   lastErrorClass?: ConnectorErrorClass;
   lastSuccessAt?: string;
   lastAttemptAt?: string;
+  /**
+   * When the scheduler will next collect from this connection (also the lease a running sync holds). Absent on a connection
+   * that has never been scheduled, which is due at the next collection run; see lib/server/source-sync-schedule.ts.
+   */
+  nextScheduledAt?: string;
   revokedAt?: string;
 };
 
@@ -182,8 +187,22 @@ export type IngestResult =
  * registration steps the direct customer-upload path performs; this module
  * never re-implements that pipeline.
  */
+export type IngestInput = {
+  tenantId: string;
+  workspaceId: string;
+  providerKey: string;
+  fileName: string;
+  bytes: Buffer;
+  contentType: string;
+  contentSha256: string;
+  /** The connection the document was collected for, and the stable key of this remote id/version/content (see {@link acquisitionKey}). */
+  sourceConnectionId: string;
+  acquisitionKey: string;
+};
+
 export interface IngestSink {
-  ingest(input: { tenantId: string; workspaceId: string; providerKey: string; fileName: string; bytes: Buffer; contentType: string; contentSha256: string }): Promise<IngestResult>;
+  /** Idempotent per `acquisitionKey`: ingesting the same remote document version again must never create a second document. */
+  ingest(input: IngestInput): Promise<IngestResult>;
 }
 
 function text(row: PostgresRow, key: string): string | undefined {
@@ -230,6 +249,7 @@ function rowToConnection(row: PostgresRow): SourceConnection {
     lastErrorClass: text(row, "last_error_class") as ConnectorErrorClass | undefined,
     lastSuccessAt: text(row, "last_success_at"),
     lastAttemptAt: text(row, "last_attempt_at"),
+    nextScheduledAt: text(row, "next_scheduled_at"),
     revokedAt: text(row, "revoked_at"),
   };
 }
@@ -285,7 +305,7 @@ export async function createSourceConnection(
 export async function listSourceConnections(identity: RequestIdentity, db: PostgresSqlApi = controlDb()): Promise<SourceConnection[]> {
   const rows = await db.query(`select source_connection_id, tenant_id, workspace_id, provider_key, connection_label,
       credential_type, source_scope, scope_confirmed_by, scope_confirmed_at, connector_version, status,
-      consecutive_failures, last_error_class, last_success_at, last_attempt_at, revoked_at,
+      consecutive_failures, last_error_class, last_success_at, last_attempt_at, next_scheduled_at, revoked_at,
       -- never select secret_reference for a customer-facing listing
       'redacted' as secret_reference
     from corvis_source.source_connection where tenant_id=$1 order by created_at desc`, [identity.tenantId]);
@@ -301,7 +321,7 @@ export async function getSourceConnection(identity: RequestIdentity, sourceConne
   assertSourceConnectionId(sourceConnectionId);
   const rows = await db.query(`select source_connection_id, tenant_id, workspace_id, provider_key, connection_label,
       credential_type, source_scope, scope_confirmed_by, scope_confirmed_at, connector_version, status,
-      consecutive_failures, last_error_class, last_success_at, last_attempt_at, revoked_at,
+      consecutive_failures, last_error_class, last_success_at, last_attempt_at, next_scheduled_at, revoked_at,
       -- never select secret_reference for a customer-facing read
       'redacted' as secret_reference
     from corvis_source.source_connection where tenant_id=$1 and source_connection_id=$2::uuid limit 1`,

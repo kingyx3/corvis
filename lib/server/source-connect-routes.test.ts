@@ -186,7 +186,7 @@ test("the provider list is the approved registry (certified providers plus the l
   const response = await providersGet(request("GET", "/api/v1/source-connections/providers"));
   assert.equal(response.status, 200);
   const payload = await response.json() as { data: Array<{ providerKey: string; demo: boolean }> };
-  assert.deepEqual(payload.data.filter((provider) => !provider.demo).map((provider) => provider.providerKey), ["acme-portal", "acme-oauth"]);
+  assert.deepEqual(payload.data.filter((provider) => !provider.demo).map((provider) => provider.providerKey), ["acme-portal", "acme-oauth", "acme-choice", "acme-choice-oauth"]);
   assert.ok(!JSON.stringify(payload).includes("connectorVersion"));
   assert.ok(!JSON.stringify(payload).includes("exchangeCode"));
 });
@@ -682,4 +682,88 @@ test("only an OAuth credential is ever refreshed", async () => {
   nextRefresh = async () => { throw new Error("must not be called for a token connection"); };
   nextTest = async () => ({ ok: true });
   assert.deepEqual((await asJson<{ data: unknown }>(await testRoute(id, tenant))).data, { ok: true });
+});
+
+// ---- Choosing which of a provider's folders to read (B1d) ----
+
+const CHOICE_SCOPE = [{ id: "q", label: "Quarterly reports", path: "/Fund/Quarterly" }, { id: "c", label: "Capital accounts", path: "/Fund/Capital" }, { id: "s", label: "Side letters", path: "/Fund/Letters" }];
+const scopesDiscovered: Array<Array<{ label: string; path?: string }>> = [];
+function choiceDriver(providerKey: string): ConnectorDriver {
+  return { ...driver(providerKey), discover: async (_credential, scope) => { scopesDiscovered.push(scope); return []; } };
+}
+function approveChoice(scope: typeof CHOICE_SCOPE | Array<{ label: string }> = CHOICE_SCOPE) {
+  registerApprovedSourceProvider({
+    providerKey: "acme-choice", displayName: "Acme choice portal", summary: "Reads folders you pick.", demo: false,
+    connect: { method: "credential", credentialType: "scoped_api_token" }, scope,
+    disclosure: { reads: ["Reports."], behaviour: ["Daily."], limits: ["Read only."] }, connectorVersion: "1.0.0",
+  }, choiceDriver("acme-choice"));
+  registerApprovedSourceProvider({
+    providerKey: "acme-choice-oauth", displayName: "Acme choice room", summary: "Reads folders you pick after sign-in.", demo: false,
+    connect: { method: "oauth" }, scope,
+    disclosure: { reads: ["Reports."], behaviour: ["Daily."], limits: ["Read only."] }, connectorVersion: "2.0.0", oauth: oauthClient,
+  }, choiceDriver("acme-choice-oauth"));
+}
+approveChoice();
+test.after(() => { unregisterApprovedSourceProvider("acme-choice"); unregisterApprovedSourceProvider("acme-choice-oauth"); });
+const storedScope = (id: string) => JSON.parse(String(rowFor(id).source_scope)) as unknown;
+
+test("a connection can be narrowed to the folders the administrator kept; what is stored is exactly that, and sync reads only it", async () => {
+  nextTest = async () => ({ ok: true });
+  const listed = await (await providersGet(request("GET", "/api/v1/source-connections/providers"))).json() as { data: Array<{ providerKey: string; scope: unknown[] }> };
+  assert.deepEqual(listed.data.find((provider) => provider.providerKey === "acme-choice")!.scope, CHOICE_SCOPE, "the descriptor carries the provider-declared folder ids");
+
+  const response = await connect({ providerKey: "acme-choice", selectedScopeIds: ["s", "q"] });
+  assert.equal(response.status, 201);
+  const { data } = await response.json() as Connected;
+  const expected = [{ label: "Quarterly reports", path: "/Fund/Quarterly" }, { label: "Side letters", path: "/Fund/Letters" }];
+  assert.deepEqual(data.connection.sourceScope, expected, "in the provider's order, without the internal ids");
+  assert.deepEqual(storedScope(data.connection.sourceConnectionId), expected);
+
+  scopesDiscovered.length = 0;
+  const sync = await runConnectionSync(TENANT, data.connection.sourceConnectionId, "scheduled", { secrets: sourceConnectorSecretStore(), drivers: sourceConnectorDrivers(), ingest: noIngest });
+  assert.equal(sync.state, "succeeded");
+  assert.deepEqual(scopesDiscovered, [expected], "the driver is only ever asked about the narrowed scope");
+
+  const whole = await (await connect({ providerKey: "acme-choice" })).json() as Connected;
+  assert.equal(whole.data.connection.sourceScope.length, 3, "no selection means everything the provider declares");
+});
+
+test("a selection is checked against the registry, never trusted: unknown, empty, duplicate and unoffered choices create nothing", async () => {
+  const before = rows.size;
+  for (const selectedScopeIds of [[], ["nope"], ["q", "q"], ["q", "/etc/passwd"], "q", [1], null]) {
+    assert.equal((await connect({ providerKey: "acme-choice", selectedScopeIds })).status, 400, JSON.stringify(selectedScopeIds));
+  }
+  assert.equal((await connect({ providerKey: "acme-portal", selectedScopeIds: ["q"] })).status, 400, "a provider that declares no choice refuses any selection");
+  assert.equal(rows.size, before);
+});
+
+test("OAuth: the chosen folders survive the redirect and are re-checked when the connection is created", async () => {
+  nextTest = async () => ({ ok: true });
+  freeProvider(TENANT, "acme-choice-oauth");
+  const started = await oauthStartPost(request("POST", "/api/v1/source-connections/oauth/start", { body: { providerKey: "acme-choice-oauth", connectionLabel: "Room", scopeConfirmed: true, selectedScopeIds: ["c"] } }));
+  assert.equal(started.status, 200);
+  const completed = await complete({ code: "code", state: lastConsent!.state }, cookieOf(started));
+  assert.equal(completed.status, 201);
+  const { data } = await completed.json() as Connected;
+  assert.deepEqual(data.connection.sourceScope, [{ label: "Capital accounts", path: "/Fund/Capital" }]);
+  assert.deepEqual(storedScope(data.connection.sourceConnectionId), [{ label: "Capital accounts", path: "/Fund/Capital" }]);
+
+  const before = rows.size;
+  freeProvider(TENANT, "acme-choice-oauth");
+  const bad = await oauthStartPost(request("POST", "/api/v1/source-connections/oauth/start", { body: { providerKey: "acme-choice-oauth", connectionLabel: "Room", scopeConfirmed: true, selectedScopeIds: ["nope"] } }));
+  assert.equal(bad.status, 400, "refused before the administrator is sent anywhere");
+  assert.equal(bad.headers.get("set-cookie"), null);
+
+  // The provider changes what it offers between the redirect out and the redirect back: the old choice no longer stands.
+  freeProvider(TENANT, "acme-choice-oauth");
+  const second = await oauthStartPost(request("POST", "/api/v1/source-connections/oauth/start", { body: { providerKey: "acme-choice-oauth", connectionLabel: "Room", scopeConfirmed: true, selectedScopeIds: ["s"] } }));
+  const state = lastConsent!.state;
+  unregisterApprovedSourceProvider("acme-choice-oauth");
+  approveChoice([{ label: "One folder only" }]);
+  const stale = await complete({ code: "code", state }, cookieOf(second));
+  assert.equal(stale.status, 400);
+  assert.equal(rows.size, before, "no connection was created");
+  unregisterApprovedSourceProvider("acme-choice");
+  unregisterApprovedSourceProvider("acme-choice-oauth");
+  approveChoice();
 });

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuditEvent, RequestIdentity } from "../../core/enterprise.ts";
 import {
   TENANT_EXPORT_APPROVAL_WINDOW_HOURS,
+  TENANT_EXPORT_BUILD_PHASES,
   tenantExportActions,
   tenantExportStatus,
   type TenantExportArtifact,
@@ -10,11 +11,13 @@ import {
   type TenantExportEvent,
   type TenantExportManifest,
   type TenantExportPage,
+  type TenantExportProgress,
   type TenantExportRequest,
   type TenantExportState,
 } from "../../core/tenant-export.ts";
 import { DataGovernanceError } from "./data-governance.ts";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "./pagination.ts";
+import { keysetTimestampSql } from "./keyset-sql.ts";
 import type { GcsControlClient } from "./gcs.ts";
 import { exportObjectKey } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -62,10 +65,9 @@ export const TENANT_EXPORT_LINK_MINUTES = 10;
 // Keyset cursors: a timestamp and an id, newest first
 // ---------------------------------------------------------------------------
 
-/** Microsecond-precision UTC text of a timestamptz, the exact value a keyset compares against (a JS Date would drop digits and skip or repeat rows). */
-export function keysetTimestampSql(column: string): string {
-  return `to_char(${column} at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-}
+// Microsecond-precision UTC text of a timestamptz, the exact value a keyset compares against (a JS Date would drop digits
+// and skip or repeat rows). It lives in pagination.ts (keyset-sql.ts) so the export build can use it without loading this module.
+export { keysetTimestampSql };
 const CURSOR_TIMESTAMP = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
 export function encodeKeysetCursor(at: string, id: string): string { return encodeCursor(`${at}|${id}`); }
@@ -113,25 +115,29 @@ function jsonObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-/** The funds and documents the delivered archive holds data for, recorded at build time (never sent to clients). */
-export type ArtifactScope = { fundIds: string[]; documentIds: string[] };
-
-export function artifactScope(manifest: unknown): ArtifactScope {
-  const artifact = jsonObject(jsonObject(manifest).artifact);
-  const list = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
-  return { fundIds: list(artifact.fundIds), documentIds: list(artifact.documentIds) };
-}
-
-/** The manifest a client may see: the stored one without the internal artifact scope. */
+/**
+ * The manifest a client may see: the stored one without the internal artifact scope. The scope (the funds, documents and
+ * source files the archive holds, which grows with the organization) is not even selected: see `REQUEST_COLUMNS`. The
+ * rights re-check reads it inside the database (`tenant_export_scope_changed`).
+ */
 function publicManifest(manifest: unknown): TenantExportManifest {
   const copy = { ...jsonObject(manifest) };
   delete copy.artifact;
   return copy as TenantExportManifest;
 }
 
+/** What a running build last reported (migration 094), or null when there is nothing usable to show. */
+function buildProgress(value: unknown): TenantExportProgress | null {
+  const progress = jsonObject(value);
+  const counters = ["estimatedBytes", "bytesWritten", "estimatedRows", "rowsWritten", "estimatedDocuments", "documentsWritten", "percent"] as const;
+  const phase = TENANT_EXPORT_BUILD_PHASES.find((candidate) => candidate === progress.phase);
+  if (!phase || typeof progress.updatedAt !== "string" || counters.some((key) => typeof progress[key] !== "number" || !Number.isFinite(progress[key]))) return null;
+  return { phase, updatedAt: progress.updatedAt, ...Object.fromEntries(counters.map((key) => [key, progress[key] as number])) } as TenantExportProgress;
+}
+
 export const REQUEST_COLUMNS = `r.request_id::text as request_id, r.state, r.reason, r.requested_by_auth_method, r.requested_by_subject,
   r.requested_at, r.approval_expires_at, r.decided_by_subject, r.decided_at, r.decision_note, r.cancelled_at, r.state_changed_at,
-  r.checksum_sha256, r.size_bytes, r.artifact_expires_at, r.manifest,
+  r.checksum_sha256, r.size_bytes, r.artifact_expires_at, r.manifest - 'artifact' as manifest, r.build_progress,
   (r.state = 'pending_approval' and r.approval_expires_at <= now()) as approval_lapsed,
   (r.state = 'complete' and r.artifact_expires_at > now()) as download_available`;
 
@@ -159,6 +165,8 @@ export function toTenantExportRequest(row: PostgresRow, identity: RequestIdentit
     cancelledAt: optionalStr(row, "cancelled_at"),
     statusChangedAt: str(row, "state_changed_at"),
     artifact,
+    // Only a running build has progress to show; what an earlier attempt left behind is never presented as current.
+    progress: status === "building" ? buildProgress(row.build_progress) : null,
     actions: tenantExportActions(status, requestedByMe, downloadAvailable),
   };
   if (history) item.history = history;
@@ -259,7 +267,7 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
     const row = await this.row(identity, requestId, db);
     const request = toTenantExportRequest(row, identity);
     if (!request.actions.canDownload) throw new DataGovernanceError("data_export_not_available", 409);
-    await this.assertRightsStillCover(db, identity.tenantId, artifactScope(row.manifest));
+    await this.assertRightsStillCover(db, identity.tenantId, requestId);
     const token = randomBytes(32).toString("base64url");
     const grant = (await db.query(`insert into corvis_control.tenant_export_download_grant (tenant_id, request_id, subject, token_sha256, expires_at)
       select $1::uuid, $2::uuid, $3, $4, least(r.artifact_expires_at, now() + make_interval(mins => $5))
@@ -281,10 +289,10 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
         and g.tenant_id = $1::uuid and g.request_id = $2::uuid and g.subject = $3 and g.token_sha256 = $4
         and g.expires_at > now() and g.consumed_at is null
         and r.state = 'complete' and r.artifact_expires_at > now()
-      returning r.object_uri, r.checksum_sha256, r.size_bytes, r.manifest`, [identity.tenantId, requestId, identity.subject, sha256(token)]))[0];
+      returning r.object_uri, r.checksum_sha256, r.size_bytes`, [identity.tenantId, requestId, identity.subject, sha256(token)]))[0];
     if (!row) return null;
     // Rights are re-checked at download, not only at build: the artifact's bytes outlive the contract terms they were built under.
-    await this.assertRightsStillCover(db, identity.tenantId, artifactScope(row.manifest));
+    await this.assertRightsStillCover(db, identity.tenantId, requestId);
     return { objectUri: str(row, "object_uri"), checksumSha256: str(row, "checksum_sha256"), sizeBytes: Number(row.size_bytes) };
   }
 
@@ -310,11 +318,13 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
         and consumed_at is not null and expires_at > now()`, [identity.tenantId, requestId, identity.subject, sha256(token)]);
   }
 
-  /** Every fund and document the archive holds data for must still be redistributable. */
-  private async assertRightsStillCover(db: PostgresSqlApi, tenantId: string, scope: ArtifactScope): Promise<void> {
-    const rows = await db.query(`select resource_type, resource_id from corvis_control.tenant_export_rights($1::uuid)`, [tenantId]);
-    const held = new Set(rows.map((row) => `${str(row, "resource_type")}:${str(row, "resource_id")}`));
-    const required = [...scope.fundIds.map((id) => `fund:${id}`), ...scope.documentIds.map((id) => `document:${id}`)];
-    if (required.some((key) => !held.has(key))) throw new DataGovernanceError("data_export_rights_changed", 409);
+  /**
+   * Every fund and document the archive holds data for must still be redistributable, and every source document file in it
+   * must still have source-file access granted (F10b). The comparison is made by the database (`tenant_export_scope_changed`,
+   * migration 094) against the scope recorded when the archive was built, so what the archive holds never travels here.
+   */
+  private async assertRightsStillCover(db: PostgresSqlApi, tenantId: string, requestId: string): Promise<void> {
+    const row = (await db.query(`select corvis_control.tenant_export_scope_changed($1::uuid,$2::uuid) as changed`, [tenantId, requestId]))[0];
+    if (flag(row!, "changed")) throw new DataGovernanceError("data_export_rights_changed", 409);
   }
 }
