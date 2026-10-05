@@ -10,8 +10,13 @@ import {
   OAUTH_RETURN_MARKER,
   buildConnectSecret,
   connectCredentialField,
+  SCOPE_SELECTION_REQUIRED,
+  chosenScope,
   connectFailureMessage,
+  describeConnectedCollection,
   describeOnDemandTest,
+  describeScopeSelection,
+  selectableScope,
   describeTestFailure,
   parseOAuthReturn,
   validateConnectionName,
@@ -111,4 +116,31 @@ test("the redirect parameters are removed from the URL while unrelated ones stay
   assert.equal(withoutOAuthReturn(`?${OAUTH_RETURN_MARKER}=return&code=abc&state=xyz&iss=https%3A%2F%2Fp`), "");
   assert.equal(withoutOAuthReturn(`?keep=1&${OAUTH_RETURN_MARKER}=return&error=access_denied&error_description=no`), "?keep=1");
   assert.equal(withoutOAuthReturn(""), "");
+});
+
+const THREE = [{ id: "a", label: "Quarterly reports", path: "/Q" }, { id: "b", label: "Capital accounts", path: "/C" }, { id: "c", label: "Side letters" }];
+
+test("a provider offers a folder choice only when every item has its own id", () => {
+  assert.deepEqual(selectableScope(THREE), THREE);
+  assert.equal(selectableScope([{ id: "a", label: "Only one" }]), undefined, "one folder is not a choice");
+  assert.equal(selectableScope([]), undefined);
+  assert.equal(selectableScope([{ id: "a", label: "A" }, { label: "B" }]), undefined, "an item without an id");
+  assert.equal(selectableScope([{ id: "a", label: "A" }, { id: "", label: "B" }]), undefined, "an empty id");
+  assert.equal(selectableScope([{ id: "a", label: "A" }, { id: "a", label: "B" }]), undefined, "duplicate ids");
+});
+
+test("the chosen folders are stated in plain words, exactly as they will be stored", () => {
+  assert.deepEqual(chosenScope(THREE, new Set(["c", "a", "zzz"])).map((item) => item.id), ["a", "c"], "provider order, unknown ids ignored");
+  assert.equal(describeScopeSelection(THREE, new Set(["a", "b", "c"])), "Corvis will read all 3 folders: Quarterly reports, Capital accounts, Side letters.");
+  assert.equal(describeScopeSelection(THREE, new Set(["b"])), "Corvis will read 1 of 3 folders: Capital accounts. It will not read: Quarterly reports, Side letters.");
+  assert.equal(describeScopeSelection(THREE, new Set()), "No folder is chosen, so there is nothing for Corvis to read.");
+  assert.match(SCOPE_SELECTION_REQUIRED, /at least one folder/);
+});
+
+test("the success step says when collection runs from the connection's own schedule", () => {
+  const now = new Date("2026-10-02T12:00:00.000Z");
+  assert.match(describeConnectedCollection({ status: "active" }, now), /scheduled collection is on\. The first sync starts at the next collection run\. Documents/);
+  assert.match(describeConnectedCollection({ status: "active", nextScheduledAt: "2026-10-02T11:00:00.000Z" }, now), /The first sync starts at the next collection run/, "a schedule already reached is due now");
+  assert.match(describeConnectedCollection({ status: "active", nextScheduledAt: "2026-10-02T18:00:00.000Z" }, now), /The next sync is due in 6 hours\./);
+  assert.doesNotMatch(describeConnectedCollection({ status: "active" }, now), /not switched on yet/);
 });

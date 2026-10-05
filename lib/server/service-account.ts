@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AuditEvent, RequestIdentity } from "../../core/enterprise.ts";
 import {
   SERVICE_ACCOUNT_CREDENTIAL_HISTORY,
+  SERVICE_ACCOUNT_ENTITLEMENT_LIMIT,
+  SERVICE_ACCOUNT_GRANTABLE_LIMIT,
   SERVICE_ACCOUNT_LIMIT,
   credentialStatus,
   expiresSoon,
@@ -12,8 +14,11 @@ import {
   type ServiceAccountCommand,
   type ServiceAccountCreated,
   type ServiceAccountCredential,
+  type ServiceAccountEntitlement,
+  type ServiceAccountGrantableResource,
   type ServiceAccountList,
   type ServiceAccountCredentialIssued,
+  type ServiceAccountResourceType,
   type ServiceAccountRole,
 } from "../../core/service-account.ts";
 import { mintCredential } from "./service-account-credential.ts";
@@ -63,7 +68,17 @@ export interface ServiceAccountBackend {
   extend(identity: RequestIdentity, serviceAccountId: string, command: Extract<ServiceAccountCommand, { action: "extend" }>, db?: PostgresSqlApi): Promise<{ serviceAccount: ServiceAccount; previousExpiresAt: string }>;
   /** Hands the account to another active Organization Admin. */
   transferOwner(identity: RequestIdentity, serviceAccountId: string, ownerSubject: string, db?: PostgresSqlApi): Promise<{ serviceAccount: ServiceAccount; previousOwner: string }>;
+  /**
+   * Gives the account read access to one fund or document, in its own workspace, through the same entitlement rows a person's
+   * access comes from. Refused unless the organization owns the resource AND holds an effective client-visible data right for it.
+   */
+  grantEntitlement(identity: RequestIdentity, serviceAccountId: string, resource: ServiceAccountResourceRef, db?: PostgresSqlApi): Promise<{ serviceAccount: ServiceAccount }>;
+  /** Ends everything the account holds on one fund or document, effective now; never refused for a data-right reason. */
+  revokeEntitlement(identity: RequestIdentity, serviceAccountId: string, resource: ServiceAccountResourceRef, db?: PostgresSqlApi): Promise<{ serviceAccount: ServiceAccount; endedEntitlements: number }>;
 }
+
+/** The fund or document an entitlement command names. */
+export type ServiceAccountResourceRef = { resourceType: ServiceAccountResourceType; resourceId: string };
 
 /** The most Organization Admins offered as a new owner. */
 const SERVICE_ACCOUNT_OWNER_CANDIDATE_LIMIT = 200;
@@ -114,7 +129,19 @@ export function toServiceAccountCredential(row: PostgresRow, now: Date): Service
   };
 }
 
-export function toServiceAccount(row: PostgresRow, credentialRows: PostgresRow[], now: Date): ServiceAccount {
+export function toServiceAccountEntitlement(row: PostgresRow): ServiceAccountEntitlement {
+  return {
+    resourceType: str(row, "resource_type") as ServiceAccountResourceType,
+    resourceId: str(row, "resource_id"),
+    label: str(row, "label"),
+    permission: str(row, "permission"),
+    grantedAt: instant(str(row, "valid_from")),
+    withinDataRights: row.within_data_rights === true,
+  };
+}
+
+export function toServiceAccount(row: PostgresRow, credentialRows: PostgresRow[], entitlementRows: PostgresRow[], now: Date): ServiceAccount {
+  const entitlements = entitlementRows.map(toServiceAccountEntitlement);
   const credentials = credentialRows.map((credential) => toServiceAccountCredential(credential, now));
   const expiresAt = instant(str(row, "expires_at"));
   const ownerActive = row.owner_active === true;
@@ -136,7 +163,8 @@ export function toServiceAccount(row: PostgresRow, credentialRows: PostgresRow[]
     ownerAssignedAt: instant(str(row, "owner_assigned_at")),
     ownerActive,
     credentials,
-    ...serviceAccountLifecycle({ disabled: str(row, "status") === "disabled", expiresAt, ownerActive, credentials }, now),
+    entitlements,
+    ...serviceAccountLifecycle({ disabled: str(row, "status") === "disabled", expiresAt, ownerActive, credentials, entitlementCount: entitlements.length }, now),
   };
 }
 
@@ -169,12 +197,27 @@ export class PostgresServiceAccountBackend implements ServiceAccountBackend {
         where c.tenant_id = $1::uuid and ($2::uuid is null or c.service_account_id = $2::uuid)
       ) ranked where position <= ${SERVICE_ACCOUNT_CREDENTIAL_HISTORY}
       order by position`, [identity.tenantId, serviceAccountId]);
+    // What each account can read now: its effective entitlements, named, and whether the organization's data right still covers each.
+    const entitlements = await db.query(`select * from (
+        select a.service_account_id::text as service_account_id, e.resource_type, e.resource_id, e.permission, e.valid_from,
+          case when e.resource_type = 'fund' then coalesce(f.canonical_name, e.resource_id) else coalesce(d.display_name, e.resource_id) end as label,
+          corvis_control.service_account_data_right_effective(e.tenant_id, e.resource_type, e.resource_id) as within_data_rights,
+          row_number() over (partition by a.service_account_id order by e.resource_type, e.resource_id, e.permission) as position
+        from corvis_control.service_account a
+        join corvis_control.resource_entitlement e on e.tenant_id = a.tenant_id and e.subject_user_id = a.user_id
+          and e.valid_from <= now() and (e.valid_until is null or e.valid_until > now()) and e.resource_type in ('fund','document')
+        left join corvis_identity.fund f on e.resource_type = 'fund' and f.global_fund_id = e.resource_id
+        left join corvis_source.document d on e.resource_type = 'document' and d.tenant_id = e.tenant_id and d.document_id::text = e.resource_id
+        where a.tenant_id = $1::uuid and ($2::uuid is null or a.service_account_id = $2::uuid)
+      ) ranked where position <= ${SERVICE_ACCOUNT_ENTITLEMENT_LIMIT}
+      order by service_account_id, position`, [identity.tenantId, serviceAccountId]);
     const now = new Date();
-    return accounts.map((row) => toServiceAccount(row, credentials.filter((credential) => str(credential, "service_account_id") === str(row, "service_account_id")), now));
+    const ofAccount = (rows: PostgresRow[], row: PostgresRow) => rows.filter((candidate) => str(candidate, "service_account_id") === str(row, "service_account_id"));
+    return accounts.map((row) => toServiceAccount(row, ofAccount(credentials, row), ofAccount(entitlements, row), now));
   }
 
   async list(identity: RequestIdentity, db: PostgresSqlApi = this.defaultDb()): Promise<ServiceAccountList> {
-    const [serviceAccounts, workspaces, owners] = await Promise.all([
+    const [serviceAccounts, workspaces, owners, grantable] = await Promise.all([
       this.read(identity, null, db),
       db.query(`select workspace_id::text as workspace_id, display_name from corvis_control.workspace
         where tenant_id = $1::uuid and status = 'active' order by display_name, workspace_id`, [identity.tenantId]),
@@ -182,11 +225,29 @@ export class PostgresServiceAccountBackend implements ServiceAccountBackend {
       db.query(`select distinct s.subject from corvis_control.identity_subject s
         where s.tenant_id = $1::uuid and s.auth_method in ('oidc','saml') and corvis_control.service_account_owner_active(s.tenant_id, s.user_id)
         order by s.subject limit ${SERVICE_ACCOUNT_OWNER_CANDIDATE_LIMIT}`, [identity.tenantId]),
+      // What an admin may grant: the organization's own funds and documents that hold an effective, client-visible data right.
+      // The same two tests the grant function applies, so nothing is offered that the function would refuse.
+      db.query(`select resource_type, resource_id, label from (
+          select 'fund'::text as resource_type, r.resource_id, coalesce(f.canonical_name, r.resource_id) as label
+          from (select distinct dr.resource_id from corvis_control.data_rights dr where dr.tenant_id = $1::uuid and dr.resource_type = 'fund') r
+          left join corvis_identity.fund f on f.global_fund_id = r.resource_id
+          where corvis_control.service_account_data_right_effective($1::uuid, 'fund', r.resource_id)
+            and corvis_control.access_policy_resource_belongs_to_tenant($1::uuid, 'fund', r.resource_id)
+          union all
+          select 'document'::text, r.resource_id, coalesce(d.display_name, r.resource_id)
+          from (select distinct dr.resource_id from corvis_control.data_rights dr where dr.tenant_id = $1::uuid and dr.resource_type = 'document') r
+          left join corvis_source.document d on d.tenant_id = $1::uuid and d.document_id::text = r.resource_id
+          where corvis_control.service_account_data_right_effective($1::uuid, 'document', r.resource_id)
+            and corvis_control.access_policy_resource_belongs_to_tenant($1::uuid, 'document', r.resource_id)
+        ) grantable order by resource_type, label, resource_id limit ${SERVICE_ACCOUNT_GRANTABLE_LIMIT}`, [identity.tenantId]),
     ]);
     return {
       serviceAccounts,
       workspaces: workspaces.map((row) => ({ workspaceId: str(row, "workspace_id"), name: str(row, "display_name") })),
       owners: owners.map((row) => ({ subject: str(row, "subject") })),
+      grantable: grantable.map((row): ServiceAccountGrantableResource => ({
+        resourceType: str(row, "resource_type") as ServiceAccountResourceType, resourceId: str(row, "resource_id"), label: str(row, "label"),
+      })),
     };
   }
 
@@ -253,5 +314,21 @@ export class PostgresServiceAccountBackend implements ServiceAccountBackend {
       identity.tenantId, serviceAccountId, identity.authMethod, identity.subject, ownerSubject,
     ]);
     return { serviceAccount: await this.get(identity, serviceAccountId, db), previousOwner: str(rows[0]!, "previous_owner") };
+  }
+
+  async grantEntitlement(identity: RequestIdentity, serviceAccountId: string, resource: ServiceAccountResourceRef, db: PostgresSqlApi = this.defaultDb()): Promise<{ serviceAccount: ServiceAccount }> {
+    if (!isServiceAccountId(serviceAccountId)) throw new ServiceAccountError("service_account_not_found", 404);
+    await db.query(`select corvis_control.grant_service_account_entitlement($1::uuid,$2::uuid,$3,$4,$5,$6,$7::integer)`, [
+      identity.tenantId, serviceAccountId, identity.authMethod, identity.subject, resource.resourceType, resource.resourceId, SERVICE_ACCOUNT_ENTITLEMENT_LIMIT,
+    ]);
+    return { serviceAccount: await this.get(identity, serviceAccountId, db) };
+  }
+
+  async revokeEntitlement(identity: RequestIdentity, serviceAccountId: string, resource: ServiceAccountResourceRef, db: PostgresSqlApi = this.defaultDb()): Promise<{ serviceAccount: ServiceAccount; endedEntitlements: number }> {
+    if (!isServiceAccountId(serviceAccountId)) throw new ServiceAccountError("service_account_not_found", 404);
+    const rows = await db.query(`select corvis_control.revoke_service_account_entitlement($1::uuid,$2::uuid,$3,$4,$5,$6) as ended`, [
+      identity.tenantId, serviceAccountId, identity.authMethod, identity.subject, resource.resourceType, resource.resourceId,
+    ]);
+    return { serviceAccount: await this.get(identity, serviceAccountId, db), endedEntitlements: Number(rows[0]!.ended) };
   }
 }

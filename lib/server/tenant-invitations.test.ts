@@ -6,7 +6,7 @@ import { AuthorizationError } from "../../core/enterprise.ts";
 import { ConflictError } from "./platform.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
 import { BULK_ROLES } from "../bulk-invite-csv.ts";
-import { acceptTenantInvitation, assertInvitationIssuer, createTenantInvitation, INVITABLE_ROLES, normalizeTenantInvitation } from "./tenant-invitations.ts";
+import { acceptTenantInvitation, assertInvitationIssuer, createTenantInvitation, INVITABLE_ROLES, normalizeTenantInvitation, TenantInvitationError } from "./tenant-invitations.ts";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE = "22222222-2222-4222-8222-222222222222";
@@ -22,10 +22,12 @@ class FakeDb implements PostgresSqlApi {
   readonly executions: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
   private readonly acceptance?: PostgresRow | Error;
   private readonly failInsert?: unknown;
+  domainAllowed: unknown = true;
   constructor(acceptance?: PostgresRow | Error, failInsert?: unknown) { this.acceptance = acceptance; this.failInsert = failInsert; }
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.queries.push({ sql, parameters });
     if (sql.includes("from corvis_control.workspace w")) return [{ display_name: "Primary Workspace" }];
+    if (sql.includes("email_domain_allowed")) return [{ allowed: this.domainAllowed }];
     if (sql.includes("accept_tenant_invitation")) {
       if (this.acceptance instanceof Error) throw this.acceptance;
       return this.acceptance ? [this.acceptance] : [];
@@ -83,6 +85,24 @@ test("invitation creation stores a hash, returns the one-time token once and wri
   const audit = db.executions.find((item) => item.sql.includes("insert into corvis_control.audit_event"));
   assert.ok(audit, "issue must leave an audit event");
   assert.equal(audit.parameters[5], "tenant_invitation.issued");
+});
+
+test("F7b: an invitation is refused, before anything is written, when the tenant verifies domains and the address is not on one", async () => {
+  for (const answer of [false, undefined, "false"]) {
+    const db = new FakeDb();
+    db.domainAllowed = answer;
+    const normalized = normalizeTenantInvitation(command)!;
+    await assert.rejects(createTenantInvitation(identity, normalized, "corr-domain", db),
+      (error: unknown) => error instanceof TenantInvitationError && error.code === "email_domain_not_verified" && error.status === 422);
+    const check = db.queries.find((item) => item.sql.includes("email_domain_allowed"));
+    assert.deepEqual(check?.parameters, [normalized.tenantId, normalized.email]);
+    assert.equal(db.executions.length, 0, "nothing is stored or audited for a refused address");
+  }
+  // The answer "true" is the only way through, including as text from a driver that does not decode booleans.
+  const db = new FakeDb();
+  db.domainAllowed = "true";
+  await createTenantInvitation(identity, normalizeTenantInvitation(command)!, "corr-domain-ok", db);
+  assert.ok(db.executions.some((item) => item.sql.includes("insert into corvis_control.tenant_invitation")));
 });
 
 test("a duplicate pending invitation is reported as a conflict", async () => {

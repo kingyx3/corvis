@@ -12,8 +12,8 @@ register(new URL("./test-support/alias-loader.mjs", import.meta.url), import.met
 const { DataGovernanceError } = await import("./data-governance.ts");
 const {
   PostgresTenantExportBackend,
+  REQUEST_COLUMNS,
   TENANT_EXPORT_LINK_MINUTES,
-  artifactScope,
   decodeKeysetCursor,
   encodeKeysetCursor,
   isUuid,
@@ -69,8 +69,10 @@ class FakeDb implements PostgresSqlApi {
 
 const refusal = (code: string, status: number) => (error: unknown) => error instanceof DataGovernanceError && error.code === code && error.status === status;
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
-const rightsRows = [{ resource_type: "fund", resource_id: "fund-a" }, { resource_type: "document", resource_id: "doc-a" }, { resource_type: "document", resource_id: "doc-extra" }];
-const isRights = (sql: string) => /tenant_export_rights/.test(sql);
+// The comparison of what an archive holds against current rights is made in SQL (migration 094); these are its two answers.
+const covered = [{ changed: false }];
+const rightsChanged = [{ changed: true }];
+const isRights = (sql: string) => /tenant_export_scope_changed/.test(sql);
 
 function backend(db: FakeDb, objectStore: { getObjectStream(key: string): Promise<{ body: ReadableStream<Uint8Array>; contentType?: string; contentLength?: string } | null> } = { async getObjectStream() { return null; } }) {
   return new PostgresTenantExportBackend(() => db, () => objectStore);
@@ -117,12 +119,25 @@ test("a row becomes a request with the status, the viewer's own flag and the act
   assert.equal(cancelled.status, "cancelled");
 });
 
-test("the artifact scope is read from the stored manifest and tolerates anything else", () => {
-  assert.deepEqual(artifactScope(storedManifest), { fundIds: ["fund-a"], documentIds: ["doc-a"] });
-  assert.deepEqual(artifactScope(JSON.stringify(storedManifest)), { fundIds: ["fund-a"], documentIds: ["doc-a"] });
-  assert.deepEqual(artifactScope({ artifact: { fundIds: [1, "f"], documentIds: "nope" } }), { fundIds: ["1", "f"], documentIds: [] });
-  assert.deepEqual(artifactScope(null), { fundIds: [], documentIds: [] });
-  assert.deepEqual(artifactScope({ artifact: "nope" }), { fundIds: [], documentIds: [] });
+test("the internal artifact scope is never selected, so the list of what an archive holds does not travel with every request", () => {
+  assert.match(REQUEST_COLUMNS, /r\.manifest - 'artifact' as manifest/);
+  assert.match(REQUEST_COLUMNS, /r\.build_progress/);
+});
+
+test("a running build shows its size estimate and progress, and only while it is building (F10c)", () => {
+  const report = { phase: "documents", estimatedBytes: 5000, bytesWritten: 1250, estimatedRows: 100, rowsWritten: 100, estimatedDocuments: 8, documentsWritten: 2, percent: 25, updatedAt: "2026-10-03T00:00:00.000Z" };
+  const building = toTenantExportRequest(row({ state: "building", build_progress: report }), morgan);
+  assert.deepEqual(building.progress, report);
+  // A driver that returns jsonb as text is read the same way.
+  assert.deepEqual(toTenantExportRequest(row({ state: "building", build_progress: JSON.stringify(report) }), morgan).progress, report);
+  // Not building: whatever an earlier attempt left behind is not shown as current.
+  assert.equal(toTenantExportRequest(row({ state: "approved", build_progress: report }), morgan).progress, null);
+  assert.equal(toTenantExportRequest(completeRow({ build_progress: report }), morgan).progress, null);
+  // Building but nothing usable reported yet: no progress rather than a made-up one.
+  for (const bad of [null, "not json", [1], { ...report, phase: "unknown" }, { ...report, percent: "25" }, { ...report, bytesWritten: Number.POSITIVE_INFINITY }, { ...report, updatedAt: 5 }]) {
+    assert.equal(toTenantExportRequest(row({ state: "building", build_progress: bad }), morgan).progress, null, JSON.stringify(bad));
+  }
+  assert.equal(toTenantExportRequest(row({ state: "building" }), morgan).progress, null);
 });
 
 test("the audit event carries identifiers and the status, attributed to the acting admin", () => {
@@ -238,7 +253,7 @@ test("a decision passes the actor and the guard to SQL, where independence is en
 });
 
 test("a link is issued only for a downloadable export whose data is still redistributable, and is single-use and hashed at rest", async () => {
-  const db = new FakeDb((sql) => isRights(sql) ? rightsRows : /insert into corvis_control\.tenant_export_download_grant/.test(sql) ? [{ expires_at: "2026-10-03 10:10:00+00" }] : [completeRow()]);
+  const db = new FakeDb((sql) => isRights(sql) ? covered : /insert into corvis_control\.tenant_export_download_grant/.test(sql) ? [{ expires_at: "2026-10-03 10:10:00+00" }] : [completeRow()]);
   const { request, download } = await backend(db).issueDownload(morgan, REQUEST);
   assert.equal(request.status, "complete");
   assert.equal(download.downloadExpiresAt, "2026-10-03 10:10:00+00");
@@ -260,16 +275,15 @@ test("no link is issued for an export that is not complete, has lapsed, or whose
   await assert.rejects(() => backend(new FakeDb(() => [row()])).issueDownload(morgan, REQUEST), refusal("data_export_not_available", 409));
   await assert.rejects(() => backend(new FakeDb(() => [completeRow({ download_available: false })])).issueDownload(morgan, REQUEST), refusal("data_export_not_available", 409));
   await assert.rejects(() => backend(new FakeDb()).issueDownload(morgan, REQUEST), refusal("data_export_not_found", 404));
-  const revoked = new FakeDb((sql) => isRights(sql) ? [{ resource_type: "fund", resource_id: "fund-a" }] : [completeRow()]);
+  const revoked = new FakeDb((sql) => isRights(sql) ? rightsChanged : [completeRow()]);
   await assert.rejects(() => backend(revoked).issueDownload(morgan, REQUEST), refusal("data_export_rights_changed", 409));
   assert.equal(revoked.calls.some((call) => /insert into/.test(call.sql)), false, "nothing is issued when rights no longer cover the archive");
-  // A right on the wrong resource type is no right: the fund id does not cover a document of the same text.
-  const wrongType = new FakeDb((sql) => isRights(sql) ? [{ resource_type: "document", resource_id: "fund-a" }, { resource_type: "document", resource_id: "doc-a" }] : [completeRow()]);
-  await assert.rejects(() => backend(wrongType).issueDownload(morgan, REQUEST), refusal("data_export_rights_changed", 409));
+  // The database compares what the archive holds (funds, documents and source files) with current rights, for this request only.
+  assert.deepEqual(revoked.calls.find((call) => isRights(call.sql))!.parameters, [TENANT, REQUEST]);
 });
 
 test("redeeming consumes the link in the statement that validates it, bound to tenant, request, subject and token hash", async () => {
-  const db = new FakeDb((sql) => isRights(sql) ? rightsRows : [{ object_uri: "gs://bucket/exports/t/x.zip", checksum_sha256: "b".repeat(64), size_bytes: "99", manifest: storedManifest }]);
+  const db = new FakeDb((sql) => isRights(sql) ? covered : [{ object_uri: "gs://bucket/exports/t/x.zip", checksum_sha256: "b".repeat(64), size_bytes: "99" }]);
   const redeemed = await backend(db).redeemDownload(morgan, REQUEST, "token-1");
   assert.deepEqual(redeemed, { objectUri: "gs://bucket/exports/t/x.zip", checksumSha256: "b".repeat(64), sizeBytes: 99 });
   const update = db.calls[0]!;
@@ -290,8 +304,9 @@ test("a link that matches nothing, or is malformed, redeems to nothing and never
 });
 
 test("a download is refused when the organization's data rights no longer cover the archive", async () => {
-  const db = new FakeDb((sql) => isRights(sql) ? [{ resource_type: "fund", resource_id: "fund-a" }] : [{ object_uri: "gs://b/exports/x", checksum_sha256: "b".repeat(64), size_bytes: 1, manifest: storedManifest }]);
+  const db = new FakeDb((sql) => isRights(sql) ? rightsChanged : [{ object_uri: "gs://b/exports/x", checksum_sha256: "b".repeat(64), size_bytes: 1 }]);
   await assert.rejects(() => backend(db).redeemDownload(morgan, REQUEST, "token-1"), refusal("data_export_rights_changed", 409));
+  assert.deepEqual(db.calls.find((call) => isRights(call.sql))!.parameters, [TENANT, REQUEST]);
 });
 
 test("the archive is streamed from the object store with its length when known", async () => {

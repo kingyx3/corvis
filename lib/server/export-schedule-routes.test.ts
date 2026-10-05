@@ -127,6 +127,34 @@ test("creating a schedule writes only the schedule and its audit event: nothing 
   assert.equal(payload.data.notifyOnCompletion, true);
 });
 
+test("the performance scorecard can be scheduled: the canonical scope with its filters is saved, and the owner must be entitled to a fund", async () => {
+  const scope = { performanceScorecard: true, fundId: "fund-1", period: "Q1 2026" };
+  seed((query) => isCreateFunction(query) ? [scheduleRow({ schedule_id: query.parameters[1], scope, scope_label: query.parameters[9], trigger_kind: "on_publish", next_run_at: null })] : []);
+  const response = await createPost(request("/export-schedules", { method: "POST", body: create({ scope: { ...scope, fundId: " fund-1 ", extra: 1 }, trigger: "on_publish" }) }));
+  assert.equal(response.status, 201);
+  const call = queries.find(isCreateFunction)!;
+  assert.equal(call.parameters[8], JSON.stringify(scope), "canonical: trimmed, unknown keys dropped");
+  assert.equal(call.parameters[9], "Performance scorecard · fund-1 · Q1 2026");
+  assert.equal(call.parameters[11], "on_publish");
+
+  seed((query) => isCreateFunction(query) ? [scheduleRow({ schedule_id: query.parameters[1] })] : []);
+  const all = await createPost(request("/export-schedules", { method: "POST", body: create({ scope: { performanceScorecard: true } }) }));
+  assert.equal(all.status, 201, "all funds the owner is entitled to");
+  assert.equal(queries.find(isCreateFunction)!.parameters[9], "Performance scorecard · all entitled funds");
+
+  seed(() => []);
+  const elsewhere = await createPost(request("/export-schedules", { method: "POST", body: create({ scope: { performanceScorecard: true, fundId: "fund-9" } }) }));
+  assert.equal(elsewhere.status, 403);
+  const nobody = await createPost(request("/export-schedules", { method: "POST", funds: [], body: create({ scope: { performanceScorecard: true } }) }));
+  assert.equal(nobody.status, 403, "all funds is nothing without a fund");
+  for (const bad of [{ performanceScorecard: false }, { performanceScorecard: true, fundId: "" }, { performanceScorecard: true, snapshotId: "x" }]) {
+    const invalid = await createPost(request("/export-schedules", { method: "POST", body: create({ scope: bad }) }));
+    assert.equal(invalid.status, 400, JSON.stringify(bad));
+    assert.equal((await body(invalid)).error, "invalid_scope");
+  }
+  assert.equal(queries.some(isCreateFunction), false, "nothing is written for a refused scope");
+});
+
 test("the owner can opt a schedule out of emails when creating it", async () => {
   seed((query) => isCreateFunction(query) ? [scheduleRow({ schedule_id: query.parameters[1], notify_on_completion: query.parameters[12] })] : []);
   const response = await createPost(request("/export-schedules", { method: "POST", body: create({ notifyOnCompletion: false }) }));

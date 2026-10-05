@@ -11,6 +11,8 @@ import {
   SERVICE_ACCOUNT_MAX_PURPOSE_LENGTH,
   SERVICE_ACCOUNT_MAX_REASON_LENGTH,
   SERVICE_ACCOUNT_MIN_TEXT_LENGTH,
+  SERVICE_ACCOUNT_PERMISSION_LABEL,
+  SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL,
   SERVICE_ACCOUNT_ROLES,
   SERVICE_ACCOUNT_ROLE_LABEL,
   SERVICE_ACCOUNT_STATUS_LABEL,
@@ -18,6 +20,7 @@ import {
   serviceAccountCredentialSummary,
   type IssuedServiceAccountCredential,
   type ServiceAccount,
+  type ServiceAccountEntitlement,
   type ServiceAccountList,
   type ServiceAccountRole,
 } from "@/core/service-account";
@@ -28,7 +31,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { displayDate } from "@/lib/display-format";
 
 type Load<T> = { kind: "loading" } | { kind: "error" } | { kind: "ready"; value: T };
-type Panel = { serviceAccountId: string; kind: "rotate" | "issue" | "revoke" | "disable" | "extend" | "transfer" };
+type Panel = { serviceAccountId: string; kind: "rotate" | "issue" | "revoke" | "disable" | "extend" | "transfer" | "grant" | "ungrant"; resource?: Pick<ServiceAccountEntitlement, "resourceType" | "resourceId" | "label"> };
 type Reveal = { accountName: string; heading: string; credential: IssuedServiceAccountCredential };
 
 const ROLE_GUIDE: Record<ServiceAccountRole, string> = {
@@ -60,6 +63,7 @@ export function ServiceAccountsSection() {
   const [credentialDays, setCredentialDays] = useState(SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS);
   const [extendDays, setExtendDays] = useState(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS);
   const [newOwner, setNewOwner] = useState("");
+  const [grantChoice, setGrantChoice] = useState("");
   // The create form.
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -67,7 +71,7 @@ export function ServiceAccountsSection() {
   const [roleName, setRoleName] = useState<ServiceAccountRole>("analyst");
   const [accountDays, setAccountDays] = useState(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS);
   const [newCredentialDays, setNewCredentialDays] = useState(SERVICE_ACCOUNT_DEFAULT_CREDENTIAL_DAYS);
-  const ids = { name: useId(), purpose: useId(), workspace: useId(), role: useId(), roleHint: useId(), account: useId(), credential: useId(), reason: useId(), overlap: useId(), days: useId(), secret: useId(), extend: useId(), extendHint: useId(), owner: useId() };
+  const ids = { name: useId(), purpose: useId(), workspace: useId(), role: useId(), roleHint: useId(), account: useId(), credential: useId(), reason: useId(), overlap: useId(), days: useId(), secret: useId(), extend: useId(), extendHint: useId(), owner: useId(), grant: useId(), grantHint: useId() };
   const latest = useRef(0);
 
   const refresh = useCallback(async (silent = false) => {
@@ -93,6 +97,7 @@ export function ServiceAccountsSection() {
   const accounts = list?.serviceAccounts ?? [];
   const workspaces = list?.workspaces ?? [];
   const owners = list?.owners ?? [];
+  const grantable = list?.grantable ?? [];
   const selectedWorkspace = workspaceId || workspaces[0]?.workspaceId || "";
   const nameOk = name.trim().length >= SERVICE_ACCOUNT_MIN_TEXT_LENGTH && name.trim().length <= SERVICE_ACCOUNT_MAX_NAME_LENGTH;
   const purposeOk = purpose.trim().length >= SERVICE_ACCOUNT_MIN_TEXT_LENGTH && purpose.trim().length <= SERVICE_ACCOUNT_MAX_PURPOSE_LENGTH;
@@ -139,7 +144,7 @@ export function ServiceAccountsSection() {
     <div className="panel-heading"><div><p className="eyebrow">Non-human access</p><h2 id="service-accounts-heading">Service accounts</h2></div><span className="table-muted">{list ? `${accounts.filter((account) => account.status === "active").length} active` : ""}</span></div>
     <p className="lede">A service account lets your own systems call Corvis without borrowing a person&apos;s login. It has one role in one workspace and the same entitlements and data rights as a person, it expires, and every change to it is in the access audit trail below.</p>
     <div className="lineage-note tone-warning" role="note"><Icon name="alert"/><div><strong>Credentials are not yet accepted by the API</strong><span>You can create accounts and issue, rotate and revoke credentials here, and everything is recorded. The Corvis API does not yet accept these credentials on requests; that is being enabled separately, and no credential will work until it is.</span></div></div>
-    <div className="lineage-note" role="note"><Icon name="shield"/><div><strong>What an account can see</strong><span>Creating an account grants no fund or document access. Corvis operations grant that, as for people, to the account&apos;s identity reference shown on each account.</span></div></div>
+    <div className="lineage-note" role="note"><Icon name="shield"/><div><strong>What an account can see</strong><span>Creating an account grants no fund or document access: until you grant some under &quot;Data access&quot;, it sees nothing. You can grant only funds and documents your organization is licensed to see, as for people, and every grant is recorded in the audit trail.</span></div></div>
 
     <form className="data-export-request" onSubmit={(event) => { event.preventDefault(); if (createReady) void create(); }}>
       <h3>Create a service account</h3>
@@ -220,6 +225,40 @@ export function ServiceAccountsSection() {
             <div className="form-field"><dt>Identity reference</dt><dd><code>{account.userId}</code></dd></div>
           </dl>
           {account.status === "disabled" && <p className="data-issue-summary">Deactivated {account.disabledAt ? time(account.disabledAt) : ""} by {account.disabledBy}{account.disableReason ? `: ${account.disableReason}` : "."}</p>}
+          <div role="group" aria-label={`Data access of ${account.name}`}>
+            <h4>Data access</h4>
+            {account.entitlements.length === 0
+              ? <p className="table-muted">{account.status === "disabled" ? "Deactivated: it has no access." : "It cannot see any fund or document yet."}</p>
+              : <ul className="data-issues-list" aria-label={`Funds and documents ${account.name} can read`}>
+                {account.entitlements.map((entitlement) => <li key={`${entitlement.resourceType}:${entitlement.resourceId}`} className="table-secondary">
+                  <strong>{entitlement.label}</strong> · {SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL[entitlement.resourceType]} · {SERVICE_ACCOUNT_PERMISSION_LABEL[entitlement.permission] ?? entitlement.permission} · since {day(entitlement.grantedAt)}
+                  {!entitlement.withinDataRights && <span> · <strong>Not covered by your organization&apos;s data rights, so the account cannot see it.</strong></span>}
+                  {account.entitlementAccess.canRevoke && open === null && <> <button type="button" className="text-button" disabled={busy !== null} aria-label={`Remove access to ${entitlement.label} from ${account.name}`}
+                    onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "ungrant", resource: entitlement }); setReason(""); }}>Remove</button></>}
+                </li>)}
+              </ul>}
+          </div>
+          {open === "grant" && (() => {
+            const held = new Set(account.entitlements.map((entitlement) => `${entitlement.resourceType}:${entitlement.resourceId}`));
+            const choices = grantable.filter((resource) => !held.has(`${resource.resourceType}:${resource.resourceId}`));
+            return <div className="form-field" role="group" aria-label={`Grant data access to ${account.name}`}>
+              <label htmlFor={ids.grant}><span>Fund or document</span></label>
+              <select id={ids.grant} className="filter-button" value={grantChoice} disabled={busy !== null || choices.length === 0} aria-describedby={ids.grantHint} onChange={(event) => setGrantChoice(event.target.value)}>
+                <option value="">Choose a fund or document</option>
+                {choices.map((resource) => <option key={`${resource.resourceType}:${resource.resourceId}`} value={`${resource.resourceType}:${resource.resourceId}`}>{SERVICE_ACCOUNT_RESOURCE_TYPE_LABEL[resource.resourceType]}: {resource.label}</option>)}
+              </select>
+              <span id={ids.grantHint} className="table-muted">{choices.length === 0
+                ? "There is nothing left to grant. Only funds and documents your organization is licensed to see can be granted; ask Corvis if one is missing."
+                : "The account can read it in its own workspace and cannot change anything. Only funds and documents your organization is licensed to see are listed."}</span>
+              <label htmlFor={ids.reason}><span>Reason</span></label>
+              <input id={ids.reason} className="input-control" maxLength={SERVICE_ACCOUNT_MAX_REASON_LENGTH} value={reason} disabled={busy !== null} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Feeds the reporting warehouse" />
+            </div>;
+          })()}
+          {open === "ungrant" && panel?.resource && <div className="form-field" role="group" aria-label={`Remove access to ${panel.resource.label} from ${account.name}`}>
+            <div className="lineage-note tone-warning"><Icon name="alert"/><div><strong>Remove access to {panel.resource.label}?</strong><span>The account stops being able to read it immediately. You can grant it again later.</span></div></div>
+            <label htmlFor={ids.reason}><span>Reason</span></label>
+            <input id={ids.reason} className="input-control" maxLength={SERVICE_ACCOUNT_MAX_REASON_LENGTH} value={reason} disabled={busy !== null} onChange={(event) => setReason(event.target.value)} placeholder="e.g. No longer needed" />
+          </div>}
 
           {open === "rotate" && <div className="form-field" role="group" aria-label={`Rotate the credential of ${account.name}`}>
             <label htmlFor={ids.overlap}><span>Keep the old credential working for</span></label>
@@ -268,12 +307,17 @@ export function ServiceAccountsSection() {
             {open === null && account.actions.canIssue && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "issue" }); setReason(""); }}>Issue credential</button>}
             {open === null && account.actions.canExtend && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "extend" }); setReason(""); setExtendDays(SERVICE_ACCOUNT_MAX_LIFETIME_DAYS); }}>Extend expiry</button>}
             {open === null && account.actions.canTransfer && <button type="button" className={account.needsOwner ? "primary-button button-small" : "secondary-button button-small"} disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "transfer" }); setReason(""); setNewOwner(""); }}>{account.needsOwner ? "Assign a new owner" : "Change owner"}</button>}
+            {open === null && account.entitlementAccess.canGrant && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "grant" }); setReason(""); setGrantChoice(""); }}>Grant data access</button>}
             {open === null && account.actions.canRevoke && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "revoke" }); setReason(""); }}>Revoke credential</button>}
             {open === null && account.actions.canDisable && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={() => { setPanel({ serviceAccountId: account.serviceAccountId, kind: "disable" }); setReason(""); }}>Deactivate account</button>}
             {open === "rotate" && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => void act(account, key("rotate"), { action: "rotate", overlapMinutes: overlap, credentialExpiresInDays: credentialDays }, () => "Credential rotated.", "The credential could not be rotated. Try again.")}>{busy === key("rotate") ? "Rotating…" : "Confirm rotation"}</button>}
             {open === "issue" && <button type="button" className="primary-button button-small" disabled={busy !== null} onClick={() => void act(account, key("issue"), { action: "issue", credentialExpiresInDays: credentialDays }, () => "Credential issued.", "The credential could not be issued. Try again.")}>{busy === key("issue") ? "Issuing…" : "Confirm issue"}</button>}
             {open === "extend" && <button type="button" className="primary-button button-small" disabled={busy !== null || extendDays < minimumExtensionDays(account.expiresAt, new Date())} onClick={() => void act(account, key("extend"), { action: "extend", expiresInDays: extendDays }, (updated) => `Expiry extended to ${day(updated.expiresAt)}.`, "The expiry could not be extended. Try again.")}>{busy === key("extend") ? "Extending…" : "Confirm extension"}</button>}
             {open === "transfer" && <button type="button" className="primary-button button-small" disabled={busy !== null || newOwner === ""} onClick={() => void act(account, key("transfer"), { action: "transfer", ownerSubject: newOwner }, (updated) => `${updated.name} is now owned by ${updated.ownerSubject}.`, "The owner could not be changed. Try again.")}>{busy === key("transfer") ? "Changing…" : "Confirm new owner"}</button>}
+            {open === "grant" && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk || grantable.every((resource) => `${resource.resourceType}:${resource.resourceId}` !== grantChoice)}
+              onClick={() => { const choice = grantable.find((resource) => `${resource.resourceType}:${resource.resourceId}` === grantChoice); if (choice) void act(account, key("grant"), { action: "grant_entitlement", resourceType: choice.resourceType, resourceId: choice.resourceId, reason: reason.trim() }, () => `${account.name} can now read ${choice.label}.`, "Access could not be granted. Try again."); }}>{busy === key("grant") ? "Granting…" : "Confirm grant"}</button>}
+            {open === "ungrant" && panel?.resource && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk}
+              onClick={() => void act(account, key("ungrant"), { action: "revoke_entitlement", resourceType: panel.resource!.resourceType, resourceId: panel.resource!.resourceId, reason: reason.trim() }, () => `${account.name} can no longer read ${panel.resource!.label}.`, "Access could not be removed. Try again.")}>{busy === key("ungrant") ? "Removing…" : "Confirm removal"}</button>}
             {open === "revoke" && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk} onClick={() => void act(account, key("revoke"), { action: "revoke", reason: reason.trim() }, () => "Credentials revoked. They stopped working immediately.", "The credentials could not be revoked. Try again.")}>{busy === key("revoke") ? "Revoking…" : "Confirm revocation"}</button>}
             {open === "disable" && <button type="button" className="primary-button button-small" disabled={busy !== null || !reasonOk} onClick={() => void act(account, key("disable"), { action: "disable", reason: reason.trim() }, (updated) => `${updated.name} deactivated everywhere.`, "The account could not be deactivated. Try again.")}>{busy === key("disable") ? "Deactivating…" : "Confirm deactivation"}</button>}
             {open !== null && <button type="button" className="secondary-button button-small" disabled={busy !== null} onClick={closePanel}>Back</button>}

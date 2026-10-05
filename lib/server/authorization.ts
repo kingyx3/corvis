@@ -1,9 +1,10 @@
 import type { RequestIdentity, Role, WorkspaceMembershipSummary } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
 import { postgres, type PostgresSqlApi } from "./postgres.ts";
+import { SessionEndedByPolicyError } from "./request-context.ts";
 import { countMetric, durationMetric, logEvent } from "./telemetry.ts";
 
-export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId">;
+export type AuthorizationPrincipal = Pick<RequestIdentity, "subject" | "tenantId" | "workspaceId" | "authMethod" | "sessionId" | "tokenIssuer" | "tokenAudience">;
 
 export type MembershipAuthorization = {
   roles: Role[];
@@ -46,6 +47,15 @@ export type ResolveOptions = {
    * person's interactive session. Revocation ("sign out everywhere") is always applied.
    */
   applySessionPolicy?: boolean;
+  /**
+   * Whether a tenant's identity-provider token binding (F7e, #338) is applied: when an operator turned it on for the
+   * tenant, an OIDC request is authorized only if its verified token's issuer and audience equal the tenant's active
+   * recorded provider. Defaults to false: only the interactive request path (authorized-request.ts) asks for it, because
+   * background re-authorization and service identities have no bearer token to compare. A tenant with no record, or with
+   * binding off (the default), is never affected. When binding applies and the principal carries no verified issuer and
+   * audience, it is refused (fail closed).
+   */
+  enforceIdentityBinding?: boolean;
 };
 
 export interface MembershipAuthorizationRepository {
@@ -122,7 +132,15 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
             and dr.resource_type='workspace'
             and dr.resource_id=m.workspace_id::text
             and dr.effective_from <= now()
-            and (dr.effective_to is null or dr.effective_to > now())), false) as redistribution_allowed
+            and (dr.effective_to is null or dr.effective_to > now())), false) as redistribution_allowed,
+        -- F7e: token binding is opt-in per tenant (an operator sets enforce_token_binding). It is evaluated only when the
+        -- caller asked for it ($6) and only for OIDC; a null issuer/audience compares as not equal, so it fails closed.
+        ($6::boolean and exists (
+          select 1 from corvis_control.tenant_identity_provider b
+          where b.tenant_id=s.tenant_id
+            and b.enforce_token_binding
+            and not coalesce(b.protocol='oidc' and b.status='active' and b.issuer=$7 and b.audience=$8, false)
+        )) as identity_binding_denied
       from corvis_control.identity_subject s
       join corvis_control.tenant t
         on t.tenant_id=s.tenant_id and t.status='active'
@@ -172,7 +190,8 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
         and m.valid_from <= now()
         and (m.valid_until is null or m.valid_until > now())
       order by m.workspace_id, m.role_name, e.resource_type, e.resource_id`,
-    [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
+    [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId,
+      options.enforceIdentityBinding === true && principal.authMethod === "oidc", principal.tokenIssuer ?? null, principal.tokenAudience ?? null]);
 
     const workspaceIds = [...new Set(rows.map((row) => text(row.workspace_id)).filter(Boolean))];
     if (!workspaceIds.includes(principal.workspaceId)) return null;
@@ -182,7 +201,19 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
       .map((row) => ROLE_MAP[text(row.role_name)])
       .filter((role): role is Role => role !== undefined))];
     if (roles.length === 0) return null;
-    if (options.applySessionPolicy !== false && !(await this.sessionAllowed(principal))) return null;
+    if (rows.some((row) => truthy(row.identity_binding_denied))) {
+      // The same generic 401 as any other refusal, so nothing says whether the tenant uses binding. Never logs the subject or the token's values.
+      logEvent("warn", "auth.identity_binding_denied", { correlationId: "identity-binding", tenantId: principal.tenantId }, { hasTokenClaims: principal.tokenIssuer !== undefined && principal.tokenAudience !== undefined });
+      countMetric("auth.identity_binding_denied", 1, { correlationId: "identity-binding", tenantId: principal.tenantId });
+      return null;
+    }
+    if (options.applySessionPolicy !== false) {
+      const verdict = await this.sessionVerdict(principal);
+      // An ended session is told apart from a refused one (F7c, #336) only here, after the token verified and the membership
+      // resolved. `untracked_session` and anything unexpected stay the generic refusal: signing in again would not help.
+      if (verdict === "idle_timeout" || verdict === "max_session") throw new SessionEndedByPolicyError(verdict);
+      if (verdict !== "ok") return null;
+    }
     // Tenant-wide, not scoped to the requested workspace: `rows` already
     // covers every workspace this subject belongs to (only the entitlement
     // join above is workspace-scoped), so this reflects the raw tenant_admin
@@ -246,9 +277,9 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
    * the denominator of the denial rate) and every denial the `auth.session_policy_denied` count metric tagged with the
    * reason; neither carries a subject or a session id. Alert guidance: docs/tenant-self-service.md.
    */
-  private async sessionAllowed(principal: AuthorizationPrincipal): Promise<boolean> {
+  private async sessionVerdict(principal: AuthorizationPrincipal): Promise<string> {
     // The policy governs people; service identities are controlled by their grants (the SQL function exempts them too).
-    if (principal.authMethod === "service_account") return true;
+    if (principal.authMethod === "service_account") return "ok";
     const context = { correlationId: "session-policy", tenantId: principal.tenantId };
     const startedAt = Date.now();
     const rows = await this.db.query(`select corvis_control.enforce_session_policy($1::uuid,$2,$3,$4) as verdict`,
@@ -256,10 +287,10 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
     const verdict = text(rows[0]?.verdict);
     const outcome = verdict || "unknown";
     durationMetric("auth.session_policy", startedAt, context, { outcome });
-    if (verdict === "ok") return true;
+    if (verdict === "ok") return "ok";
     logEvent("warn", "auth.session_policy_denied", context, { reason: outcome });
     countMetric("auth.session_policy_denied", 1, context, { reason: outcome });
-    return false;
+    return outcome;
   }
 }
 

@@ -102,7 +102,9 @@ export async function resolveAuthorizedRequestIdentity(
     workspaceId: authenticated.workspaceId,
     authMethod: authenticated.authMethod,
     sessionId: authenticated.sessionId,
-  });
+    tokenIssuer: authenticated.tokenIssuer,
+    tokenAudience: authenticated.tokenAudience,
+  }, { enforceIdentityBinding: true });
   if (!authorized) throw new AuthenticationError("No active authoritative authorization context");
 
   const identity: RequestIdentity = {

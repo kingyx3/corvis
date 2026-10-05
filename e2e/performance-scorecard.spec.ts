@@ -178,3 +178,123 @@ test("a drill-through from Data review lands on Position financials even when th
   await expect(page.getByRole("heading", { name: /^position financials$/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /^position financials$/i })).toHaveAttribute("aria-pressed", "true");
 });
+
+test("the fund and period filters narrow the tables: an older period shows what the GP reported for it, never a false Not reported", async ({ page }) => {
+  await openScorecard(page);
+  const filters = page.getByRole("group", { name: /scorecard filters/i });
+  await expect(filters.getByRole("combobox", { name: "Fund" }).locator("option")).toHaveText(["All entitled funds", "Advent International GPE VIII", "EQT IX", "Hg Genesis 9", "Nordic Capital Fund V"]);
+  await expect(filters.getByRole("combobox", { name: "Reporting period" }).locator("option")).toHaveText(["Latest reported", "Q2 2026", "Q1 2026"]);
+
+  await filters.getByRole("combobox", { name: "Fund" }).selectOption({ label: "Advent International GPE VIII" });
+  const table = page.getByRole("region", { name: /fund performance table/i });
+  await expect(table.locator(".scorecard-fund-name")).toHaveText(["Advent International GPE VIII"]);
+  await expect(fundRow(page, "Advent International GPE VIII")).toContainText("USD 1,958,000,000");
+  await expect(page.getByText(/showing all 1 fund\./i)).toBeVisible();
+
+  await filters.getByRole("combobox", { name: "Reporting period" }).selectOption("Q1 2026");
+  await expect(page.getByRole("status").filter({ hasText: /reporting period q1 2026/i })).toBeVisible();
+  const advent = fundRow(page, "Advent International GPE VIII");
+  await expect(advent).toContainText("USD 1,903,000,000");
+  await expect(advent).toContainText("1.58x");
+  await expect(advent).toContainText("1.51x");
+  await expect(advent).not.toContainText("USD 1,958,000,000");
+  await expect(advent).not.toContainText("14.2%");
+  await expect(advent.getByText("Not reported")).toHaveCount(3);
+  await expect(advent).toContainText("As of 31 Mar 2026");
+  await page.getByRole("button", { name: /^advent international gpe viii/i }).click();
+  const investments = page.getByRole("region", { name: /underlying investments of advent international gpe viii/i });
+  await expect(investments.getByRole("row").filter({ hasText: "ABC Corp" })).toContainText("USD 676,000,000");
+
+  await filters.getByRole("button", { name: /^clear filters$/i }).click();
+  await expect(table.locator(".scorecard-fund-name")).toHaveCount(4);
+  await expect(filters.getByRole("combobox", { name: "Fund" })).toHaveValue("");
+  await expect(filters.getByRole("combobox", { name: "Reporting period" })).toHaveValue("");
+  await expect(fundRow(page, "Advent International GPE VIII")).toContainText("USD 1,958,000,000");
+});
+
+test("Export this view honours the filters, and the export in Data delivery history names them", async ({ page }) => {
+  await openScorecard(page);
+  const filters = page.getByRole("group", { name: /scorecard filters/i });
+  await filters.getByRole("combobox", { name: "Fund" }).selectOption({ label: "EQT IX" });
+  await filters.getByRole("combobox", { name: "Reporting period" }).selectOption("Q1 2026");
+  await expect(page.getByRole("region", { name: /fund performance table/i }).locator(".scorecard-fund-name")).toHaveText(["EQT IX"]);
+  await page.getByRole("button", { name: /^export this view$/i }).click();
+  await expect(page.getByRole("status").filter({ hasText: /governed csv requested.*eqt ix.*q1 2026/i })).toBeVisible();
+  await page.getByRole("button", { name: /^data delivery$/i }).first().click();
+  await expect(page.getByRole("heading", { name: /deliver structured data/i })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: /performance scorecard · fund-eqt-ix · q1 2026/i }).first()).toBeVisible();
+});
+
+test("Schedule export saves the scorecard scope with its filters, and an all-funds scorecard says it follows the funds the owner holds at each run", async ({ page }) => {
+  const tenant = `e2e-scorecard-${Date.now()}`;
+  await page.route("**/api/v1/export-schedules**", (route) => route.continue({ headers: { ...route.request().headers(), "x-corvis-demo-tenant": tenant } }));
+  await openScorecard(page);
+  await page.getByRole("button", { name: "Schedule export" }).click();
+  const dialog = page.getByRole("dialog", { name: "Schedule this export" });
+  await expect(dialog.getByLabel("What will be exported")).toContainText("Performance scorecard · all entitled funds");
+  await expect(dialog.getByRole("combobox", { name: "Run" }).locator("option").first()).toHaveText("When a snapshot of any fund you are entitled to is published");
+  await expect(dialog).toContainText(/covers every fund you are entitled to when each run is made/i);
+  await dialog.getByRole("combobox", { name: "Run" }).selectOption("on_publish");
+  const posted = page.waitForRequest((request) => request.url().endsWith("/api/v1/export-schedules") && request.method() === "POST");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  expect((await posted).postDataJSON()).toMatchObject({ scope: { performanceScorecard: true }, trigger: "on_publish", format: "csv" });
+  await expect(page.getByRole("dialog", { name: "Schedule saved" })).toContainText("the next time a matching snapshot is published");
+  await page.getByRole("dialog", { name: "Schedule saved" }).getByRole("button", { name: "Close" }).click();
+
+  const filters = page.getByRole("group", { name: /scorecard filters/i });
+  await filters.getByRole("combobox", { name: "Fund" }).selectOption({ label: "Hg Genesis 9" });
+  await filters.getByRole("combobox", { name: "Reporting period" }).selectOption("Q1 2026");
+  await expect(page.getByRole("region", { name: /fund performance table/i }).locator(".scorecard-fund-name")).toHaveText(["Hg Genesis 9"]);
+  await page.getByRole("button", { name: "Schedule export" }).click();
+  const filtered = page.getByRole("dialog", { name: "Schedule this export" });
+  await expect(filtered.getByLabel("What will be exported")).toContainText("Performance scorecard · fund-hg-genesis-9 · Q1 2026");
+  await expect(filtered.getByRole("combobox", { name: "Run" }).locator("option").first()).toHaveText("When a snapshot of this fund is published");
+  await filtered.getByRole("combobox", { name: "Run" }).selectOption("quarterly");
+  const postedFiltered = page.waitForRequest((request) => request.url().endsWith("/api/v1/export-schedules") && request.method() === "POST");
+  await filtered.getByRole("button", { name: "Save schedule" }).click();
+  expect((await postedFiltered).postDataJSON()).toMatchObject({ scope: { performanceScorecard: true, fundId: "fund-hg-genesis-9", period: "Q1 2026" }, trigger: "quarterly" });
+  await expect(page.getByRole("dialog", { name: "Schedule saved" })).toContainText("The first run is on");
+});
+
+test("the scorecard loads fund by fund: a page of funds, then Load more funds, never dropping a fund or turning a figure into Not reported", async ({ page }) => {
+  const requests: string[] = [];
+  // Ask the server for two funds at a time, as a very large tenant's pages would be cut.
+  await page.route("**/api/v1/performance-scorecard**", (route) => {
+    const url = new URL(route.request().url());
+    requests.push(url.search);
+    if (!url.searchParams.has("limit")) url.searchParams.set("limit", "2");
+    return route.continue({ url: url.toString() });
+  });
+  await openScorecard(page);
+  const table = page.getByRole("region", { name: /fund performance table/i });
+  await expect(table.locator(".scorecard-fund-name")).toHaveText(["Advent International GPE VIII", "EQT IX"]);
+  await expect(page.getByText(/showing 2 of 4 funds\./i)).toBeVisible();
+  await expect(fundRow(page, "EQT IX").getByText("Not reported")).toHaveCount(2);
+  await page.getByRole("button", { name: /^load more funds$/i }).click();
+  await expect(table.locator(".scorecard-fund-name")).toHaveText(["Advent International GPE VIII", "EQT IX", "Hg Genesis 9", "Nordic Capital Fund V"]);
+  await expect(page.getByText(/showing all 4 funds\./i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^load more funds$/i })).toHaveCount(0);
+  await expect(fundRow(page, "Hg Genesis 9")).toContainText("USD 719 millions");
+  await expect(fundRow(page, "Nordic Capital Fund V").getByText("Not reported")).toHaveCount(6);
+  expect(requests.some((search) => search.includes("cursor="))).toBe(true);
+  // Changing a filter starts again from the first page.
+  await page.getByRole("group", { name: /scorecard filters/i }).getByRole("combobox", { name: "Reporting period" }).selectOption("Q1 2026");
+  await expect(page.getByText(/showing 2 of 4 funds\./i)).toBeVisible();
+});
+
+test("a failing Load more funds keeps what is shown and offers another try", async ({ page }) => {
+  let failMore = true;
+  await page.route("**/api/v1/performance-scorecard**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("cursor") && failMore) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) });
+    if (!url.searchParams.has("limit")) url.searchParams.set("limit", "3");
+    return route.continue({ url: url.toString() });
+  });
+  await openScorecard(page);
+  await page.getByRole("button", { name: /^load more funds$/i }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /more funds could not be loaded|temporarily unavailable/i })).toBeVisible();
+  await expect(page.getByRole("region", { name: /fund performance table/i }).locator(".scorecard-fund-name")).toHaveCount(3);
+  failMore = false;
+  await page.getByRole("button", { name: /^load more funds$/i }).click();
+  await expect(page.getByRole("region", { name: /fund performance table/i }).locator(".scorecard-fund-name")).toHaveCount(4);
+});

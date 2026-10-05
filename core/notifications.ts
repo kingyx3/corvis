@@ -19,6 +19,7 @@ export type NotificationCategoryId =
   | "security_policy"
   | "tenant_export_approval"
   | "tenant_export_outcome"
+  | "service_account_expiry"
   | "role_changed";
 
 /** Outbox-only categories: never shown as a preference. */
@@ -51,6 +52,7 @@ export const NOTIFICATION_CATEGORIES: readonly NotificationCategoryDefinition[] 
   { id: "security_policy", label: "Sign-in and session policy changes", description: "An Organization Admin changed your organization's session policy or signed a user out of every session.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "tenant_export_approval", label: "Organization export awaiting approval", description: "An Organization Admin asked for a full export of your organization's data and a different Organization Admin must approve it.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "tenant_export_outcome", label: "Organization export updates", description: "A full export of your organization's data that you requested was approved, rejected, is ready to download, or could not be built.", mandatory: false, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
+  { id: "service_account_expiry", label: "Service account or credential expiring", description: "A service account, or the API credential it uses, is about to expire.", mandatory: true, audience: "organization_admins", defaultEnabled: true, defaultDelivery: "immediate" },
   { id: "role_changed", label: "Your access changed", description: "Your role in a workspace was changed or removed.", mandatory: true, audience: "everyone", defaultEnabled: true, defaultDelivery: "immediate" },
 ];
 
@@ -215,6 +217,27 @@ function exportScheduleFailedLine(reason: unknown, where: string): string {
   }
 }
 
+/**
+ * Says whether a service account or its credential is about to expire, and how soon, in words only: never the account's
+ * name, workspace, owner or purpose (the page behind the link shows which one, to people who may see it). A window is the
+ * closed set the sweep queues; anything else falls back to the general wording.
+ */
+function serviceAccountExpiryBody(subject: unknown, window: unknown): { subject: string; line: string; hint: string } {
+  const soon = window === "final" ? "within the next 3 days" : window === "warning" ? "within the next 14 days" : "soon";
+  if (subject === "credential") {
+    return {
+      subject: "A Corvis API credential is about to expire",
+      line: `An API credential for a service account in your organization expires ${soon}. Systems that use it will stop working when it does.`,
+      hint: "Rotate the credential in Access administration before then.",
+    };
+  }
+  return {
+    subject: "A Corvis service account is about to expire",
+    line: `A service account in your organization expires ${soon}. Its credentials and access stop working with it.`,
+    hint: "Extend the account in Access administration, or plan its replacement, before then.",
+  };
+}
+
 type Body = { subject: string; lines: string[]; action: { label: string; url: string }; optional: boolean };
 
 function body(category: OutboxCategory, params: Record<string, unknown>, context: TemplateContext): Body {
@@ -314,6 +337,15 @@ function body(category: OutboxCategory, params: Record<string, unknown>, context
         lines: [content.line, content.hint],
         action: { label: "Open Access administration", url: new URL("/access-self-service", context.appUrl).toString() },
         optional: true,
+      };
+    }
+    case "service_account_expiry": {
+      const content = serviceAccountExpiryBody(params.subject, params.window);
+      return {
+        subject: content.subject,
+        lines: [content.line, content.hint],
+        action: { label: "Open Access administration", url: new URL("/access-self-service", context.appUrl).toString() },
+        optional: false,
       };
     }
     case "role_changed": {

@@ -7,7 +7,7 @@ import { ConflictError, PublicationGateError } from "@/lib/server/platform";
 import { isTransientPostgresError } from "@/lib/server/postgres-native";
 import { RateLimitError } from "@/lib/server/rate-limit";
 import { ResearchCancelledError, ResearchProviderError, ResearchTimeoutError } from "@/lib/server/research";
-import { AuthenticationError } from "@/lib/server/request-context";
+import { AuthenticationError, SessionEndedByPolicyError } from "@/lib/server/request-context";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
 import { TenantInvitationError } from "@/lib/server/tenant-invitations";
 import { adminSqlErrorClassification } from "@/lib/server/sql-application-errors";
@@ -27,7 +27,17 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
 /** Seconds a client should wait before retrying after a transient database unavailability. */
 export const DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
 
+/** The stable machine-readable reason of a 401 for a session the organization's policy ended (F7c, #336). */
+export const SESSION_ENDED_BY_POLICY_ERROR = "session_ended_by_policy";
+
 export function apiError(error: unknown, correlationId: string): Response {
+  if (error instanceof SessionEndedByPolicyError) {
+    // Distinguishable from `authentication_required` (a missing, invalid, revoked or foreign identity) so the person is told
+    // why they must sign in again. Only reachable after the token verified and membership resolved, so it says nothing to
+    // anyone who is not that member. The reason (idle vs maximum length) stays in the log, not in the response.
+    logEvent("warn", "api.session_ended_by_policy", { correlationId }, { reason: error.reason });
+    return json({ error: SESSION_ENDED_BY_POLICY_ERROR, correlationId }, { status: 401 });
+  }
   if (error instanceof AuthenticationError) {
     logEvent("warn", "api.authentication_denied", { correlationId });
     return json({ error: "authentication_required", correlationId }, { status: 401 });

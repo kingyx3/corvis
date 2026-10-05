@@ -1,7 +1,7 @@
 import { MAX_CONNECTION_NAME_LENGTH, OAUTH_RETURN_MARKER } from "../../core/source-connect-wizard.ts";
 import { getServerConfig } from "./config.ts";
-import { approvedSourceProvider, type ApprovedSourceProvider } from "./source-providers.ts";
-import { ConnectorGovernanceError, assertSourceConnectionId, type SecretPayload, type SourceConnection } from "./source-connectors.ts";
+import { approvedSourceProvider, resolveScopeSelection, type ApprovedSourceProvider } from "./source-providers.ts";
+import { ConnectorGovernanceError, assertSourceConnectionId, type SecretPayload, type SourceConnection, type SourceScope } from "./source-connectors.ts";
 
 /** Customer-facing connection shape: never the secret reference, an internal resource pointer. */
 export function redactedConnection(connection: SourceConnection): Omit<SourceConnection, "secretReference"> {
@@ -26,12 +26,21 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export type ParsedConnectRequest = { provider: ApprovedSourceProvider; connectionLabel: string };
+export type ParsedConnectRequest = {
+  provider: ApprovedSourceProvider;
+  connectionLabel: string;
+  /** What the connection will read: the provider's declared scope, narrowed by a validated selection when one was sent. */
+  scope: SourceScope[];
+  /** The validated selection as sent (ids the provider declared), carried through an OAuth redirect; absent when everything is read. */
+  scopeIds?: string[];
+};
 
 /**
  * The part of a connect or OAuth-start body both routes share. The administrator must have confirmed the disclosed
  * access (`scopeConfirmed: true`, set only after the wizard's confirmation step), and the provider must be approved:
- * the caller never supplies scope, credential type or connector version.
+ * the caller never supplies scope, credential type or connector version. The one thing an administrator may choose is
+ * which of the provider's declared folders to include (`selectedScopeIds`), and that choice is checked against the
+ * registry (`resolveScopeSelection`): it can only narrow what the provider declares, never add to it.
  */
 export function parseConnectRequest(body: unknown, method: "oauth" | "credential"): { parsed: ParsedConnectRequest; object: Record<string, unknown> } {
   const object = asObject(body);
@@ -42,7 +51,8 @@ export function parseConnectRequest(body: unknown, method: "oauth" | "credential
   const provider = approvedSourceProvider(object.providerKey);
   // An unknown provider and one that connects the other way are both "not approved for this flow".
   if (!provider || provider.connect.method !== method) throw new ConnectorGovernanceError("unregistered_provider");
-  return { parsed: { provider, connectionLabel: object.connectionLabel.trim() }, object };
+  const scope = resolveScopeSelection(provider, object.selectedScopeIds);
+  return { parsed: { provider, connectionLabel: object.connectionLabel.trim(), scope, ...(object.selectedScopeIds !== undefined ? { scopeIds: object.selectedScopeIds as string[] } : {}) }, object };
 }
 
 export type ParsedOAuthStart =

@@ -15,6 +15,7 @@ import {
   reauthorizeOutcome,
   type ConnectionAction,
   type ConnectionHealth,
+  type RunRecord,
   type SourceConnectionRecord,
 } from "@/core/source-connection-health";
 import { apiUrl } from "@/lib/api-url";
@@ -76,9 +77,11 @@ function failureText(action: ConnectionAction, result: Extract<CommandResult, { 
  * plain-language health, the single next action, and pause / resume / reauthorize / revoke
  * controls. Renders nothing for a caller the API refuses (HTTP 403), like the run history.
  */
-export function SourceConnectionsSection({ runHistoryAvailable, onOpenRunHistory, onChanged }: {
+export function SourceConnectionsSection({ runHistoryAvailable, lastRuns, onOpenRunHistory, onChanged }: {
   /** Connection ids whose run history is rendered below, so a row only links to history that exists. */
   runHistoryAvailable: ReadonlySet<string>;
+  /** The newest run of each connection, from the run history, for "Last run" and the "Syncing now" state. */
+  lastRuns: ReadonlyMap<string, RunRecord>;
   onOpenRunHistory: (sourceConnectionId: string) => void;
   /** Called after a command succeeds so the attention banner and run history can refresh. */
   onChanged: () => void;
@@ -173,7 +176,7 @@ export function SourceConnectionsSection({ runHistoryAvailable, onOpenRunHistory
     {state.kind === "error" && <div className="table-card" role="alert"><div className="empty-cell"><strong>Source connections are unavailable.</strong> The documents above are unaffected. <button className="text-button" onClick={() => { setState({ kind: "loading" }); setReloadKey((key) => key + 1); }}>Retry</button></div></div>}
     {state.kind === "ready" && state.connections.length === 0 && <div className="table-card"><div className="empty-cell">No source connections yet. Use Connect source to add one.</div></div>}
     {state.kind === "ready" && state.connections.length > 0 && <ul className="source-connections-list" aria-label="Source connections">
-      {state.connections.map((connection) => <ConnectionCard key={connection.sourceConnectionId} connection={connection} health={describeConnection(connection, now)} hasRunHistory={runHistoryAvailable.has(connection.sourceConnectionId)} onOpenRunHistory={onOpenRunHistory} testing={testingId === connection.sourceConnectionId} onTest={() => void runTest(connection)} onAction={(action) => { setOutcome(null); setDialog({ action, connection }); }}/>)}
+      {state.connections.map((connection) => <ConnectionCard key={connection.sourceConnectionId} connection={connection} health={describeConnection(lastRuns.has(connection.sourceConnectionId) ? { ...connection, lastRun: lastRuns.get(connection.sourceConnectionId) } : connection, now)} hasRunHistory={runHistoryAvailable.has(connection.sourceConnectionId)} onOpenRunHistory={onOpenRunHistory} testing={testingId === connection.sourceConnectionId} onTest={() => void runTest(connection)} onAction={(action) => { setOutcome(null); setDialog({ action, connection }); }}/>)}
     </ul>}
     {dialog && dialog.action !== "reauthorize" && <ConfirmDialog action={dialog.action} connection={dialog.connection} onClose={() => setDialog(null)} onDone={(text) => finish(dialog.connection, text)}/>}
     {wizard && <ConnectSourceWizard resume={wizard.resume} onClose={closeWizard} onConnected={(sourceConnectionId) => { connectedId.current = sourceConnectionId; void reload(); }}/>}
@@ -211,7 +214,8 @@ function ConnectionCard({ connection, health, hasRunHistory, testing, onTest, on
       <div><dt>Scope</dt><dd>{health.scopeSummary}{health.scopeItems.length > 0 && <details><summary>Scope details</summary><ul>{health.scopeItems.map((item) => <li key={`${item.label}|${item.path ?? ""}`}>{item.label}{item.path && <span className="table-secondary"> · {item.path}</span>}</li>)}</ul></details>}</dd></div>
       <div><dt>Last successful sync</dt><dd>{health.lastSuccess.at ? <><time dateTime={health.lastSuccess.at}>{time(health.lastSuccess.at)}</time><span className="table-secondary">{health.lastSuccess.relative}</span></> : "Never"}</dd></div>
       <div><dt>Last attempt</dt><dd>{health.lastAttempt ? <><time dateTime={health.lastAttempt.at}>{time(health.lastAttempt.at)}</time><span className="table-secondary">{health.lastAttempt.relative}{health.lastAttempt.failed ? " · did not succeed" : ""}</span></> : "No attempt yet"}</dd></div>
-      <div><dt>Next sync</dt><dd>{health.nextSync}</dd></div>
+      <div><dt>Last run</dt><dd>{health.lastRun ? <><span className="source-connection-run" data-tone={health.lastRun.tone}><strong>{health.lastRun.label}</strong> · <time dateTime={health.lastRun.at}>{time(health.lastRun.at)}</time></span><span className="table-secondary">{health.lastRun.detail}</span></> : "No run yet"}</dd></div>
+      <div><dt>Next sync</dt><dd>{health.nextSync}{health.nextSyncAt && <span className="table-secondary"><time dateTime={health.nextSyncAt}>{time(health.nextSyncAt)}</time></span>}</dd></div>
       <div className="source-connection-required"><dt>Required action</dt><dd><strong>{action.label}</strong><span className="table-secondary">{action.detail}</span>{action.kind === "contact_support" && <ContactSupportLink className="text-button" view="documents"/>}</dd></div>
     </dl>
     <div className="source-connection-controls">

@@ -6,7 +6,7 @@ import { sourceConnectionService } from "@/lib/server/source-connection-service"
 import { sourceConnectorSecretStore } from "@/lib/server/source-connector-runtime";
 import { ConnectorGovernanceError } from "@/lib/server/source-connectors";
 import { clearedAttemptCookie, consumeOAuthAttempt, discardOAuthAttempt, readAttemptCookie } from "@/lib/server/source-oauth";
-import { approvedSourceProvider, oauthProviderForConnection } from "@/lib/server/source-providers";
+import { approvedSourceProvider, oauthProviderForConnection, resolveScopeSelection } from "@/lib/server/source-providers";
 import { logEvent } from "@/lib/server/telemetry";
 
 /**
@@ -55,7 +55,9 @@ export async function POST(request: Request) {
       const result = await service.reauthorizeAndTest(identity, attempt.reauthorizeConnectionId, secret, id);
       return json({ data: { outcome: "reauthorized", connection: redactedConnection(result.connection), test: result.test }, correlationId: id }, { headers });
     }
-    const result = await service.connect(identity, { provider, connectionLabel: attempt.connectionLabel, secret }, id);
+    // The folders chosen before the sign-in are re-checked against the registry now, so a provider that changed its declaration in between cannot be given a scope it no longer offers.
+    const scope = resolveScopeSelection(provider, attempt.scopeIds);
+    const result = await service.connect(identity, { provider, connectionLabel: attempt.connectionLabel, secret, scope }, id);
     return json({ data: { outcome: "connected", connection: redactedConnection(result.connection), test: result.test }, correlationId: id }, { status: 201, headers });
   } catch (error) { return apiError(error, id); }
 }

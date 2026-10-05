@@ -31,10 +31,11 @@ export type PositionFinancialsExportScope = {
 };
 /**
  * The GP-reported performance scorecard (F1): every figure of the Analytics scorecard for the caller's entitled
- * funds and their underlying investments, pinned to the published snapshots behind it. The view has no filters,
- * so the scope carries none; `true` is the only accepted value.
+ * funds and their underlying investments, pinned to the published snapshots behind it. The optional filters (F1c)
+ * narrow it exactly as they narrow the view: `fundId` to one entitled fund, `period` to the figures stated for that
+ * reporting period. The scope is persisted on the export manifest, so the filters an export was made with are recorded.
  */
-export type PerformanceScorecardExportScope = { performanceScorecard: true };
+export type PerformanceScorecardExportScope = { performanceScorecard: true; fundId?: string; period?: string };
 export type ExportScope = SnapshotExportScope | PositionFinancialsExportScope | PerformanceScorecardExportScope;
 /** Which product surface is requesting the export, recorded on the manifest for delivery history (#182 D12). */
 export type ExportSource = NonNullable<ExportManifest["source"]>;

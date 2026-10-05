@@ -8,9 +8,21 @@ import {
   parseTenantExportRequest,
   tenantExportActions,
   tenantExportStatus,
+  tenantExportProgressPercent,
   tenantExportStatusSummary,
   type TenantExportStatus,
 } from "./tenant-export.ts";
+
+test("build progress is a whole percent of the estimate, never 100 before the archive is stored, and 0 when there is nothing to measure", () => {
+  assert.equal(tenantExportProgressPercent(0, 1000), 0);
+  assert.equal(tenantExportProgressPercent(250, 1000), 25);
+  assert.equal(tenantExportProgressPercent(999, 1000), 99);
+  assert.equal(tenantExportProgressPercent(1000, 1000), 99, "complete only when the request is complete");
+  assert.equal(tenantExportProgressPercent(5000, 1000), 99, "an estimate that was too small cannot overshoot");
+  assert.equal(tenantExportProgressPercent(500, 0), 0, "no estimate yet");
+  assert.equal(tenantExportProgressPercent(Number.NaN, 1000), 0);
+  assert.equal(tenantExportProgressPercent(-5, 1000), 0);
+});
 
 function codeOf(run: () => unknown): string {
   try { run(); return "ok"; } catch (error) {

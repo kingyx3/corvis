@@ -4,6 +4,8 @@ import test from "node:test";
 import type { AuditEvent, RequestIdentity } from "../../core/enterprise.ts";
 import type { DemoTenantExportStore as DemoTenantExportStoreType } from "../../adapters/demo/tenant-export-store.ts";
 import type { TenantExportManifest, TenantExportRequest } from "../../core/tenant-export.ts";
+import { createHash } from "node:crypto";
+import { publicTenantExportManifest } from "./tenant-export-bundle.ts";
 import { readStoredZip } from "./test-support/zip-reader.ts";
 
 // See lib/server/source-connections-routes.test.ts for why this loader is needed (the "@/..." route alias).
@@ -108,17 +110,63 @@ test("a different admin approves, and the export is built with a verifiable mani
 
   const entries = readStoredZip(bytes);
   const manifest = JSON.parse(entries.get("manifest.json")!.toString("utf8")) as TenantExportManifest;
-  assert.deepEqual(manifest, approved.artifact!.manifest);
+  assert.deepEqual(publicTenantExportManifest(manifest), approved.artifact!.manifest, "the request shows the manifest without the individual source files");
   assert.deepEqual([manifest.requestedBy, manifest.approvedBy], ["demo-admin", "second-admin"]);
-  assert.deepEqual(manifest.files.map((file) => file.path), ["README.txt", "published-data/observations.csv", "access-audit/access-audit.csv", "source-documents/inventory.csv"]);
+  assert.deepEqual(manifest.files.map((file) => file.path), [
+    "README.txt", "published-data/observations-0001.csv", "access-audit/access-audit-0001.csv", "source-documents/inventory-0001.csv",
+    "source-documents/files/doc-adv-viii-q2/Advent International GPE VIII _ Q2 2026.pdf.txt",
+  ]);
+  for (const file of manifest.files) assert.equal(file.sha256, createHash("sha256").update(entries.get(file.path)!).digest("hex"), file.path);
+  // Source files: the one document the organization holds source-file access for is in the archive; the other is counted.
+  assert.deepEqual(manifest.sourceFiles, { included: 1, excluded: 1, totalBytes: manifest.files.at(-1)!.sizeBytes });
+  assert.deepEqual(manifest.fileCount, 5);
+  assert.equal(approved.artifact!.manifest.files.length, 4);
   // Contractual data rights: Hg Genesis 9 is not redistributable, so its figures never reach the archive, and it is counted as left out.
   assert.deepEqual(manifest.dataRights.funds, { included: 2, excluded: 1 });
   assert.deepEqual(manifest.dataRights.documents, { included: 2, excluded: 2 });
-  const observations = entries.get("published-data/observations.csv")!.toString("utf8");
+  const observations = entries.get("published-data/observations-0001.csv")!.toString("utf8");
   assert.match(observations, /fund-advent-viii/);
   assert.doesNotMatch(observations, /fund-hg-genesis-9/);
-  assert.match(entries.get("access-audit/access-audit.csv")!.toString("utf8"), /data_export\.approved/);
+  assert.match(entries.get("access-audit/access-audit-0001.csv")!.toString("utf8"), /data_export\.approved/);
   assert.ok(manifest.notIncluded.some((entry) => entry.item === "Source document files"));
+});
+
+test("with a build time the export is building, shows its size estimate and progress, and completes as the clock runs (F10c)", async () => {
+  const started = new Date("2026-10-02T12:00:00.000Z");
+  let now = started;
+  const demo = new DemoTenantExportStore(() => now, 3000);
+  const mine = await opened(demo);
+  const building = await demo.decide(second(), mine.requestId, { action: "approve", expectedStatus: "pending_approval" });
+  assert.equal(building.status, "building");
+  assert.equal(building.artifact, null);
+  assert.deepEqual(building.progress, { ...building.progress!, phase: "data", percent: 0, bytesWritten: 0, rowsWritten: 0, documentsWritten: 0 });
+  assert.ok(building.progress!.estimatedBytes > 86_400_000, "the estimate counts the source file the export will carry");
+  assert.deepEqual([building.progress!.estimatedDocuments, building.progress!.estimatedRows > 0], [1, true]);
+  assert.deepEqual(building.actions, { canApprove: false, canReject: false, canCancel: false, canDownload: false });
+  await assert.rejects(() => demo.issueDownload(identity(), mine.requestId), refusal("data_export_not_available", 409));
+
+  now = new Date(started.getTime() + 1500);
+  const half = (await demo.get(identity(), mine.requestId)).progress!;
+  assert.equal(half.phase, "documents");
+  assert.ok(half.percent > 0 && half.percent < 99, `partway (${half.percent}%)`);
+  assert.ok(half.bytesWritten > 0 && half.bytesWritten < half.estimatedBytes);
+  assert.equal(half.documentsWritten, 0);
+  assert.equal((await demo.get(identity(), mine.requestId)).history!.at(-1)!.eventType, "build_started");
+
+  now = new Date(started.getTime() + 2900);
+  const last = (await demo.get(identity(), mine.requestId)).progress!;
+  assert.deepEqual([last.phase, last.documentsWritten], ["finalizing", 1]);
+  assert.ok(last.percent <= 99);
+
+  now = new Date(started.getTime() + 3000);
+  const done = await demo.get(identity(), mine.requestId);
+  assert.equal(done.status, "complete");
+  assert.equal(done.progress, null);
+  assert.equal(done.actions.canDownload, true);
+  assert.deepEqual(done.history!.map((event) => event.eventType), ["requested", "approved", "build_started", "build_completed"]);
+  assert.equal(done.artifact!.manifest.sourceFiles!.included, 1);
+  // The seeded export, built before anyone looked, is complete at once whatever the build time.
+  assert.equal((await demo.list(identity(), EVERYTHING)).items.filter((item) => item.status === "complete").length, 2);
 });
 
 test("reject needs a different admin and a note, only the requester may withdraw, and a decided request is final", async () => {
@@ -339,7 +387,14 @@ test("the retention route is read-only and Organization-Admin-only", async () =>
   assert.equal((await body(analyst)).error, "forbidden", "a role without admin:manage is refused before anything else");
 });
 
-test("the whole export flow runs through the routes: request, approve by a second admin, link, download once", async () => {
+test("the whole export flow runs through the routes: request, approve by a second admin, build, link, download once", async () => {
+  // A request approved through the routes is built over a few seconds in the browser composition: the same store, with a clock this test drives.
+  let flowClock = new Date("2026-10-02T12:00:00.000Z");
+  overrideTenantExportService(createTenantExportService(new DemoTenantExportStore(() => flowClock, 3000)));
+  try { await flow(() => { flowClock = new Date(flowClock.getTime() + 5000); }); } finally { overrideTenantExportService(); }
+});
+
+async function flow(finishBuild: () => void): Promise<void> {
   const tenant = "tenant-flow";
   const seeded = (await body(await listGet(request("/access/data-exports", { tenant })))).data;
   assert.deepEqual(seeded.map((item) => item.status), ["pending_approval", "complete", "rejected"]);
@@ -363,7 +418,12 @@ test("the whole export flow runs through the routes: request, approve by a secon
 
   const approved = await itemPost(request(`/access/data-exports/${mine.requestId}`, { method: "POST", tenant, subject: "second-admin", body: { action: "approve", expectedStatus: "pending_approval" } }), params(mine.requestId));
   assert.equal(approved.status, 200);
-  assert.equal((await body(approved)).data.status, "complete");
+  const building = (await body(approved)).data as TenantExportRequest;
+  assert.equal(building.status, "building");
+  assert.equal(building.progress!.phase, "data", "the response shows the estimate and progress while the export is built");
+  assert.equal((await itemPost(request(`/access/data-exports/${mine.requestId}`, { method: "POST", tenant, body: { action: "prepare_download" } }), params(mine.requestId))).status, 409);
+  finishBuild();
+  assert.equal((await body(await itemGet(request(`/access/data-exports/${mine.requestId}`, { tenant }), params(mine.requestId)))).data.status, "complete");
   const detail = await itemGet(request(`/access/data-exports/${mine.requestId}`, { tenant }), params(mine.requestId));
   assert.equal((await body(detail)).data.history!.length, 4);
 
@@ -389,7 +449,7 @@ test("the whole export flow runs through the routes: request, approve by a secon
   const head = await downloadHead(request(`/access/data-exports/${mine.requestId}/download`, { method: "HEAD", tenant }));
   assert.equal(head.status, 405);
   assert.equal(head.headers.get("allow"), "GET");
-});
+}
 
 test("the list is paged newest first with a stable cursor: every request once, none skipped when a newer one arrives between pages (F10f)", async () => {
   const demo = store();

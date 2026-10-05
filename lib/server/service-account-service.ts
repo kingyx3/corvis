@@ -94,6 +94,23 @@ export function createServiceAccountService(backend: ServiceAccountBackend): Ser
               previousOwner, ownerSubject: serviceAccount.ownerSubject,
             }),
           }).then(({ serviceAccount }) => ({ serviceAccount }));
+        case "grant_entitlement":
+          return runAuditedMutation({
+            demoMode: backend.demo,
+            mutate: (db) => backend.grantEntitlement(identity, serviceAccountId, command, db),
+            // The grant is read-only and in the account's own workspace; the audit event names the resource by identifier, never the figures behind it.
+            audit: ({ serviceAccount }) => serviceAccountAuditEvent(identity, correlationId, "service_account.entitlement_granted", serviceAccount, {
+              resourceType: command.resourceType, resourceId: command.resourceId, permission: "read", reason: command.reason,
+            }),
+          });
+        case "revoke_entitlement":
+          return runAuditedMutation({
+            demoMode: backend.demo,
+            mutate: (db) => backend.revokeEntitlement(identity, serviceAccountId, command, db),
+            audit: ({ serviceAccount, endedEntitlements }) => serviceAccountAuditEvent(identity, correlationId, "service_account.entitlement_revoked", serviceAccount, {
+              resourceType: command.resourceType, resourceId: command.resourceId, endedEntitlements, reason: command.reason,
+            }),
+          }).then(({ serviceAccount }) => ({ serviceAccount }));
         case "disable":
           return runAuditedMutation({
             demoMode: backend.demo,

@@ -92,6 +92,83 @@ export type ScorecardFact = {
 export type ScorecardFund = { fundId: string; fund: string };
 export type ScorecardPayload = { funds: ScorecardFund[]; facts: ScorecardFact[] };
 
+// ---------------------------------------------------------------------------------------------
+// Filters (F1c, #332)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What narrows the scorecard. `fundId` shows one entitled fund; `period` shows, per metric, the latest figure the GP stated
+ * for that reporting period (a figure's `period` label, e.g. "Q1 2026"), so an older period reads as what was reported for it
+ * rather than turning into "Not reported". Both narrow the tables and the governed export alike, and the export records them.
+ * Neither is ever a way to widen access: an entitled fund is a precondition, not something a filter grants.
+ */
+export type ScorecardFilters = { fundId?: string; period?: string };
+
+export const MAX_SCORECARD_FUND_ID_LENGTH = 512;
+export const MAX_SCORECARD_PERIOD_LENGTH = 64;
+
+/** A filter a caller can fix (400). The code is stable and never carries the offending value. */
+export class ScorecardFilterError extends Error {
+  readonly code = "invalid_scorecard_filter";
+  readonly status = 400 as const;
+  constructor() { super("invalid_scorecard_filter"); this.name = "ScorecardFilterError"; }
+}
+
+// Identifiers and period labels are single-line: C0, DEL and the line/paragraph separators are rejected.
+const SINGLE_LINE_FORBIDDEN = /[\u0000-\u001f\u007f\u2028\u2029]/;
+
+function filterText(value: unknown, max: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new ScorecardFilterError();
+  const clean = value.trim();
+  if (clean.length === 0 || clean.length > max || SINGLE_LINE_FORBIDDEN.test(clean)) throw new ScorecardFilterError();
+  return clean;
+}
+
+/**
+ * The canonical filters of a request: absent means no filter, anything present must be a non-empty single-line string within
+ * its bound (an empty string is an error, never "no filter", so a scope can never widen by accident). Unknown keys are ignored.
+ */
+export function parseScorecardFilters(input: { fundId?: unknown; period?: unknown }): ScorecardFilters {
+  const fundId = filterText(input.fundId, MAX_SCORECARD_FUND_ID_LENGTH);
+  const period = filterText(input.period, MAX_SCORECARD_PERIOD_LENGTH);
+  return { ...(fundId !== undefined ? { fundId } : {}), ...(period !== undefined ? { period } : {}) };
+}
+
+/** Scope label shown for a scorecard export (delivery history, manifest, schedule): the one place its wording is decided. */
+export function scorecardScopeLabel(filters: ScorecardFilters): string {
+  return `Performance scorecard · ${filters.fundId ?? "all entitled funds"}${filters.period ? ` · ${filters.period}` : ""}`;
+}
+
+/** The scorecard narrowed to the filters, by fund and by figure period. Used where the whole fact set is in memory (demo mode). */
+export function filterScorecardPayload(payload: ScorecardPayload, filters: ScorecardFilters): ScorecardPayload {
+  return {
+    funds: payload.funds.filter((fund) => filters.fundId === undefined || fund.fundId === filters.fundId),
+    facts: payload.facts.filter((fact) => (filters.fundId === undefined || fact.fundId === filters.fundId) && (filters.period === undefined || fact.period === filters.period)),
+  };
+}
+
+/**
+ * The reporting periods a person can filter by: each distinct period label once, the one with the latest as-of date first
+ * (a period without any dated figure last), then by label.
+ */
+export function scorecardPeriodOptions(entries: readonly { period: string; asOf: string | null }[]): string[] {
+  const latest = new Map<string, string | null>();
+  for (const { period, asOf } of entries) {
+    if (period.trim() === "") continue;
+    const known = latest.get(period);
+    if (known === undefined || (asOf !== null && (known === null || asOf > known))) latest.set(period, asOf);
+  }
+  return [...latest.entries()].sort(([leftPeriod, left], [rightPeriod, right]) => {
+    if (left !== right) {
+      if (left === null) return 1;
+      if (right === null) return -1;
+      return left < right ? 1 : -1;
+    }
+    return leftPeriod.localeCompare(rightPeriod);
+  }).map(([period]) => period);
+}
+
 export type ScorecardFigure = {
   factId: string;
   snapshotId: string;
@@ -130,6 +207,13 @@ export type FundRow = {
 };
 
 export type Scorecard = { funds: FundRow[] };
+
+/**
+ * One keyset page of the scorecard, by fund (`GET /api/v1/performance-scorecard`). `funds` holds complete fund rows (a fund is
+ * never split across pages). `fundOptions` is every entitled fund whatever the filters, for the fund filter; `periodOptions` is
+ * every reporting period with a published figure, sent with the first page only (the client keeps it).
+ */
+export type ScorecardPage = Scorecard & { filters: ScorecardFilters; fundOptions: ScorecardFund[]; periodOptions: string[] };
 
 /** Scenarios and actualities that are projections, not a result the GP reported; they never reach the scorecard. */
 const NOT_A_RESULT = new Set(["forecast", "budget", "plan", "projected", "projection", "target"]);
@@ -249,7 +333,8 @@ function cellsFor(metrics: readonly ScorecardMetric[], facts: readonly Scorecard
   return metrics.map((metric) => ({ metric, figures: latestFigures(facts.filter((fact) => fact.metricCode === metric.code)) }));
 }
 
-function nameOrder(a: { name: string; id: string }, b: { name: string; id: string }): number {
+/** Name, then id: the order of every fund and investment list, and the key the fund pages walk. */
+export function nameOrder(a: { name: string; id: string }, b: { name: string; id: string }): number {
   return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
 }
 

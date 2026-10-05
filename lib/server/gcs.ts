@@ -64,6 +64,10 @@ export interface UploadObjectStore {
 }
 
 const CANCEL_TIMEOUT_MS = 10_000;
+/** GCS accepts resumable chunks in multiples of 256 KiB (except the last). */
+const GCS_UPLOAD_CHUNK_GRANULARITY = 256 * 1024;
+/** One in-flight upload chunk: the most memory a streamed write ever holds, whatever the object's size. */
+export const GCS_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 /** Upper bound for any control-plane GCS call so a stalled provider cannot pin a request. */
 export const GCS_REQUEST_TIMEOUT_MS = 30_000;
 /** Whole-object reads (integrity hashing) legitimately outlast a metadata call; still bounded beneath a Cloud Run request. */
@@ -150,7 +154,8 @@ export class GcsControlClient implements UploadObjectStore {
   async createResumableUpload(input: {
     key: string;
     contentType: string;
-    sizeBytes: number;
+    /** Omit when the size is not known yet (a streamed write): the final chunk then declares the total. */
+    sizeBytes?: number;
     metadata: Record<string, string>;
     origin?: string;
   }): Promise<string> {
@@ -158,8 +163,8 @@ export class GcsControlClient implements UploadObjectStore {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "x-upload-content-type": input.contentType,
-      "x-upload-content-length": String(input.sizeBytes),
     };
+    if (input.sizeBytes !== undefined) headers["x-upload-content-length"] = String(input.sizeBytes);
     if (input.origin) headers.origin = input.origin;
     const response = await this.authorizedFetch(url, {
       method: "POST",
@@ -172,8 +177,8 @@ export class GcsControlClient implements UploadObjectStore {
     return location;
   }
 
-  async cancelResumableUpload(uploadUrl: string): Promise<void> {
-    const status = await deleteWithZeroContentLength(uploadUrl);
+  async cancelResumableUpload(uploadUrl: string, requestImpl?: typeof httpsRequest): Promise<void> {
+    const status = await deleteWithZeroContentLength(uploadUrl, requestImpl);
     if (![204, 404, 410, 499].includes(status)) {
       throw new Error(`GCS resumable upload cancellation failed (${status})`);
     }
@@ -246,6 +251,69 @@ export class GcsControlClient implements UploadObjectStore {
       body,
     });
     if (!response.ok) throw new Error(`GCS object write failed (${response.status})`);
+  }
+
+  /**
+   * Writes an object from a stream of unknown length through a resumable upload, so memory is bounded by one upload
+   * chunk (a multiple of 256 KiB, as GCS requires) however large the object is (#231, F10b #322). Returns the size
+   * written. A failed or aborted write cancels the upload session so no partial object is left behind.
+   */
+  async putObjectStream(key: string, source: AsyncIterable<Uint8Array>, contentType: string, options: { chunkBytes?: number } = {}): Promise<{ sizeBytes: number }> {
+    const chunkBytes = options.chunkBytes ?? GCS_UPLOAD_CHUNK_BYTES;
+    if (!Number.isInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes % GCS_UPLOAD_CHUNK_GRANULARITY !== 0) throw new Error("GCS upload chunks must be a positive multiple of 256 KiB");
+    const session = await this.createResumableUpload({ key, contentType, metadata: {} });
+    let offset = 0;
+    try {
+      let pending: Buffer[] = [];
+      let pendingBytes = 0;
+      for await (const piece of source) {
+        pending.push(Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength));
+        pendingBytes += piece.byteLength;
+        while (pendingBytes >= chunkBytes) {
+          const joined = Buffer.concat(pending, pendingBytes);
+          await this.uploadRange(session, offset, joined.subarray(0, chunkBytes), undefined);
+          offset += chunkBytes;
+          pending = [joined.subarray(chunkBytes)];
+          pendingBytes -= chunkBytes;
+        }
+      }
+      const rest = Buffer.concat(pending, pendingBytes);
+      await this.uploadRange(session, offset, rest, offset + rest.length);
+      return { sizeBytes: offset + rest.length };
+    } catch (error) {
+      await this.cancelResumableUpload(session).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Sends bytes `offset..` of a resumable session, resending whatever the server reports it did not persist. `total` is set on the last range. */
+  private async uploadRange(session: string, offset: number, bytes: Buffer, total: number | undefined): Promise<void> {
+    let sent = 0;
+    for (;;) {
+      const remaining = bytes.subarray(sent);
+      const start = offset + sent;
+      const range = remaining.length === 0 ? `bytes */${total}` : `bytes ${start}-${start + remaining.length - 1}/${total ?? "*"}`;
+      // The session URI is self-authorizing (no bearer token). A 308 is the normal answer to a non-final chunk and carries no Location, so redirects are not followed.
+      const response = await fetch(session, {
+        method: "PUT", headers: { "content-range": range }, body: remaining.length === 0 ? undefined : remaining as unknown as BodyInit,
+        redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(this.requestTimeoutMs),
+      });
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 200 || response.status === 201) {
+        if (total === undefined) throw new Error("GCS resumable upload finished before the last chunk");
+        return;
+      }
+      if (response.status !== 308) throw new Error(`GCS resumable upload failed (${response.status})`);
+      // 308: Range names the last persisted byte (absent when nothing was).
+      const persisted = /^bytes=0-(\d+)$/.exec(response.headers.get("range") ?? "");
+      const next = persisted ? Number(persisted[1]) + 1 : 0;
+      if (next >= offset + bytes.length) {
+        if (total !== undefined) throw new Error("GCS resumable upload did not finalize the object");
+        return;
+      }
+      if (next <= start) throw new Error("GCS resumable upload made no progress");
+      sent = next - offset;
+    }
   }
 
   async getJson<T>(key: string): Promise<T | null> {

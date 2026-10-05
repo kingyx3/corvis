@@ -104,6 +104,8 @@ export const SQL_APPLICATION_ERRORS = [
   "export schedule scope is invalid",
   "export schedule limit reached",
   "export schedule transition not allowed",
+  // corvis_control.create_export_schedule, performance scorecard scope (097)
+  "export schedule scorecard filter is invalid",
   // corvis_control.set_review_item_assignee / add_review_item_comment (086)
   "review item not found",
   "review item actor not found",
@@ -137,6 +139,24 @@ export const SQL_APPLICATION_ERRORS = [
   "service account needs an owner",
   "service account owner must be an active organization admin",
   "service account owner unchanged",
+  // Service account entitlement self-service (F6c): what an organization does not hold cannot be granted, and one refusal covers every such case.
+  "service account resource type not allowed",
+  "service account resource required",
+  "service account resource outside organization data rights",
+  "service account entitlement already granted",
+  "service account entitlement limit reached",
+  "service account entitlement not found",
+  // corvis_control.set_tenant_verified_domain / remove_tenant_verified_domain / set_tenant_identity_provider (095)
+  "identity records require an active operations admin",
+  "identity record change needs a stated reason",
+  "identity record tenant not found",
+  "verified domain is invalid",
+  "verified domain belongs to another tenant",
+  "verified domain limit reached",
+  "verified domain not found",
+  "identity provider record is invalid",
+  "identity provider version conflict",
+  "identity provider binding requires an active oidc record",
 ] as const;
 
 export type SqlApplicationError = (typeof SQL_APPLICATION_ERRORS)[number];
@@ -235,6 +255,7 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   // Scheduled exports (F4): refusals of a schedule or a status change that its key history, quota or current state cannot accept.
   "idempotency key reused with different export schedule": { code: "idempotency_key_reused", status: 409 },
   "export schedule scope is invalid": { code: "invalid_scope", status: 400 },
+  "export schedule scorecard filter is invalid": { code: "invalid_scope", status: 400 },
   "export schedule limit reached": { code: "export_schedule_limit_reached", status: 409 },
   "export schedule transition not allowed": { code: "export_schedule_transition_not_allowed", status: 409 },
   // Review item discussion (F3): a missing or invisible item, an ineligible person, a stale assignment or a replayed key.
@@ -270,6 +291,24 @@ const ADMIN_SQL_ERROR_CLASSIFICATION: Partial<Record<SqlApplicationError, { code
   "service account needs an owner": { code: "service_account_needs_owner", status: 409 },
   "service account owner must be an active organization admin": { code: "service_account_owner_invalid", status: 422 },
   "service account owner unchanged": { code: "service_account_owner_unchanged", status: 409 },
+  // Entitlement self-service (F6c). Ownership and data-right refusals share one code and status so a caller cannot probe what other organizations hold.
+  "service account resource type not allowed": { code: "invalid_resource_type", status: 400 },
+  "service account resource required": { code: "invalid_resource", status: 400 },
+  "service account resource outside organization data rights": { code: "entitlement_outside_data_rights", status: 422 },
+  "service account entitlement already granted": { code: "service_account_entitlement_exists", status: 409 },
+  "service account entitlement limit reached": { code: "service_account_entitlement_limit_reached", status: 409 },
+  "service account entitlement not found": { code: "service_account_entitlement_not_found", status: 404 },
+  // Verified domains and the identity-provider record (F7b/F7e): Corvis operations only, one tenant per domain, a stale version.
+  "identity records require an active operations admin": { code: "operations_admin_required", status: 403 },
+  "identity record change needs a stated reason": { code: "invalid_reason", status: 400 },
+  "identity record tenant not found": { code: "tenant_not_found", status: 404 },
+  "verified domain is invalid": { code: "invalid_domain", status: 400 },
+  "verified domain belongs to another tenant": { code: "verified_domain_taken", status: 409 },
+  "verified domain limit reached": { code: "verified_domain_limit_reached", status: 409 },
+  "verified domain not found": { code: "verified_domain_not_found", status: 404 },
+  "identity provider record is invalid": { code: "invalid_request", status: 400 },
+  "identity provider version conflict": { code: "identity_provider_version_conflict", status: 409 },
+  "identity provider binding requires an active oidc record": { code: "invalid_binding", status: 400 },
 };
 
 /**

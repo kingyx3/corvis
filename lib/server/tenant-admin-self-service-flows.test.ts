@@ -314,7 +314,8 @@ const csvRow = (row: number, overrides: Partial<BulkInviteRow> = {}): BulkInvite
   row, name: `User ${row}`, email: `user${row}@example.com`, roleName: "reviewer", workspaceId, reason: "Finance onboarding", ...overrides,
 } as BulkInviteRow);
 
-const activeWorkspace: Handler = { match: /from corvis_control\.workspace w/, rows: [{ display_name: "Finance" }] };
+// One row answers both statements invitation creation makes: the workspace lookup and the F7b domain check (off: allowed).
+const activeWorkspace: Handler = { match: /from corvis_control\.workspace w|email_domain_allowed/, rows: [{ display_name: "Finance", allowed: true }] };
 
 test("bulk invitations create each row in its own transaction, scope them to the caller's tenant and report email delivery", async () => {
   const db = new TransactionalDb([activeWorkspace]);
@@ -400,7 +401,7 @@ test("bulk invitations grant tenant_admin only with explicit confirmation from a
 test("bulk invitations report stable codes per row: workspace missing, already pending, and unexpected failures without leaking details", async (t) => {
   const lines = silenceConsole(t);
   const unique = Object.assign(new Error("duplicate key value violates unique constraint \"ux_pending\" (email=secret@example.com)"), { code: "23505" });
-  const db = new TransactionalDb([{ match: /from corvis_control\.workspace w/, rows: [{ display_name: "Finance" }] }]);
+  const db = new TransactionalDb([activeWorkspace]);
   db.executeHandlers.push({ match: /insert into corvis_control\.tenant_invitation/, error: unique });
   const conflict = await createBulkInvitations(admin, [csvRow(2)], { confirmTenantAdmin: false, correlationId: "bulk-6", db });
   assert.deepEqual(conflict.errors, [{ row: 2, error: new ConflictError("invitation_already_pending").code }]);

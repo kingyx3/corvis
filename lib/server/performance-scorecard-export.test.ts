@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../core/enterprise.ts";
-import { SCORECARD_EXPORT_COLUMNS } from "../../core/performance-scorecard.ts";
+import { SCORECARD_EXPORT_COLUMNS, ScorecardFilterError } from "../../core/performance-scorecard.ts";
 import { EXPORT_MAX_ROWS, ExportRowLimitError } from "./export-renderer.ts";
 import { loadScorecardExportRows, performanceScorecardScope, resolveScorecardExport, SCORECARD_EXPORT_LABEL } from "./performance-scorecard-export.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "./postgres.ts";
@@ -48,6 +48,15 @@ test("performanceScorecardScope accepts only the object `performanceScorecard: t
     assert.equal(performanceScorecardScope(value), undefined, JSON.stringify(value));
   }
   assert.match(SCORECARD_EXPORT_LABEL, /^Performance scorecard/);
+});
+
+test("the scorecard scope carries its canonical filters, and a malformed filter is refused rather than widened", () => {
+  assert.deepEqual(performanceScorecardScope({ performanceScorecard: true, fundId: " fund-a ", period: " Q1 2026 ", extra: 1 }), { performanceScorecard: true, fundId: "fund-a", period: "Q1 2026" });
+  assert.deepEqual(performanceScorecardScope({ performanceScorecard: true, fundId: null }), { performanceScorecard: true });
+  for (const bad of [{ fundId: "" }, { fundId: 4 }, { period: "  " }, { period: "a\nb" }, { period: "x".repeat(65) }]) {
+    assert.throws(() => performanceScorecardScope({ performanceScorecard: true, ...bad }), ScorecardFilterError, JSON.stringify(bad));
+  }
+  assert.equal(performanceScorecardScope({ performanceScorecard: false, fundId: "" }), undefined, "filters of something that is not a scorecard scope are not looked at");
 });
 
 test("resolving a scorecard export pins it to the current published snapshots behind the shown figures", async () => {
@@ -100,4 +109,57 @@ test("a scorecard larger than the export row cap fails with the typed row-limit 
   }));
   const { db } = fakeDb(facts);
   await assert.rejects(loadScorecardExportRows(identity, ["snap-1"], db), (error: unknown) => error instanceof ExportRowLimitError);
+});
+
+test("resolving a filtered scorecard export narrows the read to the filters, and the unentitled fund is refused", async () => {
+  const { db, calls } = fakeDb(
+    [factRow({ fund_id: "fund-b", fact_id: "fact-9" })],
+    [{ snapshot_id: "snap-1", schema_version: "v2", taxonomy_version: "v3", fund_id: "fund-b", version: 1, blocking_exception_count: 0 }],
+  );
+  const resolved = await resolveScorecardExport(identity, db, { fundId: "fund-b", period: "Q2 2026" });
+  const factsQuery = calls.find((call) => call.sql.includes("with current_snapshot"))!;
+  assert.deepEqual(JSON.parse(String(factsQuery.parameters[1])), ["fund-b"]);
+  assert.equal(factsQuery.parameters[4], "Q2 2026");
+  assert.equal(resolved.rowCount, 6, "one fund's six fund-level metrics");
+  const snapshotQuery = calls.find((call) => call.sql.includes("fund_period_snapshots"))!;
+  assert.deepEqual(JSON.parse(String(snapshotQuery.parameters[1])), ["fund-b"], "the snapshot lookup is narrowed to the filtered fund too");
+
+  const elsewhere = fakeDb([factRow()]);
+  await assert.rejects(resolveScorecardExport(identity, elsewhere.db, { fundId: "fund-z" }), (error: unknown) => error instanceof Error && error.name === "AuthorizationError");
+  assert.equal(elsewhere.calls.length, 0, "nothing is read for a fund outside the entitlement");
+});
+
+test("delivery rebuilds a filtered scorecard with the filters the export was requested with", async () => {
+  const { db, calls } = fakeDb([factRow({ fund_id: "fund-b" })]);
+  const rows = await loadScorecardExportRows(identity, ["snap-1"], db, { fundId: "fund-b", period: "Q2 2026" });
+  assert.equal(rows.length, 6);
+  assert.ok(rows.every((row) => row.fund_id === "fund-b"));
+  const factsQuery = calls.find((call) => call.sql.includes("with current_snapshot"))!;
+  assert.deepEqual(factsQuery.parameters.slice(4), [JSON.stringify(["snap-1"]), "Q2 2026"]);
+});
+
+test("an export over several fund pages concatenates them in scorecard order and pins the snapshots of every page", async () => {
+  const many = Array.from({ length: 150 }, (_, index) => ({ fund_id: `fund-${String(index).padStart(3, "0")}`, fund_name: `Fund ${String(index).padStart(3, "0")}` }));
+  const calls: Array<{ sql: string; parameters: PostgresPrimitive[] }> = [];
+  const db: PostgresSqlApi = {
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes("corvis_identity.fund f")) return many;
+      if (sql.includes("fund_period_snapshots")) return [{ snapshot_id: "snap-1", fund_id: "fund-000", version: 1 }, { snapshot_id: "snap-2", fund_id: "fund-149", version: 1 }];
+      const requested = JSON.parse(String(parameters[1])) as string[];
+      // Each fund reports its NAV from one of two snapshots, so both are pinned only if both pages are read.
+      return requested.map((fundId) => factRow({ fund_id: fundId, fact_id: `fact-${fundId}`, snapshot_id: fundId < "fund-100" ? "snap-1" : "snap-2" }));
+    },
+    async execute() {},
+    async health() { return true; },
+  };
+  const everyFund = { ...identity, entitlements: { ...identity.entitlements, fundIds: many.map((row) => String(row.fund_id)) } };
+  const resolved = await resolveScorecardExport(everyFund, db);
+  assert.equal(resolved.rowCount, 150 * 6);
+  const snapshotQuery = calls.find((call) => call.sql.includes("fund_period_snapshots"))!;
+  assert.deepEqual(JSON.parse(String(snapshotQuery.parameters[1])), many.map((row) => row.fund_id));
+  assert.deepEqual(JSON.parse(String(snapshotQuery.parameters[2])), ["snap-1", "snap-2"]);
+  const rows = await loadScorecardExportRows(everyFund, ["snap-1", "snap-2"], db);
+  assert.deepEqual([...new Set(rows.map((row) => row.fund_id))], many.map((row) => row.fund_id), "table order across pages");
+  await assert.rejects(loadScorecardExportRows(everyFund, ["snap-1", "snap-2", "snap-3"], db), /export_snapshot_authorization_expired/);
 });

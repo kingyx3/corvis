@@ -7,6 +7,7 @@ import {
   TENANT_EXPORT_MIN_REASON_LENGTH,
   TENANT_EXPORT_STATUS_LABEL,
   tenantExportStatusSummary,
+  type TenantExportBuildPhase,
   type TenantExportPage,
   type TenantExportRequest,
 } from "@/core/tenant-export";
@@ -175,13 +176,13 @@ function DataExportSection() {
     } finally { setLoadingOlder(false); }
   };
 
-  // An approved request is built by the delivery worker within about a minute: keep the list current until it settles.
+  // An approved request is built by the delivery worker (a large export takes longer, and shows its progress): keep the list current until it settles.
   const items = state.kind === "ready" ? [...state.value.items, ...(older?.items ?? [])] : [];
   const moreCursor = state.kind === "ready" ? (older ? older.nextCursor : state.value.nextCursor) : null;
   const building = items.some((item) => item.status === "approved" || item.status === "building");
   useEffect(() => {
     if (!building) return;
-    const timer = setInterval(() => void refresh(true), 8000);
+    const timer = setInterval(() => void refresh(true), 3000);
     return () => clearInterval(timer);
   }, [building, refresh]);
 
@@ -238,8 +239,8 @@ function DataExportSection() {
     <ul className="data-export-contents" aria-label="What a full export contains">
       <li><strong>Published data</strong>: approved observations in your published snapshots.</li>
       <li><strong>Access audit trail</strong>: invitations, member changes, support access, source connections, data issues and exports.</li>
-      <li><strong>Source documents</strong>: an inventory of each document with its size and SHA-256. The document files themselves are not part of the export yet.</li>
-      <li><strong>Only what you may redistribute</strong>: data your contracts do not let you redistribute is left out, and the manifest says how many funds and documents that was.</li>
+      <li><strong>Source documents</strong>: an inventory of each document with its size and SHA-256, and the document files themselves where your contracts grant you source-file access. A large data set is split into numbered files, and every file is listed with its checksum.</li>
+      <li><strong>Only what you may redistribute</strong>: data your contracts do not let you redistribute is left out, and the manifest says how many funds, documents and source files that was.</li>
     </ul>
     <form className="data-export-request" onSubmit={(event) => { event.preventDefault(); if (reasonValid && !open && busy === null) void submit(); }}>
       <label className="form-field" htmlFor={reasonId}><span>Why do you need this export?</span>
@@ -265,6 +266,7 @@ function DataExportSection() {
           </div>
           <p className="data-issue-comment">{item.reason}</p>
           <p className="data-issue-summary">{tenantExportStatusSummary(item)}</p>
+          {item.status === "building" && <ExportProgress item={item}/>}
           {item.artifact && <p className="data-issue-replacement">Archive {formatBytes(item.artifact.sizeBytes)} · SHA-256 <code>{item.artifact.checksumSha256}</code> · available until {time(item.artifact.expiresAt)}</p>}
           {confirmingThis === "approve" && <div className="lineage-note tone-warning" role="group" aria-label="Confirm approval"><Icon name="shield"/><div><strong>Approve this export?</strong><span>Corvis will build and deliver a complete copy of your organization&apos;s data (what your contracts allow) and a download link will be available to Organization Admins. You are recorded as the approver.</span></div></div>}
           {confirmingThis === "reject" && <div className="form-field" role="group" aria-label="Confirm rejection">
@@ -289,6 +291,25 @@ function DataExportSection() {
   </section>;
 }
 
+const PHASE_LABEL: Record<TenantExportBuildPhase, string> = {
+  estimating: "Estimating the size of the export",
+  data: "Writing the data files",
+  documents: "Copying source documents",
+  finalizing: "Finishing the archive",
+};
+
+/** The size estimate and progress of a running build, as the worker last reported them. */
+function ExportProgress({ item }: { item: TenantExportRequest }) {
+  const progress = item.progress;
+  if (!progress) return <p className="table-secondary">Preparing the export. Its size estimate appears here shortly.</p>;
+  const number = (value: number) => value.toLocaleString("en-US");
+  return <div className="data-export-progress" data-testid="export-progress">
+    <progress max={100} value={progress.percent} aria-label={`Export build progress, ${progress.percent}%`}/>
+    <p className="data-issue-summary"><strong>{PHASE_LABEL[progress.phase]}.</strong> {progress.percent}% of an estimated {formatBytes(progress.estimatedBytes)}.</p>
+    <p className="table-secondary">{number(progress.rowsWritten)} of about {number(progress.estimatedRows)} data rows · {number(progress.documentsWritten)} of {number(progress.estimatedDocuments)} source files · updated {time(progress.updatedAt)}</p>
+  </div>;
+}
+
 function ExportManifest({ item }: { item: TenantExportRequest }) {
   const manifest = item.artifact!.manifest;
   return <div className="data-export-manifest">
@@ -296,7 +317,8 @@ function ExportManifest({ item }: { item: TenantExportRequest }) {
     <div className="table-card" tabIndex={0} role="region" aria-label={`Files in the export requested ${time(item.requestedAt)}`}><table className="data-table">
       <thead><tr><th>File</th><th>Rows</th><th>Size</th><th>SHA-256</th></tr></thead>
       <tbody>{manifest.files.map((file) => <tr key={file.path}><td><strong>{file.path}</strong><span className="table-secondary">{file.description}</span></td><td>{file.rowCount}</td><td>{formatBytes(file.sizeBytes)}</td><td><code>{file.sha256}</code></td></tr>)}</tbody></table></div>
-    <p>Funds: {manifest.dataRights.funds.included} included, {manifest.dataRights.funds.excluded} left out. Documents: {manifest.dataRights.documents.included} included, {manifest.dataRights.documents.excluded} left out.</p>
+    {manifest.sourceFiles && <p className="table-secondary">{manifest.sourceFiles.included} source document file{manifest.sourceFiles.included === 1 ? "" : "s"} ({formatBytes(manifest.sourceFiles.totalBytes)}) {manifest.sourceFiles.included === 1 ? "is" : "are"} in the archive, each listed with its size and SHA-256 in <code>manifest.json</code> inside it{manifest.fileCount ? `; the archive holds ${manifest.fileCount} files in all` : ""}.</p>}
+    <p>Funds: {manifest.dataRights.funds.included} included, {manifest.dataRights.funds.excluded} left out. Documents: {manifest.dataRights.documents.included} included, {manifest.dataRights.documents.excluded} left out{manifest.sourceFiles ? `. Source files: ${manifest.sourceFiles.included} included, ${manifest.sourceFiles.excluded} left out` : ""}.</p>
     <p className="table-secondary">{manifest.dataRights.basis}</p>
     {manifest.notIncluded.length > 0 && <ul>{manifest.notIncluded.map((entry) => <li key={entry.item}><strong>Not included: {entry.item}.</strong> {entry.reason}</li>)}</ul>}
   </div>;

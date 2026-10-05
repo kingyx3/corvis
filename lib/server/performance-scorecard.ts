@@ -1,26 +1,50 @@
-import type { RequestIdentity } from "../../core/enterprise.ts";
-import { SCORECARD_METRIC_CODES, type ScorecardFact, type ScorecardFund, type ScorecardPayload } from "../../core/performance-scorecard.ts";
+import { AuthorizationError, type RequestIdentity } from "../../core/enterprise.ts";
+import { nameOrder, SCORECARD_METRIC_CODES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../../core/performance-scorecard.ts";
 import { getServerConfig } from "./config.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "./pagination.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
 /**
- * Upper bound on the facts one scorecard load reads. The query already reduces each subject/metric/currency
- * to its single latest fact, so this is far above any realistic tenant. Truncating silently would turn
- * published figures into false "Not reported" cells, so exceeding it fails the request instead.
+ * Upper bound on the facts one scorecard *page* reads. The query already reduces each subject/metric/currency to its single
+ * latest fact, so this is far above any realistic fund. The scorecard is read by fund (keyset pages), so a tenant whose total
+ * is above it still loads: a page that would exceed it is halved and retried, never truncated, because truncating silently
+ * would turn published figures into false "Not reported" cells. Only a single fund above the cap fails the request.
  */
 export const SCORECARD_MAX_FACTS = 50_000;
+/** Funds per page when the caller does not say, and the most a caller may ask for. */
+export const SCORECARD_DEFAULT_PAGE_FUNDS = 25;
+export const SCORECARD_MAX_PAGE_FUNDS = 100;
 
 export class ScorecardTooLargeError extends Error {
   readonly code = "performance_scorecard_too_large";
   constructor() {
-    super(`The performance scorecard has more than ${SCORECARD_MAX_FACTS} reported figures; narrow the entitled scope`);
+    super(`A single fund of the performance scorecard has more than ${SCORECARD_MAX_FACTS} reported figures; narrow the scorecard to a period`);
     this.name = "ScorecardTooLargeError";
   }
 }
 
-export type PerformanceScorecardQuery = {
+export type PerformanceScorecardQuery = ScorecardFilters & {
   /** Restrict to these published snapshots (a governed export pins the snapshots it was requested for). */
   snapshotIds?: readonly string[];
+};
+
+export type ScorecardPageRequest = {
+  /** Opaque cursor of the previous page (the keyset of its last fund); absent for the first page. */
+  cursor?: string | null;
+  /** Funds per page, 1 to SCORECARD_MAX_PAGE_FUNDS. A page may hold fewer when its figures would exceed the cap. */
+  limit?: number;
+  /** Also compute the reporting periods the scorecard can be filtered by (the view asks on its first page only). */
+  periods?: boolean;
+};
+
+export type ScorecardPageResult = {
+  /** The page's funds (complete) and every figure of those funds. */
+  payload: ScorecardPayload;
+  /** Every entitled fund, whatever the filters, for the fund filter. */
+  fundOptions: ScorecardFund[];
+  /** Every period with a published figure; empty unless the request asked for it (`periods`). */
+  periodOptions: string[];
+  nextCursor: string | null;
 };
 
 function text(row: PostgresRow, key: string): string { return row[key] == null ? "" : String(row[key]); }
@@ -76,42 +100,12 @@ function mapFact(row: PostgresRow): ScorecardFact {
 }
 
 /**
- * Published, GP-reported fund and investment performance facts for the Analytics scorecard.
- *
- * Source of truth: consolidated facts of every entitled fund snapshot whose *current* version is published
- * (a draft, blocked, withdrawn or superseded version contributes nothing, exactly like the Overview rollup).
- * A conflicting alternative, a breakdown row and a look-through row are left out, as is anything whose source
- * document the caller is not entitled to: a figure with no entitled source is not served.
- *
- * Each fact is served with the first entitled source reference of its first source observation (document, page,
- * sheet, cells) so every figure drills through to its document. Per fund, subject, metric, currency and unit only
- * the latest fact is returned. Its order (as-of date, publication time, snapshot id, fact id; undated and
- * unpublished last) is the order of `compareLatestFirst` in core/performance-scorecard.ts, which makes the final
- * selection among the returned candidates.
+ * The facts of the entitled funds' current published snapshots, up to the ranking CTE `ranked_fact` (which keeps the latest fact
+ * per fund, subject, metric, currency and unit). Positional parameters: $1 tenant, $2 funds, $3 entitled documents, $4 metric codes,
+ * then the optional snapshot pin and period filter, whose placeholders the caller supplies.
  */
-export class PostgresPerformanceScorecardRepository {
-  private readonly db: PostgresSqlApi;
-  constructor(db: PostgresSqlApi) { this.db = db; }
-
-  async load(identity: RequestIdentity, query: PerformanceScorecardQuery = {}): Promise<ScorecardPayload> {
-    const fundIds = identity.entitlements.fundIds ?? [];
-    const documentIds = identity.entitlements.documentIds ?? [];
-    // Without both entitlements nothing may be shown: fail closed rather than list funds with empty cells.
-    if (fundIds.length === 0 || documentIds.length === 0) return { funds: [], facts: [] };
-
-    const fundRows = await this.db.query(`select a.fund_id,coalesce(f.canonical_name,a.fund_id) as fund_name
-      from (select distinct value as fund_id from jsonb_array_elements_text($1::jsonb)) a
-      left join corvis_identity.fund f on f.global_fund_id=a.fund_id
-      order by coalesce(f.canonical_name,a.fund_id),a.fund_id`, [jsonList(fundIds)]);
-    const funds: ScorecardFund[] = fundRows.map((row) => ({ fundId: text(row, "fund_id"), fund: text(row, "fund_name") }));
-
-    const parameters: PostgresPrimitive[] = [identity.tenantId, jsonList(fundIds), jsonList(documentIds), jsonList(SCORECARD_METRIC_CODES)];
-    let snapshotPredicate = "";
-    if (query.snapshotIds) {
-      parameters.push(jsonList(query.snapshotIds));
-      snapshotPredicate = `\n          and s.snapshot_id::text in (select jsonb_array_elements_text($${parameters.length}::jsonb))`;
-    }
-    const rows = await this.db.query(`with current_snapshot as (
+function factChain(snapshotPredicate: string, periodPredicate: string): string {
+  return `with current_snapshot as (
         select distinct on (s.snapshot_id)
                s.tenant_id,s.snapshot_id,s.version,s.fund_id,s.report_period,s.status,s.fact_ids,s.published_at
         from corvis_consolidated.fund_period_snapshot s
@@ -141,7 +135,7 @@ export class PostgresPerformanceScorecardRepository {
           and f.metric_code in (select jsonb_array_elements_text($4::jsonb))
           and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
           and nullif(btrim(f.value->'semanticDimensions'->>'breakdownCategory'),'') is null
-          and nullif(btrim(f.value->'semanticDimensions'->>'lookthroughSource'),'') is null
+          and nullif(btrim(f.value->'semanticDimensions'->>'lookthroughSource'),'') is null${periodPredicate}
       ), scoped_fact as (
         select pf.*,
                case when pf.subject_level='fund' then 'fund' else 'investment' end as level
@@ -183,7 +177,92 @@ export class PostgresPerformanceScorecardRepository {
                  order by sf.as_of desc nulls last,sf.published_at desc nulls last,sf.snapshot_id desc,sf.fact_id desc
                ) as latest_rank
         from sourced_fact sf
-      )
+      )`;
+}
+
+function encodePageCursor(fund: ScorecardFund): string { return encodeCursor(JSON.stringify([fund.fund, fund.fundId])); }
+
+function decodePageCursor(cursor: string): { name: string; id: string } {
+  let parsed: unknown;
+  try { parsed = JSON.parse(decodeCursor(cursor)); } catch { throw new InvalidCursorError(); }
+  if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== "string" || typeof parsed[1] !== "string") throw new InvalidCursorError();
+  return { name: parsed[0], id: parsed[1] };
+}
+
+/** Funds per page for a requested size: the default when absent, never below 1 or above SCORECARD_MAX_PAGE_FUNDS. */
+export function scorecardPageSize(limit: number | undefined): number {
+  return Math.min(Math.max(Math.trunc(limit ?? SCORECARD_DEFAULT_PAGE_FUNDS), 1), SCORECARD_MAX_PAGE_FUNDS);
+}
+
+/**
+ * The funds after the cursor's keyset position, in scorecard order. The cursor is decoded here, so a tampered one fails
+ * (`InvalidCursorError`) before anything is read; one whose fund has since left the list still resumes after its position.
+ */
+export function fundsAfterCursor(funds: readonly ScorecardFund[], cursor: string | null | undefined): ScorecardFund[] {
+  if (!cursor) return [...funds];
+  const after = decodePageCursor(cursor);
+  return funds.filter((fund) => nameOrder({ name: fund.fund, id: fund.fundId }, { name: after.name, id: after.id }) > 0);
+}
+
+/** The cursor of the page that ends the given funds, or null when it ends the scorecard. */
+export function nextFundCursor(page: readonly ScorecardFund[], remainingCount: number): string | null {
+  return page.length < remainingCount ? encodePageCursor(page[page.length - 1]!) : null;
+}
+
+/**
+ * Published, GP-reported fund and investment performance facts for the Analytics scorecard.
+ *
+ * Source of truth: consolidated facts of every entitled fund snapshot whose *current* version is published
+ * (a draft, blocked, withdrawn or superseded version contributes nothing, exactly like the Overview rollup).
+ * A conflicting alternative, a breakdown row and a look-through row are left out, as is anything whose source
+ * document the caller is not entitled to: a figure with no entitled source is not served.
+ *
+ * Each fact is served with the first entitled source reference of its first source observation (document, page,
+ * sheet, cells) so every figure drills through to its document. Per fund, subject, metric, currency and unit only
+ * the latest fact is returned. Its order (as-of date, publication time, snapshot id, fact id; undated and
+ * unpublished last) is the order of `compareLatestFirst` in core/performance-scorecard.ts, which makes the final
+ * selection among the returned candidates.
+ *
+ * Filters (F1c): `fundId` narrows to one entitled fund (a fund the caller is not entitled to is refused, never ignored);
+ * `period` keeps only the facts stated for that reporting period *before* the latest one is chosen, so the figures shown are
+ * the latest of that period and an older period never degrades into "Not reported".
+ *
+ * Paging (F1c): funds are paged by keyset on (name, id), the order the scorecard lists them in. A fund's figures are read
+ * whole, in one query per page, so a tenant of any size loads page by page and a figure is never dropped to fit.
+ */
+export class PostgresPerformanceScorecardRepository {
+  private readonly db: PostgresSqlApi;
+  constructor(db: PostgresSqlApi) { this.db = db; }
+
+  /** Every entitled fund, in scorecard order. */
+  private async entitledFunds(fundIds: readonly string[]): Promise<ScorecardFund[]> {
+    const rows = await this.db.query(`select a.fund_id,coalesce(f.canonical_name,a.fund_id) as fund_name
+      from (select distinct value as fund_id from jsonb_array_elements_text($1::jsonb)) a
+      left join corvis_identity.fund f on f.global_fund_id=a.fund_id
+      order by coalesce(f.canonical_name,a.fund_id),a.fund_id`, [jsonList(fundIds)]);
+    return rows.map((row): ScorecardFund => ({ fundId: text(row, "fund_id"), fund: text(row, "fund_name") }))
+      .sort((a, b) => nameOrder({ name: a.fund, id: a.fundId }, { name: b.fund, id: b.fundId }));
+  }
+
+  private parameters(identity: RequestIdentity, fundIds: readonly string[], query: PerformanceScorecardQuery): { values: PostgresPrimitive[]; snapshotPredicate: string; periodPredicate: string } {
+    const values: PostgresPrimitive[] = [identity.tenantId, jsonList(fundIds), jsonList(identity.entitlements.documentIds!), jsonList(SCORECARD_METRIC_CODES)];
+    let snapshotPredicate = "";
+    if (query.snapshotIds) {
+      values.push(jsonList(query.snapshotIds));
+      snapshotPredicate = `\n          and s.snapshot_id::text in (select jsonb_array_elements_text($${values.length}::jsonb))`;
+    }
+    let periodPredicate = "";
+    if (query.period !== undefined) {
+      values.push(query.period);
+      periodPredicate = `\n          and coalesce(nullif(f.economic_period,''),cs.report_period)=$${values.length}`;
+    }
+    return { values, snapshotPredicate, periodPredicate };
+  }
+
+  /** The latest facts of exactly these funds. Fails (rather than truncating) above SCORECARD_MAX_FACTS. */
+  private async facts(identity: RequestIdentity, fundIds: readonly string[], query: PerformanceScorecardQuery): Promise<ScorecardFact[]> {
+    const { values, snapshotPredicate, periodPredicate } = this.parameters(identity, fundIds, query);
+    const rows = await this.db.query(`${factChain(snapshotPredicate, periodPredicate)}
       select fact_id::text as fact_id,snapshot_id::text as snapshot_id,published_at,fund_id,level,investment_key,investment_name,
              holding_id,company_id,metric_code,value_number,value_string,value_raw,currency,unit,as_of,
              coalesce(nullif(economic_period,''),report_period) as economic_period,
@@ -192,9 +271,70 @@ export class PostgresPerformanceScorecardRepository {
       from ranked_fact
       where latest_rank=1
       order by fund_id,level,investment_key nulls first,metric_code,as_of desc nulls last,fact_id
-      limit ${SCORECARD_MAX_FACTS + 1}`, parameters);
+      limit ${SCORECARD_MAX_FACTS + 1}`, values);
     if (rows.length > SCORECARD_MAX_FACTS) throw new ScorecardTooLargeError();
-    return { funds, facts: rows.map(mapFact) };
+    return rows.map(mapFact);
+  }
+
+  /** Every reporting period that has a figure the caller can see, latest first, ignoring the period filter itself. */
+  private async periodOptions(identity: RequestIdentity, fundIds: readonly string[], query: PerformanceScorecardQuery): Promise<string[]> {
+    const { values, snapshotPredicate } = this.parameters(identity, fundIds, { snapshotIds: query.snapshotIds });
+    const rows = await this.db.query(`${factChain(snapshotPredicate, "")}
+      select coalesce(nullif(economic_period,''),report_period) as period,max(as_of) as as_of
+      from sourced_fact
+      group by 1`, values);
+    return scorecardPeriodOptions(rows.map((row) => ({ period: text(row, "period"), asOf: nullableText(row, "as_of") })));
+  }
+
+  /**
+   * One page of whole funds. `request.cursor` is the previous page's `nextCursor`; a page is `limit` funds (default
+   * SCORECARD_DEFAULT_PAGE_FUNDS) unless their figures would exceed the cap, in which case the page is halved until they fit.
+   */
+  async loadPage(identity: RequestIdentity, query: PerformanceScorecardQuery = {}, request: ScorecardPageRequest = {}): Promise<ScorecardPageResult> {
+    const entitledIds = identity.entitlements.fundIds ?? [];
+    const documentIds = identity.entitlements.documentIds ?? [];
+    // Without both entitlements nothing may be shown: fail closed rather than list funds with empty cells.
+    if (entitledIds.length === 0 || documentIds.length === 0) return { payload: { funds: [], facts: [] }, fundOptions: [], periodOptions: [], nextCursor: null };
+    if (query.fundId !== undefined && !entitledIds.includes(query.fundId)) throw new AuthorizationError("performance_scorecard:fund");
+    const fundOptions = await this.entitledFunds(entitledIds);
+    // A tampered cursor fails here, before any figure is read; it is only ever compared with fund names, never bound into SQL.
+    const remaining = fundsAfterCursor(fundOptions.filter((fund) => query.fundId === undefined || fund.fundId === query.fundId), request.cursor);
+
+    let size = Math.min(scorecardPageSize(request.limit), remaining.length);
+    let facts: ScorecardFact[] = [];
+    while (size > 0) {
+      try {
+        facts = await this.facts(identity, remaining.slice(0, size).map((fund) => fund.fundId), query);
+        break;
+      } catch (error) {
+        // Halve and retry: the page gets smaller, no figure is ever left out. One fund over the cap cannot be split, so it fails.
+        if (!(error instanceof ScorecardTooLargeError) || size === 1) throw error;
+        size = Math.ceil(size / 2);
+      }
+    }
+    const page = remaining.slice(0, size);
+    const periodOptions = request.periods ? await this.periodOptions(identity, entitledIds, query) : [];
+    return { payload: { funds: page, facts }, fundOptions, periodOptions, nextCursor: nextFundCursor(page, remaining.length) };
+  }
+
+  /** Every page in turn, for a reader that needs the whole scorecard (a governed export) without holding it all at once. */
+  async *pages(identity: RequestIdentity, query: PerformanceScorecardQuery = {}): AsyncGenerator<ScorecardPayload> {
+    let cursor: string | null = null;
+    do {
+      const page: ScorecardPageResult = await this.loadPage(identity, query, { cursor, limit: SCORECARD_MAX_PAGE_FUNDS });
+      yield page.payload;
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+  }
+
+  /** The whole scorecard: every page, concatenated. */
+  async load(identity: RequestIdentity, query: PerformanceScorecardQuery = {}): Promise<ScorecardPayload> {
+    const all: ScorecardPayload = { funds: [], facts: [] };
+    for await (const page of this.pages(identity, query)) {
+      all.funds.push(...page.funds);
+      all.facts.push(...page.facts);
+    }
+    return all;
   }
 }
 

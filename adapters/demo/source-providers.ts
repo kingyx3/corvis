@@ -9,9 +9,10 @@ import type { SourceOAuthClient } from "../../lib/server/source-oauth.ts";
  * (provider choice, disclosure, confirmation, OAuth redirect and PKCE, direct
  * credential entry, the connectivity test and its failures) can be exercised
  * and tested end to end without any real portal. They contact nothing and
- * are labelled "Demo" everywhere a customer sees them. There is deliberately
- * no `ConnectorDriver` here: a real driver is built against the first
- * customer-required provider (#31), not speculatively.
+ * are labelled "Demo" everywhere a customer sees them. Their only driver is the
+ * demonstration one in ./source-driver.ts (fixed demonstration PDFs, demo mode
+ * only): a real driver is built against the first customer-required provider
+ * (#31), not speculatively.
  */
 
 export const DEMO_OAUTH_PROVIDER_KEY = "demo-oauth-data-room";
@@ -68,11 +69,11 @@ export const DEMO_SOURCE_PROVIDERS: readonly DemoProvider[] = [
     summary: "Demonstration only: reads the fund reports folder of a fictional data room after you approve access on its consent page.",
     demo: true,
     connect: { method: "oauth" },
-    scope: [{ label: "Demo fund reports", path: "/Demo/Fund reports" }],
+    scope: [{ id: "fund-reports", label: "Demo fund reports", path: "/Demo/Fund reports" }, { id: "side-letters", label: "Demo side letters", path: "/Demo/Side letters" }],
     disclosure: {
-      reads: ["Quarterly reports and capital account statements in the folder “Demo fund reports”.", "File names, dates and the files themselves, so they can enter the normal Corvis review process."],
-      behaviour: ["You are sent to the provider's own page to approve access, then returned here.", "Corvis tests the connection straight away. Scheduled collection starts only after the test passes.", "You can pause, reauthorize or revoke the connection at any time."],
-      limits: ["Corvis never sees your provider password.", "Corvis cannot upload, change or delete anything at the provider.", "Nothing outside the confirmed folder is read."],
+      reads: ["Quarterly reports and capital account statements in the folders listed below. You can leave a folder out before you confirm.", "File names, dates and the files themselves, so they can enter the normal Corvis review process."],
+      behaviour: ["You are sent to the provider's own page to approve access, then returned here.", "Corvis tests the connection straight away. Scheduled collection starts only after the test passes, and then repeats on a regular schedule.", "You can pause, reauthorize or revoke the connection at any time."],
+      limits: ["Corvis never sees your provider password.", "Corvis cannot upload, change or delete anything at the provider.", "Nothing outside the folders you confirm is read."],
     },
     connectorVersion: DEMO_VERSION,
     oauth: demoOAuthClient,
@@ -83,11 +84,11 @@ export const DEMO_SOURCE_PROVIDERS: readonly DemoProvider[] = [
     summary: "Demonstration only: reads quarterly reports from a fictional GP portal using an API token you paste once.",
     demo: true,
     connect: { method: "credential", credentialType: "scoped_api_token" },
-    scope: [{ label: "Quarterly reports", path: "/Fund III/Quarterly" }, { label: "Capital account statements", path: "/Fund III/Capital accounts" }],
+    scope: [{ id: "quarterly-reports", label: "Quarterly reports", path: "/Fund III/Quarterly" }, { id: "capital-accounts", label: "Capital account statements", path: "/Fund III/Capital accounts" }],
     disclosure: {
-      reads: ["Quarterly reports and capital account statements for Fund III.", "File names, dates and the files themselves, so they can enter the normal Corvis review process."],
-      behaviour: ["You paste an API token that the provider issued to you. Corvis keeps it only in its secret store.", "Corvis tests the connection straight away. Scheduled collection starts only after the test passes.", "You can pause, reauthorize or revoke the connection at any time."],
-      limits: ["Corvis cannot upload, change or delete anything at the provider.", "The token is never shown again, logged or kept in your browser.", "Nothing outside the two folders above is read."],
+      reads: ["Quarterly reports and capital account statements for Fund III. You can leave one of the two folders out before you confirm.", "File names, dates and the files themselves, so they can enter the normal Corvis review process."],
+      behaviour: ["You paste an API token that the provider issued to you. Corvis keeps it only in its secret store.", "Corvis tests the connection straight away. Scheduled collection starts only after the test passes, and then repeats on a regular schedule.", "You can pause, reauthorize or revoke the connection at any time."],
+      limits: ["Corvis cannot upload, change or delete anything at the provider.", "The token is never shown again, logged or kept in your browser.", "Nothing outside the folders you confirm is read."],
     },
     credentialHint: `Demo only. Use ${DEMO_TOKENS.valid} to pass the test. To see a failed test, use ${DEMO_TOKENS.invalid} (rejected), ${DEMO_TOKENS.noAccess} (no access) or ${DEMO_TOKENS.unreachable} (cannot reach the provider).`,
     connectorVersion: DEMO_VERSION,

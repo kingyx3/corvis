@@ -20,6 +20,17 @@
 --     Organization Admin; the owner changes only by transfer to another active Organization Admin; an owner who is
 --     deactivated or demoted leaves the account working but ownerless, so it is not extended until it has a new owner;
 --     a deactivated account can be neither extended nor handed over; an expired account can be renewed;
+--   * expiry notices (F6d, migration 096): one mandatory notice per active human Organization Admin, per window (14 days,
+--     then 3), per account or credential in use, deduplicated in the outbox so a sweep that runs every minute queues
+--     each once; a renewal never repeats an old notice, a deactivated, expired, revoked or rotated-out item and a
+--     suspended tenant are never announced, a credential that ends with its account is covered by the account's notice,
+--     the parameters are words only (no name or identifier), and no preference can switch the category off;
+--   * entitlement self-service (F6c, migration 096): an Organization Admin grants a service account read access to a fund
+--     or document only when the tenant owns it AND holds an effective client-visible data right (one refusal message for
+--     every other case: another tenant's resource, no right, a hidden, lapsed or conflicting right, an unknown id), in
+--     the account's workspace, bounded per account, never for a person, never from a non-admin or another tenant; an
+--     expired or deactivated account is granted nothing; revocation ends everything the account holds on the resource
+--     and is never refused for a data-right reason;
 --   * tenants are isolated, and RLS is enabled and forced with no client policy on both tables.
 --
 -- Run after supabase-auth-fixture.sql and the full migration chain. Everything is rolled back.
@@ -532,6 +543,300 @@ begin
     raise exception 'a renewed account is current again';
   end if;
   perform corvis_control.issue_service_account_credential(tenant, account, gen_random_uuid(), 'rotate', 'oidc', 'idp|admin-one', pg_temp.digest_of('e2'), now()+interval '10 days', 0);
+end $$;
+
+-- 13. Expiry notices (migration 096): one mandatory notice per Organization Admin, per window, per account or credential.
+insert into corvis_control.tenant (tenant_id,slug,display_name,status)
+values ('c0960000-0000-4000-8000-00000000000c','sa-c','SA C','active'),
+       ('c0960000-0000-4000-8000-00000000000d','sa-d','SA D (suspended)','active');
+insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name,status)
+values ('c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-00000000000c','primary','C primary','active'),
+       ('c0960000-0000-4000-8000-0000000000d1','c0960000-0000-4000-8000-00000000000d','primary','D primary','active');
+insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject,status)
+values ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e1','oidc','idp|c-admin-one','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e2','saml','idp|c-admin-two','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e3','oidc','idp|c-revoked','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e4','oidc','idp|c-analyst','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e5','oidc','idp|c-disabled','disabled'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000e6','service_account','svc|c-robot','active'),
+       ('c0960000-0000-4000-8000-00000000000d','c0960000-0000-4000-8000-0000000000f1','oidc','idp|d-admin','active');
+insert into corvis_control.membership (tenant_id,workspace_id,user_id,role_name,status)
+values ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e1','tenant_admin','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e2','tenant_admin','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e3','tenant_admin','revoked'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e4','analyst','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e5','tenant_admin','active'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000c1','c0960000-0000-4000-8000-0000000000e6','tenant_admin','active'),
+       ('c0960000-0000-4000-8000-00000000000d','c0960000-0000-4000-8000-0000000000d1','c0960000-0000-4000-8000-0000000000f1','tenant_admin','active');
+
+do $$
+declare
+  tenant uuid := 'c0960000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0960000-0000-4000-8000-0000000000c1';
+  far uuid := 'c0960000-0000-4000-8000-0000000000a1';
+  cred_soon uuid := 'c0960000-0000-4000-8000-0000000000a2';
+  acct_soon uuid := 'c0960000-0000-4000-8000-0000000000a3';
+  acct_final uuid := 'c0960000-0000-4000-8000-0000000000a4';
+  acct_disabled uuid := 'c0960000-0000-4000-8000-0000000000a5';
+  acct_revoked uuid := 'c0960000-0000-4000-8000-0000000000a6';
+  acct_rotated uuid := 'c0960000-0000-4000-8000-0000000000a7';
+  acct_lapsed uuid := 'c0960000-0000-4000-8000-0000000000a8';
+  acct_other_tenant uuid := 'c0960000-0000-4000-8000-0000000000a9';
+  queued integer;
+  first_user uuid;
+begin
+  -- Drain whatever the earlier sections of this script left due (other tenants' short-lived accounts), so the counts below
+  -- are this tenant's alone.
+  perform corvis_control.queue_service_account_expiry_notices(5000);
+  -- Accounts: nothing due, a credential in its warning window, an account in its warning window (its credential is clamped
+  -- to the account's expiry, so only the account is announced), an account inside the final window, and several that must
+  -- never be announced.
+  perform corvis_control.create_service_account(tenant, far, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Far future', 'Far from expiry', workspace, 'viewer', now()+interval '200 days', now()+interval '90 days', pg_temp.digest_of('n-1'), 100);
+  perform corvis_control.create_service_account(tenant, cred_soon, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Credential due', 'Credential nearly expired', workspace, 'viewer', now()+interval '200 days', now()+interval '10 days', pg_temp.digest_of('n-2'), 100);
+  perform corvis_control.create_service_account(tenant, acct_soon, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Account due', 'Account nearly expired', workspace, 'viewer', now()+interval '10 days', now()+interval '30 days', pg_temp.digest_of('n-3'), 100);
+  perform corvis_control.create_service_account(tenant, acct_final, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Account final', 'Account about to expire', workspace, 'viewer', now()+interval '2 days', now()+interval '30 days', pg_temp.digest_of('n-4'), 100);
+  perform corvis_control.create_service_account(tenant, acct_disabled, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Account disabled', 'Deactivated before the sweep', workspace, 'viewer', now()+interval '5 days', now()+interval '30 days', pg_temp.digest_of('n-5'), 100);
+  perform corvis_control.disable_service_account(tenant, acct_disabled, 'oidc', 'idp|c-admin-one', 'Not needed any more');
+  perform corvis_control.create_service_account(tenant, acct_revoked, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Credential revoked', 'Revoked before the sweep', workspace, 'viewer', now()+interval '200 days', now()+interval '5 days', pg_temp.digest_of('n-6'), 100);
+  perform corvis_control.revoke_service_account_credentials(tenant, acct_revoked, 'oidc', 'idp|c-admin-one');
+  perform corvis_control.create_service_account(tenant, acct_rotated, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Credential rotated', 'Rotated before the sweep', workspace, 'viewer', now()+interval '200 days', now()+interval '5 days', pg_temp.digest_of('n-7'), 100);
+  perform corvis_control.issue_service_account_credential(tenant, acct_rotated, gen_random_uuid(), 'rotate', 'oidc', 'idp|c-admin-one', pg_temp.digest_of('n-7b'), now()+interval '90 days', 600);
+  perform corvis_control.create_service_account(tenant, acct_lapsed, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Account lapsed', 'Already expired', workspace, 'viewer', now()+interval '1 hour', now()+interval '30 minutes', pg_temp.digest_of('n-8'), 100);
+  set local session_replication_role = replica;
+  update corvis_control.service_account set created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' where service_account_id = acct_lapsed;
+  update corvis_control.service_account_credential set created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' where service_account_id = acct_lapsed;
+  set local session_replication_role = origin;
+  -- A suspended tenant is not announced to.
+  perform corvis_control.create_service_account('c0960000-0000-4000-8000-00000000000d', acct_other_tenant, gen_random_uuid(), 'oidc', 'idp|d-admin', 'Suspended tenant account', 'Tenant is suspended', 'c0960000-0000-4000-8000-0000000000d1', 'viewer', now()+interval '3 days', now()+interval '2 days', pg_temp.digest_of('n-9'), 100);
+  update corvis_control.tenant set status = 'suspended' where tenant_id = 'c0960000-0000-4000-8000-00000000000d';
+
+  perform pg_temp.expect_error($f$select corvis_control.queue_service_account_expiry_notices(0)$f$, 'service account expiry notice limit is out of range');
+  perform pg_temp.expect_error($f$select corvis_control.queue_service_account_expiry_notices(null)$f$, 'service account expiry notice limit is out of range');
+  perform pg_temp.expect_error($f$select corvis_control.queue_service_account_expiry_notices(5001)$f$, 'service account expiry notice limit is out of range');
+
+  -- The limit bounds one call, and a notice already queued never counts against it.
+  queued := corvis_control.queue_service_account_expiry_notices(1);
+  if queued <> 1 then raise exception 'a limit of one queues one notice, got %', queued; end if;
+  queued := corvis_control.queue_service_account_expiry_notices();
+  -- credential due x 2 admins + account due x 2 + account final x 2, less the one already queued.
+  if queued <> 5 then raise exception 'five more notices are due, got %', queued; end if;
+
+  if (select count(*) from corvis_control.email_outbox where tenant_id = tenant and category = 'service_account_expiry') <> 6 then raise exception 'six notices in all'; end if;
+  if exists (select 1 from corvis_control.email_outbox o where o.category = 'service_account_expiry' and o.tenant_id = 'c0960000-0000-4000-8000-00000000000d') then raise exception 'a suspended tenant gets none'; end if;
+  if exists (select 1 from corvis_control.email_outbox o join corvis_control.membership m on m.tenant_id = o.tenant_id and m.user_id = o.recipient_user_id
+      where o.category = 'service_account_expiry' and m.role_name <> 'tenant_admin') then raise exception 'a notice only ever goes to a member of its own tenant holding the admin role'; end if;
+  -- Only the two active human Organization Admins are addressed: not the revoked admin, the analyst, the disabled identity or a machine.
+  if (select array_agg(distinct o.recipient_user_id order by o.recipient_user_id) from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry')
+     <> array['c0960000-0000-4000-8000-0000000000e1','c0960000-0000-4000-8000-0000000000e2']::uuid[] then
+    raise exception 'recipients are the active human Organization Admins only';
+  end if;
+  if exists (select 1 from corvis_control.email_outbox o where o.category = 'service_account_expiry' and (o.required_roles <> array['tenant_admin']::text[] or o.workspace_id is not null or o.fund_id is not null or o.recipient_email is not null or o.status <> 'queued')) then
+    raise exception 'notices are tenant-wide, role-gated, addressed to a user and queued';
+  end if;
+  -- Words only: the parameters are the item kind and the window, nothing else, and carry no name or identifier.
+  if exists (select 1 from corvis_control.email_outbox o where o.category = 'service_account_expiry' and (
+        (select array_agg(k order by k) from jsonb_object_keys(o.template_params) k) <> array['subject','window']::text[]
+        or o.template_params ->> 'subject' not in ('account','credential') or o.template_params ->> 'window' not in ('warning','final'))) then
+    raise exception 'notice parameters are the kind and the window only';
+  end if;
+  if exists (select 1 from corvis_control.email_outbox o where o.category = 'service_account_expiry' and o.template_params::text ~* '(due|lapsed|rotated|far future|[0-9a-f]{8}-[0-9a-f]{4})') then
+    raise exception 'no account name or identifier in a notice';
+  end if;
+  if (select count(*) from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry' and o.template_params = '{"subject":"credential","window":"warning"}') <> 2
+     or (select count(*) from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry' and o.template_params = '{"subject":"account","window":"warning"}') <> 2
+     or (select count(*) from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry' and o.template_params = '{"subject":"account","window":"final"}') <> 2 then
+    raise exception 'one credential warning, one account warning and one account final notice per admin';
+  end if;
+  -- The notice for a credential that ends with its account is the account's, not a second one.
+  if exists (select 1 from corvis_control.email_outbox o where o.category = 'service_account_expiry' and o.dedupe_key like '%' || acct_soon::text || '%' and o.dedupe_key like 'service_account_expiry:credential:%') then
+    raise exception 'a credential clamped to its account expiry is covered by the account notice';
+  end if;
+
+  -- Once per window: running again, even after the notices were sent, queues nothing.
+  if corvis_control.queue_service_account_expiry_notices() <> 0 then raise exception 'a second sweep queues nothing'; end if;
+  update corvis_control.email_outbox set status = 'sent', sent_at = now() where tenant_id = tenant and category = 'service_account_expiry';
+  if corvis_control.queue_service_account_expiry_notices() <> 0 then raise exception 'a sent notice is never queued again'; end if;
+
+  -- Entering the next window queues the tighter notice once: the account now inside 3 days gets its 'final' notice.
+  set local session_replication_role = replica;
+  update corvis_control.service_account set expires_at = now() + interval '2 days' where service_account_id = acct_soon;
+  update corvis_control.service_account_credential set expires_at = now() + interval '2 days' where service_account_id = acct_soon;
+  set local session_replication_role = origin;
+  if corvis_control.queue_service_account_expiry_notices() <> 2 then raise exception 'the final window queues one notice per admin'; end if;
+  if corvis_control.queue_service_account_expiry_notices() <> 0 then raise exception 'and only once'; end if;
+
+  -- Renewal: extending an account that was announced ends its windows, and its old notices are never repeated. The
+  -- credential it already holds now ends before the account does, so that credential is announced (rotate it).
+  perform corvis_control.extend_service_account(tenant, acct_final, 'oidc', 'idp|c-admin-one', now() + interval '300 days');
+  queued := corvis_control.queue_service_account_expiry_notices();
+  if queued <> 2 then raise exception 'the credential of the renewed account is announced, the account is not (got %)', queued; end if;
+  if exists (select 1 from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry'
+      and o.dedupe_key like 'service_account_expiry:account:' || acct_final::text || '%' and o.status = 'queued') then
+    raise exception 'a renewed account is not announced again';
+  end if;
+  -- Rotating that credential ends it (rotating out) and the new one is far from expiry: nothing more.
+  perform corvis_control.issue_service_account_credential(tenant, acct_final, gen_random_uuid(), 'rotate', 'oidc', 'idp|c-admin-one', pg_temp.digest_of('n-4b'), now() + interval '90 days', 0);
+  if corvis_control.queue_service_account_expiry_notices() <> 0 then raise exception 'a rotated credential and a renewed account are quiet'; end if;
+
+  -- Never for a deactivated account, a revoked or rotating-out credential, an expired account, a suspended tenant, or an
+  -- item outside its window.
+  if exists (select 1 from corvis_control.email_outbox o where o.tenant_id = tenant and o.category = 'service_account_expiry'
+      and (o.dedupe_key like '%' || acct_disabled::text || '%' or o.dedupe_key like '%' || acct_revoked::text || '%' or o.dedupe_key like '%' || acct_rotated::text || '%' or o.dedupe_key like '%' || acct_lapsed::text || '%' or o.dedupe_key like '%' || far::text || '%')) then
+    raise exception 'no notice for a deactivated, revoked, rotated, lapsed or distant item';
+  end if;
+  -- An account that was announced and is then deactivated is not announced for a later window.
+  set local session_replication_role = replica;
+  update corvis_control.service_account set expires_at = now() + interval '1 day' where service_account_id = cred_soon;
+  update corvis_control.service_account_credential set expires_at = now() + interval '12 hours' where service_account_id = cred_soon;
+  set local session_replication_role = origin;
+  perform corvis_control.disable_service_account(tenant, cred_soon, 'oidc', 'idp|c-admin-one', 'Retired after the first notice');
+  if corvis_control.queue_service_account_expiry_notices() <> 0 then raise exception 'a deactivated account is never announced again'; end if;
+
+  -- The category is mandatory: no preference row can name it, so no admin can opt out of it.
+  select recipient_user_id into first_user from corvis_control.email_outbox where tenant_id = tenant and category = 'service_account_expiry' limit 1;
+  if first_user is null then raise exception 'a recipient exists'; end if;
+  begin
+    insert into corvis_control.notification_preference (tenant_id, user_id, category, enabled, delivery) values (tenant, first_user, 'service_account_expiry', false, 'immediate');
+    raise exception 'a mandatory notice cannot be switched off';
+  exception when check_violation then null;
+  end;
+end $$;
+
+-- 14. Entitlement self-service (migration 096): an Organization Admin grants and revokes read access for a service account
+-- within the tenant's own data rights, writing the entitlement rows the authorization lookup already reads.
+insert into corvis_identity.fund (global_fund_id, canonical_name)
+values ('f-licensed','Licensed Fund'),('f-hidden-right','Hidden Fund'),('f-lapsed-right','Lapsed Fund'),('f-no-right','Unlicensed Fund'),
+       ('f-conflict','Conflicted Fund'),('f-foreign','Foreign Fund'),('f-unknown','Unowned Fund')
+on conflict do nothing;
+insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
+select 'c0960000-0000-4000-8000-00000000000c', gen_random_uuid(), fund, 'Q2 2026', 1, 'draft', '1', '1'
+from unnest(array['f-licensed','f-hidden-right','f-lapsed-right','f-no-right','f-conflict']) as fund;
+insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
+values ('a0880000-0000-4000-8000-00000000000a', gen_random_uuid(), 'f-foreign', 'Q2 2026', 1, 'draft', '1', '1');
+insert into corvis_source.document (tenant_id,document_id,display_name,media_type,status,created_by)
+values ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000b1','Licensed report.pdf','application/pdf','published','fixture'),
+       ('c0960000-0000-4000-8000-00000000000c','c0960000-0000-4000-8000-0000000000b2','Unlicensed report.pdf','application/pdf','published','fixture'),
+       ('a0880000-0000-4000-8000-00000000000a','c0960000-0000-4000-8000-0000000000b3','Foreign report.pdf','application/pdf','published','fixture');
+insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible,effective_from,effective_to)
+values ('c0960000-0000-4000-8000-00000000000c','fund','f-licensed',true,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-hidden-right',false,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-lapsed-right',true,now()-interval '2 days',now()-interval '1 day'),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-conflict',true,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-conflict',false,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-foreign',true,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','fund','f-unknown',true,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','document','c0960000-0000-4000-8000-0000000000b1',true,now()-interval '1 day',null),
+       ('c0960000-0000-4000-8000-00000000000c','document','c0960000-0000-4000-8000-0000000000b3',true,now()-interval '1 day',null);
+
+do $$
+declare
+  tenant uuid := 'c0960000-0000-4000-8000-00000000000c';
+  workspace uuid := 'c0960000-0000-4000-8000-0000000000c1';
+  account uuid := 'c0960000-0000-4000-8000-0000000000f2';
+  expired uuid := 'c0960000-0000-4000-8000-0000000000f3';
+  person uuid := 'c0960000-0000-4000-8000-0000000000e4';
+  account_user uuid;
+  expired_user uuid;
+  ended integer;
+begin
+  perform corvis_control.create_service_account(tenant, account, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Entitled feed', 'Reads the licensed fund', workspace, 'analyst', now()+interval '200 days', now()+interval '30 days', pg_temp.digest_of('e-1'), 100);
+  perform corvis_control.create_service_account(tenant, expired, gen_random_uuid(), 'oidc', 'idp|c-admin-one', 'Expired feed', 'Expires in the past in this test', workspace, 'viewer', now()+interval '1 hour', now()+interval '30 minutes', pg_temp.digest_of('e-2'), 100);
+  select user_id into account_user from corvis_control.service_account where service_account_id = account;
+  select user_id into expired_user from corvis_control.service_account where service_account_id = expired;
+
+  -- The data-right test is the lookup's: at least one effective right and every effective right client-visible.
+  if not corvis_control.service_account_data_right_effective(tenant,'fund','f-licensed') then raise exception 'a client-visible effective right counts'; end if;
+  if corvis_control.service_account_data_right_effective(tenant,'fund','f-hidden-right') or corvis_control.service_account_data_right_effective(tenant,'fund','f-lapsed-right')
+     or corvis_control.service_account_data_right_effective(tenant,'fund','f-no-right') or corvis_control.service_account_data_right_effective(tenant,'fund','f-conflict')
+     or corvis_control.service_account_data_right_effective('a0880000-0000-4000-8000-00000000000a','fund','f-licensed') then
+    raise exception 'a hidden, lapsed, missing, conflicting or another tenant''s right does not count';
+  end if;
+
+  -- A fund and a document the tenant owns and holds a client-visible right for can be granted, read-only, in the account's workspace.
+  perform corvis_control.grant_service_account_entitlement(tenant, account, 'oidc', 'idp|c-admin-one', 'fund', 'f-licensed', 200);
+  perform corvis_control.grant_service_account_entitlement(tenant, account, 'oidc', 'idp|c-admin-one', 'document', 'c0960000-0000-4000-8000-0000000000b1', 200);
+  if (select count(*) from corvis_control.resource_entitlement e where e.tenant_id = tenant and e.subject_user_id = account_user and e.workspace_id = workspace and e.permission = 'read' and e.valid_until is null and e.valid_from <= now()) <> 2 then
+    raise exception 'two read entitlements in the account workspace, effective now, open-ended (the account''s own expiry bounds them)';
+  end if;
+  if (select count(*) from corvis_control.resource_entitlement e where e.subject_user_id = account_user) <> 2 then raise exception 'nothing else was granted'; end if;
+  -- Granting for a service account touches no person.
+  if exists (select 1 from corvis_control.resource_entitlement e where e.tenant_id = tenant and e.subject_user_id = 'c0960000-0000-4000-8000-0000000000e1') then raise exception 'no person was granted anything'; end if;
+
+  -- Everything the tenant does not hold is refused with the same message: another tenant's fund or document, a resource
+  -- with no right, a hidden or lapsed or conflicting right, an unknown resource, and an unknown type or empty id.
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-no-right',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-hidden-right',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-lapsed-right',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-conflict',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-foreign',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-unknown',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-nonexistent',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b2',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b3',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','not-a-uuid',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','workspace',%L,200)$f$, tenant, account, workspace), 'service account resource type not allowed');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one',null,'f-licensed',200)$f$, tenant, account), 'service account resource type not allowed');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','   ',200)$f$, tenant, account), 'service account resource required');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund',null,200)$f$, tenant, account), 'service account resource required');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund',%L,200)$f$, tenant, account, repeat('x', 513)), 'service account resource required');
+  if (select count(*) from corvis_control.resource_entitlement e where e.subject_user_id = account_user) <> 2 then raise exception 'a refused grant leaves nothing behind'; end if;
+
+  -- Who may act, and on what.
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-analyst','fund','f-licensed',200)$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-revoked','fund','f-licensed',200)$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'service_account','svc|c-robot','fund','f-licensed',200)$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|admin-b','fund','f-licensed',200)$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement('b0880000-0000-4000-8000-00000000000b',%L,'oidc','idp|admin-b','fund','f-licensed',200)$f$, account), 'service account not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed',200)$f$, tenant, person), 'service account not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-analyst','fund','f-licensed')$f$, tenant, account), 'service account requires an active organization admin');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement('b0880000-0000-4000-8000-00000000000b',%L,'oidc','idp|admin-b','fund','f-licensed')$f$, account), 'service account not found');
+
+  -- Already granted, and the per-account bound.
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed',200)$f$, tenant, account), 'service account entitlement already granted');
+  insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible)
+  values ('c0960000-0000-4000-8000-00000000000c','document','c0960000-0000-4000-8000-0000000000b2',true);
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b2',2)$f$, tenant, account), 'service account entitlement limit reached');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b2',0)$f$, tenant, account), 'service account entitlement limit reached');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b2',null)$f$, tenant, account), 'service account entitlement limit reached');
+  perform corvis_control.grant_service_account_entitlement(tenant, account, 'oidc', 'idp|c-admin-one', 'document', 'c0960000-0000-4000-8000-0000000000b2', 3);
+
+  -- An account that is expired or deactivated is granted nothing.
+  set local session_replication_role = replica;
+  update corvis_control.service_account set created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' where service_account_id = expired;
+  set local session_replication_role = origin;
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed',200)$f$, tenant, expired), 'service account is not active');
+
+  -- Revocation ends every entitlement of the account on that resource, never refused for a data-right reason.
+  update corvis_control.data_rights set effective_to = now() where tenant_id = tenant and resource_id = 'f-licensed' and effective_to is null;
+  if corvis_control.service_account_data_right_effective(tenant,'fund','f-licensed') then raise exception 'the right has lapsed'; end if;
+  insert into corvis_control.resource_entitlement (tenant_id,workspace_id,subject_user_id,resource_type,resource_id,permission,valid_from)
+  values (tenant, workspace, account_user, 'fund', 'f-licensed', 'review', now() - interval '1 day');
+  ended := corvis_control.revoke_service_account_entitlement(tenant, account, 'oidc', 'idp|c-admin-one', 'fund', 'f-licensed');
+  if ended <> 2 then raise exception 'the read grant and an operator-granted review permission on the resource are both ended, got %', ended; end if;
+  if exists (select 1 from corvis_control.resource_entitlement e where e.subject_user_id = account_user and e.resource_id = 'f-licensed' and (e.valid_until is null or e.valid_until > now())) then
+    raise exception 'nothing on that resource is effective any more';
+  end if;
+  if (select count(*) from corvis_control.resource_entitlement e where e.subject_user_id = account_user and e.resource_id = 'f-licensed') <> 2 then raise exception 'ended rows are kept for review, not deleted'; end if;
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed')$f$, tenant, account), 'service account entitlement not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-never-granted')$f$, tenant, account), 'service account entitlement not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','workspace','f-licensed')$f$, tenant, account), 'service account resource type not allowed');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','')$f$, tenant, account), 'service account resource required');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,gen_random_uuid(),'oidc','idp|c-admin-one','fund','f-licensed')$f$, tenant), 'service account not found');
+  -- With the right gone the grant is refused again; once the right is back, a regrant reopens the ended row.
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed',200)$f$, tenant, account), 'service account resource outside organization data rights');
+  insert into corvis_control.data_rights (tenant_id,resource_type,resource_id,client_visible,effective_from)
+  values (tenant,'fund','f-licensed',true,now());
+  perform corvis_control.grant_service_account_entitlement(tenant, account, 'oidc', 'idp|c-admin-one', 'fund', 'f-licensed', 200);
+  if not exists (select 1 from corvis_control.resource_entitlement e where e.subject_user_id = account_user and e.resource_id = 'f-licensed' and e.permission = 'read' and e.valid_until is null) then raise exception 'a regrant reopens the read entitlement'; end if;
+
+  -- Deactivating the account ends its entitlements too (088), so a revoke afterwards finds nothing.
+  perform corvis_control.disable_service_account(tenant, account, 'oidc', 'idp|c-admin-one', 'Retired');
+  perform pg_temp.expect_error(format($f$select corvis_control.revoke_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','document','c0960000-0000-4000-8000-0000000000b1')$f$, tenant, account), 'service account entitlement not found');
+  perform pg_temp.expect_error(format($f$select corvis_control.grant_service_account_entitlement(%L,%L,'oidc','idp|c-admin-one','fund','f-licensed',200)$f$, tenant, account), 'service account is not active');
+  -- An expired (not deactivated) account can still have its access removed.
+  insert into corvis_control.resource_entitlement (tenant_id,workspace_id,subject_user_id,resource_type,resource_id,permission,valid_from)
+  values (tenant, workspace, expired_user, 'document', 'c0960000-0000-4000-8000-0000000000b1', 'read', now() - interval '1 day');
+  if corvis_control.revoke_service_account_entitlement(tenant, expired, 'oidc', 'idp|c-admin-one', 'document', 'c0960000-0000-4000-8000-0000000000b1') <> 1 then raise exception 'an expired account can still have access removed'; end if;
 end $$;
 
 -- 12. RLS: enabled and forced, no client policy, and a non-owner role without BYPASSRLS reads nothing.

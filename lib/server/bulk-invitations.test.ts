@@ -47,7 +47,7 @@ test("per-row failures return a stable code, never the raw error message", async
 test("a row whose invitation is already pending reports its conflict code, not invitation_failed", async () => {
   const uniqueViolation = Object.assign(new Error("duplicate key"), { code: "23505" });
   const db: PostgresSqlApi = {
-    async query(): Promise<PostgresRow[]> { return [{ display_name: "Primary" }]; },
+    async query(sql: string): Promise<PostgresRow[]> { return sql.includes("email_domain_allowed") ? [{ allowed: true }] : [{ display_name: "Primary" }]; },
     async execute(sql: string): Promise<void> {
       if (/insert into corvis_control\.tenant_invitation/i.test(sql)) throw uniqueViolation;
     },

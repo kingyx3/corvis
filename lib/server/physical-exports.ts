@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID } from "crypto";
 import type { ExportScope } from "../../core/delivery.ts";
 import { assertRedistributionAllowed, AuthorizationError, type ExportManifest, type RequestIdentity } from "../../core/enterprise.ts";
 import { getServerConfig } from "./config.ts";
-import { resolveScorecardExport, SCORECARD_EXPORT_LABEL } from "./performance-scorecard-export.ts";
+import { scorecardScopeLabel } from "../../core/performance-scorecard.ts";
+import { resolveScorecardExport } from "./performance-scorecard-export.ts";
 import { PostgresPositionFinancialStatementRepository } from "./position-financial-statements.ts";
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
 
@@ -139,7 +140,7 @@ export async function createPhysicalExport(
     positionRowCount = rows.length;
     snapshots = await positionFinancialSnapshots(identity, positionScope, store);
   } else if (scorecardScope) {
-    const resolved = await resolveScorecardExport(identity, store);
+    const resolved = await resolveScorecardExport(identity, store, scorecardScope);
     scorecardRowCount = resolved.rowCount;
     snapshots = resolved.snapshots;
   } else {
@@ -173,7 +174,7 @@ export async function createPhysicalExport(
   const generatedAt = new Date().toISOString();
   const scopeLabel = positionScope
     ? `Position financials · ${positionScope.positionFinancials.companyId} · ${positionScope.positionFinancials.periodicity}${positionScope.positionFinancials.portfolioId ? ` · portfolio ${positionScope.positionFinancials.portfolioId}` : ""}`
-    : scorecardScope ? SCORECARD_EXPORT_LABEL
+    : scorecardScope ? scorecardScopeLabel(scorecardScope)
     : snapshotScope ? `Snapshot ${snapshotScope.snapshotId}` : undefined;
   const rowCounts: Record<string, number> = positionScope
     ? { positionFinancials: positionRowCount ?? 0, snapshots: snapshots.length }

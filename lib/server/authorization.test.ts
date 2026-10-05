@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { AuthenticationError, SessionEndedByPolicyError } from "./request-context.ts";
 import { membershipAuthorizationRepository, PostgresMembershipAuthorizationRepository, PostgresSessionRevocationRepository, sessionRevocationRepository } from "./authorization.ts";
 import { PostgresOperationsRepository } from "./platform-repositories.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "./postgres.ts";
@@ -72,7 +73,8 @@ test("authoritative membership and data rights map roles, resources, source acce
     { workspaceId: principal.workspaceId, workspaceDisplayName: "Primary Workspace", roles: ["reviewer", "read_only"] },
     { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: undefined, roles: ["analyst"] },
   ]);
-  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId]);
+  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId, false, null, null],
+    "token binding is not asked for by default and no token claim is sent");
   assert.match(db.lastSql, /t\.display_name as tenant_display_name/);
   assert.match(db.lastSql, /w\.display_name as workspace_display_name/);
   // Entitlement rows are joined only for the requested workspace.
@@ -293,12 +295,60 @@ test("an authorized human session is recorded and checked against the organizati
   assert.deepEqual(db.enforceCalls, [[principal.tenantId, "oidc", principal.subject, principal.sessionId]]);
 });
 
-test("a session the policy ends (idle, too long, or not measurable) is denied exactly like a revoked one", async () => {
-  for (const verdict of ["idle_timeout", "max_session", "untracked_session", "something_new", ""]) {
+test("a session the policy ends by idle time or length is told apart (F7c); one that cannot be measured or answers oddly is denied exactly like a revoked one", async () => {
+  for (const verdict of ["idle_timeout", "max_session"] as const) {
+    const db = new FakeDb(memberRows, verdict);
+    await assert.rejects(new PostgresMembershipAuthorizationRepository(db).resolve(principal), (error: unknown) =>
+      error instanceof SessionEndedByPolicyError && error instanceof AuthenticationError && error.reason === verdict);
+    assert.equal(db.enforceCalls.length, 1, verdict);
+  }
+  for (const verdict of ["untracked_session", "something_new", ""]) {
     const db = new FakeDb(memberRows, verdict);
     assert.equal(await new PostgresMembershipAuthorizationRepository(db).resolve(principal), null, verdict);
     assert.equal(db.enforceCalls.length, 1, verdict);
   }
+});
+
+test("F7e: token binding is requested only for an interactive OIDC request, with the verified token's issuer and audience, and is evaluated in SQL", async () => {
+  const token = { tokenIssuer: "https://idp.acme.com/realms/acme", tokenAudience: "corvis-acme" };
+  const db = new FakeDb(memberRows);
+  assert.ok(await new PostgresMembershipAuthorizationRepository(db).resolve({ ...principal, ...token }, { enforceIdentityBinding: true }));
+  assert.deepEqual(db.lastParameters.slice(5), [true, token.tokenIssuer, token.tokenAudience]);
+  // Only an opt-in tenant record can deny; the comparison is in the one lookup, so a request costs no extra round trip.
+  assert.match(db.lastSql, /from corvis_control\.tenant_identity_provider b[\s\S]*b\.enforce_token_binding[\s\S]*b\.issuer=\$7 and b\.audience=\$8/);
+  // Service identities and SAML sessions have no bearer token: the flag stays off for them even when asked for.
+  for (const authMethod of ["service_account", "saml"] as const) {
+    const other = new FakeDb(memberRows);
+    await new PostgresMembershipAuthorizationRepository(other).resolve({ ...principal, authMethod, ...token }, { enforceIdentityBinding: true });
+    assert.equal(other.lastParameters[5], false, authMethod);
+  }
+  // Background re-authorization does not ask for it.
+  const background = new FakeDb(memberRows);
+  await new PostgresMembershipAuthorizationRepository(background).resolve({ ...principal, ...token }, { applySessionPolicy: false });
+  assert.equal(background.lastParameters[5], false);
+});
+
+test("F7e: a request the tenant's binding denies is refused like any other, before the session is recorded, and is observable without naming the person", async (t) => {
+  const lines: Array<Record<string, unknown>> = [];
+  t.mock.method(console, "info", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+  t.mock.method(console, "warn", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+  for (const flag of [true, "true"]) {
+    const denied = new FakeDb(memberRows.map((row) => ({ ...row, identity_binding_denied: flag })));
+    assert.equal(await new PostgresMembershipAuthorizationRepository(denied).resolve({ ...principal, tokenIssuer: "https://other.example", tokenAudience: "x" }, { enforceIdentityBinding: true }), null);
+    assert.equal(denied.enforceCalls.length, 0, "a refused token never records or extends a session");
+  }
+  const noClaims = new FakeDb(memberRows.map((row) => ({ ...row, identity_binding_denied: true })));
+  assert.equal(await new PostgresMembershipAuthorizationRepository(noClaims).resolve(principal, { enforceIdentityBinding: true }), null);
+  const events = lines.filter((line) => line.event === "auth.identity_binding_denied");
+  assert.deepEqual(events.map((line) => line.hasTokenClaims), [true, true, false]);
+  assert.equal(lines.filter((line) => line.metric === "auth.identity_binding_denied").length, 3);
+  for (const line of lines) {
+    const serialized = JSON.stringify(line);
+    assert.ok(!serialized.includes(principal.subject) && !serialized.includes(principal.sessionId) && !serialized.includes("other.example"), "telemetry never names the person, the session or the token's issuer");
+  }
+  // Not denied (the default, a tenant with no record or with binding off): the request proceeds exactly as before.
+  const allowed = new FakeDb(memberRows.map((row) => ({ ...row, identity_binding_denied: false })));
+  assert.ok(await new PostgresMembershipAuthorizationRepository(allowed).resolve(principal, { enforceIdentityBinding: true }));
 });
 
 test("a policy check that answers nothing at all fails closed", async () => {
@@ -321,7 +371,7 @@ test("service identities and background re-authorization are not subject to the 
   const background = new FakeDb(memberRows, "idle_timeout");
   assert.ok(await new PostgresMembershipAuthorizationRepository(background).resolve(principal, { applySessionPolicy: false }));
   assert.equal(background.enforceCalls.length, 0, "a queued export neither ends nor extends the person's session");
-  assert.equal(await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve(principal, { applySessionPolicy: true }), null);
+  await assert.rejects(new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, "idle_timeout")).resolve(principal, { applySessionPolicy: true }), SessionEndedByPolicyError);
 });
 
 test("a demo identity never resolves an authoritative context, and the shared repositories are created once per process", async () => {
@@ -349,7 +399,7 @@ test("session policy enforcement is observable: latency for every check, a denia
 
   lines.length = 0;
   for (const verdict of ["idle_timeout", "max_session", "untracked_session", ""]) {
-    await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, verdict)).resolve(principal);
+    await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, verdict)).resolve(principal).catch((error: unknown) => { if (!(error instanceof SessionEndedByPolicyError)) throw error; });
   }
   await new PostgresMembershipAuthorizationRepository(new FakeDb(memberRows, null)).resolve(principal);
   const reason = (line: Record<string, unknown>) => line.reason ?? line.outcome;
