@@ -190,7 +190,7 @@ export const TENANT_EXPORT_MIN_REASON_LENGTH = 3;
 export const TENANT_EXPORT_MAX_TEXT_LENGTH = 1000;
 // Free text may hold line breaks and tabs; every other C0 control, DEL and the line/paragraph separators is refused
 // (Postgres text cannot hold NUL, and the rest only breaks layouts and CSV/log consumers).
-const FREE_TEXT_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029]/;
+export const FREE_TEXT_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029]/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

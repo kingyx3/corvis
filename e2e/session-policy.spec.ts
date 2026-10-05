@@ -28,9 +28,11 @@ test.beforeAll(async ({ request }) => {
   await request.post("/api/v1/access/session-policy/sign-out", { headers, data: {} });
 });
 
-async function isolate(page: Page, roles = "admin"): Promise<{ tenant: string; headers: Record<string, string> }> {
-  const tenant = `e2e-${randomUUID()}`;
-  const headers = { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": roles };
+// A tenant whose id starts with "sso-ready-" illustrates an organization whose provider is recorded with token binding on, with
+// MFA enforcement and a sign-out endpoint recorded (adapters/demo/session-policy-store.ts); any other illustrates none of that.
+async function isolate(page: Page, roles = "admin", options: { ssoReady?: boolean; extraHeaders?: Record<string, string> } = {}): Promise<{ tenant: string; headers: Record<string, string> }> {
+  const tenant = `${options.ssoReady ? "sso-ready-" : "e2e-"}${randomUUID()}`;
+  const headers = { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": roles, ...options.extraHeaders };
   await page.route(/\/api\/v1\/access\/session-policy/, (route) => route.continue({ headers: { ...route.request().headers(), ...headers } }));
   return { tenant, headers };
 }
@@ -215,4 +217,121 @@ test("F7d: the page says how long session records are kept, and the explanation 
   await expect(note).toContainText("never data from your work");
   const violations = await blockingViolations(page, "section[aria-labelledby='session-policy-heading']");
   expect(violations, describe(violations)).toEqual([]);
+});
+
+test("F7a: the identity view says what Corvis knows about MFA and never more, and flags a reported second factor @matrix", async ({ page }) => {
+  // Nothing recorded and nothing reported by the token: both rows say so rather than guessing.
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const provider = page.getByRole("region", { name: "Identity provider and provisioning" });
+  await expect(provider.getByRole("row", { name: /MFA enforced by your identity provider/ })).toContainText("Not reported by your identity provider");
+  await expect(provider.getByRole("row", { name: /^This session/ })).toContainText("Not reported by your identity provider");
+  await expect(provider.getByRole("row", { name: /sign-out endpoint/ })).toContainText("Not recorded");
+  await expect(provider).not.toContainText("MFA used");
+  // Recorded by Corvis support, and the administrator's own token reported more than one factor.
+  const reported = await page.context().newPage();
+  await isolate(reported, "admin", { ssoReady: true, extraHeaders: { "x-corvis-demo-mfa": "true" } });
+  await reported.goto("/access-self-service");
+  const known = reported.getByRole("region", { name: "Identity provider and provisioning" });
+  await expect(known.getByRole("row", { name: /MFA enforced by your identity provider/ })).toContainText("Yes (as recorded by Corvis support)");
+  await expect(known.getByRole("row", { name: /^This session/ })).toContainText("MFA used (reported by your identity provider)");
+  await expect(known.getByRole("row", { name: /sign-out endpoint/ })).toContainText("https://login.meridian.example/demo/logout");
+  await expect(reported.getByRole("region", { name: "Members and their sessions" }).getByRole("row", { name: /morgan\.lee@meridian\.example/ })).toContainText("(1 with MFA reported)");
+  const violations = await blockingViolations(reported, "section[aria-labelledby='session-policy-heading']");
+  expect(violations, describe(violations)).toEqual([]);
+  // A single factor is said to be a single factor, not "not reported".
+  const single = await page.context().newPage();
+  await isolate(single, "admin", { extraHeaders: { "x-corvis-demo-mfa": "false" } });
+  await single.goto("/access-self-service");
+  await expect(single.getByRole("region", { name: "Identity provider and provisioning" }).getByRole("row", { name: /^This session/ })).toContainText("without a second factor");
+});
+
+test("F7a: Require SSO is unavailable until the provider is recorded with token binding, then can be turned on and off with a reason @matrix", async ({ page }) => {
+  // Not recorded with binding: the control is off, says why, and the server refuses it however the page is driven.
+  const { headers } = await isolate(page);
+  await page.goto("/access-self-service");
+  let form = section(page);
+  const sso = form.getByRole("checkbox", { name: "Only accept sign-ins through our identity provider" });
+  await expect(sso).toBeDisabled();
+  await expect(form.getByText(/Not available yet: it needs your identity provider to be recorded/)).toBeVisible();
+  const base = { idleTimeoutMinutes: 30, maxSessionMinutes: 480, expectedVersion: 0, reason: "Require SSO for everyone" };
+  const refused = await page.request.put("/api/v1/access/session-policy", { headers, data: { ...base, requireSso: true } });
+  expect(refused.status()).toBe(409);
+  expect(((await refused.json()) as { error: string }).error).toBe("sso_requires_token_binding");
+  const malformed = await page.request.put("/api/v1/access/session-policy", { headers, data: { ...base, requireSso: "yes" } });
+  expect(malformed.status()).toBe(400);
+  expect(((await malformed.json()) as { error: string }).error).toBe("invalid_require_sso");
+
+  // Recorded with binding: it can be turned on.
+  const ready = await page.context().newPage();
+  const readyIsolation = await isolate(ready, "admin", { ssoReady: true });
+  await ready.goto("/access-self-service");
+  form = section(ready);
+  const readySso = form.getByRole("checkbox", { name: "Only accept sign-ins through our identity provider" });
+  await expect(readySso).toBeEnabled();
+  await expect(form.getByText(/SAML and gateway-asserted sign-ins are refused/)).toBeVisible();
+  await expect(form.getByText(/Now: not required\./)).toBeVisible();
+  await readySso.check();
+  const save = form.getByRole("button", { name: "Save session policy" });
+  await expect(save).toBeDisabled();
+  await form.getByLabel("Why are you changing this?").fill("Require our identity provider for every sign-in");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(ready.getByRole("status").filter({ hasText: "Session policy saved." })).toBeVisible();
+  await expect(form.getByText(/Now: required\./)).toBeVisible();
+  await ready.reload();
+  await expect(form.getByRole("checkbox", { name: "Only accept sign-ins through our identity provider" })).toBeChecked();
+  // A change that does not state it keeps it (never silently weakened).
+  const kept = await ready.request.put("/api/v1/access/session-policy", { headers: readyIsolation.headers, data: { idleTimeoutMinutes: 60, maxSessionMinutes: 480, expectedVersion: 1, reason: "Shorter idle limit" } });
+  expect(kept.status()).toBe(200);
+  expect(((await kept.json()) as { data: { requireSso: boolean } }).data.requireSso).toBe(true);
+  await ready.reload();
+  // Turning it off is always possible.
+  await form.getByRole("checkbox", { name: "Only accept sign-ins through our identity provider" }).uncheck();
+  await form.getByLabel("Why are you changing this?").fill("Moving to a new identity provider");
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  await expect(form.getByText(/Now: not required\./)).toBeVisible();
+  const violations = await blockingViolations(ready, "section[aria-labelledby='session-policy-heading']");
+  expect(violations, describe(violations)).toEqual([]);
+});
+
+test("F7a: a Require SSO change refused because this session would itself be refused is explained, not shown as a code @matrix", async ({ page }) => {
+  await isolate(page, "admin", { ssoReady: true });
+  await page.goto("/access-self-service");
+  const form = section(page);
+  await page.route(/\/api\/v1\/access\/session-policy$/, (route) => route.request().method() === "PUT"
+    ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "sso_would_lock_out_current_session", correlationId: "e2e-409" }) })
+    : route.fallback());
+  await form.getByRole("checkbox", { name: "Only accept sign-ins through our identity provider" }).check();
+  await form.getByLabel("Why are you changing this?").fill("Require our identity provider for every sign-in");
+  await form.getByRole("button", { name: "Save session policy" }).click();
+  const alert = form.getByRole("alert").filter({ hasText: "Something went wrong" });
+  await expect(alert).toContainText("You cannot turn this on from this session");
+  await expect(alert).not.toContainText("sso_would_lock_out_current_session");
+});
+
+test("F7c: after signing someone out, the page says their identity provider session must be ended there when an endpoint is recorded @matrix", async ({ page }) => {
+  await isolate(page, "admin", { ssoReady: true });
+  await page.goto("/access-self-service");
+  const people = page.getByRole("region", { name: "Members and their sessions" });
+  await people.getByRole("row", { name: /alex\.chen@meridian\.example/ }).getByRole("button", { name: /Sign out alex\.chen@meridian\.example everywhere/ }).click();
+  await people.getByLabel(/Why are you signing alex\.chen@meridian\.example out/).fill("Lost laptop");
+  await people.getByRole("button", { name: "Confirm sign out everywhere" }).click();
+  const status = page.getByRole("status").filter({ hasText: "alex.chen@meridian.example was signed out of every session" });
+  await expect(status).toContainText("Their session at your identity provider has not been ended: Corvis cannot do that.");
+  await expect(status).toContainText("https://login.meridian.example/demo/logout");
+});
+
+test("F7c: the back-channel logout endpoint is POST-only and refuses anything but a valid signed logout token without saying why", async ({ request }) => {
+  const url = "/api/v1/auth/oidc/backchannel-logout";
+  expect((await request.get(url)).status()).toBe(405);
+  for (const form of [{ other: "field" }, { logout_token: "not-a-token" }, { logout_token: "aaa.bbb.ccc" }] as Array<Record<string, string>>) {
+    const response = await request.post(url, { form });
+    expect(response.status()).toBe(400);
+    expect(response.headers()["cache-control"]).toContain("no-store");
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("invalid_request");
+    expect(JSON.stringify(body)).not.toContain("signature");
+  }
+  expect((await request.post(url, { data: { logout_token: "x.y.z" } })).status()).toBe(400);
 });

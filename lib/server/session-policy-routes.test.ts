@@ -116,13 +116,28 @@ test("changing the policy writes the change, its audit event and the security no
   assert.equal(response.status, 200);
   const { data } = await response.json() as { data: { version: number; idleTimeoutMinutes: number } };
   assert.deepEqual([data.version, data.idleTimeoutMinutes], [1, 30]);
-  assert.deepEqual(queries.find((query) => /set_tenant_session_policy/.test(query.sql))!.parameters, [TENANT, "oidc", "idp|alex", 30, 480, 0]);
+  assert.deepEqual(queries.find((query) => /set_tenant_session_policy/.test(query.sql))!.parameters, [TENANT, "oidc", "idp|alex", 30, 480, 0, null, null, null]);
   const audit = queries.find(isAudit)!;
   for (const expected of ["access.session_policy.updated", "session_policy", "idp|alex", TENANT]) assert.ok(audit.parameters.includes(expected), expected);
   assert.ok(JSON.stringify(audit.parameters).includes("Align with our policy"), "the reason is audited");
   const notice = queries.find((query) => /insert into corvis_control\.email_outbox/.test(query.sql))!;
   assert.ok(notice, "Organization Admins are sent a security notice");
   assert.ok(notice.parameters.includes("security_policy"));
+});
+
+test("F7a: Require SSO is stated as a boolean or left out; anything else is refused before any SQL runs, and a valid value reaches SQL with the actor's verified claims", async () => {
+  for (const requireSso of ["true", 1, null, {}]) {
+    seed();
+    const response = await policyPut(request("/access/session-policy", { method: "PUT", body: { ...update, requireSso } }));
+    assert.equal(response.status, 400, JSON.stringify(requireSso));
+    assert.equal(await errorOf(response), "invalid_require_sso");
+    assert.equal(queries.length, 0);
+  }
+  seed((query) => (/set_tenant_session_policy/.test(query.sql) ? [{ ...policyRow, require_sso: true }] : []));
+  const response = await policyPut(request("/access/session-policy", { method: "PUT", body: { ...update, requireSso: true } }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { data: { requireSso: boolean } }).data.requireSso, true);
+  assert.deepEqual(queries.find((query) => /set_tenant_session_policy/.test(query.sql))!.parameters.slice(6), [true, null, null]);
 });
 
 test("a change that changes nothing is neither audited nor announced", async () => {
@@ -158,7 +173,7 @@ test("signing a user out records who, why and how many sessions ended, and notif
   seed((query) => (/sign_out_user_everywhere/.test(query.sql) ? [{ revoked: 2 }] : /identity_subject s/.test(query.sql) ? [{ label: "morgan.lee@example.test" }] : []));
   const response = await signOutPost(request("/access/session-policy/sign-out", { method: "POST", body: { userId: USER.toUpperCase(), reason: "Left the firm", tenantId: "someone-else" } }));
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json() as { data: unknown }).data, { userId: USER, label: "morgan.lee@example.test", revokedSessions: 2 });
+  assert.deepEqual((await response.json() as { data: unknown }).data, { userId: USER, label: "morgan.lee@example.test", revokedSessions: 2, idpEndSessionEndpoint: null });
   assert.deepEqual(queries.find((query) => /sign_out_user_everywhere/.test(query.sql))!.parameters, [TENANT, "oidc", "idp|alex", USER, "Left the firm"]);
   const audit = queries.find(isAudit)!;
   for (const expected of ["access.session.signed_out_everywhere", "user_sessions", USER]) assert.ok(audit.parameters.includes(expected), expected);
@@ -182,6 +197,8 @@ test("refusals from the database surface as their stable codes, not as a 500", a
     ["session policy version conflict", 409, "session_policy_version_conflict"],
     ["session sign-out cannot target current user", 409, "cannot_sign_out_current_user"],
     ["session sign-out target not found", 404, "member_not_found"],
+    ["session policy sso needs token binding", 409, "sso_requires_token_binding"],
+    ["session policy sso would lock out current session", 409, "sso_would_lock_out_current_session"],
   ];
   const failing = (message: string) => createSessionPolicyService({
     demo: true,

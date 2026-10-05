@@ -11,6 +11,7 @@ class FakeDb implements PostgresSqlApi {
   lastExecuteSql = "";
   lastExecuteParameters: PostgresPrimitive[] = [];
   enforceCalls: PostgresPrimitive[][] = [];
+  enforceSql = "";
   private readonly rows: PostgresRow[];
   private readonly verdict: string | null;
 
@@ -23,6 +24,7 @@ class FakeDb implements PostgresSqlApi {
   async query(sql: string, parameters: PostgresPrimitive[] = []) {
     if (sql.includes("enforce_session_policy")) {
       this.enforceCalls.push(parameters);
+      this.enforceSql = sql;
       return this.verdict === null ? [] : [{ verdict: this.verdict }];
     }
     this.lastSql = sql;
@@ -73,7 +75,7 @@ test("authoritative membership and data rights map roles, resources, source acce
     { workspaceId: principal.workspaceId, workspaceDisplayName: "Primary Workspace", roles: ["reviewer", "read_only"] },
     { workspaceId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", workspaceDisplayName: undefined, roles: ["analyst"] },
   ]);
-  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId, false, null, null],
+  assert.deepEqual(db.lastParameters, [principal.tenantId, principal.subject, principal.authMethod, principal.sessionId, principal.workspaceId, false, null, null, false],
     "token binding is not asked for by default and no token claim is sent");
   assert.match(db.lastSql, /t\.display_name as tenant_display_name/);
   assert.match(db.lastSql, /w\.display_name as workspace_display_name/);
@@ -292,7 +294,18 @@ test("an authorized human session is recorded and checked against the organizati
   const db = new FakeDb(memberRows);
   const result = await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
   assert.deepEqual(result?.roles, ["analyst"]);
-  assert.deepEqual(db.enforceCalls, [[principal.tenantId, "oidc", principal.subject, principal.sessionId]]);
+  assert.deepEqual(db.enforceCalls, [[principal.tenantId, "oidc", principal.subject, principal.sessionId, null]], "no amr reported: nothing is claimed");
+});
+
+test("F7a: what the verified token reported about MFA is handed to the session record, and only that", async () => {
+  for (const mfaUsed of [true, false]) {
+    const db = new FakeDb(memberRows);
+    await new PostgresMembershipAuthorizationRepository(db).resolve({ ...principal, mfaUsed });
+    assert.deepEqual(db.enforceCalls, [[principal.tenantId, "oidc", principal.subject, principal.sessionId, mfaUsed]]);
+  }
+  const db = new FakeDb(memberRows);
+  await new PostgresMembershipAuthorizationRepository(db).resolve(principal);
+  assert.match(db.enforceSql, /enforce_session_policy\(\$1::uuid,\$2,\$3,\$4,\$5::boolean\)/);
 });
 
 test("a session the policy ends by idle time or length is told apart (F7c); one that cannot be measured or answers oddly is denied exactly like a revoked one", async () => {
@@ -313,7 +326,7 @@ test("F7e: token binding is requested only for an interactive OIDC request, with
   const token = { tokenIssuer: "https://idp.acme.com/realms/acme", tokenAudience: "corvis-acme" };
   const db = new FakeDb(memberRows);
   assert.ok(await new PostgresMembershipAuthorizationRepository(db).resolve({ ...principal, ...token }, { enforceIdentityBinding: true }));
-  assert.deepEqual(db.lastParameters.slice(5), [true, token.tokenIssuer, token.tokenAudience]);
+  assert.deepEqual(db.lastParameters.slice(5), [true, token.tokenIssuer, token.tokenAudience, true]);
   // Only an opt-in tenant record can deny; the comparison is in the one lookup, so a request costs no extra round trip.
   assert.match(db.lastSql, /from corvis_control\.tenant_identity_provider b[\s\S]*b\.enforce_token_binding[\s\S]*b\.issuer=\$7 and b\.audience=\$8/);
   // Service identities and SAML sessions have no bearer token: the flag stays off for them even when asked for.
@@ -326,6 +339,49 @@ test("F7e: token binding is requested only for an interactive OIDC request, with
   const background = new FakeDb(memberRows);
   await new PostgresMembershipAuthorizationRepository(background).resolve({ ...principal, ...token }, { applySessionPolicy: false });
   assert.equal(background.lastParameters[5], false);
+});
+
+test("F7a: Require SSO is evaluated in SQL for every interactive human request, OIDC or SAML, and never for service identities or background work", async () => {
+  const token = { tokenIssuer: "https://idp.acme.com/realms/acme", tokenAudience: "corvis-acme" };
+  for (const authMethod of ["oidc", "saml"] as const) {
+    const db = new FakeDb(memberRows);
+    await new PostgresMembershipAuthorizationRepository(db).resolve({ ...principal, authMethod, ...token }, { enforceIdentityBinding: true });
+    assert.equal(db.lastParameters[8], true, `${authMethod} sign-ins are checked against Require SSO`);
+    assert.match(db.lastSql, /\$9::boolean and not corvis_control\.sso_session_allowed\(s\.tenant_id, s\.auth_method, \$7, \$8\)\) as sso_denied/);
+  }
+  // A gateway assertion carries no verified token: the SQL predicate receives nulls and fails closed.
+  const assertion = new FakeDb(memberRows);
+  await new PostgresMembershipAuthorizationRepository(assertion).resolve(principal, { enforceIdentityBinding: true });
+  assert.deepEqual(assertion.lastParameters.slice(6), [null, null, true]);
+  // Not asked for (background re-authorization, tests of other paths): off.
+  const background = new FakeDb(memberRows);
+  await new PostgresMembershipAuthorizationRepository(background).resolve({ ...principal, ...token }, { applySessionPolicy: false });
+  assert.equal(background.lastParameters[8], false);
+  // The SQL function itself exempts service identities (they are governed by grants).
+  const service = new FakeDb(memberRows);
+  await new PostgresMembershipAuthorizationRepository(service).resolve({ ...principal, authMethod: "service_account" }, { enforceIdentityBinding: true });
+  assert.equal(service.lastParameters[8], true, "asked for, and the SQL predicate answers true for a service identity");
+});
+
+test("F7a: a sign-in Require SSO refuses gets the same generic denial, before the session is recorded, and is observable without naming the person", async (t) => {
+  const lines: Array<Record<string, unknown>> = [];
+  t.mock.method(console, "info", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+  t.mock.method(console, "warn", (line: unknown) => { lines.push(JSON.parse(String(line)) as Record<string, unknown>); });
+  for (const flag of [true, "true"]) {
+    const denied = new FakeDb(memberRows.map((row) => ({ ...row, sso_denied: flag })));
+    assert.equal(await new PostgresMembershipAuthorizationRepository(denied).resolve({ ...principal, authMethod: "saml" }, { enforceIdentityBinding: true }), null);
+    assert.equal(denied.enforceCalls.length, 0, "a refused sign-in never records or extends a session");
+  }
+  const withToken = new FakeDb(memberRows.map((row) => ({ ...row, sso_denied: true })));
+  assert.equal(await new PostgresMembershipAuthorizationRepository(withToken).resolve({ ...principal, tokenIssuer: "https://other.example", tokenAudience: "x" }, { enforceIdentityBinding: true }), null);
+  assert.deepEqual(lines.filter((line) => line.event === "auth.sso_required_denied").map((line) => [line.authMethod, line.hasTokenClaims]), [["saml", false], ["saml", false], ["oidc", true]]);
+  assert.equal(lines.filter((line) => line.metric === "auth.sso_required_denied").length, 3);
+  for (const line of lines) {
+    const serialized = JSON.stringify(line);
+    assert.ok(!serialized.includes(principal.subject) && !serialized.includes(principal.sessionId) && !serialized.includes("other.example"), "telemetry never names the person, the session or the token's issuer");
+  }
+  const allowed = new FakeDb(memberRows.map((row) => ({ ...row, sso_denied: false })));
+  assert.ok(await new PostgresMembershipAuthorizationRepository(allowed).resolve(principal, { enforceIdentityBinding: true }));
 });
 
 test("F7e: a request the tenant's binding denies is refused like any other, before the session is recorded, and is observable without naming the person", async (t) => {

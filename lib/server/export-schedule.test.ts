@@ -625,7 +625,7 @@ test("the default dependencies resolve the owner from the real membership query 
   assert.deepEqual(exported[0]!.entitlements.fundIds, ["fund-1"]);
   assert.equal(exported[0]!.entitlements.redistributionAllowed, true);
   const resolution = db.calls.find((call) => call.sql.includes("from corvis_control.identity_subject s"))!;
-  assert.deepEqual(resolution.parameters, [TENANT, "idp|owner", "oidc", scheduleSessionId(SCHEDULE), WORKSPACE, false, null, null]);
+  assert.deepEqual(resolution.parameters, [TENANT, "idp|owner", "oidc", scheduleSessionId(SCHEDULE), WORKSPACE, false, null, null, false]);
 
   // A Parquet schedule with the flag not configured is refused as format_unavailable, through the default gate.
   const parquet = new FakeDb((sql) => {

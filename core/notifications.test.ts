@@ -21,7 +21,7 @@ test("categories are visible only to the audience that can receive them", () => 
   const visible = (viewer: typeof analyst) => NOTIFICATION_CATEGORIES.filter((category) => categoryVisibleTo(category, viewer)).map((category) => category.id);
   assert.deepEqual(visible(analyst), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "role_changed"]);
   assert.deepEqual(visible(workspaceAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "role_changed"]);
-  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "support_access", "security_policy", "tenant_export_approval", "tenant_export_outcome", "service_account_expiry", "role_changed"]);
+  assert.deepEqual(visible(orgAdmin), ["export_ready", "pinned_fund_published", "data_issue_update", "review_discussion", "export_schedule_failed", "source_attention", "support_access", "security_policy", "tenant_export_approval", "tenant_export_outcome", "deletion_request_approval", "service_account_expiry", "role_changed"]);
 });
 
 test("security notices are mandatory and ignore any stored preference", () => {
@@ -129,6 +129,25 @@ test("the service account expiry notice is mandatory, for Organization Admins on
   }
 });
 
+test("the deletion approval notice is mandatory, Organization-Admin-only, and says only that an approval is needed (F10e)", () => {
+  const approval = NOTIFICATION_CATEGORIES.find((item) => item.id === "deletion_request_approval")!;
+  assert.equal(approval.mandatory, true, "the four-eyes control needs the other admins to be told");
+  assert.equal(approval.audience, "organization_admins");
+  const code = (viewer: typeof analyst) => {
+    try { normalizePreferenceChanges({ categories: [{ id: "deletion_request_approval", enabled: false, delivery: "immediate" }] }, viewer); return "ok"; } catch (error) { return (error as NotificationPreferenceError).code; }
+  };
+  assert.equal(code(orgAdmin), "category_not_configurable");
+  assert.equal(code(analyst), "unknown_category");
+  const email = renderEmail("deletion_request_approval", { event: "approval_needed", reason: "SECRET REASON", dataClasses: ["financials"], requestedBy: "morgan@x.test" }, { appUrl, workspaceName: "Growth Workspace" });
+  assert.match(email.subject, /data deletion needs your approval/);
+  assert.match(email.text, /A different Organization Admin must approve it before Corvis acts on it/);
+  assert.match(email.text, /in Growth Workspace/);
+  assert.match(email.text, /https:\/\/app\.corvis\.test\/access-self-service/);
+  assert.match(email.text, /cannot be turned off/);
+  assert.doesNotMatch(email.text + email.html, /SECRET REASON|financials|morgan/, "no reason, scope or person");
+  assert.doesNotMatch(renderEmail("deletion_request_approval", {}, { appUrl }).text, / in \./, "no workspace name, no dangling phrase");
+});
+
 test("every email links back to the app, and optional ones link to notification settings", () => {
   const cases: Array<[OutboxCategory, Record<string, unknown>, boolean]> = [
     ["export_ready", { format: "csv" }, true],
@@ -141,6 +160,7 @@ test("every email links back to the app, and optional ones link to notification 
     ["security_policy", { event: "user_signed_out" }, false],
     ["tenant_export_approval", {}, false],
     ["tenant_export_outcome", { event: "ready" }, true],
+    ["deletion_request_approval", { event: "approval_needed" }, false],
     ["service_account_expiry", { subject: "account", window: "warning" }, false],
     ["role_changed", { roleName: "viewer" }, false],
     ["digest", { items: [{ category: "export_ready", count: 2 }] }, true],

@@ -243,6 +243,8 @@ async function directOidcIdentity(request: Request, config: ServerConfig): Promi
       sessionId: verified.sessionId,
       tokenIssuer: verified.issuer,
       tokenAudience: verified.audience,
+      ...(verified.mfaUsed !== undefined ? { mfaUsed: verified.mfaUsed } : {}),
+      ...(verified.authContext !== undefined ? { authContext: verified.authContext } : {}),
       ...(verified.email ? { authenticatedEmail: verified.email } : {}),
       ...(verified.emailVerified !== undefined ? { emailVerified: verified.emailVerified } : {}),
     };
@@ -280,6 +282,8 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
       },
       authMethod: "demo",
       sessionId: request.headers.get("x-corvis-session-id") || `demo-${correlation}`,
+      // Demo mode only: lets a demo caller illustrate what a provider's `amr` would show (true: a second factor, false: one factor).
+      ...(["true", "false"].includes(request.headers.get("x-corvis-demo-mfa") ?? "") ? { mfaUsed: request.headers.get("x-corvis-demo-mfa") === "true" } : {}),
       tenantDisplayName: request.headers.get("x-corvis-demo-tenant-name") || "Meridian Capital Partners",
       workspaceDisplayName: request.headers.get("x-corvis-demo-workspace-name") || "Primary Workspace",
     };

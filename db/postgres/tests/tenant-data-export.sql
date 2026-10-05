@@ -725,7 +725,7 @@ begin
     and c.relname in ('tenant_export_request','tenant_export_request_event','tenant_export_download_grant')
     and not (c.relrowsecurity and c.relforcerowsecurity);
   if offenders is not null then raise exception 'RLS must be enabled and forced on %', offenders; end if;
-  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and tablename in ('tenant_export_request','tenant_export_request_event','tenant_export_download_grant')) then
+  if exists (select 1 from pg_policies where schemaname = 'corvis_control' and policyname <> 'corvis_runtime_service' and tablename in ('tenant_export_request','tenant_export_request_event','tenant_export_download_grant')) then
     raise exception 'tenant export tables are server-managed: no client policy may exist';
   end if;
 end $$;

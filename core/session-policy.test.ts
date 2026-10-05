@@ -10,6 +10,8 @@ import {
   SESSION_MAX_LENGTH_BOUNDS,
   sessionLimitLabel,
   SessionPolicyValidationError,
+  ssoCanBeRequired,
+  type IdentityProviderView,
 } from "./session-policy.ts";
 
 const valid = { idleTimeoutMinutes: 30, maxSessionMinutes: 480, expectedVersion: 0, reason: "Align with our security policy" };
@@ -85,4 +87,23 @@ test("session records are kept longer than any session a limit can measure, what
   for (const tooShort of [0, -5, SESSION_MAX_LENGTH_BOUNDS.max, SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES - 1]) {
     assert.equal(sessionActivityRetentionMinutes(tooShort), SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES, `${tooShort} is raised to the floor`);
   }
+});
+
+test("Require SSO is a boolean or left out (keep); nothing else is accepted", () => {
+  assert.equal("requireSso" in parseSessionPolicyUpdate(valid), false, "left out stays left out, so the stored value is kept");
+  assert.equal(parseSessionPolicyUpdate({ ...valid, requireSso: true }).requireSso, true);
+  assert.equal(parseSessionPolicyUpdate({ ...valid, requireSso: false }).requireSso, false);
+  for (const bad of ["true", 1, 0, null, {}, []]) assert.equal(code(() => parseSessionPolicyUpdate({ ...valid, requireSso: bad })), "invalid_require_sso", JSON.stringify(bad));
+});
+
+test("Require SSO is offered only for an organization's own active OIDC provider with token binding", () => {
+  const provider: IdentityProviderView = {
+    protocol: "oidc", issuer: "https://idp.acme.com", audience: "corvis", source: "tenant", status: "active", tokenBindingEnforced: true, idpEnforcesMfa: null, endSessionEndpoint: null,
+  };
+  assert.equal(ssoCanBeRequired(provider), true);
+  assert.equal(ssoCanBeRequired({ ...provider, source: "global", status: null, tokenBindingEnforced: false }), false, "the shared provider cannot satisfy it");
+  assert.equal(ssoCanBeRequired({ ...provider, protocol: "saml" }), false);
+  assert.equal(ssoCanBeRequired({ ...provider, status: "pending" }), false);
+  assert.equal(ssoCanBeRequired({ ...provider, status: "disabled" }), false);
+  assert.equal(ssoCanBeRequired({ ...provider, tokenBindingEnforced: false }), false);
 });

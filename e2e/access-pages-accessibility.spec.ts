@@ -27,12 +27,30 @@ const invitation = {
   createdAt: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-08T00:00:00.000Z",
 };
 
+const deletionBase = {
+  decidedAt: null, executedAt: null, legalHoldBlocks: false, reason: null, requestedBy: null, approvalExpiresAt: null, decidedBy: null, decisionNote: null,
+  requestedByMe: false, actions: { canApprove: false, canReject: false, canCancel: false },
+};
+// Deletion requests (F10e): a colleague's waiting for this admin, one this admin made, one Corvis operations carried out, one blocked by a hold.
+const deletionRequests = [
+  {
+    ...deletionBase, requestId: "d1", origin: "customer", status: "pending_approval", dataClasses: ["financials"], scopeLabel: "Financial data", requestedAt: "2026-10-01T10:00:00.000Z",
+    reason: "Contract ends this quarter", requestedBy: "morgan.lee@example.test", approvalExpiresAt: "2026-10-08T10:00:00.000Z", actions: { canApprove: true, canReject: true, canCancel: false },
+  },
+  {
+    ...deletionBase, requestId: "d2", origin: "customer", status: "pending_approval", dataClasses: ["audit"], scopeLabel: "Audit records", requestedAt: "2026-09-30T10:00:00.000Z",
+    reason: "Closing an old workspace", requestedBy: "admin@example.test", approvalExpiresAt: "2026-10-07T10:00:00.000Z", requestedByMe: true, actions: { canApprove: false, canReject: false, canCancel: true },
+  },
+  { ...deletionBase, requestId: "d3", origin: "corvis", status: "blocked", dataClasses: ["source_documents"], scopeLabel: "3 documents within source documents", requestedAt: "2026-09-10T10:00:00.000Z", legalHoldBlocks: true },
+  { ...deletionBase, requestId: "d4", origin: "corvis", status: "completed", dataClasses: ["published_data"], scopeLabel: "Published data", requestedAt: "2026-08-01T10:00:00.000Z", decidedAt: "2026-08-02T10:00:00.000Z", executedAt: "2026-08-02T12:00:00.000Z" },
+];
 const retention = {
   policies: [
     { dataClass: "financials", label: "Financial data", retentionDays: 2555, retentionLabel: "7 years", deleteOnTermination: false, legalHold: false, policyVersion: "2026-01", effectiveFrom: "2026-01-01T00:00:00.000Z", inEffect: true },
     { dataClass: "source_documents", label: "Source documents", retentionDays: null, retentionLabel: "No fixed retention period", deleteOnTermination: true, legalHold: true, policyVersion: "2026-03", effectiveFrom: "2026-03-01T00:00:00.000Z", inEffect: true },
   ],
   legalHolds: [{ holdId: "h1", dataClass: "source_documents", label: "Source documents", scopeLabel: "3 documents within source documents", matterReference: "MATTER-2026-014", placedAt: "2026-04-12T09:30:00.000Z" }],
+  deletionRequests,
 };
 const exportBase = {
   reason: "Records review at contract end", requestedAt: "2026-09-30T10:00:00.000Z", approvalExpiresAt: "2026-10-07T10:00:00.000Z", decidedBy: null, decidedAt: null,
@@ -62,16 +80,19 @@ const dataExports = [
 ];
 
 const sessionPolicy = {
-  policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
+  policy: { idleTimeoutMinutes: 30, maxSessionMinutes: 480, requireSso: true, version: 2, updatedAt: "2026-10-01T09:00:00.000Z", updatedBy: "admin@example.test" },
   bounds: { idleTimeoutMinutes: { min: 15, max: 480 }, maxSessionMinutes: { min: 60, max: 10080 } },
   // F7e/F7b: the organization's own recorded provider (token binding on) and its verified email domains are part of the scan.
-  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true },
+  identityProvider: { protocol: "oidc", issuer: "https://login.example.test", audience: "corvis-example", source: "tenant", status: "active", tokenBindingEnforced: true,
+    // F7a/F7c: what Corvis support recorded about the provider's MFA enforcement and sign-out endpoint are part of the scan too.
+    idpEnforcesMfa: true, endSessionEndpoint: "https://login.example.test/logout" },
+  currentSession: { mfaUsed: true, authContext: "urn:example:mfa" },
   verifiedDomains: [{ domain: "example.test", verificationMethod: "dns_txt", verifiedAt: "2026-08-12T09:00:00.000Z" }, { domain: "example.org", verificationMethod: "operator_attested", verifiedAt: "2026-09-01T09:00:00.000Z" }],
   scim: { configured: true, enabled: true, authMethod: "oidc", defaultWorkspaceName: "Primary Workspace", defaultRole: "viewer", activeUsers: 12, updatedAt: "2026-08-14T09:00:00.000Z" },
   signInMethods: [{ authMethod: "oidc", users: 7 }, { authMethod: "saml", users: 2 }],
   members: [
-    { userId: "00000000-0000-4000-8000-0000000000d1", label: "admin@example.test", isCurrentUser: true, activeSessions: 1 },
-    { userId: "00000000-0000-4000-8000-0000000000d2", label: "morgan.lee@example.test", isCurrentUser: false, activeSessions: 2 },
+    { userId: "00000000-0000-4000-8000-0000000000d1", label: "admin@example.test", isCurrentUser: true, activeSessions: 1, sessionsWithMfa: 1 },
+    { userId: "00000000-0000-4000-8000-0000000000d2", label: "morgan.lee@example.test", isCurrentUser: false, activeSessions: 2, sessionsWithMfa: 0 },
   ],
 };
 
@@ -163,6 +184,13 @@ for (const colorScheme of ["light", "dark"] as const) {
     // The retention and full-export sections (F10) are part of the scan, with every request state and an open manifest.
     await expect(page.getByRole("region", { name: "Retention periods" })).toContainText("Financial data");
     await expect(page.getByRole("region", { name: "Legal holds", exact: true })).toContainText("MATTER-2026-014");
+    // F10e: the deletion requests, a colleague's approval confirmation and the request form are part of the scan.
+    const deletions = page.getByRole("list", { name: "Deletion requests" });
+    await expect(deletions.getByRole("listitem").filter({ hasText: "3 documents within source documents" })).toContainText("Blocked by a legal hold");
+    await expect(deletions.getByRole("listitem").filter({ hasText: "Published data" })).toContainText("deleted");
+    await expect(deletions.getByRole("listitem").filter({ hasText: "Financial data" })).toContainText("by morgan.lee@example.test");
+    await deletions.getByRole("listitem").filter({ hasText: "Financial data" }).getByRole("button", { name: "Approve deletion" }).click();
+    await expect(page.getByRole("group", { name: "Confirm approval" })).toContainText("Deletion cannot be undone");
     // The sign-in and session policy section (F7): identity provider, session limits and the sign-out confirmation are part of the scan.
     const provider = page.getByRole("region", { name: "Identity provider and provisioning" });
     await expect(provider).toContainText("https://login.example.test");

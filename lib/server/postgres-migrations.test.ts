@@ -82,7 +82,11 @@ test("every tenant-bearing Postgres table enables RLS, including server-only den
     assert.equal(/\btrue\b/.test(expression ?? ""), false, `${policy} on ${table} must not be allow-all`);
   }
 
-  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(sql), false, "client-facing migrations must not add broad mutation policies");
+  // The one mutation-capable policy is the least-privilege runtime role's (migration 100, #227): TO corvis_runtime only and
+  // true only while no end-user subject is bound to the session, so no client-facing role can ever mutate through it.
+  const mutationPolicies = [...sql.matchAll(/create\s+policy[^;]+?\sfor\s+(?:insert|update|delete|all)\b[^;]*/g)].map((match) => match[0]);
+  assert.equal(mutationPolicies.length, 1, "client-facing migrations must not add broad mutation policies");
+  assert.match(mutationPolicies[0] ?? "", /\bfor all to corvis_runtime using \(auth\.uid\(\) is null\) with check \(auth\.uid\(\) is null\)/);
 });
 
 test("RLS helpers bind access to active, effective auth.uid membership", async () => {

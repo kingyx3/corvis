@@ -70,6 +70,14 @@ export type RequestIdentity = {
   tokenIssuer?: string;
   tokenAudience?: string;
   /**
+   * What the verified token reported about how the person signed in (F7a, #334): whether its `amr` showed more than one factor
+   * (true) or only one (false); undefined when the provider sent no `amr`, or Corvis did not verify a token itself. Evidence
+   * as reported by the identity provider, never a claim Corvis makes.
+   */
+  mfaUsed?: boolean;
+  /** The verified token's `acr` claim (bounded) when the provider sent one. */
+  authContext?: string;
+  /**
    * Whether the subject holds the raw `tenant_admin` database role (as
    * opposed to `accountadmin`, a workspace-scoped administrator): both map to
    * the `admin` application Role above, but only a tenant_admin may grant

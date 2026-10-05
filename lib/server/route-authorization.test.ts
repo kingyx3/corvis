@@ -130,6 +130,8 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
   ["access/data-exports/[exportId]/download/route.ts", { GET: ADMIN }],
   ["access/data-exports/[exportId]/route.ts", { GET: ADMIN, POST: ADMIN }],
   ["access/data-exports/route.ts", { GET: ADMIN, POST: ADMIN }],
+  ["access/deletion-requests/[requestId]/route.ts", { POST: ADMIN }],
+  ["access/deletion-requests/route.ts", { POST: ADMIN }],
   ["access/invitations/[invitationId]/route.ts", { POST: ADMIN }],
   ["access/invitations/bulk/route.ts", { POST: ADMIN }],
   ["access/invitations/route.ts", { GET: ADMIN, POST: ADMIN }],
@@ -241,6 +243,7 @@ const MATRIX: Array<[string, Record<string, Permission | null>]> = [
 // Routes with their own (non-session) authentication, exercised in dedicated tests below.
 const OWN_AUTHENTICATION = new Set([
   "auth/service-account/token/route.ts", // Corvis-issued service-account credential exchange
+  "auth/oidc/backchannel-logout/route.ts", // called by the identity provider; authenticated only by the signed logout token
   "health/route.ts", // public
   "health/ready/route.ts", // public readiness probe
   "invitations/accept/route.ts", // authenticated but pre-membership
@@ -353,6 +356,8 @@ test("a role that holds the permission is let past authorization (denials above 
     { file: "access/data-exports/route.ts", method: "GET", role: "admin", expect: 200 },
     { file: "access/data-exports/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_reason" },
     { file: "access/data-exports/[exportId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },
+    { file: "access/deletion-requests/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_data_classes" },
+    { file: "access/deletion-requests/[requestId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },
     { file: "access/service-accounts/route.ts", method: "GET", role: "admin", expect: 200 },
     { file: "access/service-accounts/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_name" },
     { file: "access/service-accounts/[serviceAccountId]/route.ts", method: "POST", role: "admin", body: {}, expect: 400, error: "invalid_action" },

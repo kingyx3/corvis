@@ -11,12 +11,11 @@ updates:
       development-dependencies:
         dependency-type: development
     ignore:
-      # Held back until the toolchain supports them: typescript-eslint rejects
-      # TypeScript 7, eslint-config-next's React/import plugins do not support
-      # ESLint 10, and @types/node must track the Node 24 runtime.
+      # TypeScript 7 is held back: typescript-eslint (8.71.0, peer
+      # typescript <6.1.0) throws at load on TS 7, which ships no JS compiler API.
+      # @types/node majors beyond 26 stay held until the Node runtime moves.
+      # ESLint majors are no longer ignored (on 10 since #216).
       - dependency-name: typescript
-        update-types: ["version-update:semver-major"]
-      - dependency-name: eslint
         update-types: ["version-update:semver-major"]
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
