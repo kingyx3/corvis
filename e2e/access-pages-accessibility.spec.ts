@@ -186,6 +186,8 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 
   test(`service-account forms and the one-time credential panel pass axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    // One axe scan per panel across every form of the section: well over the default 45 s on a slow WebKit runner.
+    test.slow();
     await page.emulateMedia({ colorScheme });
     await mockAccessApi(page, "loaded");
     await page.goto("/access-self-service");

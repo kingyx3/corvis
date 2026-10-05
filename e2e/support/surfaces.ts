@@ -195,6 +195,8 @@ export const surfaces: Surface[] = [
     await goToReauthorizeConsent(page);
     await page.getByRole("link", { name: /^approve access$/i }).click();
     await page.getByRole("button", { name: /^done$/i }).waitFor();
+    // The dialog overlay fades in over the card behind it; scanning mid-fade measures the card's contrast through a half-opaque overlay (seen on WebKit).
+    await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
   } },
   { id: "research", label: "Ask Corvis", nav: /^ask corvis$/i, heading: /^ask corvis$/i },
   // The Help menu (F9): a dialog opened from the top bar, reachable on every viewport.
