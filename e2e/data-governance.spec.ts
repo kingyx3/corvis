@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { accessibilityBudget } from "./quality-budgets.ts";
 
-// Data retention view and full tenant data export (F10, #266), on the Organization Admin's access self-service page.
+// Data retention view, deletion requests (F10e, #325) and full tenant data export (F10, #266), on the Organization Admin's access self-service page.
 // The demo composition serves /api/v1/access/retention and /api/v1/access/data-exports from in-memory stores seeded per
 // demo tenant, so every test pins its own tenant: an approval or rejection in one test can never leak into another.
 // The rest of this page (invitations, support access, audit) needs a database and is not part of the demo composition,
@@ -28,6 +28,8 @@ test.beforeAll(async ({ request }) => {
   const headers = { "x-corvis-demo-tenant": "e2e-warmup", "x-corvis-demo-roles": "admin" };
   const missing = "00000000-0000-4000-8000-000000000000";
   await request.get("/api/v1/access/retention", { headers });
+  await request.post("/api/v1/access/deletion-requests", { headers, data: {} });
+  await request.post(`/api/v1/access/deletion-requests/${missing}`, { headers, data: { action: "approve" } });
   await request.get("/api/v1/access/data-exports", { headers });
   await request.get(`/api/v1/access/data-exports/${missing}`, { headers });
   await request.post(`/api/v1/access/data-exports/${missing}`, { headers, data: { action: "approve" } });
@@ -38,7 +40,7 @@ test.beforeAll(async ({ request }) => {
 async function isolate(page: Page): Promise<{ tenant: string; headers: Record<string, string> }> {
   const tenant = `e2e-${randomUUID()}`;
   const headers = { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": "admin" };
-  await page.route(/\/api\/v1\/access\/(retention|data-exports)/, (route) => route.continue({ headers: { ...route.request().headers(), ...headers } }));
+  await page.route(/\/api\/v1\/access\/(retention|data-exports|deletion-requests)/, (route) => route.continue({ headers: { ...route.request().headers(), ...headers } }));
   return { tenant, headers };
 }
 
@@ -59,12 +61,146 @@ test("Organization Admins see retention periods and the legal holds that apply, 
   const holds = page.getByRole("region", { name: "Legal holds", exact: true });
   await expect(holds).toContainText("MATTER-2026-014");
   await expect(holds).toContainText("3 documents within source documents");
-  // Read-only: the section offers no control that could change a period or a hold.
-  const section = page.locator("section[aria-labelledby='retention-heading']");
-  await expect(section.getByRole("button")).toHaveCount(0);
-  await expect(section.getByRole("textbox")).toHaveCount(0);
+  // Read-only: nothing in the periods or the holds can change a period or a hold.
+  await expect(periods.getByRole("button")).toHaveCount(0);
+  await expect(holds.getByRole("button")).toHaveCount(0);
+  await expect(periods.getByRole("textbox")).toHaveCount(0);
+  await expect(holds.getByRole("textbox")).toHaveCount(0);
   const violations = await blockingViolations(page, "section[aria-labelledby='retention-heading']");
   expect(violations, describe(violations)).toEqual([]);
+});
+
+const deletionCard = (page: Page, text: string | RegExp): Locator => page.getByRole("list", { name: "Deletion requests" }).getByRole("listitem").filter({ hasText: text });
+const COLLEAGUE_DELETION = /Contract ends this quarter/;
+
+test("Organization Admins see the deletion requests that affect their organization with status and dates, and never an operator's detail (F10e) @matrix", async ({ page }) => {
+  const { headers } = await isolate(page);
+  await page.goto("/access-self-service");
+  await expect(page.getByRole("heading", { name: "Deletion requests", level: 3 })).toBeVisible();
+  const list = page.getByRole("list", { name: "Deletion requests" });
+  await expect(list.getByRole("listitem")).toHaveCount(3);
+
+  // A deletion Corvis operations carried out: what it covered, where it stands and when, and nothing about who ran it.
+  const done = deletionCard(page, "Audit records");
+  await expect(done).toContainText("Completed");
+  await expect(done).toContainText("by Corvis operations");
+  await expect(done).toContainText(/approved \d{1,2} [A-Z][a-z]{2} \d{4} · deleted \d{1,2} [A-Z][a-z]{2} \d{4}/);
+  await expect(done).toContainText("The data was deleted");
+  // One a legal hold blocks.
+  const held = deletionCard(page, "Source documents");
+  await expect(held).toContainText("Blocked");
+  await expect(held).toContainText("On hold");
+  await expect(held).toContainText("Blocked by a legal hold. Nothing was deleted");
+  // Read-only: Corvis operations' requests offer no control at all.
+  await expect(done.getByRole("button")).toHaveCount(0);
+  await expect(held.getByRole("button")).toHaveCount(0);
+
+  // The API returns the same, with every operator-only field empty.
+  const view = (await (await page.request.get("/api/v1/access/retention", { headers })).json()) as { data: { deletionRequests: Array<Record<string, unknown>> } };
+  const operator = view.data.deletionRequests.filter((item) => item.origin === "corvis");
+  expect(operator).toHaveLength(2);
+  for (const item of operator) {
+    expect([item.reason, item.requestedBy, item.approvalExpiresAt, item.decidedBy, item.decisionNote]).toEqual([null, null, null, null, null]);
+    expect(Object.keys(item).sort()).toEqual(["actions", "approvalExpiresAt", "dataClasses", "decidedAt", "decidedBy", "decisionNote", "executedAt", "legalHoldBlocks", "origin", "reason", "requestedAt", "requestedBy", "requestedByMe", "requestId", "scopeLabel", "status"].sort());
+  }
+  const violations = await blockingViolations(page, "[data-testid='deletion-requests']");
+  expect(violations, describe(violations)).toEqual([]);
+});
+
+test("a colleague's deletion request needs this admin's explicit approval, and approving hands it to Corvis operations (F10e)", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const waiting = deletionCard(page, COLLEAGUE_DELETION);
+  await expect(waiting).toContainText("Pending");
+  await expect(waiting).toContainText("by morgan.lee@meridian.example");
+  await expect(waiting).toContainText("A different Organization Admin (not the requester) must approve");
+  await waiting.getByRole("button", { name: "Approve deletion" }).click();
+  await expect(waiting.getByRole("group", { name: "Confirm approval" })).toContainText("Deletion cannot be undone");
+  const violations = await blockingViolations(page, "[data-testid='deletion-requests']");
+  expect(violations, describe(violations)).toEqual([]);
+  await waiting.getByRole("button", { name: "Confirm deletion approval" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Approved. Corvis operations will carry out the deletion." })).toBeVisible();
+  await expect(waiting).toContainText("Approved");
+  await expect(waiting).toContainText("Approved by demo-user. Corvis operations will carry out the deletion.");
+  await expect(waiting.getByRole("button")).toHaveCount(0);
+});
+
+test("a colleague's deletion request can be rejected with a note, which is kept (F10e)", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  const waiting = deletionCard(page, COLLEAGUE_DELETION);
+  await waiting.getByRole("button", { name: "Reject deletion" }).click();
+  await expect(waiting.getByRole("button", { name: "Confirm deletion rejection" })).toBeDisabled();
+  await waiting.getByRole("textbox", { name: "Why are you rejecting it?" }).fill("We still need the published data.");
+  await waiting.getByRole("button", { name: "Confirm deletion rejection" }).click();
+  await expect(waiting).toContainText("Rejected by demo-user: We still need the published data. Nothing was deleted.");
+});
+
+test("an admin's own deletion request: data under a legal hold cannot be chosen, the requester can never approve it, a different admin can, and it can be withdrawn (F10e)", async ({ page }) => {
+  const { headers } = await isolate(page);
+  await page.goto("/access-self-service");
+  // Resolve the colleague's request so this admin can make their own.
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("button", { name: "Reject deletion" }).click();
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("textbox", { name: "Why are you rejecting it?" }).fill("Superseded by our own request.");
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("button", { name: "Confirm deletion rejection" }).click();
+  await expect(deletionCard(page, COLLEAGUE_DELETION)).toContainText("Rejected");
+
+  // Blocked by a legal hold: the class is shown but cannot be chosen, and the API refuses it too.
+  const held = page.getByRole("checkbox", { name: /Source documents/ });
+  await expect(held).toBeDisabled();
+  await expect(page.getByText("under a legal hold, so it cannot be deleted")).toBeVisible();
+  const blocked = await page.request.post("/api/v1/access/deletion-requests", { headers, data: { dataClasses: ["financials", "source_documents"], reason: "Contract ended" } });
+  expect(blocked.status()).toBe(409);
+  expect(((await blocked.json()) as { error: string }).error).toBe("deletion_blocked_by_legal_hold");
+  const unknown = await page.request.post("/api/v1/access/deletion-requests", { headers, data: { dataClasses: ["not_a_class"], reason: "Contract ended" } });
+  expect(unknown.status()).toBe(400);
+
+  const submit = page.getByRole("button", { name: "Request deletion" });
+  await expect(submit).toBeDisabled();
+  await page.getByRole("checkbox", { name: "Financial data" }).check();
+  await page.getByRole("textbox", { name: "Why do you need this deletion?" }).fill("ab");
+  await expect(submit).toBeDisabled();
+  await page.getByRole("textbox", { name: "Why do you need this deletion?" }).fill("The contract has ended");
+  await submit.click();
+  const mine = deletionCard(page, "The contract has ended");
+  await expect(mine).toContainText("by you");
+  await expect(mine).toContainText("Pending");
+  await expect(mine).toContainText("You cannot approve your own request");
+  await expect(mine.getByRole("button", { name: "Approve deletion" })).toHaveCount(0);
+  await expect(mine.getByRole("button", { name: "Reject deletion" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Request deletion" })).toBeDisabled();
+  await expect(page.getByText("Another deletion request is waiting for approval")).toBeVisible();
+
+  const id = ((await (await page.request.get("/api/v1/access/retention", { headers })).json()) as { data: { deletionRequests: Array<{ requestId: string; reason: string | null }> } }).data.deletionRequests.find((item) => item.reason === "The contract has ended")!.requestId;
+  const self = await page.request.post(`/api/v1/access/deletion-requests/${id}`, { headers, data: { action: "approve" } });
+  expect(self.status()).toBe(403);
+  expect(((await self.json()) as { error: string }).error).toBe("deletion_independent_approver_required");
+  const selfReject = await page.request.post(`/api/v1/access/deletion-requests/${id}`, { headers, data: { action: "reject", note: "No" } });
+  expect(selfReject.status()).toBe(403);
+
+  // A different admin can; the requester then sees it approved.
+  const approved = await page.request.post(`/api/v1/access/deletion-requests/${id}`, { headers: { ...headers, "x-corvis-demo-subject": "second-admin" }, data: { action: "approve" } });
+  expect(approved.status()).toBe(200);
+  await page.reload();
+  await expect(deletionCard(page, "The contract has ended")).toContainText("Approved by second-admin. Corvis operations will carry out the deletion.");
+});
+
+test("the requester can withdraw a pending deletion request, and a withdrawn request frees the slot (F10e)", async ({ page }) => {
+  await isolate(page);
+  await page.goto("/access-self-service");
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("button", { name: "Reject deletion" }).click();
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("textbox", { name: "Why are you rejecting it?" }).fill("Not needed.");
+  await deletionCard(page, COLLEAGUE_DELETION).getByRole("button", { name: "Confirm deletion rejection" }).click();
+  await page.getByRole("checkbox", { name: "Audit records" }).check();
+  await page.getByRole("textbox", { name: "Why do you need this deletion?" }).fill("Closing an old workspace");
+  await page.getByRole("button", { name: "Request deletion" }).click();
+  const mine = deletionCard(page, "Closing an old workspace");
+  await mine.getByRole("button", { name: "Withdraw deletion request" }).click();
+  await expect(mine).toContainText("Withdrawn");
+  await expect(mine).toContainText("Withdrawn by the requester before anyone approved it. Nothing was deleted.");
+  await page.getByRole("checkbox", { name: "Audit records" }).check();
+  await page.getByRole("textbox", { name: "Why do you need this deletion?" }).fill("A narrower request");
+  await expect(page.getByRole("button", { name: "Request deletion" })).toBeEnabled();
 });
 
 test("a second Organization Admin approves a colleague's request, the export is built, and its checksummed archive downloads once per link @matrix", async ({ page }) => {
@@ -250,8 +386,8 @@ test("only Organization Admins get these routes: another role is refused, and no
   const deniedList = await page.request.get("/api/v1/access/data-exports", { headers: { "x-corvis-demo-tenant": tenant, "x-corvis-demo-roles": "read_only" } });
   expect(deniedList.status()).toBe(403);
 
-  await page.unroute(/\/api\/v1\/access\/(retention|data-exports)/);
-  await page.route(/\/api\/v1\/access\/(retention|data-exports)/, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily_unavailable" }) }));
+  await page.unroute(/\/api\/v1\/access\/(retention|data-exports|deletion-requests)/);
+  await page.route(/\/api\/v1\/access\/(retention|data-exports|deletion-requests)/, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily_unavailable" }) }));
   await page.goto("/access-self-service");
   await expect(page.getByRole("alert").filter({ hasText: "Retention settings are unavailable" })).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "Export requests are unavailable" })).toBeVisible();
