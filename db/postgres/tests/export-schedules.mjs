@@ -354,6 +354,29 @@ try {
     assert.equal((await refused(tx, () => scorecardRepository.load(ownerReads, { fundId: 'fund-y' }))).name, 'AuthorizationError', 'a fund filter never grants a fund');
     assert.equal((await scorecardRepository.load(ownerReads, { snapshotIds: [scoreSnap.x] })).facts.length, 1, 'an export pins the snapshots it was requested for');
 
+    // A newer forecast must not displace an actual before the domain excludes non-results.
+    // Separate holdings into the same company retain their own cost and source path.
+    await tx.execute('savepoint scorecard_review');
+    await tx.execute('set local session_replication_role = replica');
+    const reviewIds = ['f4000000-0000-4000-8000-000000000101','f4000000-0000-4000-8000-000000000102','f4000000-0000-4000-8000-000000000103'];
+    const holdings = ['f4000000-0000-4000-8000-000000000201','f4000000-0000-4000-8000-000000000202'];
+    await tx.execute(`insert into corvis_identity.company (global_company_id,canonical_name) values ('score-company','Score Company')`);
+    for (const holding of holdings) await tx.execute(`insert into corvis_facts.holding (tenant_id,holding_id,fund_id,target_type,target_company_id,review_state) values ($1,$2,'fund-x','company','score-company','approved')`, [tenantId,holding]);
+    for (let i=0;i<reviewIds.length;i++) {
+      const projected = i===0;
+      const value = JSON.stringify({number: String(projected ? 999 : i*10), currency:'USD', semanticDimensions:{subjectLevel:projected?'fund':'holding',asOfDate:projected?'2026-12-31':'2026-06-30',actuality:projected?'forecast':'actual',scenarioType:'reported'}});
+      await tx.execute(`insert into corvis_consolidated.consolidated_fact (tenant_id,consolidated_fact_id,fund_id,subject_type,subject_id,metric_code,economic_period,value,source_observation_ids,consolidation_rule_version)
+        values ($1,$2,'fund-x',$3,$4,$5,'Q2 2026',$6::jsonb,array['f4000000-0000-4000-8000-0000000000a7']::uuid[],'v1')`, [tenantId,reviewIds[i],projected?'fund':'holding',projected?'fund-x':holdings[i-1],projected?'nav':'cost',value]);
+    }
+    await publishScorecardSnapshot(scoreSnap.x,'fund-x',2,120,[scoreFact.x,...reviewIds]);
+    await tx.execute('set local session_replication_role = origin');
+    const reviewed = await scorecardRepository.load(ownerReads,{fundId:'fund-x'});
+    assert.equal(reviewed.facts.find((fact)=>fact.metricCode==='nav').valueNumber,'100.0000000000','the SQL retains the actual NAV despite a newer forecast');
+    const costs = reviewed.facts.filter((fact)=>fact.metricCode==='cost');
+    assert.deepEqual(costs.map((fact)=>fact.holdingId).sort(),holdings,'each economic holding keeps its own figure');
+    assert.equal(new Set(costs.map((fact)=>fact.investmentKey)).size,2,'global company identity cannot collapse economic positions');
+    await tx.execute('rollback to savepoint scorecard_review');
+
     // Saving, then a publication run for an all-funds scorecard: Y (the newest publication of the three) is not the owner's, so the
     // run is the owner's own newest publication, X; Y is consumed afterwards without a run and without telling the owner.
     const scorecardOnPublish = await backend.create(identity(owner), command('sc-all', { scope: { performanceScorecard: true }, trigger: 'on_publish', label: 'Scorecard on publish' }), tx);

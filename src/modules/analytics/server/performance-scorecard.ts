@@ -1,5 +1,5 @@
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { nameOrder, SCORECARD_METRIC_CODES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../domain/performance-scorecard.ts";
+import { nameOrder, SCORECARD_METRIC_CODES, SCORECARD_NON_RESULT_VALUES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../domain/performance-scorecard.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/api/pagination.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
@@ -105,6 +105,9 @@ function mapFact(row: PostgresRow): ScorecardFact {
  * then the optional snapshot pin and period filter, whose placeholders the caller supplies.
  */
 function factChain(snapshotPredicate: string, periodPredicate: string): string {
+  // Closed, code-owned vocabulary shared with the domain filter, never request data. Filter before
+  // ranking so a later projection cannot displace an older actual and become "Not reported" in the UI.
+  const nonResults = SCORECARD_NON_RESULT_VALUES.map((value) => `'${value}'`).join(",");
   return `with current_snapshot as (
         select distinct on (s.snapshot_id)
                s.tenant_id,s.snapshot_id,s.version,s.fund_id,s.report_period,s.status,s.fact_ids,s.published_at
@@ -133,6 +136,8 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
           on f.tenant_id=cs.tenant_id and f.consolidated_fact_id=published.fact_id and f.fund_id=cs.fund_id
         where cs.status='published'
           and f.metric_code in (select jsonb_array_elements_text($4::jsonb))
+          and coalesce(lower(btrim(f.value->'semanticDimensions'->>'actuality')),'') not in (${nonResults})
+          and coalesce(lower(btrim(f.value->'semanticDimensions'->>'scenarioType')),'') not in (${nonResults})
           and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
           and nullif(btrim(f.value->'semanticDimensions'->>'breakdownCategory'),'') is null
           and nullif(btrim(f.value->'semanticDimensions'->>'lookthroughSource'),'') is null${periodPredicate}
@@ -147,7 +152,7 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
                case when sf.subject_level='holding' then sf.subject_id end as holding_id,
                co.global_company_id as company_id,
                coalesce(co.canonical_name,tf.canonical_name) as investment_name,
-               case when sf.level='investment' then coalesce(co.global_company_id,h.target_fund_id,sf.subject_id) end as investment_key
+               case when sf.level='investment' then sf.subject_level || ':' || sf.subject_id end as investment_key
         from scoped_fact sf
         left join corvis_serving.holdings h
           on sf.subject_level='holding' and h.tenant_id=$1::uuid and h.holding_id::text=sf.subject_id and h.fund_id=sf.fund_id
