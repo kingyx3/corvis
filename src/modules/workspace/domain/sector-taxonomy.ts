@@ -3,8 +3,8 @@
  * exposure breakdown uses (issue #175 A4). It is Corvis-owned reference data,
  * deliberately coarse (eleven economic sectors) so a Review Analyst can
  * classify any portfolio company without a licensed industry scheme. The
- * migration that seeds `corvis_semantic.sector` and `corvis_semantic.sector_alias`
- * (db/postgres/migrations/055_sector_taxonomy.sql) must stay identical to
+ * baseline migration that seeds `corvis_semantic.sector` and `corvis_semantic.sector_alias`
+ * (db/postgres/migrations/001_baseline.sql) must stay identical to
  * this file; src/modules/workspace/domain/sector-taxonomy.test.ts enforces that.
  *
  * A new sector or a re-cut of an existing one is a new taxonomy version, never

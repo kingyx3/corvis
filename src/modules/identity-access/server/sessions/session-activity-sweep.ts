@@ -12,7 +12,7 @@ export type SessionActivitySweepOptions = {
 
 /**
  * Housekeeping for `corvis_control.tenant_session_activity` (F7d, #337): removes the records of sessions not seen for the
- * whole retention window, through `corvis_control.purge_tenant_session_activity` (migration 091). The retention is never
+ * whole retention window, through `corvis_control.purge_tenant_session_activity`. The retention is never
  * shorter than the longest session a policy can still be measuring (10,080 minutes plus a day), and the SQL function
  * refuses a shorter one itself, so a session an idle or maximum-length limit is judging is never removed. Revoked
  * sessions are unaffected: `session_revocation` is a separate table that every request consults on its own.

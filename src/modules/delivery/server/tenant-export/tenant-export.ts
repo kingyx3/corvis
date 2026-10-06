@@ -24,7 +24,7 @@ import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../..
 
 /**
  * Full tenant data export (F10, #266), Postgres side. A request, its decisions and its build live in
- * `corvis_control.tenant_export_request` and its history (migration 084). Independence of the approver is enforced in
+ * `corvis_control.tenant_export_request` and its history. Independence of the approver is enforced in
  * the SQL function `decide_tenant_export` and again by CHECK constraints on the table, so nothing here can approve a
  * request on behalf of its requester. The build itself is `tenant-export-worker.ts`.
  */
@@ -126,7 +126,7 @@ function publicManifest(manifest: unknown): TenantExportManifest {
   return copy as TenantExportManifest;
 }
 
-/** What a running build last reported (migration 094), or null when there is nothing usable to show. */
+/** What a running build last reported, or null when there is nothing usable to show. */
 function buildProgress(value: unknown): TenantExportProgress | null {
   const progress = jsonObject(value);
   const counters = ["estimatedBytes", "bytesWritten", "estimatedRows", "rowsWritten", "estimatedDocuments", "documentsWritten", "percent"] as const;
@@ -320,8 +320,8 @@ export class PostgresTenantExportBackend implements TenantExportBackend {
 
   /**
    * Every fund and document the archive holds data for must still be redistributable, and every source document file in it
-   * must still have source-file access granted (F10b). The comparison is made by the database (`tenant_export_scope_changed`,
-   * migration 094) against the scope recorded when the archive was built, so what the archive holds never travels here.
+   * must still have source-file access granted (F10b). The comparison is made by the database (`tenant_export_scope_changed`)
+   * against the scope recorded when the archive was built, so what the archive holds never travels here.
    */
   private async assertRightsStillCover(db: PostgresSqlApi, tenantId: string, requestId: string): Promise<void> {
     const row = (await db.query(`select corvis_control.tenant_export_scope_changed($1::uuid,$2::uuid) as changed`, [tenantId, requestId]))[0];

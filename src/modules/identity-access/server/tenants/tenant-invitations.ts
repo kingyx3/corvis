@@ -10,7 +10,7 @@ import { sqlApplicationErrorOf } from "../../../../platform/database/sql-applica
 export const INVITATION_TTL_DAYS = 7;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const INVITABLE_ROLES: ReadonlySet<string> = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
-// `workspace_admin` was renamed to `accountadmin` in migration 048; older clients, CSVs and API callers may still send it.
+// `workspace_admin` was renamed to `accountadmin`; older clients, CSVs and API callers may still send it.
 export function canonicalInvitationRole(role: string): string { return role === "workspace_admin" ? "accountadmin" : role; }
 
 export type CreateTenantInvitation = {

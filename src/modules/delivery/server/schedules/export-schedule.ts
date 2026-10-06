@@ -28,7 +28,7 @@ import { countMetric, logEvent } from "../../../../platform/observability/teleme
 
 /**
  * Scheduled exports (F4, #260), Postgres side. A schedule only ever writes `corvis_control.export_schedule` and its run
- * history (migration 085); the export itself is requested through `createPhysicalExport` and delivered by the existing
+ * history; the export itself is requested through `createPhysicalExport` and delivered by the existing
  * export worker, never by a second export path. Visibility is a predicate in every query below: a schedule is changed by
  * its owner only and read by its owner and Organization Admins.
  */

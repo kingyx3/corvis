@@ -10,7 +10,7 @@ Confluence remains authoritative for business semantics. The primary references 
 - AI Extraction Skill — Quarterly Fund Reports
 - Reference — AI Agent Execution Contract & Structured Output Schema
 
-The Postgres implementation is in `db/postgres/migrations/032_economic_entity_identity_lifecycle.sql` and the reviewed-candidate materialization path is extended by migrations `036`–`038`.
+The Postgres implementation is in `db/postgres/migrations/001_baseline.sql`, including the reviewed-candidate materialization path.
 
 ## Core rule
 

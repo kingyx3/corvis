@@ -1,5 +1,5 @@
--- Acceptance for migration 098 (F10e, #325): an Organization Admin's own deletion request, with dual approval, on top of
--- the operator deletion lifecycle (migrations 003, 017, 066).
+-- Acceptance (F10e, #325): an Organization Admin's own deletion request, with dual approval, on top of
+-- the operator deletion lifecycle.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * only an active human Organization Admin can request or decide; a scope is 1 to 20 distinct data classes that each

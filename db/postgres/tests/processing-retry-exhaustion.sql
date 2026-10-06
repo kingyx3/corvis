@@ -1,4 +1,4 @@
--- Acceptance for migration 043: processing retries reach dead_letter,
+-- Acceptance: processing retries reach dead_letter,
 -- superseded/exhausted claims never raise, webhook fan-out has its own
 -- completion marker, and apply_identity_lifecycle resolves pgcrypto from the
 -- Supabase `extensions` schema. Run after the full migration chain on an

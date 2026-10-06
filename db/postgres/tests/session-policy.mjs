@@ -1,9 +1,9 @@
 // Real-Postgres acceptance for the organization session policy (F7, #263), through the application code: the backend in
 // src/modules/identity-access/server/sessions/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL functions of
-// migration 087 inside one transaction that is always rolled back. Covers what the pure-SQL test (session-policy.sql)
+// the schema inside one transaction that is always rolled back. Covers what the pure-SQL test (session-policy.sql)
 // cannot: that a request is really refused once its session passes a limit, that "sign out everywhere" really stops
 // the next authoritative lookup, the view's queries against the real tables, and the security notice reaching every
-// Organization Admin (and nobody else); and (F7d, #337, migration 091) that the housekeeping sweep purges old session
+// Organization Admin (and nobody else); and that the housekeeping sweep purges old session
 // records without ever weakening enforcement, sign-out-everywhere or an existing revocation. Run after the full migration chain on a disposable database:
 //   CORVIS_DATABASE_DSN=postgres://... node db/postgres/tests/session-policy.mjs
 import assert from 'node:assert/strict';

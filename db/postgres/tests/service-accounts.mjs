@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for service accounts (F6, #262), through the application code: the Postgres backend in
 // src/modules/identity-access/server/service-accounts/service-account.ts, the credential record check in src/modules/identity-access/server/service-accounts/service-account-credential.ts and the
-// existing authorization lookup (src/modules/identity-access/server/authorization.ts) drive the SQL of migration 088 inside one transaction that
+// existing authorization lookup (src/modules/identity-access/server/authorization.ts) drive the SQL of the schema inside one transaction that
 // is always rolled back. Covers what the pure-SQL test (service-accounts.sql) cannot: that a created account resolves
 // through the EXISTING membership/lifecycle-grant authorization (and stops resolving when disabled), that the secret is
 // shown once and stored nowhere, that verification enforces rotation overlap / immediate revocation / expiry, that the
@@ -276,7 +276,7 @@ try {
     const again = await backend.extend(adminIdentity, renewable.serviceAccountId, { action: 'extend', expiresInDays: 300 }, tx);
     assert.ok(Math.abs(Date.parse(again.serviceAccount.expiresAt) - (Date.now() + 300 * 86_400_000)) < 60_000, 'with an owner again it extends');
 
-    // ---- Entitlement self-service (F6c, migration 096): an Organization Admin scopes the account's data access without a Corvis
+    // ---- Entitlement self-service: an Organization Admin scopes the account's data access without a Corvis
     // operator, within the organization's data rights, through the rows the existing authorization lookup already reads.
     await tx.execute(`insert into corvis_identity.fund (global_fund_id, canonical_name) values ('f6-fund-licensed','Licensed Fund One'),('f6-fund-unlicensed','Unlicensed Fund Two'),('f6-fund-foreign','Foreign Fund Three') on conflict do nothing`);
     await tx.execute(`insert into corvis_consolidated.fund_period_snapshot (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
@@ -354,7 +354,7 @@ try {
     assert.equal((await listTenantAccessAudit(otherAdminIdentity, tx)).some((entry) => entry.targetType === 'service_account'), false, 'another tenant never sees them');
     assert.equal(JSON.stringify(trail).includes(credential.secret), false);
 
-    // ---- Expiry notices (F6d, migration 096) end to end: the delivery tick's sweep queues one mandatory notice per active
+    // ---- Expiry notices end to end: the delivery tick's sweep queues one mandatory notice per active
     // Organization Admin per window, the outbox dispatcher sends it in words only, and it is never queued twice.
     await tx.execute(`insert into corvis_control.notification_recipient (tenant_id,user_id,email,source) values ($1,$2,'admin-one@example.test','verified_identity_claim'),($1,$3,'admin-two@example.test','verified_identity_claim')`, [tenantId, admin.userId, adminTwo.userId]);
     await backend.create(adminIdentity, { name: 'Expiring feed', purpose: 'Expires within the warning window', workspaceId, roleName: 'viewer', expiresInDays: 10, credentialExpiresInDays: 5 }, tx);

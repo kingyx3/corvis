@@ -34,6 +34,6 @@ Discussion is deliberately inert: it never changes a value, never records an app
 
 ## Rollout and validation
 
-Apply forward migration `076_saved_views_display_preferences.sql` with the existing migration runner before deploying the application. It extends the existing forced-RLS preference table without changing grants or resource policy. No provider credentials or email-delivery flags are enabled by this change.
+The baseline migration is applied with the existing migration runner before the application is deployed. The schema extends the existing forced-RLS preference table without changing grants or resource policy. No provider credentials or email-delivery flags are enabled by this change.
 
 Validation includes unit coverage for formatting, subject-bound SQL, original-object authorization and generation pinning; database acceptance for owner/shared-view isolation, cross-workspace preferences and historical source/fund revocation; and browser scenarios for the editable Research draft, source handoff, history resolution, all three saved-view screens and both themes. The new browser scenarios participate in the Chromium, mobile Chromium and WebKit CI matrix. The existing production CSP and non-demo smoke checks remain required.

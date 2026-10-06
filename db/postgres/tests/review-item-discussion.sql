@@ -1,4 +1,4 @@
--- Acceptance for migration 086 (F3, #259): assign and discuss review items.
+-- Acceptance (F3, #259): assign and discuss review items.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * only workspace members with review access can be assigned or mentioned: an active membership in a review role, an

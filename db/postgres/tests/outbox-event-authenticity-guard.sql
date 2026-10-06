@@ -1,4 +1,4 @@
--- Acceptance for migration 050: claim_event_delivery and
+-- Acceptance: claim_event_delivery and
 -- claim_processing_stage_delivery must refuse a delivery whose
 -- event_id/event_type/payload has no matching corvis_control.outbox_event
 -- row (a fabricated/injected event), while every genuine outbox-originated

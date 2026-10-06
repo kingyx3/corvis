@@ -1,4 +1,4 @@
--- Acceptance for migration 056 (as repaired by 065): a pending invitation is
+-- Acceptance: a pending invitation is
 -- accepted exactly once through corvis_control.accept_tenant_invitation,
 -- which creates the identity subject and membership and marks the invitation
 -- accepted. A replay and a mismatched verified email are refused with the

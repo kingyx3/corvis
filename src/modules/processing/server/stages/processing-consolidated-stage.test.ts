@@ -148,22 +148,34 @@ test("consolidated handler is stage-bounded and honors cancellation", async () =
   assert.equal(db.queries.length, 0);
 });
 
-test("consolidation migration is deterministic, lineage-complete and publication-neutral", async () => {
-  const sql = (await readFile("db/postgres/migrations/029_consolidated_stage.sql", "utf8")).toLowerCase();
+// The baseline is one file, so assertions about what a single command does (or never does) are scoped to that
+// function's body rather than to the whole schema. Expects lower-cased SQL.
+function functionBody(sql: string, qualifiedName: string): string {
+  const start = sql.indexOf(`create function ${qualifiedName}(`);
+  assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+  const end = sql.indexOf("\n$$;", start);
+  assert.ok(end > start, `${qualifiedName} body must be terminated`);
+  return sql.slice(start, end);
+}
 
-  assert.match(sql, /create table if not exists corvis_consolidated\.consolidation_run/);
-  assert.match(sql, /alter table corvis_consolidated\.consolidation_run force row level security/);
-  assert.match(sql, /alter table corvis_consolidated\.consolidated_fact force row level security/);
-  assert.match(sql, /create or replace function corvis_consolidated\.consolidate_reconciliation/);
+test("consolidation schema is deterministic, lineage-complete and publication-neutral", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+
+  assert.match(sql, /create table corvis_consolidated\.consolidation_run/);
+  assert.match(sql, /alter table only corvis_consolidated\.consolidation_run force row level security/);
+  assert.match(sql, /alter table only corvis_consolidated\.consolidated_fact force row level security/);
+  assert.match(sql, /create function corvis_consolidated\.consolidate_reconciliation/);
   assert.match(sql, /consolidation requires committed reconciled-stage predecessor effect/);
   assert.match(sql, /'conflicting_alternative'/);
   assert.match(sql, /'equivalent_grain'/);
   assert.match(sql, /source_observation_ids/);
   assert.match(sql, /set fact_ids=existing_fact_ids/);
-  assert.match(sql, /create or replace function corvis_consolidated\.enforce_ready_consolidation_before_success/);
+  assert.match(sql, /create function corvis_consolidated\.enforce_ready_consolidation_before_success/);
   assert.match(sql, /consolidation persistence blocks publication/);
-  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(sql), false);
-  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(sql), false);
-  assert.equal(/append_snapshot_transition\s*\(/i.test(sql), false);
-  assert.equal(/status\s*=\s*'published'/i.test(sql), false);
+
+  const consolidate = functionBody(sql, "corvis_consolidated.consolidate_reconciliation");
+  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(consolidate), false);
+  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(consolidate), false);
+  assert.equal(/append_snapshot_transition\s*\(/i.test(consolidate), false);
+  assert.equal(/status\s*=\s*'published'/i.test(consolidate), false);
 });

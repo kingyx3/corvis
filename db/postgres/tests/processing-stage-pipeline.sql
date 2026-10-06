@@ -422,7 +422,7 @@ begin
     raise exception 'an unknown incident must return null';
   end if;
 
-  -- Migration 068 lets a first-stage (`registered`) ProcessingStageReady event through the
+  -- The schema lets a first-stage (`registered`) ProcessingStageReady event through the
   -- predecessor trigger, so the replay enqueues its job and announces the retained artifact.
   -- (Before 068 this always raised 'missing predecessor job id'.)
   begin

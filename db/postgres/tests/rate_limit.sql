@@ -1,4 +1,9 @@
--- Runs against the isolated CI fixture, never a customer database.
+-- Runs against a disposable CI database, never a customer database.
+insert into corvis_control.tenant (tenant_id, slug, display_name) values
+  ('11111111-1111-1111-1111-111111111111', 'rate-limit-one', 'Rate limit tenant one'),
+  ('22222222-2222-2222-2222-222222222222', 'rate-limit-two', 'Rate limit tenant two')
+on conflict (tenant_id) do nothing;
+
 do $$
 declare
   v_allowed boolean;

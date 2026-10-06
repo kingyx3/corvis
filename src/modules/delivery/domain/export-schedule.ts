@@ -289,7 +289,7 @@ export function parseSchedulePatch(body: unknown): ExportSchedulePatch {
 }
 
 // ---------------------------------------------------------------------------
-// Calendar triggers (UTC). Migration 085 computes the same values in SQL.
+// Calendar triggers (UTC). The database computes the same values in SQL.
 // ---------------------------------------------------------------------------
 
 /** The first instant of the next month or quarter (UTC) strictly after `after`. */

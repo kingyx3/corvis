@@ -178,12 +178,22 @@ test("reconciled handler is stage-bounded and honors cancellation", async () => 
   assert.equal(db.queries.length, 0);
 });
 
-test("reconciliation migration preserves alternatives and fails closed before consolidation", async () => {
-  const sql = (await readFile("db/postgres/migrations/028_reconciled_stage.sql", "utf8")).toLowerCase();
+// The baseline is one file, so assertions about what a single command does (or never does) are scoped to that
+// function's body rather than to the whole schema. Expects lower-cased SQL.
+function functionBody(sql: string, qualifiedName: string): string {
+  const start = sql.indexOf(`create function ${qualifiedName}(`);
+  assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+  const end = sql.indexOf("\n$$;", start);
+  assert.ok(end > start, `${qualifiedName} body must be terminated`);
+  return sql.slice(start, end);
+}
 
-  assert.match(sql, /create table if not exists corvis_consolidated\.reconciliation_run/);
-  assert.match(sql, /alter table corvis_consolidated\.reconciliation_run force row level security/);
-  assert.match(sql, /create or replace function corvis_consolidated\.reconcile_canonicalization/);
+test("reconciliation baseline preserves alternatives and fails closed before consolidation", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+
+  assert.match(sql, /create table corvis_consolidated\.reconciliation_run/);
+  assert.match(sql, /alter table only corvis_consolidated\.reconciliation_run force row level security/);
+  assert.match(sql, /create function corvis_consolidated\.reconcile_canonicalization/);
   assert.match(sql, /reconciliation requires committed canonicalized-stage predecessor effect/);
   assert.match(sql, /reconciliation retained source-reference set is incomplete/);
   assert.match(sql, /reconciliation observation is missing source lineage/);
@@ -191,13 +201,14 @@ test("reconciliation migration preserves alternatives and fails closed before co
   assert.match(sql, /exact semantic-grain observations disagree/);
   assert.match(sql, /sourceauthorityselection','explicit_resolution_required'/);
   assert.match(sql, /case when grain\.has_critical then 'material' else 'unknown' end/);
-  assert.match(sql, /create or replace function corvis_control\.resume_blocked_reconciled_stage/);
+  assert.match(sql, /create function corvis_control\.resume_blocked_reconciled_stage/);
   assert.match(sql, /set state='queued',blocked_reason=null,last_error=null/);
-  assert.match(sql, /create or replace function corvis_consolidated\.resume_reconciliation_after_resolution/);
+  assert.match(sql, /create function corvis_consolidated\.resume_reconciliation_after_resolution/);
   assert.match(sql, /after update of status on corvis_consolidated\.reconciliation_exception/);
-  assert.match(sql, /create or replace function corvis_consolidated\.enforce_ready_reconciliation_before_success/);
+  assert.match(sql, /create function corvis_consolidated\.enforce_ready_reconciliation_before_success/);
   assert.match(sql, /reconciliation persistence blocks consolidation/);
-  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(sql), false);
-  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(sql), false);
+  const reconcile = functionBody(sql, "corvis_consolidated.reconcile_canonicalization");
+  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(reconcile), false);
+  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(reconcile), false);
   assert.equal(/create policy[^;]+corvis_consolidated\.reconciliation_run/i.test(sql), false);
 });

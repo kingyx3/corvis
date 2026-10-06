@@ -29,7 +29,7 @@ import { documents as demoDocuments, fundSnapshots } from "../../../platform/dem
  * own seeded accounts on first use (one whose credential expires soon and so is flagged, one in regular use, one owned by a
  * deactivated administrator and so needing a new owner, and one
  * that was deactivated), so a test that creates, rotates or revokes under its own demo tenant header never disturbs
- * another. The rules are the Postgres rules (migration 088): the same roles, lifetimes, one current credential, a
+ * another. The rules are the Postgres rules: the same roles, lifetimes, one current credential, a
  * rotation overlap that ends any earlier overlap, immediate revocation, a name that is unique among active accounts,
  * and a quota. Secrets are minted and hashed exactly as in production and only the hash is held.
  */

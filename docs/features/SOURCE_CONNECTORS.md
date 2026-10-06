@@ -4,7 +4,7 @@ This document is the technical source of truth for automated acquisition of auth
 
 ## Implementation status
 
-**Landed:** `db/postgres/migrations/018_source_connectors.sql` defines the
+**Landed:** `db/postgres/migrations/001_baseline.sql` defines the
 tenant-scoped connection/run/acquisition schema (RLS on every table;
 `source_connection` is server-only with no client SELECT policy at all,
 and its `secret_reference` column is constrained to a format that binds

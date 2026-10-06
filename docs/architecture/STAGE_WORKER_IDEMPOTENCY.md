@@ -12,7 +12,7 @@ Stage success/failure remains authoritative in Postgres. The worker delegates co
 
 ## Retry backoff schedule
 
-Every automatic retry is a new `ProcessingStageRetryScheduled` outbox event delivered through a fresh `event_inbox` row, so the inbox attempt is always 1 and cannot drive a backoff. Migration 081 therefore derives the delay in `fail_processing_stage_delivery` from the **job's** attempt counter:
+Every automatic retry is a new `ProcessingStageRetryScheduled` outbox event delivered through a fresh `event_inbox` row, so the inbox attempt is always 1 and cannot drive a backoff. The schema therefore derives the delay in `fail_processing_stage_delivery` from the **job's** attempt counter:
 
 `delay = least(900 s, 60 s * 2^(job.attempt - 1))`
 

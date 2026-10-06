@@ -91,11 +91,7 @@ test("the proxy issues a fresh per-request CSP nonce to both the request and the
 
 test("outbound webhook delivery is replay-safe and bounded", async () => {
   const delivery = await source("src/modules/delivery/server/exports/delivery.ts");
-  const migrations = await Promise.all([
-    "db/postgres/migrations/003_operations_delivery_governance.sql",
-    "db/postgres/migrations/006_upload_delivery_operations.sql",
-  ].map((file) => source(file)));
-  const sql = migrations.join("\n").toLowerCase();
+  const sql = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
 
   assert.match(delivery, /d\.state in \('delivering','complete'\)/, "claimed/completed webhook deliveries must not be redelivered concurrently");
   assert.match(delivery, /on conflict \(tenant_id,webhook_id,event_id,attempt\) do nothing/, "duplicate delivery claims must be idempotent");
@@ -107,7 +103,7 @@ test("outbound webhook delivery is replay-safe and bounded", async () => {
 });
 
 test("Postgres tenant authorization remains keyed to auth.uid and tenant/workspace membership", async () => {
-  const sql = (await source("db/postgres/migrations/001_control_plane.sql")).toLowerCase();
+  const sql = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
   assert.match(sql, /where m\.tenant_id = row_tenant_id[\s\S]*m\.user_id = auth\.uid\(\)/);
   assert.match(sql, /where m\.tenant_id = row_tenant_id[\s\S]*m\.workspace_id = row_workspace_id[\s\S]*m\.user_id = auth\.uid\(\)/);
   assert.match(sql, /m\.status = 'active'/);
@@ -117,13 +113,13 @@ test("Postgres tenant authorization remains keyed to auth.uid and tenant/workspa
 });
 
 test("authoritative session revocation is tenant-scoped, server-managed, and checked on every production authorization lookup", async () => {
-  const migration = (await source("db/postgres/migrations/008_session_revocation.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
   const authorization = await source("src/modules/identity-access/server/authorization.ts");
 
-  assert.match(migration, /create table if not exists corvis_control\.session_revocation/);
-  assert.match(migration, /primary key \(tenant_id, auth_method, subject, session_id\)/);
+  assert.match(migration, /create table corvis_control\.session_revocation \(/);
+  assert.match(migration, /alter table only corvis_control\.session_revocation\s+add constraint session_revocation_pkey primary key \(tenant_id, auth_method, subject, session_id\);/);
   assert.match(migration, /alter table corvis_control\.session_revocation enable row level security/);
-  assert.match(migration, /alter table corvis_control\.session_revocation force row level security/);
+  assert.match(migration, /alter table only corvis_control\.session_revocation force row level security/);
   assert.equal(/create policy[^;]+session_revocation/.test(migration), false, "session revocation must stay server-managed with no client policy");
 
   assert.match(authorization, /from corvis_control\.session_revocation r/);

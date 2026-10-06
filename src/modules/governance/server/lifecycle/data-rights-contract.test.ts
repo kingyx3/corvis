@@ -5,12 +5,13 @@ import test from "node:test";
 async function source(file: string) { return readFile(file, "utf8"); }
 
 test("data rights are server-managed, current, deny-by-default and resolved at the authorization boundary", async () => {
-  const migration = (await source("db/postgres/migrations/010_authoritative_data_rights.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
   const authorization = await source("src/modules/identity-access/server/authorization.ts");
   const authorizedRequest = await source("src/platform/http/identity/authorized-request.ts");
 
-  assert.match(migration, /alter table corvis_control\.data_rights force row level security/);
-  assert.match(migration, /data_rights_active_resource_idx/);
+  assert.match(migration, /alter table corvis_control\.data_rights enable row level security/);
+  assert.match(migration, /alter table only corvis_control\.data_rights force row level security/);
+  assert.match(migration, /create index data_rights_active_resource_idx on corvis_control\.data_rights /);
   assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(migration), false, "data rights must have no client mutation policy");
 
   assert.match(authorization, /from corvis_control\.data_rights dr/);

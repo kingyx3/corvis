@@ -1,4 +1,4 @@
--- Acceptance for migration 088 (F6, #262): customer self-service service accounts and their credential records.
+-- Acceptance (F6, #262): customer self-service service accounts and their credential records.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * only an active Organization Admin (tenant_admin) acts, by human identity: an analyst, a revoked admin, a service
@@ -14,18 +14,18 @@
 --     and is final;
 --   * the guard triggers: a credential's hash and lifetime are immutable, a revoked credential stays revoked, an end
 --     date can only be brought forward, and an account's identity never changes;
---   * renewal and ownership (F6b, migration 092): the creating admin is the first owner; extending moves the expiry at least
+--   * renewal and ownership: the creating admin is the first owner; extending moves the expiry at least
 --     a day later (never earlier, never past the maximum from now) together with the membership and the 009 lifecycle grant
 --     (valid_until, next_review_at, a fresh review), leaves credentials alone, and is refused for anyone but an active
 --     Organization Admin; the owner changes only by transfer to another active Organization Admin; an owner who is
 --     deactivated or demoted leaves the account working but ownerless, so it is not extended until it has a new owner;
 --     a deactivated account can be neither extended nor handed over; an expired account can be renewed;
---   * expiry notices (F6d, migration 096): one mandatory notice per active human Organization Admin, per window (14 days,
+--   * expiry notices: one mandatory notice per active human Organization Admin, per window (14 days,
 --     then 3), per account or credential in use, deduplicated in the outbox so a sweep that runs every minute queues
 --     each once; a renewal never repeats an old notice, a deactivated, expired, revoked or rotated-out item and a
 --     suspended tenant are never announced, a credential that ends with its account is covered by the account's notice,
 --     the parameters are words only (no name or identifier), and no preference can switch the category off;
---   * entitlement self-service (F6c, migration 096): an Organization Admin grants a service account read access to a fund
+--   * entitlement self-service: an Organization Admin grants a service account read access to a fund
 --     or document only when the tenant owns it AND holds an effective client-visible data right (one refusal message for
 --     every other case: another tenant's resource, no right, a hidden, lapsed or conflicting right, an unknown id), in
 --     the account's workspace, bounded per account, never for a person, never from a non-admin or another tenant; an
@@ -404,7 +404,7 @@ begin
     'service account is not active');
 end $$;
 
--- 11. Renewal and ownership (F6b, migration 092).
+-- 11. Renewal and ownership.
 do $$
 declare
   tenant uuid := 'a0880000-0000-4000-8000-00000000000a';
@@ -545,7 +545,7 @@ begin
   perform corvis_control.issue_service_account_credential(tenant, account, gen_random_uuid(), 'rotate', 'oidc', 'idp|admin-one', pg_temp.digest_of('e2'), now()+interval '10 days', 0);
 end $$;
 
--- 13. Expiry notices (migration 096): one mandatory notice per Organization Admin, per window, per account or credential.
+-- 13. Expiry notices: one mandatory notice per Organization Admin, per window, per account or credential.
 insert into corvis_control.tenant (tenant_id,slug,display_name,status)
 values ('c0960000-0000-4000-8000-00000000000c','sa-c','SA C','active'),
        ('c0960000-0000-4000-8000-00000000000d','sa-d','SA D (suspended)','active');
@@ -702,7 +702,7 @@ begin
   end;
 end $$;
 
--- 14. Entitlement self-service (migration 096): an Organization Admin grants and revokes read access for a service account
+-- 14. Entitlement self-service: an Organization Admin grants and revokes read access for a service account
 -- within the tenant's own data rights, writing the entitlement rows the authorization lookup already reads.
 insert into corvis_identity.fund (global_fund_id, canonical_name)
 values ('f-licensed','Licensed Fund'),('f-hidden-right','Hidden Fund'),('f-lapsed-right','Lapsed Fund'),('f-no-right','Unlicensed Fund'),

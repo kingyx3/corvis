@@ -5,7 +5,7 @@ import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 /**
  * The governed sector taxonomy. src/modules/workspace/domain/sector-taxonomy.ts is the single source;
- * migration 055 seeds the same rows into corvis_semantic.sector (enforced by
+ * the baseline migration seeds the same rows into corvis_semantic.sector (enforced by
  * src/modules/workspace/domain/sector-taxonomy.test.ts), so this read needs no database round trip.
  */
 export async function GET(request: Request) {

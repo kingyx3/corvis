@@ -1,4 +1,4 @@
--- Acceptance for migration 046: a processing job orphaned in 'running' (its
+-- Acceptance: a processing job orphaned in 'running' (its
 -- worker died before complete/block/fail) is reclaimed or dead-lettered once
 -- the owning inbox lease expires, instead of raising on every redelivery.
 -- A job whose owner still holds a live lease stays transient. Operator retry

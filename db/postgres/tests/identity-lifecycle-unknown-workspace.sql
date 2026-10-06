@@ -1,4 +1,4 @@
--- Acceptance for migration 082: an identity lifecycle sync (or reactivation) whose memberships name a
+-- Acceptance: an identity lifecycle sync (or reactivation) whose memberships name a
 -- well-formed workspace UUID that is not a workspace of the tenant is refused with the allowlisted
 -- 'workspace not found' (HTTP 404 workspace_not_found) instead of reaching the membership foreign key
 -- (SQLSTATE 23503, HTTP 500). The check is tenant-scoped, refusal applies nothing, and valid syncs, replays,

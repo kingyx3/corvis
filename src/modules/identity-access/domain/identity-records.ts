@@ -4,7 +4,7 @@
  *
  * Both are Corvis-assisted: an organization cannot make either claim about itself (initial identity-provider and domain
  * setup is #78), so only Corvis operations change them and the Organization Admin reads them. The values and the
- * bounds here are also CHECK constraints and function checks in migration 095, so no code path can store a value this
+ * bounds here are also CHECK constraints and function checks in the database, so no code path can store a value this
  * file would refuse.
  */
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { AuthorizationError } from "../../../../shared/domain/enterprise.ts";
@@ -136,13 +136,13 @@ test("acceptance maps expired, reused, disabled and mismatched invitations to sa
   }
 });
 
-test("invitation migration stores only a digest and atomically links identity, membership, state and audit", async () => {
-  const sql = (await readFile("db/postgres/migrations/056_tenant_invitations.sql", "utf8")).toLowerCase();
-  assert.match(sql, /token_sha256 text not null unique/);
+test("the baseline stores only a digest and atomically links identity, membership, state and audit", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  assert.match(sql, /add constraint tenant_invitation_token_sha256_key unique \(token_sha256\)/);
   assert.match(sql, /alter table corvis_control\.tenant_invitation enable row level security/);
-  assert.match(sql, /alter table corvis_control\.tenant_invitation force row level security/);
+  assert.match(sql, /alter table only corvis_control\.tenant_invitation force row level security/);
   assert.doesNotMatch(sql, /create policy[^;]+tenant_invitation/);
-  const fn = /create or replace function corvis_control\.accept_tenant_invitation[\s\S]*?\$\$;/i.exec(sql)?.[0] ?? "";
+  const fn = /create function corvis_control\.accept_tenant_invitation[\s\S]*?\$\$;/i.exec(sql)?.[0] ?? "";
   assert.match(fn, /for update/);
   assert.match(fn, /p_email_verified is distinct from true/);
   assert.match(fn, /lower\(btrim\(p_email\)\) <> v_invitation\.email/);
@@ -172,31 +172,26 @@ test("creating a workspace-admin invitation persists the accountadmin role, even
   assert.ok(!insert?.parameters.includes("workspace_admin"));
 });
 
-async function latestRoleCheck(table: string, constraint: string): Promise<Set<string>> {
-  const dir = "db/postgres/migrations";
-  const files = (await readdir(dir)).filter((file) => file.endsWith(".sql")).sort();
-  let latest: Set<string> | undefined;
-  for (const file of files) {
-    const sql = (await readFile(`${dir}/${file}`, "utf8")).toLowerCase();
-    // Both the explicit `add constraint <name> check (...)` form and the inline column check in create table.
-    const explicit = new RegExp(`alter table corvis_control\\.${table}\\s+add constraint ${constraint}\\s+check \\(role_name in \\(([^)]*)\\)\\)`, "g");
-    for (const match of sql.matchAll(explicit)) latest = new Set(match[1].match(/'([^']+)'/g)?.map((role) => role.slice(1, -1)));
-    const inline = new RegExp(`create table if not exists corvis_control\\.${table} \\([\\s\\S]*?role_name text not null check \\(role_name in \\(([^)]*)\\)\\)`, "g");
-    for (const match of sql.matchAll(inline)) latest = new Set(match[1].match(/'([^']+)'/g)?.map((role) => role.slice(1, -1)));
-  }
-  assert.ok(latest, `no role check found for ${table}`);
-  return latest;
+async function roleCheck(table: string, constraint: string): Promise<Set<string>> {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  // pg_dump normal form: an inline `constraint <name> check ((role_name = any (array['a'::text, ...])))` in create table.
+  const tableStart = sql.indexOf(`create table corvis_control.${table} (`);
+  assert.ok(tableStart >= 0, `${table} must be defined in the baseline`);
+  const tableSql = sql.slice(tableStart, sql.indexOf("\n);", tableStart));
+  const match = new RegExp(`constraint ${constraint} check \\(\\(role_name = any \\(array\\[([^\\]]*)\\]\\)\\)\\)`).exec(tableSql);
+  assert.ok(match, `no role check found for ${table}`);
+  return new Set(match[1].match(/'([^']+)'/g)?.map((role) => role.slice(1, -1)));
 }
 
-test("every invitable role is allowed by the latest membership and tenant_invitation role checks", async () => {
-  const membership = await latestRoleCheck("membership", "membership_role_name_check");
-  const invitation = await latestRoleCheck("tenant_invitation", "tenant_invitation_role_name_check");
+test("every invitable role is allowed by the membership and tenant_invitation role checks", async () => {
+  const membership = await roleCheck("membership", "membership_role_name_check");
+  const invitation = await roleCheck("tenant_invitation", "tenant_invitation_role_name_check");
   assert.ok(membership.size >= 5, "expected to parse the membership role list");
   for (const role of INVITABLE_ROLES) {
     assert.ok(membership.has(role), `${role} is invitable but rejected by membership_role_name_check, so acceptance would fail`);
     assert.ok(invitation.has(role), `${role} is invitable but rejected by tenant_invitation_role_name_check`);
   }
   for (const role of BULK_ROLES) assert.ok(INVITABLE_ROLES.has(role), `bulk role ${role} is not invitable`);
-  assert.ok(!membership.has("workspace_admin"), "workspace_admin was retired by migration 048");
+  assert.ok(!membership.has("workspace_admin"), "workspace_admin is a retired role name and must not be allowed");
   assert.ok(!invitation.has("workspace_admin"));
 });

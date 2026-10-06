@@ -1,4 +1,4 @@
--- Acceptance for migration 083 (F5, #261): customer data-issue reports on published figures.
+-- Acceptance (F5, #261): customer data-issue reports on published figures.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * reporting is idempotent per reporter and writes only the case and its history row: no snapshot, observation,

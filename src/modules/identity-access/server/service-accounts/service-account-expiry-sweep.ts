@@ -7,7 +7,7 @@ export const SERVICE_ACCOUNT_EXPIRY_NOTICE_BATCH = 500;
 
 /**
  * Tells Organization Admins before a service account, or the API credential it uses, expires (F6d, #341): the delivery
- * tick calls `corvis_control.queue_service_account_expiry_notices` (migration 096), which queues one mandatory
+ * tick calls `corvis_control.queue_service_account_expiry_notices`, which queues one mandatory
  * `service_account_expiry` email per active human Organization Admin when an active account, or its credential in use,
  * enters its 14-day warning window and again inside 3 days. The outbox `dedupe_key` (item, window, exact expiry,
  * recipient) makes the sweep idempotent however often it runs: a notice is queued once, a renewal starts new windows

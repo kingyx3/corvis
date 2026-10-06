@@ -90,9 +90,11 @@ test("the scheduled delivery tick runs the session activity sweep as its own set
   assert.match(route, /sessionActivitySweep:\(\)=>sweepTenantSessionActivity\(\)/);
 });
 
-test("the migration refuses a retention shorter than the longest session and never touches session revocation", async () => {
-  const migration = await readFile("db/postgres/migrations/091_session_activity_housekeeping.sql", "utf8");
-  assert.match(migration, new RegExp(`p_retention_minutes < ${SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES}`), "the SQL floor is the same number as src/modules/identity-access/domain/session-policy.ts");
-  const body = migration.split("create or replace function")[1]!;
+test("the purge function refuses a retention shorter than the longest session and never touches session revocation", async () => {
+  const migration = await readFile("db/postgres/migrations/001_baseline.sql", "utf8");
+  const start = migration.indexOf("CREATE FUNCTION corvis_control.purge_tenant_session_activity(");
+  assert.ok(start >= 0, "purge_tenant_session_activity must be defined in the baseline");
+  const body = migration.slice(start, migration.indexOf("\n$$;", start));
+  assert.match(body, new RegExp(`p_retention_minutes < ${SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES}`), "the SQL floor is the same number as src/modules/identity-access/domain/session-policy.ts");
   assert.doesNotMatch(body, /session_revocation/, "revoked-session records are not this function's business");
 });

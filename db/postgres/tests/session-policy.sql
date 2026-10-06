@@ -1,4 +1,4 @@
--- Acceptance for migrations 087 and 091 (F7 #263, F7d #337): organization session policy, "sign out everywhere" and housekeeping.
+-- Acceptance (F7 #263, F7d #337): organization session policy, "sign out everywhere" and housekeeping.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * the policy is bounded by CHECK constraints (idle 15 min to 8 h, session 1 h to 7 days, idle never above the
@@ -280,7 +280,7 @@ begin
   end;
 end $$;
 
--- ---------------------------------------------------------------- housekeeping (migration 091, F7d #337)
+-- ---------------------------------------------------------------- housekeeping (F7d #337)
 do $$
 declare
   t constant uuid := 'a0870000-0000-4000-8000-00000000000a';
@@ -354,7 +354,7 @@ begin
   if not exists (select 1 from corvis_control.session_revocation where tenant_id = t and session_id = 'hk-live') then raise exception 'a purge never removes a revocation'; end if;
 end $$;
 
--- ---------------------------------------------------------------- Require SSO, MFA evidence and back-channel logout (migration 099, F7a #334, F7c #336)
+-- ---------------------------------------------------------------- Require SSO, MFA evidence and back-channel logout (F7a #334, F7c #336)
 -- C: an organization with its own bound OIDC provider; D: an organization on the shared provider (no record); E: bound to ANOTHER provider.
 insert into corvis_control.tenant (tenant_id,slug,display_name)
 values ('c0990000-0000-4000-8000-00000000000c','sso-c','SSO C'),

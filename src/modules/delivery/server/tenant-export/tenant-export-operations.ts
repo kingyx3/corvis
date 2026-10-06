@@ -6,7 +6,7 @@ import { decodeKeysetCursor, encodeKeysetCursor, keysetTimestampSql } from "./te
 /**
  * The operator view of full tenant export builds that did not succeed (F10f, #326), for Corvis operations on
  * `GET /api/v1/admin/tenant-export-builds` and the `/admin/tenant-export-builds` page. A customer only ever sees that an
- * export "could not be built"; the cause is stored in `last_error` (migration 084), which until now no surface showed.
+ * export "could not be built"; the cause is stored in `last_error`, which until now no surface showed.
  *
  * What an operator may see is deliberately no more than they already see on the cross-tenant tenant-health view plus the
  * build's own diagnostics: the tenant (id and name), the request id, whether it is still being retried or has given up, the

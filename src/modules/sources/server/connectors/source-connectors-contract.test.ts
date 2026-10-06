@@ -5,25 +5,25 @@ import test from "node:test";
 async function source(file: string) { return readFile(file, "utf8"); }
 
 test("source connections carry no client-writable policy and their secret reference is tenant-bound", async () => {
-  const migration = (await source("db/postgres/migrations/018_source_connectors.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
 
   assert.match(migration, /alter table corvis_source\.source_connection enable row level security/);
-  assert.match(migration, /alter table corvis_source\.source_connection force row level security/);
+  assert.match(migration, /alter table only corvis_source\.source_connection force row level security/);
   // source_connection is intentionally server-only: no client SELECT policy at all.
-  assert.equal(/create policy\s+source_connection_(select|tenant_select)\s+on\s+corvis_source\.source_connection\b/.test(migration), false);
-  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(migration), false, "no table in this migration may grant a client mutation policy");
+  assert.equal(/create policy\s+\w+\s+on\s+corvis_source\.source_connection\s/.test(migration), false);
+  assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(migration), false, "no table in the baseline may grant a client mutation policy");
 
   assert.match(migration, /constraint source_connection_secret_reference_tenant_scoped check/);
-  assert.match(migration, /secret_reference ~ \('\^projects\/\[a-z0-9\]\[a-z0-9-\]\{4,28\}\[a-z0-9\]\/secrets\/corvis-src-' \|\| tenant_id::text \|\| /, "the secret reference format must bind the tenant id into the resource name itself");
+  assert.match(migration, /secret_reference ~ \(\('\^projects\/\[a-z0-9\]\[a-z0-9-\]\{4,28\}\[a-z0-9\]\/secrets\/corvis-src-'::text \|\| \(tenant_id\)::text\)/, "the secret reference format must bind the tenant id into the resource name itself");
 
-  assert.match(migration, /constraint source_connection_revoked_is_terminal check \(\(status = 'revoked'\) = \(revoked_at is not null\)\)/);
+  assert.match(migration, /constraint source_connection_revoked_is_terminal check \(\(\(status = 'revoked'::text\) = \(revoked_at is not null\)\)\)/);
 
   for (const table of ["source_connection_run", "acquired_document"]) {
     assert.match(migration, new RegExp(`alter table corvis_source\\.${table} enable row level security`));
-    assert.match(migration, new RegExp(`create policy ${table}_tenant_select on corvis_source\\.${table}\\s+for select using`));
+    assert.match(migration, new RegExp(`create policy ${table}_tenant_select on corvis_source\\.${table} for select using`));
   }
 
-  assert.match(migration, /unique \(tenant_id, source_connection_id, acquisition_key\)/, "idempotent re-discovery depends on this uniqueness constraint");
+  assert.match(migration, /create unique index acquired_document_run_outcome_unique_idx on corvis_source\.acquired_document using btree \(tenant_id, source_connection_id, run_id, acquisition_key, disposition\)/, "idempotent recording of a discovery outcome within a run depends on this unique index");
 });
 
 test("connections are created and rotated through the SecretStore port, never with an inline secret payload", async () => {

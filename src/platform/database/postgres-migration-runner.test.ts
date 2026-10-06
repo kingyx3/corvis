@@ -224,7 +224,11 @@ test("applyMigrations reports the failing version and applied history without SQ
 test("the repository's own migration directory produces a valid, gapless replay plan", async () => {
   const { planFromDirectory } = await import("./postgres-migration-runner.ts");
   const plan = await planFromDirectory();
-  assert.ok(plan.migrations.length >= 17);
+  assert.deepEqual(
+    plan.migrations.map((migration) => [migration.version, migration.name]),
+    [[1, "001_baseline.sql"], [2, "002_runtime_database_role.sql"]],
+    "the directory holds the schema baseline followed by the runtime database role migration",
+  );
   assert.deepEqual(plan.applied, []);
   assert.equal(plan.pending.length, plan.migrations.length);
 });

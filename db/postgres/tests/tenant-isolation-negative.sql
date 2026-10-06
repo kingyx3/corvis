@@ -4,7 +4,7 @@
 -- (which makes auth.uid() readable from the "request.jwt.claim.sub" session
 -- setting) on an isolated disposable database.
 --
--- The application's own runtime connection is documented (migration 001) to
+-- The application's own runtime connection is documented to
 -- use a service-role-equivalent connection that intentionally bypasses RLS
 -- and relies on explicit tenant_id predicates in repository code instead;
 -- this test targets the other, previously unverified audience for RLS: a
@@ -47,7 +47,7 @@ values
   ('a0000000-0000-4000-8000-00000000000a','f1000000-0000-4000-8000-00000000000a','f0000000-0000-4000-8000-00000000000a','fund-a','portfolio-rls-fund-a'),
   ('b0000000-0000-4000-8000-00000000000b','f1000000-0000-4000-8000-00000000000b','f0000000-0000-4000-8000-00000000000b','fund-b','portfolio-rls-fund-b');
 
--- Company sector classifications (migration 055) are tenant-private even
+-- Company sector classifications are tenant-private even
 -- though the company identity and the sector taxonomy are global.
 insert into corvis_identity.company (global_company_id,canonical_name)
 values ('sector-rls-company','Sector RLS Company')

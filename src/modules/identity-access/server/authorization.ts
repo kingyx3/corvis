@@ -23,7 +23,7 @@ export type MembershipAuthorization = {
    * in the tenant (not only the requested workspace). `tenant_admin` and
    * `accountadmin` both map to the `admin` application role above, but only
    * a true tenant_admin may grant the tenant_admin role to anyone (see
-   * apply_identity_lifecycle / apply_support_access_admin, migration 048).
+   * apply_identity_lifecycle / apply_support_access_admin).
    */
   isTenantAdmin: boolean;
   /** Every active workspace the subject belongs to in this tenant, not just the requested one. */
@@ -279,7 +279,7 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
   }
 
   /**
-   * The organization's session policy (F7, migration 087), applied after membership has resolved so only an
+   * The organization's session policy, applied after membership has resolved so only an
    * authorized session is ever recorded. `enforce_session_policy` records the session and answers `ok`, or why it must
    * end (`idle_timeout`, `max_session`, `untracked_session`). Anything other than an explicit `ok` denies, so a missing
    * or unexpected answer fails closed. The denial is the same "no authoritative context" 401 as a revoked session;

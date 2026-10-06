@@ -1,9 +1,9 @@
 // Real-Postgres acceptance for verified email domains and the per-tenant identity-provider record (F7b #335, F7e #338),
 // through the application code: the operator commands and domain check in src/modules/identity-access/server/directory/identity-records.ts, the view in
-// src/modules/identity-access/server/sessions/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL of migration 095
+// src/modules/identity-access/server/sessions/session-policy.ts and the authoritative lookup in src/modules/identity-access/server/authorization.ts drive the SQL of the schema
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-identity-records.sql) cannot:
 // that token binding really refuses a request through the authoritative lookup, only when an operator turned it on and
-// only for OIDC, and that the view reads the real tables; (migration 099, F7a #334, F7c #336) that Require SSO really refuses
+// only for OIDC, and that the view reads the real tables; (F7a #334, F7c #336) that Require SSO really refuses
 // every sign-in but the bound OIDC one in the authoritative lookup and can never be enabled from a session it would refuse,
 // that the MFA a token reported is shown, that "sign out everywhere" names a recorded end-session endpoint, and that a signed
 // OIDC back-channel logout token revokes the session immediately while a replayed, forged or expired one does nothing.

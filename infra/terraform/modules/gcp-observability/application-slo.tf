@@ -191,7 +191,7 @@ resource "google_logging_metric" "pipeline_dead_letter" {
 }
 
 # processing-transport.ts emits this count when an outbox event exhausts its
-# publish attempts (migration 021 sets transport_dead_lettered_at). Nothing
+# publish attempts (sets transport_dead_lettered_at). Nothing
 # retries such an event on its own, so any occurrence pages the operator, who
 # requeues it with POST /api/v1/admin/processing-transport/dead-letters (#230).
 resource "google_logging_metric" "processing_transport_dead_letter" {

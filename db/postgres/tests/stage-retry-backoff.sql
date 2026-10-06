@@ -1,4 +1,4 @@
--- Acceptance for migration 081: automatic stage retries back off exponentially.
+-- Acceptance: automatic stage retries back off exponentially.
 --
 -- Every automatic retry is a brand-new outbox event with a fresh event_inbox
 -- row, so event_inbox.attempt is always 1 on a retry's failure. Before 081 the

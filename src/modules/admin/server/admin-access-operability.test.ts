@@ -6,8 +6,21 @@ async function read(path: string): Promise<string> {
   return readFile(path, "utf8");
 }
 
+const baselinePath = "db/postgres/migrations/001_baseline.sql";
+
+// The baseline is one file, so assertions about what a single command does (or never does) are scoped to that
+// function's body rather than to the whole schema. Expects lower-cased SQL.
+function functionBody(sql: string, qualifiedName: string): string {
+  const start = sql.indexOf(`create function ${qualifiedName}(`);
+  assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+  assert.equal(sql.indexOf(`create function ${qualifiedName}(`, start + 1), -1, `${qualifiedName} must be defined exactly once`);
+  const end = sql.indexOf("\n$$;", start);
+  assert.ok(end > start, `${qualifiedName} body must be terminated`);
+  return sql.slice(start, end);
+}
+
 test("resource entitlement and data-right admin commands are tenant scoped, effective dated and audit atomic", async () => {
-  const sql = (await read("db/postgres/migrations/040_admin_access_policy.sql")).toLowerCase();
+  const sql = (await read(baselinePath)).toLowerCase();
   assert.match(sql, /apply_resource_entitlement_admin/);
   assert.match(sql, /where tenant_id=p_tenant_id/);
   assert.match(sql, /valid_from/);
@@ -29,7 +42,7 @@ test("resource entitlement and data-right admin commands are tenant scoped, effe
 test("re-granting an entitlement with unchanged dates is not counted as a change in the audit trail", async () => {
   // A plain `on conflict ... do update` always reports row_count=1, so a repeat grant with identical
   // valid_from/valid_until would otherwise read as a fresh change in audit_event.metadata.changed.
-  const sql = (await read("db/postgres/migrations/093_resource_entitlement_grant_change_accuracy.sql")).toLowerCase();
+  const sql = (await read(baselinePath)).toLowerCase();
   assert.match(sql, /do update set valid_from=excluded\.valid_from, valid_until=excluded\.valid_until/);
   assert.match(sql, /where corvis_control\.resource_entitlement\.valid_from is distinct from excluded\.valid_from/);
   assert.match(sql, /or corvis_control\.resource_entitlement\.valid_until is distinct from excluded\.valid_until/);
@@ -37,8 +50,9 @@ test("re-granting an entitlement with unchanged dates is not counted as a change
 });
 
 test("disabled human identities require an explicit separately audited reactivation", async () => {
-  const ordinary = (await read("db/postgres/migrations/011_identity_lifecycle_sync.sql")).toLowerCase();
-  const privileged = (await read("db/postgres/migrations/041_reactivation_support_access.sql")).toLowerCase();
+  const sql = (await read(baselinePath)).toLowerCase();
+  const ordinary = functionBody(sql, "corvis_control.apply_identity_lifecycle");
+  const privileged = sql;
   const route = await read("src/app/api/v1/admin/identity-lifecycle/route.ts");
 
   assert.match(ordinary, /disabled identity requires explicit reactivation/);
@@ -51,16 +65,17 @@ test("disabled human identities require an explicit separately audited reactivat
 });
 
 test("support access is approval based, time bounded, audited and does not manufacture resource rights", async () => {
-  const sql = (await read("db/postgres/migrations/041_reactivation_support_access.sql")).toLowerCase();
-  assert.match(sql, /create table if not exists corvis_control\.support_access_grant/);
+  const sql = (await read(baselinePath)).toLowerCase();
+  assert.match(sql, /create table corvis_control\.support_access_grant \(/);
   assert.match(sql, /purpose text not null/);
   assert.match(sql, /approval_reference text not null/);
-  assert.match(sql, /check \(valid_until > valid_from\)/);
-  assert.match(sql, /support access requires a future expiry/);
-  assert.match(sql, /requested support role is already active outside this grant/);
-  assert.match(sql, /access\.support\.'\|\|p_operation/);
-  assert.doesNotMatch(sql, /insert into corvis_control\.resource_entitlement/);
-  assert.doesNotMatch(sql, /insert into corvis_control\.data_rights/);
+  assert.match(sql, /check \(\(valid_until > valid_from\)\)/);
+  const command = functionBody(sql, "corvis_control.apply_support_access_admin");
+  assert.match(command, /support access requires a future expiry/);
+  assert.match(command, /requested support role is already active outside this grant/);
+  assert.match(command, /access\.support\.'\|\|p_operation/);
+  assert.doesNotMatch(command, /insert into corvis_control\.resource_entitlement/);
+  assert.doesNotMatch(command, /insert into corvis_control\.data_rights/);
 
   const route = await read("src/app/api/v1/admin/support-access/route.ts");
   assert.match(route, /resolveAdminRequestIdentity\(request\)/);
@@ -84,15 +99,15 @@ test("access review exposes every launch authorization layer through tenant-boun
 });
 
 test("support access can never be self-approved by the granting administrator", async () => {
-  const sql = (await read("db/postgres/migrations/045_support_access_separation_of_duties.sql")).toLowerCase();
-  assert.match(sql, /create or replace function corvis_control\.apply_support_access_admin/);
-  assert.match(sql, /p_subject=p_actor_subject/);
-  assert.match(sql, /a\.subject=p_actor_subject and a\.user_id=p_user_id/);
-  assert.match(sql, /support access cannot be self-approved/);
-  // The rest of the 041 contract must survive the redefinition.
-  assert.match(sql, /support access requires a future expiry/);
-  assert.match(sql, /requested support role is already active outside this grant/);
-  assert.match(sql, /access\.support\.'\|\|p_operation/);
+  const sql = (await read(baselinePath)).toLowerCase();
+  const command = functionBody(sql, "corvis_control.apply_support_access_admin");
+  assert.match(command, /p_subject=p_actor_subject/);
+  assert.match(command, /a\.subject=p_actor_subject and a\.user_id=p_user_id/);
+  assert.match(command, /support access cannot be self-approved/);
+  // The rest of the support-access contract must sit alongside the separation-of-duties guard.
+  assert.match(command, /support access requires a future expiry/);
+  assert.match(command, /requested support role is already active outside this grant/);
+  assert.match(command, /access\.support\.'\|\|p_operation/);
 
   const route = await read("src/app/api/v1/admin/support-access/route.ts");
   assert.match(route, /subject === identity\.subject/);
@@ -100,22 +115,22 @@ test("support access can never be self-approved by the granting administrator", 
 });
 
 test("only a tenant_admin may grant anyone the tenant_admin role, at the app layer and in SQL", async () => {
-  const sql = (await read("db/postgres/migrations/048_account_admin_role_separation.sql")).toLowerCase();
-  assert.match(sql, /create or replace function corvis_control\.apply_identity_lifecycle/);
-  assert.match(sql, /create or replace function corvis_control\.apply_support_access_admin/);
-  assert.match(sql, /tenant_admin_role_requires_tenant_admin_actor/);
+  const sql = (await read(baselinePath)).toLowerCase();
+  const lifecycle = functionBody(sql, "corvis_control.apply_identity_lifecycle");
+  const supportAccess = functionBody(sql, "corvis_control.apply_support_access_admin");
   // Both guards require the actor to hold their own active tenant_admin
   // membership, not merely to be granting it to themselves.
-  assert.match(sql, /and m\.role_name='tenant_admin' and m\.status='active'/);
-  // workspace_admin no longer exists as a role check constraint anywhere;
-  // accountadmin replaces it (the migration's own header/data-migration
-  // comments still name the retired role for context, so this only checks
-  // the role-name check-constraint lists, not the whole file).
-  assert.doesNotMatch(sql, /not in \('tenant_admin','workspace_admin'/);
-  assert.match(sql, /not in \('tenant_admin','accountadmin'/);
-  // The redefinitions must still carry the rest of the 043/045 contract.
-  assert.match(sql, /support access cannot be self-approved/);
-  assert.match(sql, /identity lifecycle event replay conflict/);
+  for (const command of [lifecycle, supportAccess]) {
+    assert.match(command, /tenant_admin_role_requires_tenant_admin_actor/);
+    assert.match(command, /and m\.role_name='tenant_admin' and m\.status='active'/);
+  }
+  // workspace_admin does not exist anywhere in the schema; accountadmin replaces it in the role allowlists.
+  assert.doesNotMatch(sql, /workspace_admin/);
+  assert.match(lifecycle, /not in \('tenant_admin','accountadmin'/);
+  assert.match(supportAccess, /not in \('tenant_admin','accountadmin'/);
+  // The same functions must still carry the rest of their contracts.
+  assert.match(supportAccess, /support access cannot be self-approved/);
+  assert.match(lifecycle, /identity lifecycle event replay conflict/);
 
   const identityLifecycleRoute = await read("src/app/api/v1/admin/identity-lifecycle/route.ts");
   assert.match(identityLifecycleRoute, /entry\.roleName === "tenant_admin"/);
