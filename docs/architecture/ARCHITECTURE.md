@@ -93,7 +93,7 @@ docs/                     technical documentation, grouped by kind (see docs/REA
 | `src/modules/*/server/` | Server-side use cases, persistence/orchestration helpers, control evidence, feature flags, and backend service implementation. |
 | `src/modules/*/adapters/` | Provider-specific implementations such as HTTP delivery, GCS resumable upload, workspace access, and demo/test adapters. |
 | `src/modules/*/ui/` | Feature-oriented UI/state for documents, review, delivery, research, and overview workflows. |
-| `src/platform/` | Cross-cutting server infrastructure: configuration, HTTP helpers and request context, Postgres access, the demo/Postgres data platform, GCP clients, telemetry and readiness, and runtime-surface selection. |
+| `src/platform/` | Cross-cutting server infrastructure that sits below the modules (it never imports a module's server, adapters, UI or application code): configuration, HTTP helpers, Postgres access, the demo/Postgres data platform, GCP clients, telemetry and readiness, and runtime-surface selection. |
 | `src/shared/` | Shared domain vocabulary, client-safe helpers and reusable presentation components. |
 | `src/composition/` | Runtime composition: selects/wires concrete implementations for domain ports. |
 | `services/` | Deployable units that run outside the web app: the control loop, the extractor and the LiteLLM gateway. |

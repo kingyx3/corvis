@@ -61,6 +61,12 @@ test("server and adapter code cannot import UI or composition, and a module's ad
   assert.equal((await messages("src/app/page.tsx", `import { x } from "@/modules/delivery/adapters/tenant-export-store.ts";\nexport const y = x;\n`)).length, 1);
 });
 
+test("src/platform cannot import module runtime layers, only module domain types", async () => {
+  for (const specifier of ["@/modules/review/server/review.ts", "@/modules/workspace/adapters/company-sector-store.ts", "@/modules/workspace/ui/preferences/preference-provider.tsx", "@/modules/sources/application/upload-document.ts"]) {
+    assert.equal((await messages("src/platform/http/api/http.ts", `import { x } from "${specifier}";\nexport const y = x;\n`)).length, 1, specifier);
+  }
+});
+
 test("production code cannot import test support", async () => {
   for (const file of ["src/modules/review/server/review.ts", "src/platform/http/http.ts", "src/app/page.tsx", "src/shared/lib/format.ts"]) {
     assert.equal((await messages(file, `import { x } from "@/test-support/identity-assertion.ts";\nexport const y = x;\n`)).length, 1, file);
@@ -78,7 +84,9 @@ test("the imports the layering allows are not flagged", async () => {
     ["src/modules/review/domain/rule.ts", "@/shared/domain/contracts.ts"],
     ["src/shared/lib/display-format.ts", "../../modules/workspace/domain/display-preferences.ts"],
     ["src/composition/services.ts", "@/modules/workspace/adapters/http-workspace.ts"],
-    ["src/platform/data/platform.ts", "@/platform/demo/company-sector-store.ts"],
+    ["src/platform/data/platform.ts", "../../modules/workspace/domain/workspace-summary.ts"],
+    ["src/platform/demo/catalog.ts", "@/modules/workspace/domain/sector-taxonomy.ts"],
+    ["src/modules/workspace/adapters/demo-workspace.ts", "@/platform/demo/company-sector-store.ts"],
     ["src/modules/review/adapters/store.ts", "../domain/review-decision.ts"],
   ];
   for (const [file, specifier] of allowed) {

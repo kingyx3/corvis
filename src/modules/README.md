@@ -5,7 +5,7 @@ One directory per bounded module (see `docs/architecture/MODULARITY.md`). Each m
 | Layer | Holds | May import |
 | --- | --- | --- |
 | `domain/` | Pure types, ports and rules. No I/O, no React. | Other `domain/` files and `src/shared/domain/`. |
-| `server/` | Use cases, repositories, HTTP helpers, workers and sweeps. Server only. | `domain/`, `adapters/`, `src/platform/`, `src/shared/`. |
+| `server/` | Use cases, repositories, HTTP helpers, workers and sweeps. Server only. Module errors implement `toApiProblem()` (`src/platform/http/api/api-problem.ts`) so `apiError` can answer for them without the platform importing the module. | `domain/`, `adapters/`, `src/platform/`, `src/shared/`. |
 | `adapters/` | Provider-specific or demo implementations of the module's ports. | `domain/`, `src/platform/`, `src/shared/`. |
 | `ui/` | React views and client state. | `domain/`, `src/shared/`, `src/composition/`; never `server/`, `adapters/` or `src/platform/`. |
 | `application/` | Client-side use cases, where a module has one. | `domain/`. |
