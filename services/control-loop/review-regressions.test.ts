@@ -64,7 +64,7 @@ test("zero CLI budgets stay zero and do not send mutations", async () => {
   let mutations = 0;
   try {
     const evidence = join(root, "report.json");
-    await runCli({ argv: ["--mode", "weekly", "--root", root, "--apply-issues", "--mutation-budget", "0", "--issue-mutation-budget", "0", "--evidence", evidence], env: { GITHUB_REPOSITORY_OWNER: "o", GITHUB_REPOSITORY: "o/r", GITHUB_TOKEN: "test" }, fetchImpl: (async (_input, init) => {
+    await runCli({ argv: ["--mode", "weekly", "--root", root, "--apply-issues", "--mutation-budget", "0", "--issue-mutation-budget", "0", "--evidence", evidence], env: { NODE_ENV: "test", GITHUB_REPOSITORY_OWNER: "o", GITHUB_REPOSITORY: "o/r", GITHUB_TOKEN: "test" }, fetchImpl: (async (_input, init) => {
       if (init?.method === "POST") { mutations += 1; return Response.json({ number: 1 }); }
       return Response.json([]);
     }) as typeof fetch });
@@ -100,8 +100,8 @@ test("invalid budgets fail closed at CLI and both mutation boundaries", async ()
   for (const budget of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     await assert.rejects(applyActions([], { mode: "execute", budget }), /nonnegative_safe_integer/);
     await assert.rejects(applyIssueReconciliation([], { mode: "execute", budget }), /nonnegative_safe_integer/);
-    await assert.rejects(runCli({ argv: ["--mode", "weekly", `--mutation-budget=${budget}`], env: {} }), /nonnegative_safe_integer/);
-    await assert.rejects(runCli({ argv: ["--mode", "weekly", `--issue-mutation-budget=${budget}`], env: {} }), /nonnegative_safe_integer/);
+    await assert.rejects(runCli({ argv: ["--mode", "weekly", `--mutation-budget=${budget}`], env: { NODE_ENV: "test" } }), /nonnegative_safe_integer/);
+    await assert.rejects(runCli({ argv: ["--mode", "weekly", `--issue-mutation-budget=${budget}`], env: { NODE_ENV: "test" } }), /nonnegative_safe_integer/);
   }
 });
 
