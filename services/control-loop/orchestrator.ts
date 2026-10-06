@@ -207,6 +207,21 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     const allFindings = degraded ? dedupeFindings(sortFindings([...findings, degraded])) : findings;
 
     const plan = planActions(allFindings);
+    // Persist the exact proposal before either external mutation path can run.
+    // Reuse the bounded per-mode state key; GCS versioning retains its history.
+    let issuePlan = planIssueReconciliation({
+      findings: activeFindings,
+      snapshot: deps.issueSnapshot ?? { fetchedAt: startedAt, issues: [] },
+      status,
+      closureAllowed: closureDecision({ status, health: computeHealth(computeWatermark()), scanComplete: allScannersComplete, fullScan: scanFull }).allowed,
+    });
+    try {
+      await deps.stateStore.write(`plan_${deps.mode}`, JSON.stringify({ runId, startedAt, headCommit: deps.headCommit ?? null, plan, issuePlan }));
+    } catch (error) {
+      status = "failed";
+      issuePlan = [];
+      notes.push(`plan_write_failed:${errorMessage(error)}`);
+    }
     // Writer/applier failures must never reject the run: that would lose the
     // watermark (failure streak, freshness), the report, and the outcomes of
     // earlier successful applies. They downgrade the run to "incomplete".
@@ -219,7 +234,14 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
         notes.push(`apply_failed:${errorMessage(error)}`);
       }
     }
-    if (applyResult?.budgetExceeded) notes.push("mutation_budget_exceeded");
+    if (applyResult?.budgetExceeded) {
+      status = "incomplete";
+      notes.push("mutation_budget_exceeded");
+    }
+    if (applyResult?.actions.some((action) => action.reason === "no_applier_configured")) {
+      status = "incomplete";
+      notes.push("no_applier_configured");
+    }
     if (applyResult?.actions.some((action) => action.outcome === "failed")) {
       status = "incomplete";
       notes.push("apply_action_failed");
@@ -234,7 +256,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     if (deps.issueSnapshot) {
       try {
         issueReconciliation = await applyIssueReconciliation(
-          planIssueReconciliation({ findings: activeFindings, snapshot: deps.issueSnapshot, status, closureAllowed: closure.allowed }),
+          issuePlan.filter((action) => action.type !== "close" || closure.allowed),
           {
             mode: deps.issueApplyMode ?? "dry-run",
             budget: deps.issueMutationBudget ?? DEFAULT_MUTATION_BUDGET,
@@ -246,7 +268,14 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
         notes.push(`issue_reconciliation_failed:${errorMessage(error)}`);
       }
     }
-    if (issueReconciliation?.budgetExceeded) notes.push("issue_mutation_budget_exceeded");
+    if (issueReconciliation?.budgetExceeded) {
+      status = "incomplete";
+      notes.push("issue_mutation_budget_exceeded");
+    }
+    if (issueReconciliation?.outcomes.some((outcome) => outcome.reason === "no_writer_configured")) {
+      status = "incomplete";
+      notes.push("no_writer_configured");
+    }
     if (issueReconciliation?.outcomes.some((outcome) => outcome.outcome === "failed")) {
       status = "incomplete";
       notes.push("issue_reconciliation_action_failed");
@@ -256,8 +285,8 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     // The watermark and reported health reflect the final status, so a run
     // downgraded by a writer failure counts toward the failure streak instead
     // of recording a success.
-    const nextWatermarkValue = computeWatermark();
-    const health = computeHealth(nextWatermarkValue);
+    let nextWatermarkValue = computeWatermark();
+    let health = computeHealth(nextWatermarkValue);
 
     // Conditional stores only persist if no other run wrote the watermark since
     // this run read it (e.g. after this run's lease went stale), instead of
@@ -265,11 +294,19 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     // report (and its evidence) still reaches the caller.
     try {
       if (!(await writeWatermarkIfUnchanged(deps.stateStore, nextWatermarkValue, previousRead))) {
+        status = "incomplete";
         notes.push("watermark_write_conflict");
       }
     } catch (error) {
+      status = "incomplete";
       notes.push(`watermark_write_failed:${errorMessage(error)}`);
     }
+
+    nextWatermarkValue = computeWatermark();
+    health = computeHealth(nextWatermarkValue);
+    const finalHealthFinding = healthFinding(health);
+    const finalFindings = allFindings.filter((finding) => finding.ruleId !== "CL-HEALTH-001");
+    if (finalHealthFinding) finalFindings.push(finalHealthFinding);
 
     return {
       schemaVersion: 1,
@@ -281,11 +318,11 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       skipped: false,
       notes,
       scan: { full: scanFull, reason: scanReason, filesScanned, scanners },
-      findings: allFindings,
+      findings: dedupeFindings(sortFindings(finalFindings)),
       plan,
       applied: applyResult ?? null,
       health,
-      closure,
+      closure: closureDecision({ status, health, scanComplete: allScannersComplete, fullScan: scanFull }),
       watermark: nextWatermarkValue,
       issueReconciliation,
     };

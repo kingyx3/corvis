@@ -87,7 +87,7 @@ test("a broken relative link is flagged with a suggestion when exactly one file 
   const findings = scanInternalLinks(files, snapshot(["docs/README.md", "docs/renamed/MOVED.md"]));
   assert.equal(findings.length, 1);
   assert.equal(findings[0]?.remediation, "auto-fix");
-  assert.equal(findings[0]?.suggestion?.after, "./renamed/MOVED.md");
+  assert.equal(findings[0]?.suggestion?.after, "[index](./renamed/MOVED.md)");
 });
 
 test("a broken link with an ambiguous or absent replacement target requires human approval", () => {

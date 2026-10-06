@@ -1,3 +1,4 @@
+import { validateMutationBudget } from "./mutation-budget.ts";
 import { classifyFailure } from "./failure.ts";
 import type { AppliedAction, ApplyResult, PlannedAction, TextEdit } from "./types.ts";
 
@@ -25,6 +26,9 @@ export type ApplyOptions = {
  * (401/403/429) additionally stop the remaining actions (recorded as skipped).
  */
 export async function applyActions(plan: readonly PlannedAction[], options: ApplyOptions): Promise<ApplyResult> {
+  validateMutationBudget(options.budget);
+  let attempted = 0;
+  const completedEdits = new Set<string>();
   const automatic = plan.filter((action) => action.approval === "automatic" && action.disposition === "planned" && action.edit);
   const dryRun = options.mode === "dry-run";
   const actions: AppliedAction[] = [];
@@ -36,7 +40,12 @@ export async function applyActions(plan: readonly PlannedAction[], options: Appl
       actions.push({ fingerprint: action.fingerprint, outcome: "skipped", reason: `halted_after:${haltedReason}` });
       continue;
     }
-    if (actions.filter((entry) => entry.outcome === "applied").length >= options.budget) {
+    const editKey = JSON.stringify(action.edit);
+    if (completedEdits.has(editKey)) {
+      actions.push({ fingerprint: action.fingerprint, outcome: "applied", reason: "covered_by_previous_edit" });
+      continue;
+    }
+    if (attempted >= options.budget) {
       budgetExceeded = true;
       actions.push({ fingerprint: action.fingerprint, outcome: "skipped", reason: "mutation_budget_exceeded" });
       continue;
@@ -51,6 +60,7 @@ export async function applyActions(plan: readonly PlannedAction[], options: Appl
     }
     // A failing edit is recorded, not thrown: earlier outcomes must survive
     // into the report and watermark instead of vanishing with the rejection.
+    attempted += 1;
     try {
       await options.applier.apply(action.edit as TextEdit);
     } catch (error) {
@@ -59,6 +69,7 @@ export async function applyActions(plan: readonly PlannedAction[], options: Appl
       if (failure.halt) haltedReason = failure.reason;
       continue;
     }
+    completedEdits.add(editKey);
     actions.push({ fingerprint: action.fingerprint, outcome: "applied", reason: null });
   }
 

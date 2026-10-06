@@ -28,18 +28,27 @@ const REFERENCE_LINK = /^\s*\[[^\]\n]+\]:\s*(\S+)/;
 export interface MarkdownLink {
   target: string;
   line: number;
+  /** Zero-based offsets within the original line, preserving inline code width. */
+  start: number;
+  end: number;
 }
 
 export function markdownLinks(text: string): MarkdownLink[] {
   const links: MarkdownLink[] = [];
   for (const line of proseLines(text)) {
-    const withoutCode = line.text.replace(/`[^`]*`/g, "");
+    const withoutCode = line.text.replace(/`[^`]*`/g, (code) => " ".repeat(code.length));
     for (const match of withoutCode.matchAll(INLINE_LINK)) {
       const target = match[1];
-      if (target) links.push({ target, line: line.number });
+      if (target) {
+        const start = match.index + match[0].indexOf("](") + 2;
+        links.push({ target, line: line.number, start, end: start + target.length });
+      }
     }
     const reference = REFERENCE_LINK.exec(withoutCode);
-    if (reference?.[1]) links.push({ target: reference[1], line: line.number });
+    if (reference?.[1]) {
+      const start = reference[0].length - reference[1].length;
+      links.push({ target: reference[1], line: line.number, start, end: start + reference[1].length });
+    }
   }
   return links;
 }

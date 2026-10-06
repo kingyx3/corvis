@@ -17,7 +17,9 @@ This document describes the repository implementation. Confluence remains author
 - single-writer lease with stale-lock recovery;
 - one structured `RunReport` instead of scattered side effects.
 
-No production remediator is registered. `--apply` therefore still cannot mutate GitHub or Confluence and reports an automatic action as skipped when no applier exists.
+The CLI registers the GitHub file-edit adapter only with `--apply` plus repository identity and a write-scoped token, and the issue writer independently with `--apply-issues` and those credentials. Scheduled GitHub Actions and Cloud Run jobs still pass neither opt-in and remain read-only. These adapters do not implement Confluence writes or bypass protected-branch rules.
+
+Link repair plans carry complete before/after document snapshots. Parsed destinations are updated together in one file write, retaining anchors and URL encoding without rewriting prose or code examples. Findings sharing the same edit reuse its verified outcome; concurrent source changes fail the optimistic check.
 
 ## State adapters
 
@@ -26,7 +28,7 @@ Two state adapters intentionally exist:
 1. `FileStateStore` — build-phase/manual GitHub Actions bootstrap. Actions cache restores `services/control-loop/state` between runs. Cache loss is safe because a missing watermark forces a full rescan.
 2. `GcsStateStore` — production-like Cloud Run Job runtime. The adapter obtains a short-lived token from the GCP metadata server and stores state in the environment's private GCS control-loop bucket.
 
-The GCS adapter exposes generation-aware conditional writes. `lock.ts` uses Cloud Storage object-generation preconditions for atomic lease acquisition/release, so two overlapping Cloud Run Job executions cannot both become the writer. Watermark updates remain ordinary writes because only the lease holder is permitted to reach them.
+The GCS adapter exposes generation-aware conditional writes. `lock.ts` uses Cloud Storage object-generation preconditions for atomic lease acquisition/release, so two overlapping Cloud Run Job executions cannot both become the writer. Watermark updates also use generation-aware compare-and-set, so an expired lease holder cannot overwrite a newer run. A conflict or persistence failure reports an incomplete run.
 
 The durable GCS state contains operational control-loop state and sanitized run reports, not customer documents or application secrets.
 
@@ -48,7 +50,7 @@ The purpose-built `services/control-loop/Dockerfile` contains the reviewed repos
 
 ## GitHub issue reads
 
-`github.ts` reads the public repository's `control-loop`-labelled issues without requiring a long-lived GitHub token. If the repository becomes private, or when issue mutation is implemented, the runtime must receive a bounded managed GitHub credential; do not add a personal access token to source, Terraform state or image layers.
+`github.ts` reads the public repository's `control-loop`-labelled issues without requiring a long-lived GitHub token. If the repository becomes private, or when issue mutation is enabled, the runtime must receive a bounded managed GitHub credential; do not add a personal access token to source, Terraform state or image layers.
 
 ## Scheduler cutover boundary
 
@@ -58,9 +60,12 @@ Before #27 enables GitHub/Confluence writes, one scheduler must become authorita
 
 ## Execution safety
 
-- plan before apply;
+- persist the exact file and issue proposals before any external write; a failed plan save blocks mutation;
 - dry-run by default;
-- mutation budget and allowlist enforcement;
+- nonnegative safe-integer mutation budgets and canonical-path allowlist enforcement; zero disables writes, invalid values fail before work;
+- budgets count attempted logical actions, including uncertain writes and state changes whose follow-up comment fails (one issue action may issue a state request plus a comment);
+- budget exhaustion, missing configured writers and failed writes mark the run incomplete and retain the prior success watermark; no later issue closure follows a failed reconciliation action;
+- final health/findings/closure reflect the final run outcome; the CLI exits nonzero on non-skipped incomplete or failed runs;
 - atomic production lease and stale-lock reclamation;
 - no automatic closure after partial/failed scans;
 - corrupted/missing watermark degrades to a full rescan;
@@ -73,8 +78,8 @@ Before #27 enables GitHub/Confluence writes, one scheduler must become authorita
 The runtime/scheduler infrastructure is no longer the primary code gap, but #27 remains open because the business-control loop is not yet fully operational:
 
 1. live Confluence read/reconciliation is not wired into the scheduled runtime;
-2. GitHub issue create/update/close/reopen is not implemented;
-3. allowlisted documentation remediation is not implemented;
+2. GitHub issue create/reopen/close by fingerprint and allowlisted repository documentation remediation are implemented, but scheduled writes remain disabled pending the single-writer cutover, scoped credentials and rollback/acceptance evidence;
+3. automated health-issue synchronization and Confluence remediation are not implemented;
 4. business-maturity comparison against the Confluence gap/readiness/control/risk registers is not implemented;
 5. production scheduler cutover and recurring provider-backed execution evidence have not yet been demonstrated;
 6. incident/postmortem feedback into regression rules remains future work.
@@ -92,7 +97,8 @@ A finding fingerprint is `domain:owners:subject`, where the subject segment is `
 - **Cloud Run lock contention:** a fresh other-owner lease means the second run exits without becoming writer; stale leases are reclaimed after the configured staleness window.
 - **Corrupted/missing watermark:** no manual repair is required; the next run performs a full scan and rewrites a valid watermark after successful completion.
 - **GCS state errors:** verify the control-loop service account has object access only to `${project_id}-corvis-control-loop-${environment}`, public access prevention remains enforced, and Scheduler/job identities match Terraform.
-- **Bad remediation:** currently impossible in production because no remediator is registered. When remediation is added, its rollback/evidence contract must be added before enabling scheduler-side mutation.
+- **Incomplete run:** inspect notes and failed/skipped outcomes, repair the cause, then rescan. Do not advance readiness or treat the proposed watermark as persisted when a watermark-write error is recorded.
+- **Bad remediation:** scheduled mutation remains disabled. For an explicitly enabled manual write, preserve the saved `plan_<mode>` and report, inspect the exact GitHub commit, and revert via the normal reviewed PR path. Never overwrite subsequent human changes. A production rollout still needs tested rollback and retained evidence.
 
 ## Testing
 
