@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import type { request as httpsRequest } from "node:https";
 import {
   computeWebhookRetryDelayMs,
   processQueuedExports,
@@ -151,13 +153,20 @@ test("send-time policy refuses endpoints that are, or resolve to, internal addre
   }
 });
 
-test("the default webhook transport re-checks addresses at connect time, so a DNS rebind to an internal address is refused", async () => {
+test("the pinned webhook transport re-checks addresses at connect time, so a DNS rebind to an internal address is refused without network I/O", async () => {
   const store = new FakeDeliveryStore();
   store.events = [pendingEvent({ endpoint_url: "https://rebind.example.com/corvis" })];
   const answers = [[{ address: "93.184.216.34" }], [{ address: "169.254.169.254" }]];
   const lookups: string[] = [];
   const rebindingLookup = async (hostname: string) => { lookups.push(hostname); return answers[Math.min(lookups.length - 1, 1)]!; };
-  const result = await processWebhookDeliveries(10, () => 0.5, { store, lookup: rebindingLookup });
+  const requestImpl = ((url: URL, options: { lookup: ReturnType<typeof policyCheckedLookup> }) => {
+    const request = Object.assign(new EventEmitter(), {
+      end: () => options.lookup(url.hostname, {}, (error) => { request.emit("error", error); }),
+    });
+    return request;
+  }) as unknown as typeof httpsRequest;
+  const fetchImpl = policyPinnedWebhookFetch(rebindingLookup, requestImpl);
+  const result = await processWebhookDeliveries(10, () => 0.5, { store, lookup: rebindingLookup, fetchImpl });
   assert.deepEqual(result, { processed: 0, failed: 1 });
   assert.equal(lookups.length, 2, "the connect-time lookup must go through the policy, not a second unchecked resolution");
   assert.match(String(failureUpdate(store)?.parameters[2]), /resolves_to_private_address/);

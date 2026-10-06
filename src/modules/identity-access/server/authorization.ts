@@ -182,6 +182,24 @@ export class PostgresMembershipAuthorizationRepository implements MembershipAuth
               and g.next_review_at > now()
           )
         )
+        -- Corvis-issued assertions name the credential that proved identity. Recheck its lifetime on
+        -- every request, so revocation, expiry and the end of rotation overlap also end issued tokens.
+        -- Other signed broker/infrastructure sessions keep their existing lifecycle-grant contract.
+        and (
+          s.auth_method <> 'service_account'
+          or left($4, 16) <> 'service-account:'
+          or exists (
+            select 1 from corvis_control.service_account_credential c
+            join corvis_control.service_account a
+              on a.tenant_id=c.tenant_id and a.service_account_id=c.service_account_id
+            where c.tenant_id=s.tenant_id and a.subject=s.subject
+              and a.workspace_id::text=$5
+              and 'service-account:' || c.credential_id::text=$4
+              and c.status='active' and c.expires_at > now()
+              and (c.ends_at is null or c.ends_at > now())
+              and a.status='active' and a.expires_at > now()
+          )
+        )
         and not exists (
           select 1
           from corvis_control.session_revocation r

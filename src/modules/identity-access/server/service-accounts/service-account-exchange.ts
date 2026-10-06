@@ -1,8 +1,19 @@
 import { createHmac } from "node:crypto";
 import type { PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { verifyServiceAccountCredential } from "./service-account-credential.ts";
+import { enforceRequestRateLimit } from "../../../../platform/http/limits/distributed-rate-limit.ts";
+import { enforceRateLimit, type RateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
 
 export const SERVICE_ACCOUNT_ASSERTION_TTL_SECONDS = 5 * 60;
+
+/** Bounds unauthenticated work per client on each instance before a credential can cost a database query. */
+export function enforceServiceAccountExchangeClientLimit(request: Request, options: { limiter?: RateLimiter; now?: number } = {}): void {
+  // The approved Cloudflare edge overwrites cf-connecting-ip; off-edge this is only a best-effort guard.
+  const client = request.headers.get("cf-connecting-ip")?.trim()
+    || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || "unknown";
+  enforceRateLimit(`service-account-exchange:${client.slice(0, 64)}`, options);
+}
 
 /** Extract a Corvis service-account credential from the caller bearer header. */
 export function serviceAccountBearer(request: Request): string | null {
@@ -26,6 +37,9 @@ export async function exchangeServiceAccountCredential(
   if (!signingSecret) throw new Error("Service-account assertion signing is not configured");
   const verified = await verifyServiceAccountCredential(credential, db);
   if (!verified) return null;
+  // Shared with ordinary API calls: rotating credentials or moving between Cloud Run instances
+  // cannot multiply the verified service identity's budget. A database failure never mints a token.
+  await enforceRequestRateLimit(verified.tenantId, verified.subject, { db });
 
   const iat = Math.floor(now.getTime() / 1000);
   const payload = {
