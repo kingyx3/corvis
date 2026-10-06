@@ -1,8 +1,8 @@
 import { parseDeletionDecision } from "@/modules/governance/domain/data-retention";
-import { readJsonObject } from "@/platform/http/admin-request";
-import { customerDeletionService } from "@/modules/governance/server/customer-deletion";
-import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/data-governance";
-import { correlationId, json } from "@/platform/http/http";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { customerDeletionService } from "@/modules/governance/server/lifecycle/customer-deletion";
+import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
+import { correlationId, json } from "@/platform/http/api/http";
 
 /**
  * `{ action: "approve" | "reject" | "cancel", note?, expectedStatus? }` decides a deletion request an Organization Admin made

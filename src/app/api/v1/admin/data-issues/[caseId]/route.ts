@@ -1,8 +1,8 @@
 import { parseTransitionCommand } from "@/modules/governance/domain/data-issue";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/admin-request";
-import { dataIssueErrorResponse } from "@/modules/governance/server/data-issue-http";
-import { dataIssueService } from "@/modules/governance/server/data-issue-service";
-import { correlationId, json } from "@/platform/http/http";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { dataIssueErrorResponse } from "@/modules/governance/server/data-issues/data-issue-http";
+import { dataIssueService } from "@/modules/governance/server/data-issues/data-issue-service";
+import { correlationId, json } from "@/platform/http/api/http";
 
 export async function GET(request: Request, context: { params: Promise<{ caseId: string }> }) {
   const id = correlationId(request);

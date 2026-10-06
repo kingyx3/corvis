@@ -1,9 +1,9 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { buildScorecard, parseScorecardFilters, ScorecardFilterError, type ScorecardPage } from "@/modules/analytics/domain/performance-scorecard";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { parseLimit } from "@/platform/http/pagination";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { parseLimit } from "@/platform/http/api/pagination";
 import { performanceScorecard, SCORECARD_DEFAULT_PAGE_FUNDS, ScorecardTooLargeError } from "@/modules/analytics/server/performance-scorecard";
 import { demoScorecardPage } from "@/modules/analytics/server/performance-scorecard-demo-page";
 

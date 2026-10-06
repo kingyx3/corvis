@@ -2,6 +2,7 @@
   "name": "corvis",
   "version": "0.2.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
@@ -10,14 +11,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tools.json",
     "lint": "eslint . --max-warnings=0",
     "test:unit": "node --test \"**/*.test.ts\"",
     "test": "rm -rf .coverage && mkdir -p .coverage && node --test --experimental-test-coverage --test-coverage-include='src/modules/*/domain/**/*.ts' --test-coverage-include='src/modules/*/server/**/*.ts' --test-coverage-include='src/platform/**/*.ts' --test-coverage-include='src/shared/domain/**/*.ts' --test-coverage-include='src/shared/lib/**/*.ts' --test-coverage-include='src/modules/sources/adapters/upload/**/*.ts' --test-coverage-include='services/control-loop/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-exclude='**/test-support/**' --test-coverage-exclude='src/platform/demo/**' --test-coverage-lines=92.82 --test-coverage-branches=82.03 --test-coverage-functions=89.35 --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=.coverage/lcov.info \"**/*.test.ts\" && node tools/dev/check-changed-coverage.mjs .coverage/lcov.info",
     "test:coverage": "npm test",
     "test:e2e": "playwright test",
-    "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/content-security-policy.spec.ts",
-    "test:e2e:non-demo": "CORVIS_E2E_TARGET=production CORVIS_E2E_DEMO=false playwright test e2e/non-demo-smoke.spec.ts --project=chromium",
+    "test:e2e:csp": "CORVIS_E2E_TARGET=production playwright test e2e/quality/content-security-policy.spec.ts",
+    "test:e2e:non-demo": "CORVIS_E2E_TARGET=production CORVIS_E2E_DEMO=false playwright test e2e/smoke/non-demo-smoke.spec.ts --project=chromium",
     "customer:preflight": "node tools/dev/customer-implementation.ts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },

@@ -5,7 +5,7 @@ import type { PostgresRow } from "../../../platform/database/postgres.ts";
 import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 import "../../../test-support/http-sql-driver.ts";
 
-// See src/modules/sources/server/source-connections-routes.test.ts for why this loader is
+// See src/modules/sources/server/connections/source-connections-routes.test.ts for why this loader is
 // needed: route modules use the Next.js "@/..." path alias.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 

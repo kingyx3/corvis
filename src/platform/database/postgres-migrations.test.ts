@@ -198,7 +198,7 @@ test("processing transport claim has a partial index limited to the event types 
 
 test("export delivery queue scan and reconciliation listing have supporting indexes", async () => {
   const sql = (await readFile(pollingMigration, "utf8")).toLowerCase();
-  const delivery = (await readFile("src/modules/delivery/server/delivery.ts", "utf8")).toLowerCase();
+  const delivery = (await readFile("src/modules/delivery/server/exports/delivery.ts", "utf8")).toLowerCase();
   assert.match(delivery, /where state in \('queued','retryable'\)[\s\S]*order by created_at limit \$1/);
   assert.match(sql, /create index if not exists export_job_delivery_queue_idx\s+on corvis_serving\.export_job \(created_at\)\s+where state in \('queued','retryable'\);/);
   assert.match(sql, /create index if not exists reconciliation_run_fund_created_idx\s+on corvis_consolidated\.reconciliation_run \(tenant_id, fund_id, created_at desc\);/);
@@ -212,8 +212,8 @@ test("export job state is constrained to the delivery lifecycle without a blocki
   assert.match(sql, /if not exists \([\s\S]*conname = 'export_job_state_check'/);
   // Every state the application writes must be inside the domain.
   const writers = [
-    await readFile("src/modules/delivery/server/delivery.ts", "utf8"),
-    await readFile("src/modules/delivery/server/physical-exports.ts", "utf8"),
+    await readFile("src/modules/delivery/server/exports/delivery.ts", "utf8"),
+    await readFile("src/modules/delivery/server/exports/physical-exports.ts", "utf8"),
     await readFile("src/platform/data/platform-repositories.ts", "utf8"),
   ].join("\n");
   for (const state of writers.matchAll(/export_job[\s\S]{0,200}?set state='([a-z_]+)'/g)) {

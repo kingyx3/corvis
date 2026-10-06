@@ -10,7 +10,7 @@ import {
 } from "../../shared/domain/enterprise.ts";
 import { SECTOR_TAXONOMY_VERSION } from "../../modules/workspace/domain/sector-taxonomy.ts";
 import { MIXED_INSTRUMENT_TYPES } from "../../modules/workspace/domain/workspace-summary.ts";
-import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "../http/pagination.ts";
+import { keysetFetchLimit, sqlKeyBound, sqlKeyset, type KeysetPage } from "../http/api/pagination.ts";
 import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../database/postgres.ts";
 
 function jsonIds(values: string[] | undefined): string { return JSON.stringify(values ?? []); }

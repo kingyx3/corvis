@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
-import { DeletionExecutionError } from "../../modules/governance/server/data-lifecycle.ts";
+import { DeletionExecutionError } from "../../modules/governance/server/lifecycle/data-lifecycle.ts";
 import {
   createDeletionRequest,
   DEAD_LETTER_BACKLOG_AGE_SECONDS_MAX,

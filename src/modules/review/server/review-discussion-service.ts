@@ -11,7 +11,7 @@ import {
   type ReviewThreadSummary,
 } from "../domain/review-discussion.ts";
 import { demoReviewDiscussionStore } from "../adapters/review-discussion-store.ts";
-import { runAuditedMutation } from "../../governance/server/audited-mutation.ts";
+import { runAuditedMutation } from "../../governance/server/evidence/audited-mutation.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres } from "../../../platform/database/postgres.ts";
 import {

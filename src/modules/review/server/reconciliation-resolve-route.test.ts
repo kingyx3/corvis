@@ -3,7 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 import "../../../test-support/http-sql-driver.ts";
 
-// See src/modules/sources/server/source-connections-routes.test.ts for why this loader is
+// See src/modules/sources/server/connections/source-connections-routes.test.ts for why this loader is
 // needed: route modules use the Next.js "@/..." path alias that plain
 // `node --test` cannot resolve on its own.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
@@ -12,14 +12,14 @@ process.env.CORVIS_DEMO_MODE = "true";
 process.env.CORVIS_DATABASE_DSN = "https://fake-postgres.test/sql";
 
 // The resolve route's Idempotency-Key wiring (issue #11,
-// src/platform/http/idempotency.ts) queries corvis_control.idempotency_key
+// src/platform/http/limits/idempotency.ts) queries corvis_control.idempotency_key
 // directly over Postgres even in demo mode (the resolution itself goes
 // through the demo in-memory platform). This fake backs that table with a
 // real in-memory map keyed on its actual primary key
 // (tenant_id, scope, idempotency_key), honoring the same
 // "insert ... on conflict do nothing returning *" contract the module
 // issues, so these tests exercise the real
-// route -> src/platform/http/idempotency.ts -> the HTTP SQL test double -> fetch path.
+// route -> src/platform/http/limits/idempotency.ts -> the HTTP SQL test double -> fetch path.
 const idempotencyRows = new Map<string, { response_status: number; response_body: string }>();
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {

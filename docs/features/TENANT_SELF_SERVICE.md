@@ -18,7 +18,7 @@ The second demo workspace intentionally has no data and read-only document capab
 - SCIM requests are rate limited per client address and per targeted tenant before any database lookup (429 with `Retry-After`); the limits are process-local per instance. Minting or rotating the SCIM token writes an `access.scim.configured` audit event in the same transaction (it records the previous settings, never the token) and appears in the tenant access audit. SCIM user creation provisions the identity and the SCIM record atomically, and unexpected SCIM 500s log the error class.
 - `POST /api/v1/access/invitations/bulk` no longer confirms `tenant_admin` rows implicitly: those rows fail with `tenant_admin_confirmation_required` unless the request carries `?confirmTenantAdmin=true`. Per-row failures report a stable code, not the raw error message.
 - `POST /api/v1/admin/identity-lifecycle` refuses to disable or demote the calling administrator (`cannot_deactivate_current_user`, `cannot_change_current_user`) or the last active tenant administrator (`last_tenant_admin`), all 409. SQL business errors raised by the identity-lifecycle, access-policy and support-access functions map to 4xx instead of 500.
-- Upload access remains uploader-or-`admin` (`src/modules/sources/server/upload-access.ts`). Open product decision: an `accountadmin` of another workspace in the tenant maps to `admin` and can act on any tenant upload.
+- Upload access remains uploader-or-`admin` (`src/modules/sources/server/uploads/upload-access.ts`). Open product decision: an `accountadmin` of another workspace in the tenant maps to `admin` and can act on any tenant upload.
 
 ## Data retention and full data export (F10)
 

@@ -1,5 +1,5 @@
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { captureVerifiedRecipient } from "@/modules/notifications/server/notifications";
 import { logEvent } from "@/platform/observability/telemetry";
 

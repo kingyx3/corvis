@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { SCORECARD_EXPORT_COLUMNS, ScorecardFilterError } from "../domain/performance-scorecard.ts";
-import { EXPORT_MAX_ROWS, ExportRowLimitError } from "../../delivery/server/export-renderer.ts";
+import { EXPORT_MAX_ROWS, ExportRowLimitError } from "../../delivery/server/exports/export-renderer.ts";
 import { loadScorecardExportRows, performanceScorecardScope, resolveScorecardExport, SCORECARD_EXPORT_LABEL } from "./performance-scorecard-export.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 

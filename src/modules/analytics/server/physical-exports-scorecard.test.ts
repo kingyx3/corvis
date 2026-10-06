@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExportScope } from "../../delivery/domain/delivery.ts";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { createPhysicalExport, exportObjectKey, exportStatusFromJob, positionFinancialSnapshots, redeemPhysicalExportGrant } from "../../delivery/server/physical-exports.ts";
+import { createPhysicalExport, exportObjectKey, exportStatusFromJob, positionFinancialSnapshots, redeemPhysicalExportGrant } from "../../delivery/server/exports/physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 class FakeDb implements PostgresSqlApi {

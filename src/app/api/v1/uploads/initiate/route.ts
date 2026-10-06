@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/shared/domain/enterprise";
-import { uploadIdempotencyKey, uploads } from "@/modules/sources/server/uploads";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { uploadIdempotencyKey, uploads } from "@/modules/sources/server/uploads/uploads";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { durationMetric } from "@/platform/observability/telemetry";
 
 export async function POST(request: Request) {

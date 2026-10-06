@@ -1,6 +1,6 @@
-import { readJsonObject } from "@/platform/http/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getNotificationSettings, NotificationPreferenceError, updateNotificationPreferences } from "@/modules/notifications/server/notifications";
 
 /**

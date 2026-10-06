@@ -7,7 +7,7 @@ import type { SqlApplicationError } from "../../../platform/database/sql-applica
 import { trustedIdentityHeaders } from "../../../test-support/identity-assertion.ts";
 import "../../../test-support/http-sql-driver.ts";
 
-// Route handlers use the Next.js "@/..." alias; see src/platform/http/http.test.ts.
+// Route handlers use the Next.js "@/..." alias; see src/platform/http/api/http.test.ts.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
 // The Postgres path: a non-demo identity through the trusted gateway, with an HTTP SQL test double that records every

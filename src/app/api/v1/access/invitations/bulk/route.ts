@@ -1,10 +1,10 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readBoundedRequestText, RequestBodyTooLargeError } from "@/platform/http/bounded-body";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { readBoundedRequestText, RequestBodyTooLargeError } from "@/platform/http/api/bounded-body";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";
-import { createBulkInvitations, parseBulkInviteCsv } from "@/modules/identity-access/server/tenant-admin-self-service";
+import { createBulkInvitations, parseBulkInviteCsv } from "@/modules/identity-access/server/tenants/tenant-admin-self-service";
 
 const MAX_CSV_BYTES=1_000_000;
 

@@ -1,5 +1,5 @@
 // Real-Postgres acceptance for data-issue reports (F5, #261), through the application code: the repository in
-// src/modules/governance/server/data-issue.ts drives the SQL functions of migration 083 inside one transaction that is always rolled back.
+// src/modules/governance/server/data-issues/data-issue.ts drives the SQL functions of migration 083 inside one transaction that is always rolled back.
 // Covers what the pure-SQL test (data-issue-reports.sql) cannot: visibility predicates as the repository builds them,
 // keyset paging, the reporter's unseen indicator, the in-app/email notice by status, send-time eligibility and
 // preferences from the F2 outbox, and the link from the governed correction flow. Run after the full migration chain on a
@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { RecordingEmailSender } from '../../../src/modules/notifications/adapters/recording-email-sender.ts';
-import { PostgresDataIssueBackend, closeDataIssuesForCorrection } from '../../../src/modules/governance/server/data-issue.ts';
+import { PostgresDataIssueBackend, closeDataIssuesForCorrection } from '../../../src/modules/governance/server/data-issues/data-issue.ts';
 import { captureVerifiedRecipient, processEmailOutbox, updateNotificationPreferences } from '../../../src/modules/notifications/server/notifications.ts';
 
 const dsn = process.env.CORVIS_DATABASE_DSN;

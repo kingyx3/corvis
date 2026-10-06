@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
 import { assertPermission } from "@/shared/domain/enterprise";
 import { isSectorCode, type CompanySectorAssignment } from "@/modules/workspace/domain/sector-taxonomy";
-import { runAuditedMutation } from "@/modules/governance/server/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
+import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
 import { companySectors, PostgresCompanySectorRepository } from "@/modules/workspace/server/company-sectors";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { withIdempotency } from "@/platform/http/idempotency";
-import { MAX_VERSION } from "@/platform/http/request-validation";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { withIdempotency } from "@/platform/http/limits/idempotency";
+import { MAX_VERSION } from "@/platform/http/api/request-validation";
 
 const MAX_REASON_LENGTH = 1000;
 

@@ -19,7 +19,7 @@ import {
   type ReviewThreadSummary,
 } from "../domain/review-discussion.ts";
 import { bestEffortNotification, enqueueForUser } from "../../notifications/server/notifications.ts";
-import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/pagination.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/api/pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**

@@ -1,8 +1,8 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
-import { sourceConnectionService } from "@/modules/sources/server/source-connection-service";
-import { assertSourceConnectionId } from "@/modules/sources/server/source-connectors";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
+import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";
+import { assertSourceConnectionId } from "@/modules/sources/server/connectors/source-connectors";
 
 /**
  * A scoped connectivity check: reads the credential and calls the driver's

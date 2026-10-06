@@ -1,6 +1,6 @@
-import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { platform } from "@/platform/data/platform";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 export async function GET(request: Request) {
   const id = correlationId(request);

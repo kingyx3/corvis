@@ -1,6 +1,6 @@
 import { assertPermission, type ResearchStreamEvent } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { platform } from "@/platform/data/platform";
 import {
   parseResearchQuestion,

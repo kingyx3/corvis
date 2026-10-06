@@ -128,7 +128,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
   </section>;
 }
 
-/** Mirrors src/modules/identity-access/server/tenant-provisioning.ts's TENANT_SLUG. */
+/** Mirrors src/modules/identity-access/server/tenants/tenant-provisioning.ts's TENANT_SLUG. */
 const TENANT_SLUG = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

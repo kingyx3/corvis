@@ -1,7 +1,7 @@
 import type { PerformanceScorecardExportScope } from "../../delivery/domain/delivery.ts";
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
 import { buildScorecard, parseScorecardFilters, scorecardExportRows, scorecardScopeLabel, scorecardSnapshotIds, type ScorecardFilters } from "../domain/performance-scorecard.ts";
-import { assertExportRowLimit, type ExportRow } from "../../delivery/server/export-renderer.ts";
+import { assertExportRowLimit, type ExportRow } from "../../delivery/server/exports/export-renderer.ts";
 import { PostgresPerformanceScorecardRepository } from "./performance-scorecard.ts";
 import type { PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 

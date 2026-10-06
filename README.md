@@ -58,16 +58,22 @@ src/
   shared/               shared kernel: domain vocabulary, client-safe helpers, design system
   composition/          wires ports to concrete adapters
 services/               deployables that run outside the web app: control-loop, extractor, litellm-gateway
-tools/                  ci/ and dev/ scripts, repo-checks/ policy tests, convex-conformance/
+tools/                  ci/ and dev/ scripts, repo-checks/ policy tests (by area), convex-conformance/
 db/postgres/            migrations (immutable once applied) and database acceptance tests
 infra/terraform/        modules, environments and the shared Cloudflare root
 openapi/                public API contract
 ops/                    runbooks, SLOs and control catalogues
-e2e/                    Playwright suites
+e2e/                    Playwright suites (journeys, admin, quality, smoke)
 docs/                   technical documentation by kind: architecture, features, operations, security, engineering, reviews
 ```
 
 Module and layer boundaries, where new code goes, and the dependency rules are in [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) and [`docs/architecture/MODULARITY.md`](docs/architecture/MODULARITY.md). The Terraform module and environment layout is in [`docs/operations/INFRASTRUCTURE.md`](docs/operations/INFRASTRUCTURE.md). Production application or infrastructure code must not live in an untracked external deployment project.
+
+To contribute, read [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, the checks a pull request must pass and the rules that are easy to break.
+
+## License
+
+Proprietary. All rights reserved: no use, copying, modification or distribution is permitted without the copyright holder's written permission. See [`LICENSE`](LICENSE). The repository is visible on GitHub, which is not a license.
 
 ## Public repository posture
 

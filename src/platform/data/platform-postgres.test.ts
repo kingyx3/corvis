@@ -7,7 +7,7 @@ import { scopeObservationsToSnapshot } from "../../modules/review/domain/review-
 import { currentSnapshots } from "../../modules/analytics/domain/current-snapshots.ts";
 import { buildWorkspaceSummary, STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT } from "../../modules/workspace/domain/workspace-summary.ts";
 import { ConflictError, platform, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
-import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "../http/pagination.ts";
+import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "../http/api/pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
 import { ResearchProviderError } from "../../modules/research/server/research.ts";
 

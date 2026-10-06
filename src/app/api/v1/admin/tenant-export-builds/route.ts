@@ -1,10 +1,10 @@
-import { resolveAdminRequestIdentity } from "@/platform/http/admin-request";
+import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
 import { getServerConfig } from "@/platform/config/config";
-import { dataGovernanceErrorResponse } from "@/modules/governance/server/data-governance";
-import { correlationId, json } from "@/platform/http/http";
-import { parseLimit } from "@/platform/http/pagination";
+import { dataGovernanceErrorResponse } from "@/modules/governance/server/lifecycle/data-governance";
+import { correlationId, json } from "@/platform/http/api/http";
+import { parseLimit } from "@/platform/http/api/pagination";
 import { postgres } from "@/platform/database/postgres";
-import { assertOperationsAdmin, listTenantExportBuildIssues, parseBuildIssueStatus } from "@/modules/delivery/server/tenant-export-operations";
+import { assertOperationsAdmin, listTenantExportBuildIssues, parseBuildIssueStatus } from "@/modules/delivery/server/tenant-export/tenant-export-operations";
 
 /**
  * Full tenant export builds that failed or are being retried (F10f, #326), across tenants, for Corvis operations only

@@ -19,7 +19,7 @@ import {
   type ReviewThreadPage,
   type ReviewThreadSummary,
 } from "../domain/review-discussion.ts";
-import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/pagination.ts";
+import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/api/pagination.ts";
 import {
   ReviewDiscussionRequestError,
   commentFingerprint,

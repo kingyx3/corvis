@@ -8,9 +8,9 @@
  * and error enums are inputs only; no function here returns one for display.
  *
  * The id lists below mirror `ConnectionStatus`, `ConnectorErrorClass` and
- * `CredentialType` in `src/modules/sources/server/source-connectors.ts`. That module cannot be
+ * `CredentialType` in `src/modules/sources/server/connectors/source-connectors.ts`. That module cannot be
  * imported from the domain layer (it reaches Postgres), so
- * `src/modules/sources/server/source-connection-health-contract.test.ts` pins the two sets
+ * `src/modules/sources/server/connections/source-connection-health-contract.test.ts` pins the two sets
  * together at compile time and at run time: adding a class on either side
  * without the matching copy here fails typecheck and the test suite.
  */
@@ -36,7 +36,7 @@ export const STALE_AFTER_MS = STALE_AFTER_HOURS * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Lifecycle transitions: one rule set shared by the Postgres path
-// (src/modules/sources/server/source-connectors.ts), the demo store and the UI.
+// (src/modules/sources/server/connectors/source-connectors.ts), the demo store and the UI.
 // ---------------------------------------------------------------------------
 
 export type ConnectionAction = "pause" | "resume" | "revoke" | "reauthorize";

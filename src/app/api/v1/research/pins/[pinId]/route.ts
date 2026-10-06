@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/authorized-request";
-import { apiError, correlationId, json } from "@/platform/http/http";
+import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { ResearchPinError, unpinResearchAnswer } from "@/modules/research/server/research-pins";
 import { isUuid } from "@/platform/database/uuid";
 

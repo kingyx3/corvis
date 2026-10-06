@@ -2,7 +2,7 @@
  * The "Connect source" setup flow (story B1): what an approved provider looks
  * like to the browser, and the plain-language copy and input rules the wizard
  * follows. Everything here is pure, so the server registry
- * (src/modules/sources/server/source-providers.ts) and the UI (src/modules/sources/ui/documents/connect-source-wizard.tsx)
+ * (src/modules/sources/server/connectors/source-providers.ts) and the UI (src/modules/sources/ui/documents/connect-source-wizard.tsx)
  * share one vocabulary and one set of rules, and it is unit-tested without a browser.
  *
  * A provider descriptor carries no credential, no URL and no server identifier
