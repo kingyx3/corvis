@@ -10,7 +10,7 @@ One directory per bounded module (see `docs/architecture/MODULARITY.md`). Each m
 | `ui/` | React views and client state. | `domain/`, `src/shared/`, `src/composition/`; never `server/`, `adapters/` or `src/platform/`. |
 | `application/` | Client-side use cases, where a module has one. | `domain/`. |
 
-The `domain/` and `ui/` rules are checked on every pull request by `tools/repo-checks/architecture/module-boundaries.test.ts` and on a schedule by the control loop (`CL-ARCH-001`, `CL-ARCH-002`).
+The layer rules are enforced by `npm run lint` (`corvis/layer-boundaries`, configured in `eslint.config.mjs`), the `domain/` and `ui/` rules are also checked on every pull request by `tools/repo-checks/architecture/module-boundaries.test.ts` and on a schedule by the control loop (`CL-ARCH-001`, `CL-ARCH-002`).
 
 Server and domain code use relative imports so `node --test` can run it without the `@/` alias loader; `src/app/` and `ui/` code may use `@/`.
 
