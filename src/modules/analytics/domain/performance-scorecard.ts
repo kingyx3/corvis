@@ -8,8 +8,8 @@
  * which already-published fact is the latest one, which trust flag it carries, and how it is written
  * down for the reader.
  *
- * Metric dictionary assumptions (the Confluence dictionary is not reachable from the repository; the
- * governed `corvis_semantic.metric_definition` rows are tenant data, not seeded in migrations):
+ * Governed definitions: Confluence Canonical Metric Dictionary (262391), Controlled Taxonomies
+ * (327724) and Canonical Data Model (425985). Metric-definition rows remain tenant data:
  * - fund-level metrics are reported with subject level `fund`: nav, tvpi, dpi, rvpi, net_irr, net_moic;
  * - investment-level metrics are reported with subject level `holding` or `company`: cost, fair_value,
  *   gross_moic, gross_irr, ownership_pct. A look-through row, a breakdown row (e.g. fair value by
@@ -32,7 +32,7 @@ export const NOT_REPORTED = "Not reported";
 
 export const FUND_SCORECARD_METRICS: readonly ScorecardMetric[] = [
   { code: "nav", label: "NAV", kind: "money", definition: "Net asset value of the fund, as reported by the GP." },
-  { code: "tvpi", label: "TVPI", kind: "multiple", definition: "Total value to paid-in capital, net of fees and carry, as reported by the GP." },
+  { code: "tvpi", label: "TVPI", kind: "multiple", definition: "Total value divided by paid-in or invested capital under the source definition, as reported by the GP." },
   { code: "dpi", label: "DPI", kind: "multiple", definition: "Distributions to paid-in capital, as reported by the GP." },
   { code: "rvpi", label: "RVPI", kind: "multiple", definition: "Residual value to paid-in capital, as reported by the GP." },
   { code: "net_irr", label: "Net IRR", kind: "percent", definition: "Internal rate of return to investors, net of fees and carry, as reported by the GP." },
@@ -65,7 +65,7 @@ export type ScorecardFact = {
   publishedAt: string | null;
   fundId: string;
   level: ScorecardLevel;
-  /** Stable id of the investment within the fund: its company id when known, else its holding id. */
+  /** Subject-level qualified identity within the fund; separate holdings never collapse into one company row. */
   investmentKey: string | null;
   investment: string | null;
   holdingId: string | null;
@@ -216,7 +216,11 @@ export type Scorecard = { funds: FundRow[] };
 export type ScorecardPage = Scorecard & { filters: ScorecardFilters; fundOptions: ScorecardFund[]; periodOptions: string[] };
 
 /** Scenarios and actualities that are projections, not a result the GP reported; they never reach the scorecard. */
-const NOT_A_RESULT = new Set(["forecast", "budget", "plan", "projected", "projection", "target"]);
+export const SCORECARD_NON_RESULT_VALUES: readonly string[] = [
+  "forecast", "budget", "plan", "projected", "projection", "target", "guidance", "pro_forma", "underwritten",
+  "management_case", "base_case", "upside_case", "downside_case", "investment_case", "consensus", "other", "unknown",
+];
+const NOT_A_RESULT = new Set(SCORECARD_NON_RESULT_VALUES);
 /** Actualities the GP uses for a figure that is not yet final. */
 const PRELIMINARY_ACTUALITY = new Set(["preliminary", "provisional", "estimate", "estimated", "flash"]);
 
