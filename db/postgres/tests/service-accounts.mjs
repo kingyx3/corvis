@@ -19,6 +19,8 @@ register(new URL('../../../src/test-support/alias-loader.mjs', import.meta.url),
 const { PostgresServiceAccountBackend, serviceAccountAuditEvent } = await import('../../../src/modules/identity-access/server/service-accounts/service-account.ts');
 const { verifyServiceAccountCredential, hashCredentialSecret } = await import('../../../src/modules/identity-access/server/service-accounts/service-account-credential.ts');
 const { PostgresMembershipAuthorizationRepository } = await import('../../../src/modules/identity-access/server/authorization.ts');
+const { exchangeServiceAccountCredential } = await import('../../../src/modules/identity-access/server/service-accounts/service-account-exchange.ts');
+const { verifyGatewayIdentityAssertion } = await import('../../../src/modules/identity-access/server/request/request-context.ts');
 const { PostgresOperationsRepository } = await import('../../../src/platform/data/platform-repositories.ts');
 const { listTenantAccessAudit } = await import('../../../src/modules/identity-access/server/tenants/tenant-admin-self-service.ts');
 const { listTenantAccessMembers } = await import('../../../src/modules/identity-access/server/tenants/tenant-access.ts');
@@ -130,6 +132,13 @@ try {
     // Another workspace of the same tenant, and another tenant, resolve nothing.
     assert.equal(await authorization.resolve({ ...principal, workspaceId: otherWorkspaceId }), null);
     assert.equal(await authorization.resolve({ ...principal, tenantId: otherTenantId, workspaceId: otherWorkspace }), null);
+    // Exercise the exact session selector minted by the customer token exchange, not only an infrastructure broker session.
+    const signingSecret = 'synthetic-ci-service-account-signing-secret';
+    const exchanged = await exchangeServiceAccountCredential(credential.secret, tx, signingSecret);
+    const credentialPrincipal = verifyGatewayIdentityAssertion(exchanged.assertion, signingSecret);
+    assert.ok(await authorization.resolve(credentialPrincipal));
+    assert.equal(await authorization.resolve({ ...credentialPrincipal, sessionId: 'service-account:not-a-uuid' }), null);
+    assert.equal(await authorization.resolve({ ...credentialPrincipal, tenantId: otherTenantId, workspaceId: otherWorkspace }), null);
     // The 009 lifecycle rule applies: an overdue grant fails closed on the next lookup.
     await tx.execute('savepoint sp_grant');
     await tx.execute(`set local session_replication_role = replica`);
@@ -163,9 +172,13 @@ try {
     assert.deepEqual(duringOverlap, ['active', 'rotating_out']);
     assert.ok(await verifyServiceAccountCredential(credential.secret, tx), 'the old credential still works during the overlap');
     assert.ok(await verifyServiceAccountCredential(rotated.credential.secret, tx), 'and so does the new one');
+    const rotatedPrincipal = verifyGatewayIdentityAssertion((await exchangeServiceAccountCredential(rotated.credential.secret, tx, signingSecret)).assertion, signingSecret);
+    assert.ok(await authorization.resolve(credentialPrincipal), 'an issued assertion remains usable during its credential overlap');
     // The overlap ends: shorten the old credential's end date (the only change the guard allows).
     await tx.execute(`update corvis_control.service_account_credential set ends_at = now() - interval '1 second' where credential_id=$1::uuid`, [credential.credentialId]);
     assert.equal(await verifyServiceAccountCredential(credential.secret, tx), null, 'the old credential stops working when the overlap ends');
+    assert.equal(await authorization.resolve(credentialPrincipal), null, 'an already issued assertion stops at the exact credential overlap boundary');
+    assert.ok(await authorization.resolve(rotatedPrincipal), 'the new credential assertion is independent of the retired one');
     assert.ok(await verifyServiceAccountCredential(rotated.credential.secret, tx));
     const afterOverlap = await backend.get(adminIdentity, serviceAccount.serviceAccountId, tx);
     assert.deepEqual(afterOverlap.credentials.map((entry) => entry.status).sort(), ['active', 'retired']);
@@ -178,18 +191,23 @@ try {
     assert.equal(revoked.revokedCredentials, 2);
     assert.equal(await verifyServiceAccountCredential(second.credential.secret, tx), null);
     assert.equal(await verifyServiceAccountCredential(rotated.credential.secret, tx), null);
+    assert.equal(await authorization.resolve(rotatedPrincipal), null, 'revocation also immediately refuses an already issued assertion');
     assert.deepEqual(revoked.serviceAccount.actions, { canIssue: true, canRotate: false, canRevoke: false, canDisable: true, canExtend: false, canTransfer: true });
     assert.equal(code(await refused(tx, () => backend.revoke(adminIdentity, serviceAccount.serviceAccountId, tx))), 'service account has no active credential');
     // Revoking a credential does not remove the account's authorization (that is what disabling is for).
     assert.ok(await authorization.resolve(principal));
     const reissued = await backend.issueCredential(adminIdentity, serviceAccount.serviceAccountId, { action: 'issue', credentialExpiresInDays: 90 }, tx);
     assert.ok(await verifyServiceAccountCredential(reissued.credential.secret, tx), 'a re-issued credential works');
+    const reissuedPrincipal = verifyGatewayIdentityAssertion((await exchangeServiceAccountCredential(reissued.credential.secret, tx, signingSecret)).assertion, signingSecret);
+    assert.ok(await authorization.resolve(reissuedPrincipal));
+    assert.equal(await authorization.resolve(rotatedPrincipal), null, 'a new credential cannot revive an old assertion');
 
     // ---- Expiry: a credential past its expiry stops working (time-travelled as the owner, with triggers off).
     await tx.execute('savepoint sp_expiry');
     await tx.execute(`set local session_replication_role = replica`);
     await tx.execute(`update corvis_control.service_account_credential set created_at = now() - interval '5 days', expires_at = now() - interval '1 day' where credential_id=$1::uuid`, [reissued.credential.credentialId]);
     assert.equal(await verifyServiceAccountCredential(reissued.credential.secret, tx), null, 'an expired credential is refused');
+    assert.equal(await authorization.resolve(reissuedPrincipal), null, 'an issued assertion cannot outlive the credential expiry');
     await tx.execute('rollback to savepoint sp_expiry');
 
     // ---- Tenant isolation: another tenant's admin sees and changes nothing.

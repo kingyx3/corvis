@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
+import { tenantRateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
 import { hashCredentialSecret, mintCredential } from "./service-account-credential.ts";
 import { verifyGatewayIdentityAssertion } from "../request/request-context.ts";
 import "../../../../test-support/http-sql-driver.ts";
@@ -17,16 +18,22 @@ Object.assign(process.env, {
   NODE_ENV: "test",
   CORVIS_DATABASE_DSN: DATABASE_DSN,
   CORVIS_TRUSTED_AUTH_PROXY_SECRET: SIGNING_SECRET,
+  CORVIS_RATE_LIMIT_REQUESTS_PER_MINUTE: "3",
 });
 
 const credential = mintCredential();
+let queries = 0;
+let rateAllowed = true;
+beforeEach(() => { tenantRateLimiter().reset(); queries = 0; rateAllowed = true; });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (url !== DATABASE_DSN) return originalFetch(input, init);
 
   const { sql, parameters } = JSON.parse(String(init?.body ?? "{}")) as { sql: string; parameters: unknown[] };
+  queries += 1;
   let rows: unknown[] = [];
+  if (sql.includes("consume_api_rate_limit")) rows = [{ allowed: rateAllowed, retry_after_seconds: 30 }];
   if (sql.includes("from corvis_control.service_account_credential")) {
     const requestedCredentialId = String(parameters[0] ?? "");
     if (requestedCredentialId === credential.credentialId) {
@@ -95,4 +102,22 @@ test("POST service-account token fails closed when the assertion signing boundar
   } finally {
     process.env.CORVIS_TRUSTED_AUTH_PROXY_SECRET = previous;
   }
+});
+
+test("the exchange bounds unauthenticated client work before any database query", async () => {
+  for (let i = 0; i < 3; i++) assert.equal((await tokenPost(request(`Bearer ${mintCredential().secret}`))).status, 401);
+  const previousQueries = queries;
+  const response = await tokenPost(request(`Bearer ${credential.secret}`));
+  assert.equal(response.status, 429);
+  assert.ok(Number(response.headers.get("retry-after")) > 0);
+  assert.equal(queries, previousQueries, "a throttled client cannot spend another database lookup");
+  assert.equal((await response.json()).error, "rate_limited");
+});
+
+test("a verified credential must consume its distributed identity budget before an assertion is minted", async () => {
+  rateAllowed = false;
+  const response = await tokenPost(request(`Bearer ${credential.secret}`));
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "30");
+  assert.equal((await response.json()).data, undefined);
 });

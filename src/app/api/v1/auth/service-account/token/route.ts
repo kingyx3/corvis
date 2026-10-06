@@ -2,7 +2,7 @@ import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";
 import { AuthenticationError } from "@/modules/identity-access/server/request/request-context";
-import { exchangeServiceAccountCredential, serviceAccountBearer } from "@/modules/identity-access/server/service-accounts/service-account-exchange";
+import { enforceServiceAccountExchangeClientLimit, exchangeServiceAccountCredential, serviceAccountBearer } from "@/modules/identity-access/server/service-accounts/service-account-exchange";
 
 /**
  * Exchanges a Corvis-issued service-account credential for a five-minute signed identity assertion.
@@ -13,6 +13,7 @@ export async function POST(request: Request): Promise<Response> {
   const id = correlationId(request);
   try {
     const config = getServerConfig();
+    enforceServiceAccountExchangeClientLimit(request);
     const credential = serviceAccountBearer(request);
     if (!credential) throw new AuthenticationError("Service-account credential required");
     if (!config.trustedAuthProxySecret) throw new AuthenticationError("Service-account authentication is unavailable");
