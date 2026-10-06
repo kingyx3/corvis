@@ -6,6 +6,7 @@ Repository tooling. Nothing here ships in an application image.
 | --- | --- |
 | `ci/` | Scripts called from `.github/workflows/` (release governance, Terraform state, trust-anchor and alerting guards, security acceptance). Keep workflow YAML thin and put logic here so it can be tested. |
 | `dev/` | Developer and operator utilities run through `npm` scripts or by hand (changed-code coverage gate, demo-bundle check, control-evidence collection, customer implementation preflight). |
+| `eslint/` | Local ESLint plugin: the `corvis/layer-boundaries` rule behind the layer rules in `eslint.config.mjs`. |
 | `repo-checks/` | `node --test` suites that assert repository-wide policy: workflow and Terraform contracts, readiness catalogues, import boundaries and the directory layout itself. They run with `npm test`. |
 | `convex-conformance/` | Isolated harness that checks database semantics against the upstream Convex backend. It has its own `package.json`. |
 
