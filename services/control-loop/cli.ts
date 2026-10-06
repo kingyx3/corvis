@@ -9,7 +9,7 @@
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { createGitRunner, resolveChangedPaths } from "./changed-paths.ts";
-import { createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
+import { createGitHubFileEditApplier, createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
 import { resolveRunMode } from "./schedule.ts";
 import { FileStateStore, GcsStateStore, type StateStore } from "./state.ts";
@@ -64,6 +64,15 @@ async function run() {
     ? createGitHubIssueWriter({ owner, repo, token })
     : undefined;
 
+  // Same opt-in shape as issueWriter: file-edit apply can only ever execute
+  // (rather than dry-run) with both an explicit --apply flag and a real
+  // write-scoped token. Mutating repo files and mutating GitHub issues are
+  // independent blast radii with independent rollout timing, so this stays
+  // its own opt-in even once --apply-issues is turned on elsewhere.
+  const applier = values.apply && token && owner && repo
+    ? createGitHubFileEditApplier({ owner, repo, token })
+    : undefined;
+
   const report = await runControlLoop({
     root: values.root ?? ".",
     mode,
@@ -77,6 +86,7 @@ async function run() {
     issueSnapshotRequired: Boolean(token),
     applyMode: values.apply ? "execute" : "dry-run",
     mutationBudget: Number(values["mutation-budget"]) || 20,
+    applier,
     issueApplyMode: issueWriter ? "execute" : "dry-run",
     issueMutationBudget: Number(values["issue-mutation-budget"]) || 5,
     issueWriter,
