@@ -117,7 +117,7 @@ export type PinResearchAnswerInput = { question: string; answer: ResearchAnswer;
  *     hashes and the log keeps the first asker, so two users with the same question and scope share an id;
  *     the check is therefore tenant-scoped, not per-actor.
  *  4. every computed result's rows must hash to the digest the server logged for its semantic query id when it
- *     computed them, so the pinned figures are the server's, not the client's -> `answer_not_permitted`.
+ *     computed them (migration 070), so the pinned figures are the server's, not the client's -> `answer_not_permitted`.
  */
 async function verifiedAnswer(identity: RequestIdentity, raw: unknown, database: () => PostgresSqlApi, demo: boolean): Promise<ResearchAnswer> {
   const answer = parseResearchAnswerPayload(raw);
