@@ -1,5 +1,7 @@
 import type { IssueSnapshot, IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
 import type { IssueWriter } from "./issue-reconciliation.ts";
+import type { EditApplier } from "./apply.ts";
+import type { TextEdit } from "./types.ts";
 
 /** Upper bound for any single GitHub API call so a hung connection cannot stall a control-loop run. */
 export const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
@@ -145,6 +147,87 @@ export function createGitHubIssueWriter(options: GitHubIssueWriterOptions): Issu
         body: JSON.stringify({ body }),
       });
       if (!response.ok) throw new Error(`github_issue_comment_failed:${response.status}`);
+    },
+  };
+}
+
+export type GitHubFileEditApplierOptions = {
+  owner: string;
+  repo: string;
+  /** A managed credential scoped to repository contents write on this repository only. Required — this applier mutates files. */
+  token: string;
+  /** Branch to read and write; defaults to the repository's default branch. */
+  branch?: string;
+  fetchImpl?: typeof fetch;
+  /** Per-request timeout; defaults to GITHUB_REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
+};
+
+/** Encodes each path segment separately so a literal "/" in `path` stays a path separator, not `%2F`. */
+function contentsPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+type GitHubContentsResponse = { content: string; encoding: string; sha: string };
+
+/**
+ * The write counterpart to the allowlisted documentation-remediation plan
+ * (`plan.ts`'s `auto-fix` actions): applies a single `TextEdit` to a
+ * repository file via the GitHub Contents API with three independent
+ * safeguards, matching the "optimistic version checks, bounded diffs and
+ * post-write validation" the control loop's safety invariants require —
+ *
+ *  1. Optimistic version check: refuses to write unless the file's current
+ *     content still matches `edit.before` exactly, so a human or another
+ *     run editing the same file in between is never silently clobbered.
+ *  2. Bounded diff: the write is exactly the plan's own before→after edit —
+ *     never a regenerated or broader rewrite of the file.
+ *  3. Post-write validation: re-reads the file after the commit and fails
+ *     the action unless the committed content matches `edit.after` exactly.
+ *
+ * Kept as a thin, directly-testable adapter behind the `EditApplier` port
+ * (see `apply.ts`), mirroring `createGitHubIssueWriter`. `apply.ts`'s own
+ * budget/halt/skip bookkeeping around this stays untouched.
+ */
+export function createGitHubFileEditApplier(options: GitHubFileEditApplierOptions): EditApplier {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const base = `https://api.github.com/repos/${options.owner}/${options.repo}/contents`;
+  const headers = githubHeaders(options.token);
+  const timeoutMs = options.timeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS;
+  const query = options.branch ? `?ref=${encodeURIComponent(options.branch)}` : "";
+
+  async function readFile(path: string): Promise<{ content: string; sha: string }> {
+    const response = await fetchImpl(`${base}/${contentsPath(path)}${query}`, {
+      headers,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw new Error(`github_file_read_failed:${response.status}`);
+    const body = await response.json() as GitHubContentsResponse;
+    if (body.encoding !== "base64") throw new Error("github_file_read_failed:unsupported_encoding");
+    return { content: Buffer.from(body.content, "base64").toString("utf8"), sha: body.sha };
+  }
+
+  return {
+    async apply(edit: TextEdit): Promise<void> {
+      const before = await readFile(edit.path);
+      if (before.content !== edit.before) throw new Error("github_file_edit_stale");
+
+      const putBody: Record<string, unknown> = {
+        message: `control-loop: allowlisted documentation remediation\n\nFile: ${edit.path}`,
+        content: Buffer.from(edit.after, "utf8").toString("base64"),
+        sha: before.sha,
+      };
+      if (options.branch) putBody.branch = options.branch;
+      const putResponse = await fetchImpl(`${base}/${contentsPath(edit.path)}`, {
+        method: "PUT",
+        headers,
+        signal: AbortSignal.timeout(timeoutMs),
+        body: JSON.stringify(putBody),
+      });
+      if (!putResponse.ok) throw new Error(`github_file_write_failed:${putResponse.status}`);
+
+      const after = await readFile(edit.path);
+      if (after.content !== edit.after) throw new Error("github_file_edit_validation_failed");
     },
   };
 }

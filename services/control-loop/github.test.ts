@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
+import { createGitHubFileEditApplier, createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+function contentsResponse(content: string, sha: string, status = 200): Response {
+  return jsonResponse({ content: Buffer.from(content, "utf8").toString("base64"), encoding: "base64", sha }, status);
 }
 
 test("fetchIssueSnapshot reads open/closed control-loop issues and extracts their fingerprint", async () => {
@@ -12,7 +16,7 @@ test("fetchIssueSnapshot reads open/closed control-loop issues and extracts thei
     calls.push(String(input));
     return jsonResponse([
       { number: 1, state: "open", title: "a", body: "Finding fingerprint: `x:y:z`", labels: [{ name: "control-loop" }] },
-      { number: 2, state: "closed", title: "b", body: "no fingerprint here", labels: ["control-loop"] },
+      { number: 2, state: "closed", title: "b", body: "no fingerprint here", labels: ["control-loop", {}] },
       { number: 3, state: "open", title: "pr", body: null, labels: [], pull_request: {} },
     ]);
   };
@@ -26,6 +30,34 @@ test("fetchIssueSnapshot reads open/closed control-loop issues and extracts thei
 test("fetchIssueSnapshot degrades to null rather than throwing on a failed request", async () => {
   const fetchImpl: typeof fetch = async () => new Response("", { status: 500 });
   assert.equal(await fetchIssueSnapshot({ owner: "o", repo: "r", fetchImpl }), null);
+});
+
+test("fetchIssueSnapshot sends an authorization header only when a token is given", async () => {
+  const headersSeen: Array<string | null> = [];
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    headersSeen.push(new Headers(init?.headers).get("authorization"));
+    return jsonResponse([]);
+  };
+  await fetchIssueSnapshot({ owner: "o", repo: "r", fetchImpl });
+  await fetchIssueSnapshot({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  assert.deepEqual(headersSeen, [null, "Bearer tok"]);
+});
+
+test("fetchIssueSnapshot, createGitHubIssueWriter and createGitHubFileEditApplier default to the global fetch when fetchImpl is omitted", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return String(input).includes("/contents/") ? contentsResponse("x", "sha-1") : jsonResponse([]);
+  }) as typeof fetch;
+  try {
+    await fetchIssueSnapshot({ owner: "o", repo: "r" });
+    await createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok" }).create({ title: "t", body: "b", labels: [] });
+    await assert.rejects(() => createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok" }).apply({ path: "a.md", before: "y", after: "z" }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 3);
 });
 
 test("createGitHubIssueWriter.create posts title/body/labels and returns the issue number", async () => {
@@ -171,4 +203,110 @@ test("createGitHubIssueWriter gives every mutating request an abort signal and r
     });
   const hanging = createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok", fetchImpl: hangingFetch, timeoutMs: 20 });
   await withEventLoopKeptAlive(() => assert.rejects(() => hanging.comment(1, "x")));
+});
+
+test("createGitHubFileEditApplier.apply surfaces a non-ok read as a failure rather than treating it as a stale file", async () => {
+  const fetchImpl: typeof fetch = async () => new Response("", { status: 404 });
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_read_failed:404/,
+  );
+});
+
+test("createGitHubFileEditApplier.apply rejects a non-base64-encoded Contents API response", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse({ content: "old content", encoding: "none", sha: "sha-1" });
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_read_failed:unsupported_encoding/,
+  );
+});
+
+test("createGitHubFileEditApplier.apply reads, writes with sha, and re-reads to validate", async () => {
+  const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+  let reads = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), init });
+    if (!init || init.method === undefined) {
+      reads += 1;
+      return contentsResponse(reads === 1 ? "old content" : "new content", "sha-1");
+    }
+    return jsonResponse({ content: { sha: "sha-2" } });
+  };
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await applier.apply({ path: "docs/README.md", before: "old content", after: "new content" });
+
+  assert.equal(calls.length, 3, "read, write, re-read");
+  assert.equal(calls[0]?.url, "https://api.github.com/repos/o/r/contents/docs/README.md");
+  assert.equal(calls[1]?.init?.method, "PUT");
+  const putBody = JSON.parse(String(calls[1]?.init?.body)) as { sha: string; content: string; message: string };
+  assert.equal(putBody.sha, "sha-1");
+  assert.equal(Buffer.from(putBody.content, "base64").toString("utf8"), "new content");
+  assert.ok(putBody.message.includes("docs/README.md"));
+  assert.equal(calls[2]?.url, calls[0]?.url);
+});
+
+test("createGitHubFileEditApplier.apply refuses to write when the current content no longer matches 'before' (optimistic version check)", async () => {
+  const fetchImpl: typeof fetch = async () => contentsResponse("someone else's edit", "sha-1");
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_edit_stale/,
+  );
+});
+
+test("createGitHubFileEditApplier.apply fails the action rather than silently succeeding when the PUT is rejected", async () => {
+  let call = 0;
+  const fetchImpl: typeof fetch = async () => {
+    call += 1;
+    if (call === 1) return contentsResponse("old content", "sha-1");
+    return new Response("", { status: 409 });
+  };
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_write_failed:409/,
+  );
+});
+
+test("createGitHubFileEditApplier.apply fails post-write validation when the committed content doesn't match 'after'", async () => {
+  let call = 0;
+  const fetchImpl: typeof fetch = async () => {
+    call += 1;
+    if (call === 1) return contentsResponse("old content", "sha-1");
+    if (call === 2) return jsonResponse({ content: { sha: "sha-2" } });
+    return contentsResponse("something unexpected", "sha-2");
+  };
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_edit_validation_failed/,
+  );
+});
+
+test("createGitHubFileEditApplier encodes each path segment so a nested file path is not mangled", async () => {
+  const calls: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    calls.push(String(input));
+    return contentsResponse("x", "sha-1");
+  };
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(() => applier.apply({ path: "docs/a b/c.md", before: "y", after: "z" }));
+  assert.equal(calls[0], "https://api.github.com/repos/o/r/contents/docs/a%20b/c.md");
+});
+
+test("createGitHubFileEditApplier includes the branch as a query param on read and in the PUT body when given", async () => {
+  const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+  let reads = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), init });
+    if (!init?.method) { reads += 1; return contentsResponse(reads === 1 ? "old content" : "new content", "sha-1"); }
+    return jsonResponse({ content: { sha: "sha-2" } });
+  };
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", branch: "control-loop-writes", fetchImpl });
+  await applier.apply({ path: "docs/README.md", before: "old content", after: "new content" });
+  assert.ok(calls[0]?.url.endsWith("?ref=control-loop-writes"));
+  const putBody = JSON.parse(String(calls[1]?.init?.body)) as { branch?: string };
+  assert.equal(putBody.branch, "control-loop-writes");
 });
