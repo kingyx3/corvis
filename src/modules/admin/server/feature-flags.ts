@@ -61,10 +61,6 @@ export const FEATURE_FLAG_REGISTRY: readonly FeatureFlagDefinition[] = [
 
 const REGISTRY_BY_KEY = new Map(FEATURE_FLAG_REGISTRY.map((definition) => [definition.key, definition]));
 
-export function featureFlagDefinition(key: string): FeatureFlagDefinition | undefined {
-  return REGISTRY_BY_KEY.get(key);
-}
-
 export type FeatureFlagRecord = {
   key: string;
   enabled: boolean;
@@ -319,14 +315,6 @@ export async function assertFeatureEnabled(
 ): Promise<void> {
   const decision = evaluateFeatureFlag(await loadFeatureFlagSnapshot(identity, db), identity, key, channel);
   if (!decision.enabled) throw new FeatureFlagDeniedError(decision);
-}
-
-export async function resolveChannelFeatureFlags(
-  identity: RequestIdentity,
-  channel: FeatureFlagChannel,
-  db: PostgresSqlApi = controlDb(),
-): Promise<FeatureFlagDecision[]> {
-  return evaluateChannelFeatureFlags(await loadFeatureFlagSnapshot(identity, db), identity, channel);
 }
 
 export async function listFeatureFlagGovernance(
