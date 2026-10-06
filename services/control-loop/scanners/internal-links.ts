@@ -40,19 +40,25 @@ export function scanInternalLinks(files: RepoFile[], snapshot: RepoSnapshot): Fi
   const broken = rule("CL-DOC-003");
   for (const file of files) {
     if (!isDocumentationPath(file.path)) continue;
+    const fileFindings: Finding[] = [];
+    const edits: Array<{ line: number; start: number; end: number; target: string }> = [];
     for (const link of markdownLinks(file.text)) {
       if (EXTERNAL_TARGET.test(link.target)) continue;
-      const withoutAnchor = link.target.split("#")[0] ?? "";
-      if (!withoutAnchor) continue;
+      const withoutAnchor = link.target.split("#")[0]!;
       const decoded = safeDecode(withoutAnchor);
       const resolved = decoded.startsWith("/") ? decoded.replace(/^\/+/, "") : resolveRelative(file.path, decoded);
       if (resolved && snapshot.paths.has(resolved)) continue;
       const subject = `${file.path}:broken-link:${decoded}`;
       const replacement = uniqueTargetFor(basenameOf(decoded), snapshot);
+      const anchor = link.target.slice(withoutAnchor.length);
       const suggestion = replacement
-        ? { path: file.path, before: link.target, after: relativePathBetween(file.path, replacement) }
+        ? { path: file.path, before: file.text, after: "" }
         : null;
-      findings.push({
+      if (replacement) {
+        const target = relativePathBetween(file.path, replacement).split("/").map((part) => encodeURIComponent(part).replaceAll("(", "%28").replaceAll(")", "%29")).join("/") + anchor;
+        edits.push({ line: link.line, start: link.start, end: link.end, target });
+      }
+      fileFindings.push({
         ruleId: broken.id,
         fingerprint: fingerprintFor(broken, subject),
         subject,
@@ -64,6 +70,18 @@ export function scanInternalLinks(files: RepoFile[], snapshot: RepoSnapshot): Fi
         detail: `canonical internal link "${link.target}" does not resolve to a tracked repository path`,
         suggestion,
       });
+    }
+    // Every finding in one document shares a single optimistic whole-file edit.
+    // Replace only parsed link destinations, from right to left; prose/code stay intact.
+    const lines = file.text.split("\n");
+    for (const edit of edits.sort((a, b) => b.line - a.line || b.start - a.start)) {
+      const line = lines[edit.line - 1]!;
+      lines[edit.line - 1] = line.slice(0, edit.start) + edit.target + line.slice(edit.end);
+    }
+    const after = lines.join("\n");
+    for (const finding of fileFindings) {
+      if (finding.suggestion) finding.suggestion.after = after;
+      findings.push(finding);
     }
   }
   return findings;

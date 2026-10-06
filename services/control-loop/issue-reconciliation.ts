@@ -1,3 +1,4 @@
+import { validateMutationBudget } from "./mutation-budget.ts";
 import { classifyFailure } from "./failure.ts";
 import type { Finding, RunStatus } from "./types.ts";
 import { CONTROL_LOOP_LABEL, type IssueSnapshot, type IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
@@ -152,9 +153,10 @@ export async function applyIssueReconciliation(
   actions: readonly ReconciliationAction[],
   options: ReconciliationApplyOptions,
 ): Promise<ReconciliationResult> {
+  validateMutationBudget(options.budget);
   const dryRun = options.mode === "dry-run";
   const outcomes: ReconciliationOutcome[] = [];
-  let applied = 0;
+  let attempted = 0;
   let budgetExceeded = false;
   let haltedReason: string | null = null;
 
@@ -163,7 +165,11 @@ export async function applyIssueReconciliation(
       outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber: action.issueNumber, outcome: "skipped", reason: `halted_after:${haltedReason}` });
       continue;
     }
-    if (applied >= options.budget) {
+    if (action.type === "close" && outcomes.some((outcome) => outcome.outcome === "failed")) {
+      outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber: action.issueNumber, outcome: "skipped", reason: "earlier_mutation_failed" });
+      continue;
+    }
+    if (attempted >= options.budget) {
       budgetExceeded = true;
       outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber: action.issueNumber, outcome: "skipped", reason: "mutation_budget_exceeded" });
       continue;
@@ -177,6 +183,7 @@ export async function applyIssueReconciliation(
       continue;
     }
 
+    attempted += 1;
     let issueNumber = action.issueNumber;
     try {
       if (action.type === "create") {
@@ -195,7 +202,6 @@ export async function applyIssueReconciliation(
       continue;
     }
     outcomes.push({ type: action.type, fingerprint: action.fingerprint, issueNumber, outcome: "applied", reason: null });
-    applied += 1;
   }
 
   return { executed: !dryRun, dryRun, budget: options.budget, budgetExceeded, haltedReason, outcomes };

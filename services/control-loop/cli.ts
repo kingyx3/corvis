@@ -8,6 +8,9 @@
 // scan, preserving the documented scheduler contract.
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { validateMutationBudget } from "./mutation-budget.ts";
 import { createGitRunner, resolveChangedPaths } from "./changed-paths.ts";
 import { createGitHubFileEditApplier, createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
@@ -74,6 +77,8 @@ export async function runCli(io: CliIO = {}): Promise<void> {
 
   const values = parseCliArgs(argv);
   const mode = resolveRunMode(values.mode);
+  const mutationBudget = validateMutationBudget(Number(values["mutation-budget"]));
+  const issueMutationBudget = validateMutationBudget(Number(values["issue-mutation-budget"]));
   const state = createStateStore(env, values.root, fetchImpl);
 
   // A daily incremental scan covers everything changed since the last
@@ -118,10 +123,10 @@ export async function runCli(io: CliIO = {}): Promise<void> {
     // limited); a missing snapshot is then a skip, not a run failure.
     issueSnapshotRequired: Boolean(token),
     applyMode: values.apply ? "execute" : "dry-run",
-    mutationBudget: Number(values["mutation-budget"]) || 20,
+    mutationBudget: mutationBudget,
     applier,
     issueApplyMode: issueWriter ? "execute" : "dry-run",
-    issueMutationBudget: Number(values["issue-mutation-budget"]) || 5,
+    issueMutationBudget: issueMutationBudget,
     issueWriter,
   });
 
@@ -129,7 +134,7 @@ export async function runCli(io: CliIO = {}): Promise<void> {
   if (values.evidence) await writeFile(values.evidence, `${serialized}\n`, "utf8");
   if (state.durable) await state.store.write(`report_${mode}`, `${serialized}\n`);
   process.stdout.write(`${serialized}\n`);
-  if (report.status === "failed") process.exitCode = 1;
+  if (report.status !== "complete" && !report.skipped) process.exitCode = 1;
 }
 
 export function reportCliFailure(error: unknown): void {
@@ -137,14 +142,9 @@ export function reportCliFailure(error: unknown): void {
   process.exitCode = 1;
 }
 
-// True only when this file is executed directly (`node cli.ts`), not when a
-// test imports it for `runCli`/`parseCliArgs`/`createStateStore`. Basenames are
-// compared (rather than full paths) since `node cli.ts` and `node ./services/.../cli.ts`
-// report different `process.argv[1]` values for the same module.
+// Compare resolved paths: an unrelated command also named cli.ts must not run us.
 export function isInvokedDirectly(): boolean {
-  const entryUrl = import.meta.url.split("?")[0]!;
-  const invokedBasename = String(process.argv[1]).split("/").pop()!;
-  return entryUrl.endsWith(invokedBasename);
+  return Boolean(process.argv[1]) && resolve(process.argv[1]!) === fileURLToPath(import.meta.url);
 }
 
 // A no-op when imported for its exports, so that importing this module never

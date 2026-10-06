@@ -32,7 +32,9 @@ export function planActions(findings: readonly Finding[]): PlannedAction[] {
         edit: null,
       };
     }
-    const allowed = definition.allowlist.some((prefix) => finding.suggestion!.path.startsWith(prefix));
+    const safePath = !finding.suggestion.path.includes("\\")
+      && !finding.suggestion.path.split("/").some((part) => part === "." || part === ".." || part === "");
+    const allowed = safePath && definition.allowlist.some((prefix) => finding.suggestion!.path.startsWith(prefix));
     if (!allowed) {
       return {
         ruleId: finding.ruleId,

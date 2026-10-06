@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -167,7 +168,7 @@ test("runCli constructs an issue writer and a file-edit applier only when the ma
   const root = await tmpRoot();
   try {
     await runCli({
-      argv: ["--mode", "manual", "--root", root, "--apply", "--apply-issues", "--mutation-budget", "nope", "--issue-mutation-budget", "nope"],
+      argv: ["--mode", "manual", "--root", root, "--apply", "--apply-issues", "--mutation-budget", "7", "--issue-mutation-budget", "2"],
       env: { NODE_ENV: "test", GITHUB_REPOSITORY_OWNER: "o", GITHUB_REPOSITORY: "o/r", GITHUB_TOKEN: "tok" },
       fetchImpl: stubFetch(),
     });
@@ -231,15 +232,17 @@ test("reportCliFailure writes an Error's stack (falling back to its message) or 
   }
 });
 
-test("isInvokedDirectly compares process.argv[1]'s basename against this module's own URL", () => {
+test("isInvokedDirectly compares the complete resolved entrypoint path", () => {
   const originalArgv = process.argv;
   try {
     process.argv = ["node", "/some/other/path/not-this-file.ts"];
     assert.equal(isInvokedDirectly(), false);
 
-    // Only the basename needs to match (`node cli.ts` and `node ./services/.../cli.ts`
-    // report different full paths for the same module); any path ending in it does.
-    process.argv = ["node", "/fake/path/to/cli.ts"];
+    process.argv = ["node", "/unrelated/cli.ts"];
+    assert.equal(isInvokedDirectly(), false);
+    process.argv = ["node"];
+    assert.equal(isInvokedDirectly(), false);
+    process.argv = ["node", fileURLToPath(new URL("./cli.ts", import.meta.url))];
     assert.equal(isInvokedDirectly(), true);
   } finally {
     process.argv = originalArgv;
@@ -269,7 +272,7 @@ test("maybeRunAsCli runs the real CLI (via process.argv/process.env) and reports
   const chunks: string[] = [];
   process.stderr.write = ((chunk: string) => { chunks.push(String(chunk)); return true; }) as typeof process.stderr.write;
   try {
-    process.argv = ["node", "/fake/path/to/cli.ts", "--mode", "not-a-real-mode"];
+    process.argv = ["node", fileURLToPath(new URL("./cli.ts", import.meta.url)), "--mode", "not-a-real-mode"];
     process.env = { NODE_ENV: "test" };
     process.exitCode = undefined;
     await maybeRunAsCli();
@@ -291,7 +294,7 @@ test("maybeRunAsCli completes a real successful run when invoked directly", asyn
   let wrote = false;
   process.stdout.write = (() => { wrote = true; return true; }) as typeof process.stdout.write;
   try {
-    process.argv = ["node", "/fake/path/to/cli.ts", "--mode", "manual", "--root", root];
+    process.argv = ["node", fileURLToPath(new URL("./cli.ts", import.meta.url)), "--mode", "manual", "--root", root];
     process.env = { NODE_ENV: "test" };
     await maybeRunAsCli();
     assert.ok(wrote, "the run should have printed its report to stdout");
