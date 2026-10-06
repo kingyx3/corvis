@@ -16,7 +16,7 @@ test("fetchIssueSnapshot reads open/closed control-loop issues and extracts thei
     calls.push(String(input));
     return jsonResponse([
       { number: 1, state: "open", title: "a", body: "Finding fingerprint: `x:y:z`", labels: [{ name: "control-loop" }] },
-      { number: 2, state: "closed", title: "b", body: "no fingerprint here", labels: ["control-loop"] },
+      { number: 2, state: "closed", title: "b", body: "no fingerprint here", labels: ["control-loop", {}] },
       { number: 3, state: "open", title: "pr", body: null, labels: [], pull_request: {} },
     ]);
   };
@@ -30,6 +30,34 @@ test("fetchIssueSnapshot reads open/closed control-loop issues and extracts thei
 test("fetchIssueSnapshot degrades to null rather than throwing on a failed request", async () => {
   const fetchImpl: typeof fetch = async () => new Response("", { status: 500 });
   assert.equal(await fetchIssueSnapshot({ owner: "o", repo: "r", fetchImpl }), null);
+});
+
+test("fetchIssueSnapshot sends an authorization header only when a token is given", async () => {
+  const headersSeen: Array<string | null> = [];
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    headersSeen.push(new Headers(init?.headers).get("authorization"));
+    return jsonResponse([]);
+  };
+  await fetchIssueSnapshot({ owner: "o", repo: "r", fetchImpl });
+  await fetchIssueSnapshot({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  assert.deepEqual(headersSeen, [null, "Bearer tok"]);
+});
+
+test("fetchIssueSnapshot, createGitHubIssueWriter and createGitHubFileEditApplier default to the global fetch when fetchImpl is omitted", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return String(input).includes("/contents/") ? contentsResponse("x", "sha-1") : jsonResponse([]);
+  }) as typeof fetch;
+  try {
+    await fetchIssueSnapshot({ owner: "o", repo: "r" });
+    await createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok" }).create({ title: "t", body: "b", labels: [] });
+    await assert.rejects(() => createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok" }).apply({ path: "a.md", before: "y", after: "z" }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 3);
 });
 
 test("createGitHubIssueWriter.create posts title/body/labels and returns the issue number", async () => {
@@ -175,6 +203,24 @@ test("createGitHubIssueWriter gives every mutating request an abort signal and r
     });
   const hanging = createGitHubIssueWriter({ owner: "o", repo: "r", token: "tok", fetchImpl: hangingFetch, timeoutMs: 20 });
   await withEventLoopKeptAlive(() => assert.rejects(() => hanging.comment(1, "x")));
+});
+
+test("createGitHubFileEditApplier.apply surfaces a non-ok read as a failure rather than treating it as a stale file", async () => {
+  const fetchImpl: typeof fetch = async () => new Response("", { status: 404 });
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_read_failed:404/,
+  );
+});
+
+test("createGitHubFileEditApplier.apply rejects a non-base64-encoded Contents API response", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse({ content: "old content", encoding: "none", sha: "sha-1" });
+  const applier = createGitHubFileEditApplier({ owner: "o", repo: "r", token: "tok", fetchImpl });
+  await assert.rejects(
+    () => applier.apply({ path: "docs/README.md", before: "old content", after: "new content" }),
+    /github_file_read_failed:unsupported_encoding/,
+  );
 });
 
 test("createGitHubFileEditApplier.apply reads, writes with sha, and re-reads to validate", async () => {
