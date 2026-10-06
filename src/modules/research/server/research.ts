@@ -125,10 +125,9 @@ function managedSignal(callerSignal: AbortSignal | undefined, timeoutMs: number)
   };
 }
 
+// Only managedSignal aborts an execution signal, and always with one of these two errors.
 function throwExecutionAbort(signal: AbortSignal): never {
-  const reason = signal.reason;
-  if (reason instanceof ResearchTimeoutError || reason instanceof ResearchCancelledError) throw reason;
-  throw new ResearchCancelledError();
+  throw signal.reason as ResearchTimeoutError | ResearchCancelledError;
 }
 
 function checkExecutionSignal(signal: AbortSignal): void {

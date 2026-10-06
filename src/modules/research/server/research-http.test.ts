@@ -39,6 +39,7 @@ test("Ask Corvis execution failures have stable structured HTTP mappings", async
   assert.deepEqual([provider.status, provider.body], [502, { error: "research_provider_error" }]);
   assert.deepEqual(provider.log, { level: "error", event: "research.provider_error", fields: { provider: "ai", status: 503 } });
   assert.equal(JSON.stringify(provider.body).includes("ai"), false, "provider identity must not be returned in the client error payload");
+  assert.deepEqual(new ResearchProviderError("search").toApiProblem().log.fields, { provider: "search", status: null }, "an unreachable provider has no status to log");
 });
 
 test("research endpoints answer malformed or mistyped bodies with 400 invalid_question, never 500", async () => {
