@@ -133,7 +133,7 @@ class DemoCustomerJourneyStore {
       row.value = command.correctedValue;
       row.state = "Needs review";
     } else {
-      row.state = command.decision === "approve" ? "Approved" : "Needs review";
+      row.state = command.decision === "approve" ? "Approved" : command.decision === "reject" ? "Rejected" : "Needs review";
     }
     row.version = (row.version ?? 1) + 1;
   }
@@ -144,6 +144,9 @@ class DemoCustomerJourneyStore {
     if ((snapshot.version ?? 1) !== command.expectedVersion) throw new Error("snapshot_version_conflict");
     const scoped = this.observations.filter((row) => row.snapshotId === snapshot.id);
     if (command.action === "publish" && scoped.some((row) => row.state !== "Approved")) throw new Error("Publication blocked: observations still require review");
+    if (command.action === "publish" && this.listReconciliationExceptions(command.snapshotId, snapshot.version ?? 1).length > 0) {
+      throw new Error("Publication blocked: blocking reconciliation exceptions remain");
+    }
     snapshot.status = command.action === "publish" ? "Published" : "Review";
     snapshot.version = (snapshot.version ?? 1) + 1;
     snapshot.changed = nowLabel();
