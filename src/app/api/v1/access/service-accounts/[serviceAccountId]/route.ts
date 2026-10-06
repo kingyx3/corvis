@@ -1,5 +1,5 @@
 import { parseServiceAccountCommand } from "@/modules/identity-access/domain/service-account";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
 import { correlationId, json } from "@/platform/http/api/http";
 import { resolveServiceAccountAdmin, serviceAccountErrorResponse } from "@/modules/identity-access/server/service-accounts/service-account-http";
 import { serviceAccountService } from "@/modules/identity-access/server/service-accounts/service-account-service";

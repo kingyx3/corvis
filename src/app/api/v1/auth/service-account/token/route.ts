@@ -1,7 +1,7 @@
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";
-import { AuthenticationError } from "@/platform/http/identity/request-context";
+import { AuthenticationError } from "@/modules/identity-access/server/request/request-context";
 import { exchangeServiceAccountCredential, serviceAccountBearer } from "@/modules/identity-access/server/service-accounts/service-account-exchange";
 
 /**

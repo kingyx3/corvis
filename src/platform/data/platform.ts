@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { demoExposureDimensionFacts, documents, fundSnapshots, observations, portfolioValueFacts } from "../demo/catalog.ts";
-import { demoCompanySectorStore } from "../../modules/workspace/adapters/company-sector-store.ts";
+import { demoCompanySectorStore } from "../demo/company-sector-store.ts";
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "../../shared/domain/contracts.ts";
 import { fundSnapshotStatus } from "../../modules/analytics/domain/current-snapshots.ts";
 import { STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_LIMIT, type AttentionAggregates, type ExposureDimension, type ExposureDimensionFact, type NeedsReviewAggregate, type PortfolioValueFact } from "../../modules/workspace/domain/workspace-summary.ts";
@@ -16,7 +16,6 @@ import {
   type ReconciliationResolutionOutcome,
   type ReconciliationSourceReference,
   type RequestIdentity,
-  type ResearchAnswer,
   type ReviewDecision,
   type ReviewOutcome,
   type SnapshotPublication,
@@ -30,8 +29,7 @@ import {
   SNAPSHOT_VERSION_KEY_WIDTH,
 } from "./platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../database/postgres.ts";
-import { evaluatePublicationGate } from "../../modules/review/server/publication-policy.ts";
-import { researchService, type ResearchExecutionOptions } from "../../modules/research/server/research.ts";
+import { evaluatePublicationGate } from "../../modules/review/domain/publication-policy.ts";
 
 /**
  * The list methods take an optional keyset `page`. Without it they return the
@@ -59,7 +57,6 @@ export interface PlatformPort {
   review(identity: RequestIdentity, decision: ReviewDecision): Promise<ReviewOutcome>;
   resolveReconciliation(identity: RequestIdentity, command: ReconciliationResolutionCommand): Promise<ReconciliationResolutionOutcome>;
   publish(identity: RequestIdentity, command: SnapshotPublication): Promise<{ accepted: true; publicationEventId: string }>;
-  research(identity: RequestIdentity, question: string, options?: ResearchExecutionOptions): Promise<ResearchAnswer>;
   audit(event: AuditEvent): Promise<void>;
   readiness(): Promise<Record<string, "configured" | "missing" | "demo">>;
   export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest>;
@@ -187,17 +184,6 @@ class DemoPlatform implements PlatformPort {
     return { accepted: true, resolutionEventId: randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" };
   }
   async publish(identity: RequestIdentity, command: SnapshotPublication) { void identity; void command; return { accepted: true as const, publicationEventId: randomUUID() }; }
-  async research(identity: RequestIdentity, question: string, options: ResearchExecutionOptions = {}): Promise<ResearchAnswer> {
-    void identity;
-    options.signal?.throwIfAborted();
-    options.onProgress?.("planning");
-    options.signal?.throwIfAborted();
-    options.onProgress?.("retrieval");
-    options.signal?.throwIfAborted();
-    options.onProgress?.("generation");
-    options.signal?.throwIfAborted();
-    return { answer: `Demo-mode response for: ${question}.`, citations: [], semanticQueryIds: [], uncertainty: "Demo mode does not execute production semantic queries." };
-  }
   async audit(event: AuditEvent) { this.auditEvents.push(event); }
   async readiness() { return { identity: "demo", objectStore: "demo", postgres: "demo", orchestration: "demo", retrieval: "demo", ai: "demo", observability: "demo" } as const; }
   async export(identity: RequestIdentity, format: ExportManifest["format"]): Promise<ExportManifest> {
@@ -411,10 +397,6 @@ export class PostgresProductionPlatform implements PlatformPort {
     }
     if (!appended) throw new ConflictError("snapshot_not_found_or_version_conflict");
     return { accepted: true, publicationEventId };
-  }
-
-  async research(identity: RequestIdentity, question: string, options: ResearchExecutionOptions = {}): Promise<ResearchAnswer> {
-    return researchService().answer(identity, question, options);
   }
 
   audit(event: AuditEvent): Promise<void> { return this.operations.audit(event); }

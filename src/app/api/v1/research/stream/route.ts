@@ -1,7 +1,7 @@
 import { assertPermission, type ResearchStreamEvent } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
-import { platform } from "@/platform/data/platform";
+import { answerResearchQuestion } from "@/modules/research/server/research-answer";
 import {
   parseResearchQuestion,
   ResearchCancelledError,
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
           try { controller.close(); } catch { /* response reader already closed */ }
         };
 
-        void platform().research(identity, question, {
+        void answerResearchQuestion(identity, question, {
           signal: execution.signal,
           onProgress: (phase) => emit({ type: "progress", phase }),
         }).then((data) => {

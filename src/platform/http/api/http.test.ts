@@ -5,8 +5,9 @@ import test from "node:test";
 // http.ts imports route-facing modules through the Next.js "@/..." alias.
 register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
 
-const { apiError, correlationId, SESSION_ENDED_BY_POLICY_ERROR } = await import("@/platform/http/api/http");
-const { AuthenticationError, SessionEndedByPolicyError } = await import("@/platform/http/identity/request-context");
+const { apiError, correlationId } = await import("@/platform/http/api/http");
+const { SESSION_ENDED_BY_POLICY_ERROR } = await import("@/modules/identity-access/server/request/request-context");
+const { AuthenticationError, SessionEndedByPolicyError } = await import("@/modules/identity-access/server/request/request-context");
 const { IdempotencyKeyReuseError, InvalidIdempotencyKeyError } = await import("@/platform/http/limits/idempotency");
 const { TenantInvitationError } = await import("@/modules/identity-access/server/tenants/tenant-invitations");
 const { WebhookSubscriptionError } = await import("@/modules/delivery/server/webhooks/webhook-subscriptions");

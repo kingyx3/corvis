@@ -6,6 +6,7 @@ import { postgres, type PostgresSqlApi } from "../../../../platform/database/pos
 import { logEvent } from "../../../../platform/observability/telemetry.ts";
 import { canAccessUpload } from "./upload-access.ts";
 import { sealArtifactIntegrity } from "./upload-integrity.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../../platform/http/api/api-problem.ts";
 
 export type UploadRequestErrorCode =
   | "invalid_upload_request"
@@ -39,7 +40,7 @@ const UPLOAD_ERROR_STATUS: Record<UploadRequestErrorCode, number> = {
 };
 
 /** Client-attributable upload failure with a stable code and HTTP status (see apiError). */
-export class UploadRequestError extends Error {
+export class UploadRequestError extends Error implements ApiProblemSource {
   readonly code: UploadRequestErrorCode;
   readonly status: number;
   constructor(code: UploadRequestErrorCode, message: string) {
@@ -47,6 +48,9 @@ export class UploadRequestError extends Error {
     this.name = "UploadRequestError";
     this.code = code;
     this.status = UPLOAD_ERROR_STATUS[code];
+  }
+  toApiProblem(): ApiProblem {
+    return { status: this.status, body: { error: this.code }, log: { level: "warn", event: "upload.request_denied", fields: { code: this.code } } };
   }
 }
 

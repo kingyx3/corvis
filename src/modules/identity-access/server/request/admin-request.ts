@@ -1,4 +1,4 @@
-import { assertPermission, AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
+import { assertPermission, AuthorizationError, type RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
 
 /**

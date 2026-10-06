@@ -221,7 +221,7 @@ Database lifecycle roles and application permissions are separate layers.
 `tenant_admin` and `accountadmin` (a workspace/product administrator; renamed
 from the earlier `workspace_admin`) both map to the application `admin` Role
 for ordinary permission checks, but they are not interchangeable scopes:
-`assertTenantAdminRequestScope()` (`src/platform/http/identity/authorized-request.ts`) requires
+`assertTenantAdminRequestScope()` (`src/modules/identity-access/server/request/authorized-request.ts`) requires
 the authoritative, tenant-wide `isTenantAdmin` signal — never just the `admin`
 Role — for every `/api/v1/admin/**` route and the tenant-scoped processing
 recovery commands (`/jobs/{jobId}/retry`, `/jobs/{jobId}/recover`); granting

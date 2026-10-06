@@ -9,9 +9,9 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 ### Identity and tenant authorization
 
 - `src/shared/domain/enterprise.ts` defines roles, permissions, entitlements and source-access separation.
-- `src/platform/http/identity/request-context.ts` verifies production end-user OIDC bearer tokens directly (signature, issuer, audience and lifetime), taking the caller token from `X-Forwarded-Authorization` behind API Gateway. Optional signed gateway assertions support brokered SAML/service identities.
+- `src/modules/identity-access/server/request/request-context.ts` verifies production end-user OIDC bearer tokens directly (signature, issuer, audience and lifetime), taking the caller token from `X-Forwarded-Authorization` behind API Gateway. Optional signed gateway assertions support brokered SAML/service identities.
 - Production configuration requires issuer/audience and fails closed when required bindings are missing.
-- `src/platform/http/identity/authorized-request.ts` independently resolves active Postgres membership, workspace roles, fund/document rights, service-identity lifecycle and session revocation on protected requests. Tenant-wide control paths require authoritative tenant-admin scope.
+- `src/modules/identity-access/server/request/authorized-request.ts` independently resolves active Postgres membership, workspace roles, fund/document rights, service-identity lifecycle and session revocation on protected requests. Tenant-wide control paths require authoritative tenant-admin scope.
 - OIDC JWKS refreshes are single-flight and throttled even on cold-start failures. Unexpired keys survive a failed refresh; expired keys fail closed.
 - Provider-backed identity/access/RLS evidence remains a launch gate in GitHub issues #8/#10; implemented code alone does not establish live control effectiveness.
 

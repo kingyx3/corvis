@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import type { ExportScope } from "@/modules/delivery/domain/delivery";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { assertFeatureEnabled } from "@/modules/admin/server/feature-flags";
 import { withIdempotency } from "@/platform/http/limits/idempotency";
 import { apiError, correlationId, json } from "@/platform/http/api/http";

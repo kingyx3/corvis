@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import type { GcsObject, UploadObjectStore } from "../../../../platform/gcp/gcs.ts";
@@ -580,9 +579,10 @@ test("client-attributable upload failures are typed 4xx errors instead of generi
   }
 });
 
-test("apiError maps UploadRequestError to its typed status and stable code", async () => {
-  const source = await readFile("src/platform/http/api/http.ts", "utf8");
-  assert.match(source, /error instanceof UploadRequestError[\s\S]*error: error\.code[\s\S]*status: error\.status/);
+test("UploadRequestError answers over HTTP with its typed status and stable code", () => {
+  const problem = new UploadRequestError("unsupported_media_type", "unsupported").toApiProblem();
+  assert.deepEqual([problem.status, problem.body], [415, { error: "unsupported_media_type" }]);
+  assert.deepEqual(problem.log, { level: "warn", event: "upload.request_denied", fields: { code: "unsupported_media_type" } });
 });
 
 test("malformed initiate fields are typed 400s and never authorize a GCS session", async () => {

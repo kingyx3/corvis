@@ -1,5 +1,5 @@
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getUserPreferences, saveDisplayPreferences, mutateSavedView, PreferenceError } from "@/modules/workspace/server/user-preferences";
 export async function GET(request: Request) {

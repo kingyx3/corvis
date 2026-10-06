@@ -6,6 +6,7 @@ import { ConflictError } from "../../../../platform/data/platform.ts";
 import { PostgresOperationsRepository } from "../../../../platform/data/platform-repositories.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { sqlApplicationErrorOf } from "../../../../platform/database/sql-application-errors.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../../platform/http/api/api-problem.ts";
 
 export const INVITATION_TTL_DAYS = 7;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -42,10 +43,13 @@ export type AcceptedInvitation = {
   roleName: CreateTenantInvitation["roleName"];
 };
 
-export class TenantInvitationError extends Error {
+export class TenantInvitationError extends Error implements ApiProblemSource {
   readonly code: string;
   readonly status: number;
   constructor(code: string, status = 400) { super(code); this.name = "TenantInvitationError"; this.code = code; this.status = status; }
+  toApiProblem(): ApiProblem {
+    return { status: this.status, body: { error: this.code }, log: { level: "warn", event: "tenant_admin.request_denied", fields: { code: this.code } } };
+  }
 }
 
 export function normalizeTenantInvitation(value: Record<string, unknown>): CreateTenantInvitation | undefined {

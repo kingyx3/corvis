@@ -1,9 +1,9 @@
-import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { AuthorizationError } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig } from "../../config/config.ts";
-import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "../../../modules/identity-access/server/authorization.ts";
-import type { RateLimiter } from "../limits/rate-limit.ts";
-import { enforceRequestRateLimit } from "../limits/distributed-rate-limit.ts";
+import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
+import { AuthorizationError } from "../../../../shared/domain/enterprise.ts";
+import { getServerConfig } from "../../../../platform/config/config.ts";
+import { membershipAuthorizationRepository, type MembershipAuthorizationRepository } from "../authorization.ts";
+import type { RateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
+import { enforceRequestRateLimit } from "../../../../platform/http/limits/distributed-rate-limit.ts";
 import { AuthenticationError, resolveRequestIdentity } from "./request-context.ts";
 
 type ResolveAuthorizedOptions = {

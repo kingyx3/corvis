@@ -3,7 +3,7 @@ import test from "node:test";
 import type { PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { hashCredentialSecret, mintCredential } from "./service-account-credential.ts";
 import { exchangeServiceAccountCredential, serviceAccountBearer, SERVICE_ACCOUNT_ASSERTION_TTL_SECONDS } from "./service-account-exchange.ts";
-import { verifyGatewayIdentityAssertion } from "../../../../platform/http/identity/request-context.ts";
+import { verifyGatewayIdentityAssertion } from "../request/request-context.ts";
 
 const TENANT = "11111111-aaaa-4aaa-8aaa-111111111111";
 const WORKSPACE = "33333333-cccc-4ccc-8ccc-333333333333";

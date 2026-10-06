@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import type { AuthorizationPrincipal, MembershipAuthorizationRepository, ResolveOptions } from "../../../modules/identity-access/server/authorization.ts";
+import type { AuthorizationPrincipal, MembershipAuthorizationRepository, ResolveOptions } from "../authorization.ts";
 import { resolveAuthorizedRequestIdentity } from "./authorized-request.ts";
-import { RateLimitError, RateLimiter } from "../limits/rate-limit.ts";
+import { RateLimitError, RateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
 import { AuthenticationError, type GatewayIdentityAssertion } from "./request-context.ts";
 
 function signedAssertion(overrides: Partial<GatewayIdentityAssertion> = {}, secret = "trusted-secret"): string {

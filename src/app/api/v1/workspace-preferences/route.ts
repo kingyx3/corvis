@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getWorkspacePersonalization, markWorkspaceVisited, normalizePinnedFundIds, updatePinnedFunds, WorkspacePersonalizationError } from "@/modules/workspace/server/workspace-personalization";
 

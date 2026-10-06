@@ -3,10 +3,10 @@ import { createHmac } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { AuthorizationError, type RequestIdentity, type Role } from "../../../shared/domain/enterprise.ts";
+import { AuthorizationError, type RequestIdentity, type Role } from "../../../../shared/domain/enterprise.ts";
 import { assertTenantAdminIdentity, readJsonObject, resolveAdminRequestIdentity } from "./admin-request.ts";
-import type { MembershipAuthorization, MembershipAuthorizationRepository } from "../../../modules/identity-access/server/authorization.ts";
-import { RateLimiter } from "../limits/rate-limit.ts";
+import type { MembershipAuthorization, MembershipAuthorizationRepository } from "../authorization.ts";
+import { RateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
 
 function post(body: string): Request {
   return new Request("https://corvis.test/api/v1/admin/x", { method: "POST", headers: { "content-type": "application/json" }, body });

@@ -1,4 +1,4 @@
-import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { getServerConfig } from "@/platform/config/config";
 import { dataGovernanceErrorResponse } from "@/modules/governance/server/lifecycle/data-governance";
 import { correlationId, json } from "@/platform/http/api/http";

@@ -12,7 +12,8 @@ import layerBoundaries from "./tools/eslint/layer-boundaries.mjs";
 //   ui/            React views and client state: no server, adapters or platform (and no Node-only packages)
 //   application/   client-side use cases: no server, adapters or platform
 //   server/, adapters/   never import UI or composition (composition wires ports to adapters, not the other way round)
-//   adapters/, application/   only the owning module, src/composition and src/platform wire them in
+//   adapters/, application/   only the owning module and src/composition wire them in
+//   src/platform   infrastructure below the modules: module domain types only, never their server, adapters, ui or application layers
 //   src/shared/domain, src/shared/lib   the shared kernel: module domain types only (no runtime layers, platform or composition)
 //   production code never imports src/test-support
 //
@@ -37,6 +38,11 @@ const layeringZones = [
     message: "Server and adapter code must not import UI or composition code.",
   },
   {
+    target: ["src/platform/"],
+    from: [...layerGlobs("adapters"), ...layerGlobs("application"), ...layerGlobs("server"), ...layerGlobs("ui")],
+    message: "src/platform is infrastructure below the modules: it may use module domain types but not module runtime layers.",
+  },
+  {
     target: ["src/shared/domain/", "src/shared/lib/"],
     from: [...layerGlobs("adapters"), ...layerGlobs("application"), ...layerGlobs("server"), ...layerGlobs("ui"), "src/platform/", "src/composition/"],
     message: "The shared kernel (src/shared/domain, src/shared/lib) may use module domain types but not module runtime layers, platform or composition.",
@@ -46,11 +52,11 @@ const layeringZones = [
     from: ["src/test-support/"],
     message: "Production code must not import test support.",
   },
-  // A module's adapters and application layers are wired in by src/composition, src/platform (the data platform) and the module itself.
+  // A module's adapters and application layers are wired in by src/composition and the module itself.
   ...modules.map((owner) => ({
-    target: ["src/app/", "src/shared/", ...modules.filter((name) => name !== owner).map((name) => `src/modules/${name}/`)],
+    target: ["src/app/", "src/platform/", "src/shared/", ...modules.filter((name) => name !== owner).map((name) => `src/modules/${name}/`)],
     from: [`src/modules/${owner}/adapters/`, `src/modules/${owner}/application/`],
-    message: `src/modules/${owner}/adapters and /application are internal: only the module itself, src/composition and src/platform may import them.`,
+    message: `src/modules/${owner}/adapters and /application are internal: only the module itself and src/composition may import them.`,
   })),
 ];
 

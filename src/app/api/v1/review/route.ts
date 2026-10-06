@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { assertPermission, type ReviewDecision } from "@/shared/domain/enterprise";
 import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
 import { PostgresProductionPlatform, platform } from "@/platform/data/platform";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { isNonEmptyString, MAX_VERSION } from "@/platform/http/api/request-validation";
 

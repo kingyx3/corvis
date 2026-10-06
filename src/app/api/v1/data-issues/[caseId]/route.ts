@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { DataIssueValidationError } from "@/modules/governance/domain/data-issue";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { dataIssueErrorResponse } from "@/modules/governance/server/data-issues/data-issue-http";
 import { dataIssueService } from "@/modules/governance/server/data-issues/data-issue-service";
 import { correlationId, json } from "@/platform/http/api/http";

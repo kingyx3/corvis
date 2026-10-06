@@ -1,7 +1,7 @@
 import { assertPermission, type RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { DeletionRequestValidationError } from "../../domain/data-retention.ts";
 import { TenantExportValidationError } from "../../../delivery/domain/tenant-export.ts";
-import { resolveAuthorizedRequestIdentity } from "../../../../platform/http/identity/authorized-request.ts";
+import { resolveAuthorizedRequestIdentity } from "../../../identity-access/server/request/authorized-request.ts";
 import { apiError, json } from "../../../../platform/http/api/http.ts";
 
 /**

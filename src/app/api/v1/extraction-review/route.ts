@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { assertDocumentAccess, assertPermission } from "@/shared/domain/enterprise";
 import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";

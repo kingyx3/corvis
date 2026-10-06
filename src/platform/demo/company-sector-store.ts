@@ -1,11 +1,11 @@
-import { demoCompanySectorSeed, demoPortfolioCompanies } from "../../../platform/demo/catalog.ts";
+import { demoCompanySectorSeed, demoPortfolioCompanies } from "./catalog.ts";
 import {
   isSectorCode,
   sectorName,
   SECTOR_TAXONOMY_VERSION,
   type CompanySectorAssignment,
   type CompanySectorRecord,
-} from "../domain/sector-taxonomy.ts";
+} from "../../modules/workspace/domain/sector-taxonomy.ts";
 
 type DemoClassification = { sectorCode: string; version: number; classifiedBy: string; classifiedAt: string };
 export type DemoAssignmentResult = { newVersion: number } | { refused: "company_not_found_or_version_conflict" | "unknown_sector_code" | "company_sector_version_conflict" };

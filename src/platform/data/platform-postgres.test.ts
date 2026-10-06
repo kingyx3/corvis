@@ -9,7 +9,6 @@ import { buildWorkspaceSummary, STUCK_DOCUMENT_AFTER_HOURS, STUCK_DOCUMENT_ITEM_
 import { ConflictError, platform, PostgresProductionPlatform, PublicationGateError, snapshotPaginationKey } from "./platform.ts";
 import { encodeCursor, InvalidCursorError, keysetPage, MAX_PAGE_LIMIT, paginate, type KeysetPage, type Page } from "../http/api/pagination.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../database/postgres.ts";
-import { ResearchProviderError } from "../../modules/research/server/research.ts";
 
 type Call = { sql: string; parameters: PostgresPrimitive[] };
 
@@ -991,18 +990,6 @@ test("readiness reports every unconfigured binding as missing while orchestratio
   });
   await withEnv({ ...unset, CORVIS_AUTH_ISSUER: "https://idp.example", CORVIS_AUTH_AUDIENCE: "corvis", CORVIS_TRUSTED_AUTH_PROXY_SECRET: "s" }, async () => {
     assert.equal((await new PostgresProductionPlatform(new UnhealthyDb()).readiness()).postgres, "missing");
-  });
-});
-
-test("research fails closed through the permissioned research service when no AI endpoint is configured", { concurrency: false }, async () => {
-  await withEnv({ NODE_ENV: "test", CORVIS_DEMO_MODE: "false", CORVIS_AI_ENDPOINT: undefined, CORVIS_DATABASE_DSN: "postgres://corvis:secret@localhost:5432/corvis" }, async () => {
-    const phases: string[] = [];
-    await assert.rejects(
-      new PostgresProductionPlatform(new FakeDb()).research(identity, "What is NAV?", { onProgress: (phase) => phases.push(phase) }),
-      (error: unknown) => error instanceof ResearchProviderError && error.provider === "ai",
-    );
-    assert.deepEqual(phases, [], "no research phase starts before the provider check");
-    await assert.rejects(new PostgresProductionPlatform(new FakeDb()).research(identity, "What is NAV?"), ResearchProviderError);
   });
 });
 

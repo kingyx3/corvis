@@ -4,7 +4,7 @@ import test from "node:test";
 
 const operationalFiles = [
   "src/platform/data/platform.ts",
-  "src/platform/data/operations.ts",
+  "src/modules/governance/server/operations/operations.ts",
   "src/modules/research/server/research.ts",
   "src/modules/sources/server/uploads/uploads.ts",
   "src/modules/delivery/server/exports/delivery.ts",

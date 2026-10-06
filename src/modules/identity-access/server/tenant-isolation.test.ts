@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { generateControlEvidence, getSourceReference, listControlEvidence } from "../../../platform/data/operations.ts";
+import { generateControlEvidence, getSourceReference, listControlEvidence } from "../../governance/server/operations/operations.ts";
 import { PostgresOperationsRepository, PostgresWorkspaceRepository } from "../../../platform/data/platform-repositories.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../platform/database/postgres.ts";
 import { PermissionedResearchService } from "../../research/server/research.ts";

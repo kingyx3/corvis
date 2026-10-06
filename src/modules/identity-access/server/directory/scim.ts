@@ -7,7 +7,7 @@ import { PostgresOperationsRepository } from "../../../../platform/data/platform
 import { postgres, withTransaction, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { isTransientPostgresError } from "../../../../platform/database/postgres-native.ts";
 import { RATE_LIMIT_WINDOW_MS, RateLimitError, RateLimiter } from "../../../../platform/http/limits/rate-limit.ts";
-import { userBearerAuthorization } from "../../../../platform/http/identity/request-context.ts";
+import { userBearerAuthorization } from "../request/request-context.ts";
 import { sqlApplicationErrorOf } from "../../../../platform/database/sql-application-errors.ts";
 import { logEvent } from "../../../../platform/observability/telemetry.ts";
 import { TenantInvitationError } from "../tenants/tenant-invitations.ts";

@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { createTenantInvitation, listTenantInvitations, normalizeTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenants/tenant-invitations";
 import { postgres, withTransaction } from "@/platform/database/postgres";

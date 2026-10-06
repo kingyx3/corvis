@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { PostgresMembershipAuthorizationRepository } from '../../../src/modules/identity-access/server/authorization.ts';
-import { SessionEndedByPolicyError } from '../../../src/platform/http/identity/request-context.ts';
+import { SessionEndedByPolicyError } from '../../../src/modules/identity-access/server/request/request-context.ts';
 import { sweepTenantSessionActivity } from '../../../src/modules/identity-access/server/sessions/session-activity-sweep.ts';
 
 // A session the policy ended is told apart from a refused one (F7c): the lookup raises SessionEndedByPolicyError with the reason.

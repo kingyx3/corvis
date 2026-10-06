@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { correlationId, json } from "@/platform/http/api/http";
 import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
 import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";

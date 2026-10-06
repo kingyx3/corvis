@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { createWebhookSubscription, listWebhookSubscriptions } from "@/modules/delivery/server/webhooks/webhook-subscriptions";

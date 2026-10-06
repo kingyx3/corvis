@@ -26,6 +26,7 @@ import {
   sanitizeRowsForModel,
   sanitizeSnippet,
 } from "./research-grounding.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../platform/http/api/api-problem.ts";
 
 type SearchHit = {
   sourceReferenceId: string;
@@ -43,23 +44,29 @@ export type ResearchExecutionOptions = {
   onProgress?: (phase: ResearchProgressPhase) => void;
 };
 
-export class ResearchTimeoutError extends Error {
+export class ResearchTimeoutError extends Error implements ApiProblemSource {
   readonly code = "research_timeout";
   constructor() {
     super("Research request timed out");
     this.name = "ResearchTimeoutError";
   }
+  toApiProblem(): ApiProblem {
+    return { status: 504, body: { error: this.code }, log: { level: "warn", event: "research.timeout" } };
+  }
 }
 
-export class ResearchCancelledError extends Error {
+export class ResearchCancelledError extends Error implements ApiProblemSource {
   readonly code = "research_cancelled";
   constructor() {
     super("Research request was cancelled");
     this.name = "ResearchCancelledError";
   }
+  toApiProblem(): ApiProblem {
+    return { status: 499, body: { error: this.code }, log: { level: "info", event: "research.cancelled" } };
+  }
 }
 
-export class ResearchProviderError extends Error {
+export class ResearchProviderError extends Error implements ApiProblemSource {
   readonly code = "research_provider_error";
   readonly provider: "search" | "ai";
   readonly status?: number;
@@ -69,6 +76,10 @@ export class ResearchProviderError extends Error {
     this.name = "ResearchProviderError";
     this.provider = provider;
     this.status = status;
+  }
+
+  toApiProblem(): ApiProblem {
+    return { status: 502, body: { error: this.code }, log: { level: "error", event: "research.provider_error", fields: { provider: this.provider, status: this.status ?? null } } };
   }
 }
 

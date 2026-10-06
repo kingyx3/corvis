@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RequestIdentity } from "../../shared/domain/enterprise.ts";
-import { DeletionExecutionError } from "../../modules/governance/server/lifecycle/data-lifecycle.ts";
+import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
+import { DeletionExecutionError } from "../lifecycle/data-lifecycle.ts";
 import {
   createDeletionRequest,
   DEAD_LETTER_BACKLOG_AGE_SECONDS_MAX,
@@ -9,8 +9,8 @@ import {
   evaluateQueueSaturation,
   generateControlEvidence,
 } from "./operations.ts";
-import { PostgresOperationsRepository } from "./platform-repositories.ts";
-import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../database/postgres.ts";
+import { PostgresOperationsRepository } from "../../../../platform/data/platform-repositories.ts";
+import { withTransaction, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 
 const TENANT = "00000000-0000-0000-0000-0000000000c1";
 const WORKSPACE = "00000000-0000-0000-0000-0000000000c2";

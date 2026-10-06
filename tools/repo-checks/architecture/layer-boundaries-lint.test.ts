@@ -78,7 +78,7 @@ test("the imports the layering allows are not flagged", async () => {
     ["src/modules/review/domain/rule.ts", "@/shared/domain/contracts.ts"],
     ["src/shared/lib/display-format.ts", "../../modules/workspace/domain/display-preferences.ts"],
     ["src/composition/services.ts", "@/modules/workspace/adapters/http-workspace.ts"],
-    ["src/platform/data/platform.ts", "@/modules/workspace/adapters/company-sector-store.ts"],
+    ["src/platform/data/platform.ts", "@/platform/demo/company-sector-store.ts"],
     ["src/modules/review/adapters/store.ts", "../domain/review-decision.ts"],
   ];
   for (const [file, specifier] of allowed) {

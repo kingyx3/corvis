@@ -3,7 +3,7 @@ import { getServerConfig, type ServerConfig } from "../../../../platform/config/
 import { normalizeOidcIssuer, OidcVerifier, unverifiedLogoutTokenIssuer, type OidcLogoutToken } from "./oidc.ts";
 import { postgres, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { RateLimiter, RATE_LIMIT_WINDOW_MS } from "../../../../platform/http/limits/rate-limit.ts";
-import { classifyOidcFailure } from "../../../../platform/http/identity/request-context.ts";
+import { classifyOidcFailure } from "../request/request-context.ts";
 import { countMetric, logEvent } from "../../../../platform/observability/telemetry.ts";
 
 /**

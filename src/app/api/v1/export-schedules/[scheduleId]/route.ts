@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { parseSchedulePatch } from "@/modules/delivery/domain/export-schedule";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { exportScheduleErrorResponse } from "@/modules/delivery/server/schedules/export-schedule-http";
 import { exportScheduleService } from "@/modules/delivery/server/schedules/export-schedule-service";
 import { correlationId, json } from "@/platform/http/api/http";

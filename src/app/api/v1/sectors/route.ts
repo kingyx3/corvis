@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { SECTOR_TAXONOMY_VERSION, SECTORS } from "@/modules/workspace/domain/sector-taxonomy";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 
 /**
