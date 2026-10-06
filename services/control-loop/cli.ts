@@ -9,63 +9,105 @@
 import { writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { createGitRunner, resolveChangedPaths } from "./changed-paths.ts";
-import { createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
+import { createGitHubFileEditApplier, createGitHubIssueWriter, fetchIssueSnapshot } from "./github.ts";
 import { runControlLoop } from "./orchestrator.ts";
 import { resolveRunMode } from "./schedule.ts";
 import { FileStateStore, GcsStateStore, type StateStore } from "./state.ts";
 import { readWatermark } from "./watermark.ts";
 
-const { values } = parseArgs({
-  options: {
-    mode: { type: "string" },
-    apply: { type: "boolean", default: false },
-    "apply-issues": { type: "boolean", default: false },
-    evidence: { type: "string" },
-    "mutation-budget": { type: "string", default: "20" },
-    "issue-mutation-budget": { type: "string", default: "5" },
-    root: { type: "string", default: "." },
-  },
-});
+export type CliArgs = {
+  mode?: string;
+  apply: boolean;
+  "apply-issues": boolean;
+  evidence?: string;
+  "mutation-budget": string;
+  "issue-mutation-budget": string;
+  root: string;
+};
 
-function createStateStore(): { store: StateStore; durable: boolean } {
-  const bucket = process.env.CONTROL_LOOP_STATE_BUCKET?.trim();
-  if (!bucket) return { store: new FileStateStore(`${values.root}/services/control-loop/state`), durable: false };
+export function parseCliArgs(argv: string[]): CliArgs {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      mode: { type: "string" },
+      apply: { type: "boolean", default: false },
+      "apply-issues": { type: "boolean", default: false },
+      evidence: { type: "string" },
+      "mutation-budget": { type: "string", default: "20" },
+      "issue-mutation-budget": { type: "string", default: "5" },
+      root: { type: "string", default: "." },
+    },
+  });
+  return values as CliArgs;
+}
+
+export function createStateStore(env: NodeJS.ProcessEnv, root: string, fetchImpl?: typeof fetch): { store: StateStore; durable: boolean } {
+  const bucket = env.CONTROL_LOOP_STATE_BUCKET?.trim();
+  if (!bucket) return { store: new FileStateStore(`${root}/services/control-loop/state`), durable: false };
   return {
     store: new GcsStateStore({
       bucket,
-      prefix: process.env.CONTROL_LOOP_STATE_PREFIX?.trim() || "control-loop",
+      prefix: env.CONTROL_LOOP_STATE_PREFIX?.trim() || "control-loop",
+      fetchImpl,
     }),
     durable: true,
   };
 }
 
-async function run() {
+/**
+ * Everything the run depends on beyond the repository checkout itself: CLI
+ * flags, environment, and the one shared `fetchImpl` threaded into every
+ * GitHub/GCS adapter so a test can intercept the network without touching
+ * global state. Omitted fields default to the real `process.argv`/`process.env`
+ * and the platform `fetch`, exactly as running `node cli.ts` does.
+ */
+export type CliIO = {
+  argv?: string[];
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: typeof fetch;
+};
+
+export async function runCli(io: CliIO = {}): Promise<void> {
+  const argv = io.argv ?? process.argv.slice(2);
+  const env = io.env ?? process.env;
+  const fetchImpl = io.fetchImpl;
+
+  const values = parseCliArgs(argv);
   const mode = resolveRunMode(values.mode);
-  const state = createStateStore();
+  const state = createStateStore(env, values.root, fetchImpl);
 
   // A daily incremental scan covers everything changed since the last
   // successfully scanned commit (not just the latest commit), diffed here with
   // git so non-ASCII paths and odd file names are handled verbatim. Any doubt
   // yields null changed paths, which the orchestrator turns into a full scan.
   const lastScannedCommit = await readWatermark(state.store).then((watermark) => watermark.lastScannedCommit ?? null, () => null);
-  const { headCommit, changedPaths } = await resolveChangedPaths({ lastScannedCommit, git: createGitRunner(values.root ?? ".") });
+  const { headCommit, changedPaths } = await resolveChangedPaths({ lastScannedCommit, git: createGitRunner(values.root) });
 
-  const owner = process.env.GITHUB_REPOSITORY_OWNER;
-  const repoFull = process.env.GITHUB_REPOSITORY;
-  const token = process.env.GITHUB_TOKEN;
+  const owner = env.GITHUB_REPOSITORY_OWNER;
+  const repoFull = env.GITHUB_REPOSITORY;
+  const token = env.GITHUB_TOKEN;
   const repo = repoFull?.split("/")[1];
-  const issueSnapshot = owner && repo ? await fetchIssueSnapshot({ owner, repo, token }) : null;
+  const issueSnapshot = owner && repo ? await fetchIssueSnapshot({ owner, repo, token, fetchImpl }) : null;
 
   // Issue reconciliation can only ever execute (rather than dry-run) with
   // both an explicit --apply-issues opt-in and a real write-scoped token —
   // the production Cloud Scheduler job today passes neither, so it stays
   // read-only exactly as documented until that is a deliberate rollout step.
   const issueWriter = values["apply-issues"] && token && owner && repo
-    ? createGitHubIssueWriter({ owner, repo, token })
+    ? createGitHubIssueWriter({ owner, repo, token, fetchImpl })
+    : undefined;
+
+  // Same opt-in shape as issueWriter: file-edit apply can only ever execute
+  // (rather than dry-run) with both an explicit --apply flag and a real
+  // write-scoped token. Mutating repo files and mutating GitHub issues are
+  // independent blast radii with independent rollout timing, so this stays
+  // its own opt-in even once --apply-issues is turned on elsewhere.
+  const applier = values.apply && token && owner && repo
+    ? createGitHubFileEditApplier({ owner, repo, token, fetchImpl })
     : undefined;
 
   const report = await runControlLoop({
-    root: values.root ?? ".",
+    root: values.root,
     mode,
     now: new Date(),
     stateStore: state.store,
@@ -77,6 +119,7 @@ async function run() {
     issueSnapshotRequired: Boolean(token),
     applyMode: values.apply ? "execute" : "dry-run",
     mutationBudget: Number(values["mutation-budget"]) || 20,
+    applier,
     issueApplyMode: issueWriter ? "execute" : "dry-run",
     issueMutationBudget: Number(values["issue-mutation-budget"]) || 5,
     issueWriter,
@@ -89,7 +132,26 @@ async function run() {
   if (report.status === "failed") process.exitCode = 1;
 }
 
-run().catch((error) => {
+export function reportCliFailure(error: unknown): void {
   process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;
-});
+}
+
+// True only when this file is executed directly (`node cli.ts`), not when a
+// test imports it for `runCli`/`parseCliArgs`/`createStateStore`. Basenames are
+// compared (rather than full paths) since `node cli.ts` and `node ./services/.../cli.ts`
+// report different `process.argv[1]` values for the same module.
+export function isInvokedDirectly(): boolean {
+  const entryUrl = import.meta.url.split("?")[0]!;
+  const invokedBasename = String(process.argv[1]).split("/").pop()!;
+  return entryUrl.endsWith(invokedBasename);
+}
+
+// A no-op when imported for its exports, so that importing this module never
+// triggers a real, unconfigured run as a side effect.
+export async function maybeRunAsCli(): Promise<void> {
+  if (!isInvokedDirectly()) return;
+  await runCli().catch(reportCliFailure);
+}
+
+await maybeRunAsCli();

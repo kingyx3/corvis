@@ -23,7 +23,7 @@ test("scheduled control loop persists runtime state without mutating protected m
 
   // The CLI and the file store must write where the workflow restores and saves the cache, or the
   // watermark is silently lost between runs.
-  assert.match(await read("services/control-loop/cli.ts"), /FileStateStore\(`\$\{values\.root\}\/services\/control-loop\/state`\)/);
+  assert.match(await read("services/control-loop/cli.ts"), /FileStateStore\(`\$\{root\}\/services\/control-loop\/state`\)/);
   assert.match(await read("services/control-loop/state.ts"), /constructor\(root = "services\/control-loop\/state"\)/);
 });
 
