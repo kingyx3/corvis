@@ -87,10 +87,14 @@ test("a published figure is Final unless the GP flagged it preliminary or restat
 });
 
 test("a forecast, budget or target is not a reported result and has no status", () => {
-  for (const value of ["forecast", "Budget", "plan", "projected", "projection", "target"]) {
+  for (const value of ["forecast", "Budget", "plan", "projected", "projection", "target", "guidance", "pro_forma", "underwritten", "management_case", "base_case", "upside_case", "downside_case", "investment_case", "consensus", "other", "unknown"]) {
     assert.equal(reportedFigureStatus({ actuality: value, scenarioType: null, isRestated: false }), null, value);
     assert.equal(reportedFigureStatus({ actuality: "actual", scenarioType: value, isRestated: false }), null, value);
   }
+});
+
+test("TVPI follows the source definition and never silently asserts a net-of-fees basis", () => {
+  assert.doesNotMatch(FUND_SCORECARD_METRICS.find((metric) => metric.code === "tvpi")!.definition, /net of fees/i);
 });
 
 test("compareLatestFirst orders by as-of, then publication, then snapshot, then fact id", () => {

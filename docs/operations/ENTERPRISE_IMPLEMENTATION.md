@@ -32,7 +32,7 @@ See [`README.md`](../README.md) for the technical-doc authority rule, [`MODULARI
 
 - **Transport dead letters.** After 8 failed publishes `fail_processing_transport_event` dead-letters the outbox event and the document stays `registered`. The dispatcher now emits the `processing.transport.dead_letter` count metric and a `processing.transport.dead_lettered` error log; alert on either. A tenant admin lists dead-lettered events with `GET /api/v1/admin/processing-transport/dead-letters` and requeues one with an audited `POST` to the same path (`ops/RUNBOOK.md`); recovery of an individual job goes through `recoverDeadLetterProcessingJob`.
 - **Lease budget.** The transport batch stops starting events once `TRANSPORT_BATCH_BUDGET_MS` (35s of the 60s lease) has elapsed and hands the remainder back through `release_processing_transport_event` (which refunds the attempt), and a failure in `fail` no longer aborts the remaining events.
-- **Stage timeouts.** `src/modules/processing/server/stages/processing-stage-http.ts` keeps each call's timeout armed through `response.text()/json()/arrayBuffer()`, and every represented/extracted handler runs under one 27s budget (`withStageBudget`), strictly under the router's 30s. Configured provider timeouts are capped at 20s.
+- **Stage timeouts.** `src/modules/processing/server/stages/processing-stage-http.ts` keeps each call's timeout armed through body consumption. Representation retains a 27s stage budget inside the default 30s router limit, with provider calls capped at 20s. Extraction has a 510s stage budget, a 540s router limit and a 600s worker deadline; its provider timeout is capped at 480s and Terraform supplies 300s by default. The application's unset/invalid-variable fallback is 15s. See [`AI_MODEL_GATEWAY.md`](../architecture/AI_MODEL_GATEWAY.md).
 - **Deletion requests** carry `execution_lease_expires_at` (10 minutes). A request stuck in `executing` with an expired or null lease is reclaimed by the next independent, authorized execute call; four-eyes, retention-coverage and legal-hold checks are unchanged. The adapter keeps receiving the stable `idempotency-key` (`tenant:request`). Since the schema an Organization Admin can also ask for a deletion from `/access-self-service`: that request waits in `pending_customer_approval`, which `EXECUTABLE_DELETION_STATES` does not include, until a different Organization Admin approves it (then it is `approved` and executes through this same flow, with this flow's checks). The admin console list (`GET /api/v1/admin/deletion-requests`) shows such requests like any other, with their `origin`.
 - **Delivery tick** (`POST /api/internal/delivery`) settles every task independently and reports per-task results; any failed task makes the response 500 (with the other results still in the body) so the scheduler retries and alerts.
 - **`last_error`** is written through `safeErrorText` (`src/modules/processing/server/recovery/processing-error-text.ts`): a stable error class plus a redacted (bearer tokens, JWTs, URL credentials/query strings, secret-named key/value pairs, opaque tokens, embedded JSON bodies), 500-character message.
@@ -64,7 +64,7 @@ Technical target rules are in [`DATA_PLATFORM.md`](../architecture/DATA_PLATFORM
 - Publication gates block unresolved review/material exceptions/incomplete lineage according to current policy primitives.
 - Snapshot publication changes create durable outbox foundations.
 - The customer workspace's **Review Analyst** UI now scopes review/publish state to the selected fund-period snapshot where snapshot-scoped observations are available. A dedicated extraction-candidate review UI remains separate product work; the governed API/persistence boundary exists now.
-- The exception/reconciliation workbench, complete four-eyes UX and provider-backed UAT workflow coverage remain in issue #6/#79.
+- Exception investigation, competing/prior values, resolution context and independent-approver UI are implemented in the workspace. Issues #6/#79 retain broader workflow acceptance and provider-backed evidence; they must not be read as proof that these UI paths are absent.
 
 ### Customer journey and module isolation
 
@@ -104,14 +104,13 @@ See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 - `/api/v1/admin/readiness` provides fail-closed readiness diagnostics.
 - Initial GCP Terraform provisions Pub/Sub lifecycle/dead-letter topics and Cloud Tasks foundations in `dev`.
 - SLO dashboards/alerts and broader recovery evidence remain tracked in issue #9.
-- Real asynchronous export rendering/storage/expiry and customer webhook delivery remain tracked in issue #11; the client delivery port/surface does not substitute for those provider-backed paths.
+- Asynchronous export rendering/storage/expiry, scheduled export execution and signed durable/retryable customer webhook delivery are implemented in the delivery server and scheduled internal tick. Issue #11 retains provider-backed delivery/recovery evidence; the implemented adapters and client surface do not establish live operation.
 
 ### Admin, control and evidence
 
 - Admin API foundations exist for feature flags, deletion workflows, control evidence and readiness.
 - Data-lifecycle adapter and evidence foundations exist.
-- These paths use the Postgres control plane; remaining work is provider-backed activation/evidence and the separate production admin surface.
-- The separate production admin application and full cross-channel control/entitlement implementation remain tracked in issue #10.
+- These paths use the Postgres control plane. The `/admin` console, tenant-health and tenant-export-build surfaces are implemented with server reauthorization and audit controls. Issue #10 retains provider-backed administration and cross-channel authorization acceptance.
 - Recurring automated evidence collection/freshness/escalation remains tracked in issue #14.
 
 ### Secure SDLC and infrastructure
@@ -124,7 +123,7 @@ See [`MODULARITY.md`](../architecture/MODULARITY.md) and issue #12.
 - obsolete Corvis-managed AWS/S3 reference infrastructure removed;
 - browser security headers and safe error boundaries.
 
-Remaining technical infrastructure is tracked primarily in issue #13: `uat`/`prod`, Cloud Run deployment, Cloudflare edge/origin, Supabase provisioning, Secret Manager/runtime identity, monitoring/budgets and release/rollback automation.
+Repository infrastructure includes `dev`, `uat` and `prod` Terraform roots, Cloud Run and AI-runtime modules, edge/origin configuration, Secret Manager identities, cost guards and reviewed release/promotion/rollback workflows. Issue #13 retains environment activation and evidence. In particular, #358 tracks the least-privilege runtime login rollout, and #224 tracks external trust/account settings; merged infrastructure code does not close either live gate.
 
 Technical standards:
 
