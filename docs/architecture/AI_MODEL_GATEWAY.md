@@ -90,7 +90,7 @@ Non-secret connection settings are GitHub Environment **variables** and are prop
 
 - `CORVIS_EXTRACTION_ENDPOINT`: approved HTTPS extraction-harness endpoint; empty means fail-closed.
 - `CORVIS_EXTRACTION_AUDIENCE`: optional Google OIDC audience; application code defaults to the endpoint.
-- `CORVIS_EXTRACTION_TIMEOUT_MS`: bounded provider-call timeout, default `20000`.
+- `CORVIS_EXTRACTION_TIMEOUT_MS`: bounded extraction-provider timeout. Terraform supplies `300000` ms by default, with a supported range of `1000`–`480000` ms. The application's fallback when the variable is absent or invalid is `15000` ms; deployed environments should use the explicit Terraform setting. Extraction has a `510000` ms stage budget and a `540000` ms router timeout inside the worker's `600000` ms deadline. Representation and metadata calls retain their shorter budgets.
 
 Sensitive integration values are GitHub Environment **secrets used only as provisioning inputs** by **AI integration secret provisioning**. The workflow writes new versions to Terraform-managed GCP Secret Manager containers and never prints the values:
 
@@ -111,7 +111,7 @@ The provider credential JSON is intentionally vendor-neutral. It is a JSON objec
 
 Only include credentials actually used in that environment. A gateway/harness entrypoint may materialize those values as process environment variables after validating the keys. Do not expose the JSON to models, prompts, candidate bundles or logs.
 
-The Terraform module grants the deployment identity permission to **add versions only** to these integration secrets. It intentionally does not grant the Corvis API/worker service accounts access to provider or Atlassian credentials. The future extraction-harness and LiteLLM runtime service accounts must receive only the individual `secretAccessor` grants they need.
+The Terraform module grants the deployment identity permission to **add versions only** to these integration secrets. It intentionally does not grant the Corvis API/worker service accounts access to provider or Atlassian credentials. `infra/terraform/modules/ai-runtime` implements dedicated runtime identities: LiteLLM receives provider credentials and the gateway key; the extractor receives the gateway key and read-only skill credential. Normal extraction never receives the Confluence update credential. These grants and images still require environment activation and retained evidence.
 
 ## Confluence extraction skill access
 
@@ -202,9 +202,9 @@ Harnesses may be useful for the separately governed skill-maintenance loop, wher
 1. Apply the environment Terraform so the AI integration Secret Manager containers exist.
 2. Configure any required GitHub Environment provisioning secrets.
 3. Run **AI integration secret provisioning** for UAT/prod. The workflow rotates only values that are present; it refuses a no-op run.
-4. Deploy the model gateway and extraction harness with dedicated service accounts and least-privilege access to the required Secret Manager entries, GCS evidence objects and Confluence read/update capability.
-5. Configure `CORVIS_EXTRACTION_ENDPOINT` (and optional audience/timeout) in the GitHub Environment.
-6. Run Terraform deploy. The worker receives only the non-secret endpoint/audience/timeout; the extracted stage remains absent when the endpoint is empty.
+4. Follow [`services/extractor/README.md`](../../services/extractor/README.md): configure the immutable LiteLLM base image and logical model map, build the four-image release, then apply it to deploy the private gateway/extractor pair with dedicated identities. Ordinary extraction has Confluence read capability only.
+5. Set `CORVIS_EXTRACTION_ENDPOINT` and audience from the Terraform outputs, then re-apply the same release. Configure the explicit timeout if the Terraform default is unsuitable for the approved workload.
+6. The worker receives only the non-secret endpoint/audience/timeout; the extracted stage remains absent when the endpoint is empty. Production promotes the reviewed UAT image digests without rebuilding.
 7. Validate the extraction harness against the representative quarterly-report corpus before promotion.
 
 No model-provider key or Atlassian credential is required merely to bootstrap the Corvis GCP foundation.
