@@ -1,4 +1,4 @@
-import { resolveRequestIdentity } from "@/platform/http/identity/request-context";
+import { resolveRequestIdentity } from "@/modules/identity-access/server/request/request-context";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { acceptTenantInvitation, TenantInvitationError } from "@/modules/identity-access/server/tenants/tenant-invitations";
 import { postgres } from "@/platform/database/postgres";

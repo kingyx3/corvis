@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { buildScorecard, parseScorecardFilters, ScorecardFilterError, type ScorecardPage } from "@/modules/analytics/domain/performance-scorecard";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { parseLimit } from "@/platform/http/api/pagination";

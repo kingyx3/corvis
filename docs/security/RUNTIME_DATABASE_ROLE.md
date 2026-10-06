@@ -110,7 +110,7 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_control.api_rate_limit` | SELECT, INSERT, UPDATE | function corvis_control.consume_api_rate_limit |
 | `corvis_control.audit_event` | SELECT, INSERT | src/modules/governance/server/evidence/audit-query.ts+5 |
 | `corvis_control.control_definition` | SELECT, UPDATE | function corvis_control.promote_control_implementation |
-| `corvis_control.control_evidence` | SELECT, INSERT | src/platform/data/operations.ts |
+| `corvis_control.control_evidence` | SELECT, INSERT | src/modules/governance/server/operations/operations.ts |
 | `corvis_control.control_evidence_record` | SELECT, INSERT | src/modules/governance/server/evidence/control-evidence-collector.ts |
 | `corvis_control.control_evidence_requirement` | SELECT | function corvis_control.promote_control_implementation |
 | `corvis_control.data_correction_incident` | SELECT, INSERT, UPDATE | src/modules/governance/server/lifecycle/data-correction.ts |
@@ -133,7 +133,7 @@ The third column is the first reference found (an application file, or the funct
 | `corvis_control.notification_preference` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
 | `corvis_control.notification_recipient` | SELECT, INSERT, UPDATE | src/modules/notifications/server/notifications.ts |
 | `corvis_control.outbox_event` | SELECT, INSERT, UPDATE | src/modules/delivery/server/exports/delivery.ts+4 |
-| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/platform/data/operations.ts+4 |
+| `corvis_control.processing_job` | SELECT, INSERT, UPDATE | src/modules/governance/server/operations/operations.ts+4 |
 | `corvis_control.processing_recovery_event` | SELECT, INSERT | src/platform/data/platform-repositories.ts |
 | `corvis_control.processing_stage_effect` | SELECT, INSERT, UPDATE | src/modules/processing/server/stages/processing-reviewed-stage.ts |
 | `corvis_control.research_answer_pin` | SELECT, INSERT, DELETE | src/modules/research/server/research-pins.ts |

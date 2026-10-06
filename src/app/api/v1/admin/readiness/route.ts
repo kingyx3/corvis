@@ -1,4 +1,4 @@
-import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { platform } from "@/platform/data/platform";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 

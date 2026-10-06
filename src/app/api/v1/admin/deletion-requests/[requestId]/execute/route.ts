@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { executeDeletionRequest } from "@/modules/governance/server/lifecycle/data-lifecycle";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { platform } from "@/platform/data/platform";

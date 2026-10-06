@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { runAuditedMutation } from "@/modules/governance/server/evidence/audited-mutation";
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";

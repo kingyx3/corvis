@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { exportScheduleErrorResponse, listExportScheduleRunsResponse } from "@/modules/delivery/server/schedules/export-schedule-http";
 import { correlationId } from "@/platform/http/api/http";
 

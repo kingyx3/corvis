@@ -1,5 +1,5 @@
 import { parseSessionPolicyUpdate } from "@/modules/identity-access/domain/session-policy";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
 import { resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
 import { correlationId, json } from "@/platform/http/api/http";
 import { sessionPolicyErrorResponse, sessionPolicyService } from "@/modules/identity-access/server/sessions/session-policy";

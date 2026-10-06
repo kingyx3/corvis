@@ -1,5 +1,5 @@
 import { getServerConfig } from "@/platform/config/config";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 import { grantSupportAccess } from "@/modules/identity-access/server/tenants/support-access-self-service";

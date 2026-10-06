@@ -102,7 +102,7 @@ Every state change writes an `audit_event` in the same transaction (target type 
 
 The issue says to confirm the mechanism (IdP client credentials versus a Corvis-issued token) against the Confluence page "Data Sharing, APIs & Permissioning", which was not reachable while this was built. What the repository already does for non-human identities:
 
-1. **Production end-user path is OIDC only.** `directOidcIdentity` (`src/platform/http/identity/request-context.ts`) verifies the bearer token against the one configured IdP (`CORVIS_AUTH_ISSUER`/`_AUDIENCE`) and always sets `authMethod: "oidc"`. A service account cannot authenticate through it today.
+1. **Production end-user path is OIDC only.** `directOidcIdentity` (`src/modules/identity-access/server/request/request-context.ts`) verifies the bearer token against the one configured IdP (`CORVIS_AUTH_ISSUER`/`_AUDIENCE`) and always sets `authMethod: "oidc"`. A service account cannot authenticate through it today.
 2. **A signed identity assertion already accepts `service_account`.** `x-corvis-identity-assertion` (HMAC, at most five minutes, `verifyGatewayIdentityAssertion`) accepts `authMethod: "service_account"`; the docs describe it as the boundary for "SAML or a future identity broker", and `resolveAuthorizedRequestIdentity` re-resolves everything from Postgres afterwards. Nothing in the repository mints such an assertion for a customer's service account.
 3. **The processing worker is the one existing machine caller**, and it uses a Google-issued OIDC ID token, verified for issuer, audience and exact service-account email, with the immutable Google `sub` provisioned as the `service_account` subject (`SERVICE_IDENTITY_HARDENING.md`). That is infrastructure identity, not customer identity.
 

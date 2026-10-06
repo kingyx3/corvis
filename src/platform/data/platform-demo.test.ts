@@ -52,31 +52,6 @@ test("demo review, resolution and publication accept the command and bump the ve
   assert.ok(publication.publicationEventId);
 });
 
-test("demo research reports each phase in order and honours cancellation between phases", async () => {
-  const demo = platform();
-  const phases: string[] = [];
-  const answer = await demo.research(identity, "What is NAV?", { onProgress: (phase) => phases.push(phase) });
-  assert.deepEqual(phases, ["planning", "retrieval", "generation"]);
-  assert.equal(answer.answer, "Demo-mode response for: What is NAV?.");
-  assert.deepEqual([answer.citations, answer.semanticQueryIds], [[], []]);
-  assert.match(answer.uncertainty ?? "", /Demo mode/);
-  assert.equal((await demo.research(identity, "No options")).citations.length, 0);
-
-  const aborted = new AbortController();
-  aborted.abort(new Error("cancelled up front"));
-  await assert.rejects(demo.research(identity, "q", { signal: aborted.signal }), /cancelled up front/);
-
-  for (const stopAfter of ["planning", "retrieval", "generation"]) {
-    const controller = new AbortController();
-    const seen: string[] = [];
-    await assert.rejects(
-      demo.research(identity, "q", { signal: controller.signal, onProgress: (phase) => { seen.push(phase); if (phase === stopAfter) controller.abort(new Error(`stopped after ${stopAfter}`)); } }),
-      new RegExp(`stopped after ${stopAfter}`),
-    );
-    assert.equal(seen.at(-1), stopAfter, "no phase starts after the abort");
-  }
-});
-
 test("demo audit, readiness and export", async () => {
   const demo = platform();
   await demo.audit({

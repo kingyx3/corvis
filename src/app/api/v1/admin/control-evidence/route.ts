@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
-import { resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
-import { generateControlEvidence, listControlEvidence } from "@/platform/data/operations";
+import { generateControlEvidence, listControlEvidence } from "@/modules/governance/server/operations/operations";
 import { PostgresOperationsRepository } from "@/platform/data/platform-repositories";
 import { postgres, withTransaction } from "@/platform/database/postgres";
 

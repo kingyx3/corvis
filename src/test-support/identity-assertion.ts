@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { Role } from "../shared/domain/enterprise.ts";
-import type { GatewayIdentityAssertion } from "../platform/http/identity/request-context.ts";
+import type { GatewayIdentityAssertion } from "../modules/identity-access/server/request/request-context.ts";
 
 /**
  * Test-only: signs a gateway identity assertion the way the trusted identity boundary does, so route tests

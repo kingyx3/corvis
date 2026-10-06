@@ -1,5 +1,5 @@
 import { parseDeletionRequest } from "@/modules/governance/domain/data-retention";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
 import { customerDeletionService } from "@/modules/governance/server/lifecycle/customer-deletion";
 import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
 import { correlationId, json } from "@/platform/http/api/http";

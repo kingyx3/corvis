@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, sign } from "node:crypto";
-import { trustedIdentityAssertion } from "../../../test-support/identity-assertion.ts";
+import { trustedIdentityAssertion } from "../../../../test-support/identity-assertion.ts";
 import { AuthenticationError, classifyOidcFailure, resolveRequestIdentity, verifyGatewayIdentityAssertion, type GatewayIdentityAssertion } from "./request-context.ts";
 
 const managedKeys = ["NODE_ENV","CORVIS_DEMO_MODE","CORVIS_TRUSTED_AUTH_PROXY_SECRET"] as const;

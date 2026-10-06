@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { originalSourceDocument } from "@/modules/sources/server/connectors/source-document";
 export async function GET(request: Request, context: { params: Promise<{ sourceReferenceId: string }> }) {

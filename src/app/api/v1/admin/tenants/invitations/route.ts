@@ -1,4 +1,4 @@
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { getServerConfig } from "@/platform/config/config";
 import { postgres, withTransaction } from "@/platform/database/postgres";

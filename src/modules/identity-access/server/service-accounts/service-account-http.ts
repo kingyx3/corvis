@@ -1,6 +1,6 @@
 import { assertPermission, type RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { ServiceAccountValidationError } from "../../domain/service-account.ts";
-import { resolveAuthorizedRequestIdentity } from "../../../../platform/http/identity/authorized-request.ts";
+import { resolveAuthorizedRequestIdentity } from "../request/authorized-request.ts";
 import { apiError, json } from "../../../../platform/http/api/http.ts";
 import { ServiceAccountError, assertCanManageServiceAccounts } from "./service-account.ts";
 

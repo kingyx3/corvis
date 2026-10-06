@@ -1,7 +1,7 @@
 import { assertPermission } from "@/shared/domain/enterprise";
 import { ReviewDiscussionValidationError, parseCommentCommand, parseSubjectRef } from "@/modules/review/domain/review-discussion";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { correlationId, json } from "@/platform/http/api/http";
 import { reviewDiscussionErrorResponse } from "@/modules/review/server/review-discussion-http";
 import { reviewDiscussionService } from "@/modules/review/server/review-discussion-service";

@@ -1,6 +1,6 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { getServerConfig } from "@/platform/config/config";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { postgres } from "@/platform/database/postgres";

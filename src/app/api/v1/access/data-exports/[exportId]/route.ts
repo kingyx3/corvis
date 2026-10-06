@@ -1,5 +1,5 @@
 import { parseTenantExportCommand } from "@/modules/delivery/domain/tenant-export";
-import { readJsonObject } from "@/platform/http/identity/admin-request";
+import { readJsonObject } from "@/modules/identity-access/server/request/admin-request";
 import { dataGovernanceErrorResponse, resolveOrganizationAdmin } from "@/modules/governance/server/lifecycle/data-governance";
 import { correlationId, json } from "@/platform/http/api/http";
 import { tenantExportService } from "@/modules/delivery/server/tenant-export/tenant-export-service";

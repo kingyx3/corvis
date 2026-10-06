@@ -4,13 +4,18 @@ import { getServerConfig } from "../../../../platform/config/config.ts";
 import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor, InvalidCursorError, MAX_PAGE_LIMIT } from "../../../../platform/http/api/pagination.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { isWebhookEventType, webhookEndpointBlockReason } from "./webhook-endpoint-policy.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../../platform/http/api/api-problem.ts";
 
-export class WebhookSubscriptionError extends Error {
+export class WebhookSubscriptionError extends Error implements ApiProblemSource {
   readonly code: string;
   constructor(code: string) {
     super(code);
     this.name = "WebhookSubscriptionError";
     this.code = code;
+  }
+  toApiProblem(): ApiProblem {
+    const status = this.code === "webhook_subscription_not_found" ? 404 : this.code === "webhook_subscription_transition_denied" || this.code === "webhook_subscription_limit_reached" ? 409 : 400;
+    return { status, body: { error: this.code }, log: { level: "warn", event: "webhook_subscription.denied", fields: { code: this.code } } };
   }
 }
 

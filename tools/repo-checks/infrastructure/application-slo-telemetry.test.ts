@@ -21,7 +21,7 @@ test("upload control plane emits the latency metric named by the SLO", async () 
 });
 
 test("lineage monitoring reflects the fail-closed publication gate", async () => {
-  const policy = await read("src/modules/review/server/publication-policy.ts");
+  const policy = await read("src/modules/review/domain/publication-policy.ts");
   const http = await read("src/platform/http/api/http.ts");
   const terraform = await read("infra/terraform/modules/gcp-observability/application-slo.tf");
   const slos = await read("ops/slos.yaml");

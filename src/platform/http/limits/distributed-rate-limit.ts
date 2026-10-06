@@ -2,7 +2,7 @@ import { getServerConfig } from "../../config/config.ts";
 import { postgres, type PostgresSqlApi } from "../../database/postgres.ts";
 import { PostgresDriverError } from "../../database/postgres-native.ts";
 import { RateLimitError, enforceRateLimit, type RateLimiter } from "./rate-limit.ts";
-import { AuthenticationError } from "../identity/request-context.ts";
+import { AuthenticationError } from "../api/authentication-error.ts";
 
 /**
  * SQLSTATEs that mean the *claimed* identity cannot own a budget row, not that

@@ -3,6 +3,7 @@ import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { connectionTransition } from "../../domain/source-connection-health.ts";
 import { getServerConfig } from "../../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../../platform/http/api/api-problem.ts";
 
 /**
  * Customer-authorized source acquisition connectors.
@@ -71,12 +72,19 @@ export type SourceConnection = {
   revokedAt?: string;
 };
 
-export class ConnectorGovernanceError extends Error {
+export class ConnectorGovernanceError extends Error implements ApiProblemSource {
   readonly code: string;
   constructor(code: string) {
     super(code);
     this.name = "ConnectorGovernanceError";
     this.code = code;
+  }
+  toApiProblem(): ApiProblem {
+    const status = this.code === "connection_not_found" ? 404
+      : this.code === "connection_revoked" || this.code.startsWith("invalid_transition_from_") ? 409
+      : this.code === "unregistered_provider" ? 422
+      : 400;
+    return { status, body: { error: this.code }, log: { level: "warn", event: "source_connection.denied", fields: { code: this.code } } };
   }
 }
 

@@ -4,7 +4,7 @@ import { enforceRequestRateLimit } from "./distributed-rate-limit.ts";
 import { RateLimitError } from "./rate-limit.ts";
 import type { PostgresSqlApi } from "../../database/postgres.ts";
 import { PostgresDriverError } from "../../database/postgres-native.ts";
-import { AuthenticationError } from "../identity/request-context.ts";
+import { AuthenticationError } from "../../../modules/identity-access/server/request/request-context.ts";
 
 function database(query: PostgresSqlApi["query"]): PostgresSqlApi {
   return { query, execute: async () => {}, health: async () => true };

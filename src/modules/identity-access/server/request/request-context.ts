@@ -1,8 +1,10 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
-import type { Entitlements, RequestIdentity, Role } from "../../../shared/domain/enterprise.ts";
-import { getServerConfig, type ServerConfig } from "../../config/config.ts";
-import { OidcVerifier } from "../../../modules/identity-access/server/sessions/oidc.ts";
-import { logEvent } from "../../observability/telemetry.ts";
+import type { Entitlements, RequestIdentity, Role } from "../../../../shared/domain/enterprise.ts";
+import { getServerConfig, type ServerConfig } from "../../../../platform/config/config.ts";
+import { OidcVerifier } from "../sessions/oidc.ts";
+import { logEvent } from "../../../../platform/observability/telemetry.ts";
+import type { ApiProblem } from "../../../../platform/http/api/api-problem.ts";
+import { AuthenticationError } from "../../../../platform/http/api/authentication-error.ts";
 
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 5 * 60;
@@ -263,9 +265,10 @@ export async function resolveRequestIdentity(request: Request): Promise<RequestI
   return directOidcIdentity(request, config);
 }
 
-export class AuthenticationError extends Error {
-  constructor(message: string) { super(message); this.name = "AuthenticationError"; }
-}
+export { AuthenticationError };
+
+/** The stable machine-readable reason of a 401 for a session the organization's policy ended (F7c, #336). */
+export const SESSION_ENDED_BY_POLICY_ERROR = "session_ended_by_policy";
 
 /**
  * The organization's session policy ended this session (F7c, #336): its idle timeout or maximum length passed. It is raised
@@ -279,5 +282,11 @@ export class SessionEndedByPolicyError extends AuthenticationError {
     super("Session ended by organization policy");
     this.name = "SessionEndedByPolicyError";
     this.reason = reason;
+  }
+  // Distinguishable from `authentication_required` (a missing, invalid, revoked or foreign identity) so the person is told
+  // why they must sign in again. Only reachable after the token verified and membership resolved, so it says nothing to
+  // anyone who is not that member. The reason (idle vs maximum length) stays in the log, not in the response.
+  override toApiProblem(): ApiProblem {
+    return { status: 401, body: { error: SESSION_ENDED_BY_POLICY_ERROR }, log: { level: "warn", event: "api.session_ended_by_policy", fields: { reason: this.reason } } };
   }
 }

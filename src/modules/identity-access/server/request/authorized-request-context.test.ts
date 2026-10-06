@@ -3,9 +3,9 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 import { resolveAuthorizedRequestIdentity, selectWorkspaceContext } from "./authorized-request.ts";
 import { AuthenticationError, SessionEndedByPolicyError } from "./request-context.ts";
-import type { MembershipAuthorizationRepository } from "../../../modules/identity-access/server/authorization.ts";
-import type { RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import "../../../test-support/http-sql-driver.ts";
+import type { MembershipAuthorizationRepository } from "../authorization.ts";
+import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
+import "../../../../test-support/http-sql-driver.ts";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

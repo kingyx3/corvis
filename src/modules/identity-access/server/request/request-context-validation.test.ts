@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { OidcVerifier } from "../../../modules/identity-access/server/sessions/oidc.ts";
+import { OidcVerifier } from "../sessions/oidc.ts";
 import {
   AuthenticationError,
   SessionEndedByPolicyError,

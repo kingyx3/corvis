@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { oauthRedirectUri, redactedConnection, usesSecureCookies } from "@/modules/sources/server/connections/source-connect-http";
 import { sourceConnectionService } from "@/modules/sources/server/connections/source-connection-service";

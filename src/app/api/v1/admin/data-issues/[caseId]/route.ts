@@ -1,5 +1,5 @@
 import { parseTransitionCommand } from "@/modules/governance/domain/data-issue";
-import { readJsonObject, resolveAdminRequestIdentity } from "@/platform/http/identity/admin-request";
+import { readJsonObject, resolveAdminRequestIdentity } from "@/modules/identity-access/server/request/admin-request";
 import { dataIssueErrorResponse } from "@/modules/governance/server/data-issues/data-issue-http";
 import { dataIssueService } from "@/modules/governance/server/data-issues/data-issue-service";
 import { correlationId, json } from "@/platform/http/api/http";

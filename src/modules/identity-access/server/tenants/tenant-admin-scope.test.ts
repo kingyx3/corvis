@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
 import { AuthorizationError } from "../../../../shared/domain/enterprise.ts";
-import { assertTenantAdminRequestScope, isTenantAdminOnlyPath } from "../../../../platform/http/identity/authorized-request.ts";
+import { assertTenantAdminRequestScope, isTenantAdminOnlyPath } from "../request/authorized-request.ts";
 
 const identity = (isTenantAdmin: boolean): RequestIdentity => ({
   subject: "idp|admin",

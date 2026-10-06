@@ -2,6 +2,7 @@ import type { Entitlements, Permission, RequestIdentity } from "../../../shared/
 import { hasPermission } from "../../../shared/domain/enterprise.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../platform/http/api/api-problem.ts";
 
 /**
  * Authoritative server-side feature-flag evaluation.
@@ -60,10 +61,6 @@ export const FEATURE_FLAG_REGISTRY: readonly FeatureFlagDefinition[] = [
 
 const REGISTRY_BY_KEY = new Map(FEATURE_FLAG_REGISTRY.map((definition) => [definition.key, definition]));
 
-export function featureFlagDefinition(key: string): FeatureFlagDefinition | undefined {
-  return REGISTRY_BY_KEY.get(key);
-}
-
 export type FeatureFlagRecord = {
   key: string;
   enabled: boolean;
@@ -108,12 +105,15 @@ export type FeatureFlagDecision = {
   config: Record<string, unknown>;
 };
 
-export class FeatureFlagGovernanceError extends Error {
+export class FeatureFlagGovernanceError extends Error implements ApiProblemSource {
   readonly code: string;
   constructor(code: string) {
     super(code);
     this.name = "FeatureFlagGovernanceError";
     this.code = code;
+  }
+  toApiProblem(): ApiProblem {
+    return { status: 422, body: { error: this.code }, log: { level: "warn", event: "feature_flag.governance_denied", fields: { code: this.code } } };
   }
 }
 
@@ -279,7 +279,7 @@ export async function isFeatureEnabled(
  * a route's existing `catch (error) { return apiError(error, id); }` instead
  * of every call site re-implementing the same enabled/blocked branch.
  */
-export class FeatureFlagDeniedError extends Error {
+export class FeatureFlagDeniedError extends Error implements ApiProblemSource {
   readonly key: string;
   readonly channel: FeatureFlagChannel;
   readonly decisionReason: FeatureFlagDecisionReason;
@@ -289,6 +289,13 @@ export class FeatureFlagDeniedError extends Error {
     this.key = decision.key;
     this.channel = decision.channel;
     this.decisionReason = decision.reason;
+  }
+  toApiProblem(): ApiProblem {
+    return {
+      status: 403,
+      body: { error: "feature_disabled", flagKey: this.key, reason: this.decisionReason },
+      log: { level: "warn", event: "feature_flag.denied", fields: { key: this.key, channel: this.channel, reason: this.decisionReason } },
+    };
   }
 }
 
@@ -308,14 +315,6 @@ export async function assertFeatureEnabled(
 ): Promise<void> {
   const decision = evaluateFeatureFlag(await loadFeatureFlagSnapshot(identity, db), identity, key, channel);
   if (!decision.enabled) throw new FeatureFlagDeniedError(decision);
-}
-
-export async function resolveChannelFeatureFlags(
-  identity: RequestIdentity,
-  channel: FeatureFlagChannel,
-  db: PostgresSqlApi = controlDb(),
-): Promise<FeatureFlagDecision[]> {
-  return evaluateChannelFeatureFlags(await loadFeatureFlagSnapshot(identity, db), identity, channel);
 }
 
 export async function listFeatureFlagGovernance(

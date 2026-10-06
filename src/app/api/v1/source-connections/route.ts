@@ -1,5 +1,5 @@
 import { assertPermission } from "@/shared/domain/enterprise";
-import { resolveAuthorizedRequestIdentity } from "@/platform/http/identity/authorized-request";
+import { resolveAuthorizedRequestIdentity } from "@/modules/identity-access/server/request/authorized-request";
 import { createAuditedSourceConnection } from "@/modules/sources/server/connectors/source-connector-governance";
 import { apiError, correlationId, json } from "@/platform/http/api/http";
 import { sourceConnectorSecretStore } from "@/modules/sources/server/connectors/source-connector-runtime";

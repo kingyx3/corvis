@@ -4,6 +4,7 @@ import { getServerConfig } from "../../../../platform/config/config.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 import { safeErrorText } from "../../../processing/server/recovery/processing-error-text.ts";
 import { logEvent } from "../../../../platform/observability/telemetry.ts";
+import type { ApiProblem, ApiProblemSource } from "../../../../platform/http/api/api-problem.ts";
 
 /**
  * Retention and deletion execution.
@@ -34,12 +35,15 @@ export const DATA_LIFECYCLE_ADAPTER_TIMEOUT_MS = 30_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export class DeletionExecutionError extends Error {
+export class DeletionExecutionError extends Error implements ApiProblemSource {
   readonly code: string;
   constructor(code: string) {
     super(code);
     this.name = "DeletionExecutionError";
     this.code = code;
+  }
+  toApiProblem(): ApiProblem {
+    return { status: 422, body: { error: this.code }, log: { level: "warn", event: "deletion.execution_denied", fields: { code: this.code } } };
   }
 }
 
@@ -51,6 +55,9 @@ export class LegalHoldError extends DeletionExecutionError {
     super("deletion_blocked_by_legal_hold");
     this.name = "LegalHoldError";
     this.holds = holds;
+  }
+  override toApiProblem(): ApiProblem {
+    return { status: 409, body: { error: this.code, holds: this.holds }, log: { level: "warn", event: "deletion.blocked_by_legal_hold", fields: { holds: this.holds } } };
   }
 }
 
