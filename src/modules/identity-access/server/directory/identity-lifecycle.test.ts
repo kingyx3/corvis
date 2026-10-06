@@ -70,22 +70,26 @@ test("identity lifecycle repository delegates one atomic database command with e
 });
 
 test("identity lifecycle SQL is idempotent, blocks unsafe remapping/reactivation and atomically records audit evidence", async () => {
-  const sql = (await readFile("db/postgres/migrations/011_identity_lifecycle_sync.sql", "utf8")).toLowerCase();
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
 
-  assert.match(sql, /create table if not exists corvis_control\.identity_lifecycle_event/);
-  assert.match(sql, /unique \(tenant_id, event_key\)/);
+  assert.match(sql, /create table corvis_control\.identity_lifecycle_event \(/);
+  assert.match(sql, /add constraint identity_lifecycle_event_tenant_id_event_key_key unique \(tenant_id, event_key\)/);
   assert.match(sql, /alter table corvis_control\.identity_lifecycle_event enable row level security/);
-  assert.match(sql, /alter table corvis_control\.identity_lifecycle_event force row level security/);
+  assert.match(sql, /alter table only corvis_control\.identity_lifecycle_event force row level security/);
   assert.equal(/create policy[^;]+identity_lifecycle_event/.test(sql), false, "lifecycle evidence must remain server-managed");
 
-  assert.match(sql, /if found then[\s\S]*v_existing_hash <> v_request_hash[\s\S]*identity lifecycle event replay conflict/);
-  assert.match(sql, /v_existing_user_id <> p_user_id[\s\S]*identity subject is already mapped to a different user/);
-  assert.match(sql, /v_existing_status='disabled'[\s\S]*disabled identity requires explicit reactivation/);
-  assert.match(sql, /on conflict \(tenant_id,auth_method,subject\) do nothing/);
-  assert.match(sql, /update corvis_control\.membership m[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
-  assert.match(sql, /update corvis_control\.resource_entitlement e[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
-  assert.match(sql, /update corvis_control\.identity_subject s[\s\S]*s\.user_id=p_user_id/);
-  assert.match(sql, /update corvis_control\.service_identity_grant g[\s\S]*g\.status='active'/);
-  assert.match(sql, /insert into corvis_control\.audit_event/);
-  assert.match(sql, /'identity\.lifecycle\.' \|\| p_operation/);
+  const start = sql.indexOf("create function corvis_control.apply_identity_lifecycle(");
+  assert.ok(start >= 0, "apply_identity_lifecycle must be defined in the baseline");
+  const command = sql.slice(start, sql.indexOf("\n$$;", start));
+
+  assert.match(command, /if found then[\s\S]*v_existing_hash <> v_request_hash[\s\S]*identity lifecycle event replay conflict/);
+  assert.match(command, /v_existing_user_id <> p_user_id[\s\S]*identity subject is already mapped to a different user/);
+  assert.match(command, /v_existing_status='disabled'[\s\S]*disabled identity requires explicit reactivation/);
+  assert.match(command, /on conflict \(tenant_id,auth_method,subject\) do nothing/);
+  assert.match(command, /update corvis_control\.membership m[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
+  assert.match(command, /update corvis_control\.resource_entitlement e[\s\S]*not exists \([\s\S]*jsonb_array_elements\(p_memberships\)/);
+  assert.match(command, /update corvis_control\.identity_subject s[\s\S]*s\.user_id=p_user_id/);
+  assert.match(command, /update corvis_control\.service_identity_grant g[\s\S]*g\.status='active'/);
+  assert.match(command, /insert into corvis_control\.audit_event/);
+  assert.match(command, /'identity\.lifecycle\.' \|\| p_operation/);
 });

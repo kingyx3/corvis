@@ -15,9 +15,9 @@ import type { PostgresRow, PostgresSqlApi } from "../../../../platform/database/
 
 /**
  * An Organization Admin's own deletion request (F10e, #325), over either backend (Postgres, or the in-memory demo store in
- * demo mode). It rides on the operator deletion lifecycle (`data-lifecycle.ts`, migrations 003, 017, 066) without
+ * demo mode). It rides on the operator deletion lifecycle (`data-lifecycle.ts`) without
  * changing it: the request is a `deletion_request` row that waits in `pending_customer_approval`, a state operations
- * cannot execute from, until a *different* Organization Admin approves it (migration 098). Whether the approver is
+ * cannot execute from, until a *different* Organization Admin approves it. Whether the approver is
  * independent of the requester, and whether a legal hold stops the request, is decided by the backend (in SQL for
  * Postgres), never here, so there is one rule and no other path around it. Mutations run through `runAuditedMutation`, so
  * the command and its audit event commit together. Carrying the deletion out stays with Corvis operations.

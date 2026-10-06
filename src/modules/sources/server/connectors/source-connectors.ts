@@ -82,7 +82,7 @@ export class ConnectorGovernanceError extends Error {
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Mirrors the connection_label check constraint in migration 018 so an over-long label is a 400, not a 500. */
+/** Mirrors the connection_label check constraint in the database so an over-long label is a 400, not a 500. */
 const MAX_CONNECTION_LABEL_LENGTH = 200;
 
 /**

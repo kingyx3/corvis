@@ -143,33 +143,41 @@ test("a malformed jobId is a normal not-found result, not a database cast failur
   assert.equal(db.queries.length, 0, "a malformed id must never reach Postgres as an invalid uuid cast");
 });
 
-test("processing recovery migration preserves lineage, evidence and idempotency", async () => {
-  const sql = (await readFile("db/postgres/migrations/027_processing_operator_recovery.sql", "utf8")).toLowerCase();
+test("processing recovery schema preserves lineage, evidence and idempotency", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  const functionBody = (name: string) => {
+    const start = sql.indexOf(`create function corvis_control.${name}(`);
+    assert.ok(start >= 0, `baseline must define ${name}`);
+    return sql.slice(start, sql.indexOf("\n$$;", start));
+  };
+  const recover = functionBody("recover_dead_letter_processing_job");
+  const fail = functionBody("fail_processing_stage_delivery");
 
-  assert.match(sql, /create table if not exists corvis_control\.processing_recovery_event/);
-  assert.match(sql, /alter table corvis_control\.processing_recovery_event force row level security/);
+  assert.match(sql, /create table corvis_control\.processing_recovery_event/);
+  assert.match(sql, /alter table corvis_control\.processing_recovery_event enable row level security/);
+  assert.match(sql, /alter table only corvis_control\.processing_recovery_event force row level security/);
   assert.equal(/create policy[^;]+processing_recovery_event/i.test(sql), false);
-  assert.match(sql, /action text not null check \(action in \('recover_dead_letter'\)\)/);
+  assert.match(sql, /constraint processing_recovery_event_action_check check \(\(action = 'recover_dead_letter'::text\)\)/);
 
-  assert.match(sql, /create or replace function corvis_control\.fail_processing_stage_delivery/);
-  assert.match(sql, /signal_payload := \(inbox_row\.payload - 'nextattemptat'\) \|\| jsonb_build_object/);
-  assert.match(sql, /'processingstageretryscheduled'/);
-  assert.equal(/signal_payload := jsonb_build_object\(/.test(sql), false);
+  assert.match(fail, /signal_payload := \(inbox_row\.payload - 'nextattemptat'\) \|\| jsonb_build_object/);
+  assert.match(fail, /'processingstageretryscheduled'/);
+  assert.equal(/signal_payload := jsonb_build_object\(/.test(fail), false);
 
-  assert.match(sql, /select \* into existing_recovery[\s\S]*?processing_recovery_event/);
-  assert.match(sql, /return query select existing_recovery\.result_job_version/);
-  assert.match(sql, /if current_job\.state <> 'dead_letter'/);
-  assert.match(sql, /if current_job\.attempt < current_job\.max_attempts/);
-  assert.match(sql, /dead-letter recovery requires retained durable stage-delivery evidence/);
-  assert.match(sql, /dead-letter recovery requires retained predecessor lineage evidence/);
-  assert.match(sql, /i\.payload \? 'predecessorresult'/);
-  assert.match(sql, /source_payload := \(source_inbox\.payload - 'nextattemptat'\)/);
-  assert.match(sql, /set state='queued',[\s\S]*?attempt=0,[\s\S]*?recovery_count=next_recovery_count/);
-  assert.match(sql, /'processingjobretryrequested'/);
-  assert.match(sql, /source_event_id uuid not null/);
-  assert.match(sql, /before_state jsonb not null/);
-  assert.match(sql, /after_state jsonb not null/);
-  assert.equal(/delete from corvis_control\.event_inbox/i.test(sql), false);
-  assert.equal(/delete from corvis_control\.processing_stage_effect/i.test(sql), false);
-  assert.equal(/update\s+corvis_control\.processing_stage_effect/i.test(sql), false);
+  assert.match(recover, /select \* into existing_recovery[\s\S]*?processing_recovery_event/);
+  assert.match(recover, /return query select existing_recovery\.result_job_version/);
+  assert.match(recover, /if current_job\.state <> 'dead_letter'/);
+  assert.match(recover, /if current_job\.attempt < current_job\.max_attempts/);
+  assert.match(recover, /dead-letter recovery requires retained durable stage-delivery evidence/);
+  assert.match(recover, /dead-letter recovery requires retained predecessor lineage evidence/);
+  assert.match(recover, /i\.payload \? 'predecessorresult'/);
+  assert.match(recover, /source_payload := \(source_inbox\.payload - 'nextattemptat'\)/);
+  assert.match(recover, /set state='queued',[\s\S]*?attempt=0,[\s\S]*?recovery_count=next_recovery_count/);
+  assert.match(recover, /'processingjobretryrequested'/);
+  assert.match(sql, /create table corvis_control\.processing_recovery_event \([^;]*?\n    source_event_id uuid not null/);
+  assert.match(sql, /create table corvis_control\.processing_recovery_event \([^;]*?\n    before_state jsonb not null/);
+  assert.match(sql, /create table corvis_control\.processing_recovery_event \([^;]*?\n    after_state jsonb not null/);
+  // Recovery never rewrites or discards the retained delivery/effect evidence it reuses.
+  assert.equal(/delete from corvis_control\.event_inbox/i.test(recover), false);
+  assert.equal(/delete from corvis_control\.processing_stage_effect/i.test(recover), false);
+  assert.equal(/update\s+corvis_control\.processing_stage_effect/i.test(recover), false);
 });

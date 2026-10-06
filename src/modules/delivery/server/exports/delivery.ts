@@ -183,10 +183,9 @@ export type WebhookDeliveryDependencies = {
 };
 
 /**
- * Webhook fan-out tracks its own completion on `outbox_event.webhook_fanout_completed_at`
- * (migration 043). It never reads or writes `published_at`, `attempt_count` or
+ * Webhook fan-out tracks its own completion on `outbox_event.webhook_fanout_completed_at`. It never reads or writes `published_at`, `attempt_count` or
  * `last_error`: those columns are the processing transport's dispatch and
- * dead-letter bookkeeping (migration 021), and sharing them let a webhook
+ * dead-letter bookkeeping, and sharing them let a webhook
  * success hide a document from the pipeline or a transport dispatch hide a
  * webhook retry. Transport event types are also excluded outright, and only
  * allow-listed customer-facing types are delivered even if a legacy
@@ -223,7 +222,7 @@ export const WEBHOOK_FANOUT_SWEEP_LIMIT = 1000;
  * event with no subscriber at all -- not one delivery ever attempted --
  * never gets a chance to be marked done and stays in
  * `outbox_processing_transport_ready_idx`'s webhook-fanout-pending partial
- * index (migration 047) forever. This sweep closes that gap directly: it
+ * index forever. This sweep closes that gap directly: it
  * proves an event can never be delivered by checking there is no
  * subscription -- active *or* paused -- for its tenant+event_type created at
  * or before it, mirroring the fan-out query's own

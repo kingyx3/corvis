@@ -67,8 +67,8 @@ test("transport dispatch failures retain the event for bounded database retry", 
   assert.equal(failed, 1);
 });
 
-test("transport migration uses leases, SKIP LOCKED, bounded backoff and terminal dead-letter state", async () => {
-  const sql = (await readFile("db/postgres/migrations/021_processing_transport_runtime.sql", "utf8")).toLowerCase();
+test("transport database functions use leases, SKIP LOCKED, bounded backoff and terminal dead-letter state", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
   assert.match(sql, /for update skip locked/);
   assert.match(sql, /transport_lease_token/);
   assert.match(sql, /attempt_count=o\.attempt_count\+1/);

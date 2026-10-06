@@ -19,7 +19,7 @@ export type ExportGrantSweepOptions = {
  * so one accumulated per status read forever. Rows are kept for a few days past expiry (so a
  * support investigation can still see recent grants) and then removed, whether consumed or not:
  * a grant past its expiry can never be redeemed again. Like the idempotency-key sweep this is a
- * single tenant-agnostic bounded delete over the `expires_at` index (migration 039).
+ * single tenant-agnostic bounded delete over the `expires_at` index.
  * Returns the number of rows deleted; a full batch means more remain for the next tick.
  */
 export async function sweepExpiredExportDownloadGrants(

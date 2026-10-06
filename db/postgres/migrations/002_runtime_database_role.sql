@@ -1,9 +1,9 @@
 -- #227: a least-privilege runtime database role, so the application no longer has to connect as the table owner or a
 -- BYPASSRLS service role.
--- Depends on migrations 001-099 (every table, view and function the grants below name).
+-- Depends on 001_baseline.sql (every table, view and function the grants below name).
 --
 -- Until now no migration granted anything to an application role: the app ran as the owner / service role, bypassed row
--- level security (migration 051 says so) and every tenant boundary rested on `tenant_id = $1` predicates in TypeScript.
+-- level security (the tables force it) and every tenant boundary rested on `tenant_id = $1` predicates in TypeScript.
 -- This migration adds the role and the grants a deployment needs to move the application onto it; it does NOT change the
 -- application's connection (that is a per-environment rollout step, see docs/RUNTIME_DATABASE_ROLE.md), and it changes
 -- nothing for the owner role.
@@ -27,10 +27,10 @@
 --      The application never binds one (it authorizes in code), so its behaviour is unchanged; a session that DOES carry a
 --      subject claim is held to the ordinary tenant/workspace policies even when it is connected as this role, so the
 --      tenant-isolation negatives run as the runtime role without relying on any bypass.
---   5. The ten corvis_serving views from migrations 002-055 that were owner-evaluated become `security_invoker`, like the
+--   5. The ten earlier corvis_serving views that were owner-evaluated become `security_invoker`, like the
 --      later ones: they read the base tables with the caller's privileges and the caller's row level security.
---   6. The three SECURITY DEFINER functions of migrations 001/056 pin `search_path = pg_catalog, pg_temp` (every object
---      reference in their bodies is already schema-qualified), like `apply_data_right_admin_authorized` (078).
+--   6. The three SECURITY DEFINER functions of the baseline pin `search_path = pg_catalog, pg_temp` (every object
+--      reference in their bodies is already schema-qualified), like `apply_data_right_admin_authorized`.
 
 begin;
 

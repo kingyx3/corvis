@@ -142,16 +142,16 @@ test("canonicalized handler is stage-bounded and honors cancellation", async () 
   assert.equal(db.queries.length, 0);
 });
 
-test("canonicalization migration preserves immutable reviewed lineage and fails closed", async () => {
-  const sql = (await readFile("db/postgres/migrations/026_canonicalized_stage.sql", "utf8")).toLowerCase();
+test("canonicalization baseline preserves immutable reviewed lineage and fails closed", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
 
-  assert.match(sql, /create table if not exists corvis_facts\.canonicalization_run/);
-  assert.match(sql, /create table if not exists corvis_facts\.canonical_candidate/);
-  assert.match(sql, /alter table corvis_facts\.canonicalization_run force row level security/);
-  assert.match(sql, /alter table corvis_facts\.canonical_candidate force row level security/);
-  assert.match(sql, /alter table corvis_facts\.observation_source_reference force row level security/);
+  assert.match(sql, /create table corvis_facts\.canonicalization_run/);
+  assert.match(sql, /create table corvis_facts\.canonical_candidate/);
+  assert.match(sql, /alter table only corvis_facts\.canonicalization_run force row level security/);
+  assert.match(sql, /alter table only corvis_facts\.canonical_candidate force row level security/);
+  assert.match(sql, /alter table only corvis_facts\.observation_source_reference force row level security/);
 
-  assert.match(sql, /create or replace function corvis_facts\.canonicalize_reviewed_extraction/);
+  assert.match(sql, /create function corvis_facts\.canonicalize_reviewed_extraction/);
   assert.match(sql, /from corvis_review\.extraction_review_gate[\s\S]*?and status='ready'/);
   assert.match(sql, /and candidate_set_sha256=p_candidate_set_sha256/);
   assert.match(sql, /and decision_set_sha256=p_decision_set_sha256/);
@@ -160,8 +160,8 @@ test("canonicalization migration preserves immutable reviewed lineage and fails 
   assert.match(sql, /canonicalization observation fund identity is unresolved/);
   assert.match(sql, /canonicalization observation metric taxonomy is unresolved/);
   assert.match(sql, /canonicalization source-reference lineage is incomplete/);
-  assert.match(sql, /create table if not exists corvis_facts\.observation_source_reference/);
-  assert.match(sql, /create or replace function corvis_facts\.enforce_ready_canonicalization_before_success/);
+  assert.match(sql, /create table corvis_facts\.observation_source_reference/);
+  assert.match(sql, /create function corvis_facts\.enforce_ready_canonicalization_before_success/);
   assert.match(sql, /canonicalization persistence blocks reconciliation/);
 
   assert.equal(/update\s+corvis_source\.extraction_candidate\s+set/i.test(sql), false);

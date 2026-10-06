@@ -346,13 +346,13 @@ test("Postgres representation repository scopes source reads to tenant, document
   assert.match(db.calls[0]?.sql ?? "", /a\.document_artifact_version_id=\$3::uuid/);
 });
 
-test("migration makes representation metadata forced-RLS and carries committed predecessor results", async () => {
-  const sql = (await readFile("db/postgres/migrations/023_document_representations.sql", "utf8")).toLowerCase();
-  assert.match(sql, /create table if not exists corvis_source\.document_representation/);
-  assert.match(sql, /primary key \(tenant_id, representation_id\)/);
-  assert.match(sql, /unique \(tenant_id, document_artifact_version_id, representation_type\)/);
+test("baseline makes representation metadata forced-RLS and carries committed predecessor results", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  assert.match(sql, /create table corvis_source\.document_representation/);
+  assert.match(sql, /alter table only corvis_source\.document_representation\s+add constraint \w+ primary key \(tenant_id, representation_id\)/);
+  assert.match(sql, /alter table only corvis_source\.document_representation\s+add constraint \w+ unique \(tenant_id, document_artifact_version_id, representation_type\)/);
   assert.match(sql, /alter table corvis_source\.document_representation enable row level security/);
-  assert.match(sql, /alter table corvis_source\.document_representation force row level security/);
+  assert.match(sql, /alter table only corvis_source\.document_representation force row level security/);
   assert.equal(/create policy[^;]+document_representation/.test(sql), false);
   assert.match(sql, /new\.event_type = 'processingstageready'/);
   assert.match(sql, /e\.state = 'complete'/);

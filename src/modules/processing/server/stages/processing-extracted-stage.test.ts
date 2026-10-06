@@ -553,21 +553,38 @@ test("Postgres extraction repository re-resolves representation by tenant, docum
   assert.match(db.calls[0]?.sql ?? "", /representation_id=\$3::uuid/);
 });
 
+// The baseline is one file, so assertions about one table are scoped to its CREATE TABLE definition.
+// Expects lower-cased SQL.
+function tableDefinition(sql: string, qualifiedName: string): string {
+  const start = sql.indexOf(`create table ${qualifiedName} (`);
+  assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+  const end = sql.indexOf("\n);", start);
+  assert.ok(end > start, `${qualifiedName} definition must be terminated`);
+  return sql.slice(start, end);
+}
+
 test("orchestration persistence remains source-layer only and gates 2.1 completeness", async () => {
-  const sql = (await readFile("db/postgres/migrations/054_extraction_orchestration_provenance.sql", "utf8")).toLowerCase();
-  assert.match(sql, /alter table corvis_source\.extraction_run/);
-  assert.match(sql, /orchestration_policy_version/);
-  assert.match(sql, /orchestration_manifest_content_sha256/);
-  assert.match(sql, /covered_page_count=page_count/);
-  assert.match(sql, /unexplained_page_gap_count=0/);
-  assert.match(sql, /unresolved_material_attribution_count=0/);
-  assert.match(sql, /alter table corvis_source\.extraction_candidate_source_reference/);
-  assert.match(sql, /document_segment_id/);
-  assert.match(sql, /work_unit_id/);
-  assert.match(sql, /fund_context_ids jsonb/);
-  assert.match(sql, /page_coverage_state/);
-  assert.equal(/alter table corvis_facts\./.test(sql), false);
-  assert.equal(/alter table corvis_identity\./.test(sql), false);
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  const runTable = tableDefinition(sql, "corvis_source.extraction_run");
+  const referenceTable = tableDefinition(sql, "corvis_source.extraction_candidate_source_reference");
+  assert.match(runTable, /orchestration_policy_version/);
+  assert.match(runTable, /orchestration_manifest_content_sha256/);
+  assert.match(runTable, /covered_page_count = page_count/);
+  assert.match(runTable, /unexplained_page_gap_count = 0/);
+  assert.match(runTable, /unresolved_material_attribution_count = 0/);
+  assert.match(runTable, /constraint extraction_run_skill_2_1_orchestration_check check/);
+  assert.match(referenceTable, /document_segment_id/);
+  assert.match(referenceTable, /work_unit_id/);
+  assert.match(referenceTable, /fund_context_ids jsonb/);
+  assert.match(referenceTable, /page_coverage_state/);
+
+  // No other table (facts, identity, ...) carries the orchestration columns: outside the two source-layer tables
+  // they may only be referenced by indexes on those tables.
+  const remainder = sql.replace(runTable, "").replace(referenceTable, "");
+  const orchestrationColumns = /orchestration_policy_version|orchestration_manifest_|covered_page_count|unexplained_page_gap_count|unresolved_material_attribution_count|document_segment_id|work_unit_id|fund_context_ids|page_coverage_state/;
+  for (const line of remainder.split("\n").filter((candidate) => orchestrationColumns.test(candidate))) {
+    assert.match(line, /^create index \w+ on corvis_source\.extraction_(run|candidate_source_reference) /, `unexpected orchestration column reference: ${line}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

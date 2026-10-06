@@ -13,7 +13,7 @@ This distinction is intentional:
 
 ## Canonical shape
 
-Migration `052_position_financial_statements.sql` adds three normalized tables.
+The baseline migration (`001_baseline.sql`) defines three normalized tables.
 
 ### `corvis_facts.position_financial_statement`
 

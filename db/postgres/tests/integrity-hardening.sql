@@ -1,4 +1,4 @@
--- Acceptance for migration 067: the latest-artifact index exists and is usable by the
+-- Acceptance: the latest-artifact index exists and is usable by the
 -- documents view's DISTINCT ON, export_job_state_check is validated on a database
 -- with no violating rows, and entity_lifecycle_participant has a primary key that
 -- ordinary inserts (explicit column list) populate automatically. Run after the full

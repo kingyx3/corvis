@@ -18,7 +18,7 @@ import { demoLegalHoldCovers, demoRetentionCovers } from "./data-retention-fixtu
  * In-memory deletion requests for demo mode and the browser suites; not production evidence. Each demo tenant gets its own
  * seeded list on first use (a deletion Corvis operations carried out, one blocked by the demo legal hold, and a request from a
  * colleague waiting for this admin's approval), so a test that approves or withdraws under its own demo tenant header never
- * disturbs another. The rules are the Postgres rules (migration 098): only a different Organization Admin may approve or
+ * disturbs another. The rules are the Postgres rules: only a different Organization Admin may approve or
  * reject, only the requester may withdraw, a legal hold refuses a request and an approval, one request is pending at a
  * time, and an approval window lapses. The one difference is what happens after approval: the demo has no operations
  * console, so an approved request stays approved.

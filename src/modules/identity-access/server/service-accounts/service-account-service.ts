@@ -81,7 +81,7 @@ export function createServiceAccountService(backend: ServiceAccountBackend): Ser
           return runAuditedMutation({
             demoMode: backend.demo,
             mutate: (db) => backend.extend(identity, serviceAccountId, command, db),
-            // The account's lifecycle review date is advanced with its expiry (migration 092), so one audit event records both.
+            // The account's lifecycle review date is advanced with its expiry, so one audit event records both.
             audit: ({ serviceAccount, previousExpiresAt }) => serviceAccountAuditEvent(identity, correlationId, "service_account.extended", serviceAccount, {
               previousExpiresAt, expiresAt: serviceAccount.expiresAt, nextReviewAt: serviceAccount.expiresAt,
             }),

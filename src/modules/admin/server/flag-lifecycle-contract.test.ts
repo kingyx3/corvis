@@ -5,18 +5,24 @@ import test from "node:test";
 async function source(file: string) { return readFile(file, "utf8"); }
 
 test("flag governance and deletion-evidence tables enable RLS and carry no broad mutation policy", async () => {
-  const migration = (await source("db/postgres/migrations/017_flag_governance_and_deletion_evidence.sql")).toLowerCase();
+  const migration = (await source("db/postgres/migrations/001_baseline.sql")).toLowerCase();
 
   for (const table of ["feature_flag_emergency_stop", "legal_hold", "deletion_execution_evidence"]) {
     assert.match(migration, new RegExp(`alter table corvis_control\\.${table} enable row level security`));
-    assert.match(migration, new RegExp(`create policy ${table}_select on corvis_control\\.${table}\\s+for select using`));
+    assert.match(migration, new RegExp(`alter table only corvis_control\\.${table} force row level security`));
+    assert.match(migration, new RegExp(`create policy ${table}_select on corvis_control\\.${table} for select using`));
   }
   assert.equal(/create policy[^;]+for (insert|update|delete|all)/.test(migration), false);
 
-  assert.match(migration, /add column if not exists kill_switch_reason text/);
-  assert.match(migration, /add column if not exists retire_by timestamptz/);
-  assert.match(migration, /add column if not exists evidence_hash text/);
-  assert.match(migration, /primary key \(tenant_id, deletion_request_id, attempt\)/, "deletion execution evidence must key on attempt so a replay never overwrites a prior attempt's record");
+  const tableBody = (table: string) => {
+    const start = migration.indexOf(`create table corvis_control.${table} (`);
+    assert.ok(start >= 0, `${table} must be defined in the baseline`);
+    return migration.slice(start, migration.indexOf("\n);", start));
+  };
+  assert.match(tableBody("feature_flag"), /\n {4}kill_switch_reason text,/);
+  assert.match(tableBody("feature_flag"), /\n {4}retire_by timestamp with time zone,/);
+  assert.match(tableBody("deletion_request"), /\n {4}evidence_hash text,/);
+  assert.match(migration, /add constraint deletion_execution_evidence_pkey primary key \(tenant_id, deletion_request_id, attempt\)/, "deletion execution evidence must key on attempt so a replay never overwrites a prior attempt's record");
 });
 
 test("feature-flag evaluation is authoritative and denies before rollout state is consulted", async () => {

@@ -28,13 +28,19 @@ class FakeDb implements PostgresSqlApi {
 const normalized = (sql: string) => sql.replace(/\s+/g, " ").trim().toLowerCase();
 
 test("holding schema enforces exactly one polymorphic target and company-only instruments", async () => {
-  const migration = (await readFile("db/postgres/migrations/035_holdings_instruments.sql", "utf8")).toLowerCase();
-  assert.match(migration, /target_type in \('company','fund'\)/);
-  assert.match(migration, /target_type='company' and target_company_id is not null and target_fund_id is null/);
-  assert.match(migration, /target_type='fund' and target_fund_id is not null and target_company_id is null/);
-  assert.match(migration, /instrument must belong to a company-targeted holding/);
-  assert.match(migration, /force row level security/);
-  assert.match(migration, /where review_state='approved'/);
+  const migration = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  const holdingStart = migration.indexOf("create table corvis_facts.holding (");
+  assert.ok(holdingStart >= 0, "missing holding table");
+  const holding = migration.slice(holdingStart, migration.indexOf("\n);", holdingStart));
+  assert.match(holding, /constraint holding_target_type_governed_check check \(\(target_type = any \(array\['company'::text, 'fund'::text\]\)\)\)/);
+  assert.match(holding, /constraint holding_exact_target_check check/);
+  assert.match(holding, /\(target_type = 'company'::text\) and \(target_company_id is not null\) and \(target_fund_id is null\)/);
+  assert.match(holding, /\(target_type = 'fund'::text\) and \(target_fund_id is not null\) and \(target_company_id is null\)/);
+  assert.match(migration, /create function corvis_facts\.enforce_instrument_company_holding\(\)[\s\S]*?instrument must belong to a company-targeted holding/);
+  assert.match(migration, /create trigger instrument_company_holding_guard before insert or update of tenant_id, holding_id on corvis_facts\.instrument for each row execute function corvis_facts\.enforce_instrument_company_holding\(\)/);
+  assert.match(migration, /alter table only corvis_facts\.holding force row level security/);
+  assert.match(migration, /alter table only corvis_facts\.instrument force row level security/);
+  assert.match(migration, /create view corvis_serving\.holdings as[^;]*where \(review_state = 'approved'::text\);/);
 });
 
 test("holding serving is tenant scoped and fund-target holdings cannot leak an unentitled target fund", async () => {

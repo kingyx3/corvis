@@ -33,7 +33,7 @@ The portfolio layer is an attribution/grouping layer. It does not replace or clo
 
 ## Persistence
 
-Migration `053_client_portfolio_attribution.sql` adds:
+The baseline migration (`001_baseline.sql`) defines:
 
 - `corvis_facts.client_portfolio` — tenant/workspace-scoped portfolio identity;
 - `corvis_facts.client_portfolio_fund_position` — a portfolio-to-fund attribution edge. `position_key` allows multiple client positions in the same economic fund without duplicating the fund identity;

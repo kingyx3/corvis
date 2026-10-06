@@ -3,27 +3,35 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { isSectorCode, normalizeSectorLabel, resolveSectorAlias, SECTOR_ALIASES, SECTOR_TAXONOMY_VERSION, SECTORS } from "./sector-taxonomy.ts";
 
-const MIGRATION = "db/postgres/migrations/055_sector_taxonomy.sql";
+const BASELINE = "db/postgres/migrations/001_baseline.sql";
 
 function sqlString(value: string): string { return value.replaceAll("''", "'"); }
 
-test("the migration seeds exactly the sectors src/modules/workspace/domain/sector-taxonomy.ts defines", async () => {
-  const sql = await readFile(MIGRATION, "utf8");
-  const block = sql.slice(sql.indexOf("insert into corvis_semantic.sector ("), sql.indexOf("on conflict (taxonomy_version, sector_code)"));
-  const seeded = [...block.matchAll(/\('([^']+)','([^']+)','((?:[^']|'')+)','((?:[^']|'')+)',(\d+)\)/g)]
+test("the baseline seeds exactly the sectors src/modules/workspace/domain/sector-taxonomy.ts defines", async () => {
+  const sql = await readFile(BASELINE, "utf8");
+  const seeded = [
+    ...sql.matchAll(
+      /^INSERT INTO corvis_semantic\.sector \(taxonomy_version, sector_code, display_name, description, display_order\) VALUES \('([^']+)', '([^']+)', '((?:[^']|'')+)', '((?:[^']|'')+)', (\d+)\);$/gm,
+    ),
+  ]
     .map(([, version, code, name, description, order]) => ({ version, code, name: sqlString(name!), description: sqlString(description!), displayOrder: Number(order) }));
   assert.deepEqual(seeded, SECTORS.map((sector) => ({ version: SECTOR_TAXONOMY_VERSION, code: sector.code, name: sector.name, description: sector.description, displayOrder: sector.displayOrder })));
 });
 
-test("the migration seeds exactly the aliases src/modules/workspace/domain/sector-taxonomy.ts defines", async () => {
-  const sql = await readFile(MIGRATION, "utf8");
-  const block = sql.slice(sql.indexOf("insert into corvis_semantic.sector_alias"), sql.indexOf("on conflict (taxonomy_version, alias_normalized)"));
-  const seeded = Object.fromEntries([...block.matchAll(/\('([^']+)','([^']+)','([^']+)'\)/g)].map(([, version, alias, code]) => {
-    assert.equal(version, SECTOR_TAXONOMY_VERSION);
-    return [alias, code];
-  }));
+test("the baseline seeds exactly the aliases src/modules/workspace/domain/sector-taxonomy.ts defines", async () => {
+  const sql = await readFile(BASELINE, "utf8");
+  const seeded = Object.fromEntries(
+    [
+      ...sql.matchAll(
+        /^INSERT INTO corvis_semantic\.sector_alias \(taxonomy_version, alias_normalized, sector_code\) VALUES \('([^']+)', '([^']+)', '([^']+)'\);$/gm,
+      ),
+    ].map(([, version, alias, code]) => {
+      assert.equal(version, SECTOR_TAXONOMY_VERSION);
+      return [alias, code];
+    }),
+  );
   assert.deepEqual(seeded, SECTOR_ALIASES);
-  // The migration's normalize function must use the same rules as normalizeSectorLabel.
+  // The baseline's normalize function must use the same rules as normalizeSectorLabel.
   assert.match(sql, /regexp_replace\(lower\(coalesce\(p_label,''\)\), '\[&\+\]', ' and ', 'g'\), '\[\^a-z0-9 \]\+', ' ', 'g'\)/);
 });
 

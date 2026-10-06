@@ -372,7 +372,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Apply full Postgres migration chain on a clean database
+      - name: Apply the Postgres migrations on a clean database
         shell: bash
         run: |
           set -euo pipefail
@@ -383,7 +383,7 @@ jobs:
             PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f "${migration}"
           done
       - run: npm ci --prefer-offline --no-audit
-      - name: Apply full migration chain through the production runner, twice
+      - name: Apply the migrations through the production runner, twice
         shell: bash
         run: |
           set -euo pipefail
@@ -423,7 +423,7 @@ jobs:
           # two documents on one fund-period: conflicting values block, identical values merge lineage. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/cross-document-conflicts.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/integrity-hardening.sql
-          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/pipeline-durability-066.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/pipeline-durability.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
           # Data-issue reports (F5): reporting is inert, the case state machine and its link to the governed correction, immutability, tenant/RLS. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/data-issue-reports.sql
@@ -465,8 +465,6 @@ jobs:
           CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/email-notifications.mjs
           # Recorded research scopes and attack-mode SCIM caches cannot outlive revoked authority. Rolled back.
           CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/authorization-cache-revocation.mjs
-          # Migration 073 corrects the audit rows 069 mislabelled; append-only audit means it is exercised in a rolled-back transaction.
-          CORVIS_DATABASE_DSN="postgres://${PGUSER}:${PGPASSWORD}@localhost:5432/corvis_migration_smoke?sslmode=disable" node db/postgres/tests/migration-073-audit-correction.mjs
       - name: Exercise RLS tenant-isolation negatives as a non-owner role
         shell: bash
         run: |
@@ -482,7 +480,7 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if; end \$\$;"
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql | tee security-acceptance.out
           grep -q POSTGRES_RLS_SECURITY_ACCEPTANCE_PASS security-acceptance.out
-      # Least-privilege runtime role (#227, migration 100). A clean database is rebuilt because several suites above
+      # Least-privilege runtime role. A clean database is rebuilt because several suites above
       # commit scratch data. The harness (see its header) runs the grant manifest and the tenant-isolation negatives as
       # corvis_runtime (no owner bypass), then the existing SQL and application suites connected as login roles that are
       # members of corvis_runtime. The owner-role runs above stay unchanged.
@@ -497,12 +495,20 @@ jobs:
           done
           PGDATABASE=corvis_runtime_smoke db/postgres/tests/run-as-runtime.sh | tee runtime-role-acceptance.log
           grep -q RUNTIME_ROLE_ACCEPTANCE_PASS runtime-role-acceptance.log
-      - name: Apply isolated rate-limit migration and acceptance checks
+      - name: Apply the migrations to a fresh database and run the rate-limit acceptance checks
+        env:
+          PGDATABASE: corvis_rate_limit_smoke
         run: |
+          createdb corvis_rate_limit_smoke
+          psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/supabase-auth-fixture.sql
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate-limit-fixture.sql
-          psql -X -v ON_ERROR_STOP=1 -f db/postgres/migrations/020_distributed_api_rate_limit.sql
+          for migration in db/postgres/migrations/*.sql; do
+            psql -X -q -v ON_ERROR_STOP=1 -f "${migration}" > /dev/null
+          done
           psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/rate_limit.sql
       - name: Verify concurrent independent database connections
+        env:
+          PGDATABASE: corvis_rate_limit_smoke
         run: node db/postgres/tests/rate-limit-concurrency.mjs
       - run: npm ci --prefer-offline --no-audit
       - name: Verify user preference ownership and workspace sharing

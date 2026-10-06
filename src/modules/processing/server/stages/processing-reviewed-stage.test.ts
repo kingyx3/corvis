@@ -194,16 +194,16 @@ test("extraction gate is ready only when every candidate satisfies its requireme
   assert.match(gate.decisionSetSha256, /^[0-9a-f]{64}$/);
 });
 
-test("review migration is forced-RLS, append-only, resumable, and persistence-blocks canonicalization", async () => {
-  const sql = (await readFile("db/postgres/migrations/025_review_quality_gate.sql", "utf8")).toLowerCase();
-  assert.match(sql, /create table if not exists corvis_review\.candidate_review_event/);
-  assert.match(sql, /alter table corvis_review\.candidate_review_event force row level security/);
-  assert.match(sql, /alter table corvis_review\.candidate_review_requirement force row level security/);
-  assert.match(sql, /alter table corvis_review\.extraction_review_gate force row level security/);
+test("review baseline is forced-RLS, append-only, resumable, and persistence-blocks canonicalization", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  assert.match(sql, /create table corvis_review\.candidate_review_event/);
+  assert.match(sql, /alter table only corvis_review\.candidate_review_event force row level security/);
+  assert.match(sql, /alter table only corvis_review\.candidate_review_requirement force row level security/);
+  assert.match(sql, /alter table only corvis_review\.extraction_review_gate force row level security/);
   assert.equal(/create policy[^;]+corvis_review/.test(sql), false);
-  assert.match(sql, /create or replace function corvis_control\.block_processing_stage_delivery/);
+  assert.match(sql, /create function corvis_control\.block_processing_stage_delivery/);
   assert.match(sql, /set state='blocked'/);
-  assert.match(sql, /create or replace function corvis_control\.resume_blocked_reviewed_stage/);
+  assert.match(sql, /create function corvis_control\.resume_blocked_reviewed_stage/);
   assert.match(sql, /g\.status='ready'/);
   assert.match(sql, /review gate blocks canonicalization/);
   assert.match(sql, /old\.stage='reviewed'[\s\S]+new\.state='succeeded'/);

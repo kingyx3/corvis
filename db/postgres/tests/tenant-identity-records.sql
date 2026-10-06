@@ -1,4 +1,4 @@
--- Acceptance for migration 095 (F7b #335, F7e #338): verified email domains and the per-tenant identity-provider record.
+-- Acceptance (F7b #335, F7e #338): verified email domains and the per-tenant identity-provider record.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * only an active Organization Admin (an active human identity with an active tenant_admin membership in the ACTOR's
@@ -246,7 +246,7 @@ begin
   if exists (select 1 from corvis_control.tenant_identity_provider where tenant_id='b0950000-0000-4000-8000-00000000000b') then raise exception 'records are per tenant'; end if;
 end $$;
 
--- ---------------------------------------------------------------- IdP-reported MFA, end-session endpoint and Require SSO (migration 099, F7a #334, F7c #336)
+-- ---------------------------------------------------------------- IdP-reported MFA, end-session endpoint and Require SSO (F7a #334, F7c #336)
 insert into corvis_control.tenant (tenant_id,slug,display_name)
 values ('f0990000-0000-4000-8000-00000000000f','identity-records-f','Identity Records F');
 insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name)

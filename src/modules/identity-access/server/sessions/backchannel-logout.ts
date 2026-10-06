@@ -14,9 +14,9 @@ import { countMetric, logEvent } from "../../../../platform/observability/teleme
  * (the deployment's shared provider, or a tenant's active recorded OpenID Connect provider) and an audience recorded for it
  * (`OidcVerifier.verifyLogoutToken`: signature, issuer, audience, fresh `iat`, `exp`, the back-channel-logout event, no
  * `nonce`). An issuer Corvis does not know is refused before any network call, so the endpoint cannot be made to fetch keys
- * from an arbitrary host. The single-use `jti` ledger, the revocations (the existing `session_revocation` of migration 008,
+ * from an arbitrary host. The single-use `jti` ledger, the revocations (the existing `session_revocation`,
  * which every authoritative request consults, so the effect is immediate) and the audit events are written atomically by
- * `corvis_control.apply_backchannel_logout` (migration 099), bounded to the tenants that issuer and audience belong to.
+ * `corvis_control.apply_backchannel_logout`, bounded to the tenants that issuer and audience belong to.
  *
  * Responses follow the specification and reveal nothing: `200` with an empty body once a valid token was applied (whether or not
  * it matched anyone Corvis knows), `400 invalid_request` for anything else (malformed, forged, expired, replayed, unknown

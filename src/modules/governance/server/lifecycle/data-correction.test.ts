@@ -56,15 +56,27 @@ test("correction commands reject empty root cause rather than creating an unowne
   assert.equal(db.calls.length, 0);
 });
 
-test("migration preserves immutable history, deterministic replay and persistence-level publication containment", async () => {
-  const sql = (await readFile("db/postgres/migrations/022_data_correction_incidents.sql", "utf8")).toLowerCase();
-  assert.match(sql, /create table if not exists corvis_control\.data_correction_incident/);
-  assert.match(sql, /unique \(tenant_id, idempotency_key\)/);
-  assert.match(sql, /'processingstageready'/);
-  assert.match(sql, /on conflict \(tenant_id,event_id\) do nothing/);
-  assert.match(sql, /active data correction incident blocks publication/);
-  assert.match(sql, /'correctionreplacementdeliveryrequested'/);
-  assert.equal(/update corvis_facts\.observation/.test(sql), false);
+test("the baseline preserves immutable history, deterministic replay and persistence-level publication containment", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+  // The baseline is one file, so each guarantee is asserted against the body of the function that owns it.
+  const functionBody = (qualifiedName: string) => {
+    const start = sql.indexOf(`create function ${qualifiedName}(`);
+    assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+    return sql.slice(start, sql.indexOf("\n$$;", start));
+  };
+  assert.match(sql, /create table corvis_control\.data_correction_incident \(/);
+  assert.match(sql, /add constraint data_correction_incident_tenant_id_idempotency_key_key unique \(tenant_id, idempotency_key\)/);
+
+  const replay = functionBody("corvis_control.request_data_correction_replay");
+  assert.match(replay, /'processingstageready'/);
+  assert.match(replay, /on conflict \(tenant_id,event_id\) do nothing/);
+  assert.match(functionBody("corvis_consolidated.assert_snapshot_publishable"), /active data correction incident blocks publication/);
+  const resolve = functionBody("corvis_control.resolve_data_correction_incident");
+  assert.match(resolve, /'correctionreplacementdeliveryrequested'/);
+
+  for (const body of [functionBody("corvis_control.open_data_correction_incident"), replay, resolve]) {
+    assert.equal(/update corvis_facts\.observation/.test(body), false);
+  }
 });
 
 test("malformed correction fields are typed 400s and never reach the uuid/integer casts", async () => {

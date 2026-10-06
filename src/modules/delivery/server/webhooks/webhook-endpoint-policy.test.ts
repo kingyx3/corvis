@@ -19,7 +19,11 @@ import {
 } from "./webhook-endpoint-policy.ts";
 
 test("transport event types are exactly what the transport claims and are never subscribable", async () => {
-  const sql = await readFile("db/postgres/migrations/021_processing_transport_runtime.sql", "utf8");
+  const baseline = await readFile("db/postgres/migrations/001_baseline.sql", "utf8");
+  // Scope to the transport claim function: the baseline is one file and other functions also filter on event types.
+  const start = baseline.indexOf("CREATE FUNCTION corvis_control.claim_processing_transport_events(");
+  assert.ok(start >= 0, "claim_processing_transport_events must be defined in the baseline");
+  const sql = baseline.slice(start, baseline.indexOf("\n$$;", start));
   const claimed = /o\.event_type in \(([^)]*)\)/.exec(sql)?.[1]?.match(/'([A-Za-z]+)'/g)?.map((value) => value.slice(1, -1));
   assert.deepEqual([...PROCESSING_TRANSPORT_EVENT_TYPES].sort(), [...(claimed ?? [])].sort());
   for (const type of PROCESSING_TRANSPORT_EVENT_TYPES) {

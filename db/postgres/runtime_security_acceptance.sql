@@ -1,5 +1,5 @@
 -- Live Postgres RLS security acceptance for a deployment whose application connects as a login role that is a member of
--- the least-privilege `corvis_runtime` role (#227, migration 100). It is the counterpart of security_acceptance.sql, which
+-- the least-privilege `corvis_runtime` role. It is the counterpart of security_acceptance.sql, which
 -- needs owner-level grants and SET ROLE and therefore cannot run as the runtime role; security_acceptance.sql hands over to
 -- this file automatically when it is run as a non-superuser member of corvis_runtime, so the acceptance workflow keeps one
 -- entry point before and after the DSN switch.

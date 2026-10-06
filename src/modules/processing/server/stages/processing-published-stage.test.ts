@@ -151,24 +151,35 @@ test("published handler is stage-bounded and honors cancellation", async () => {
   assert.equal(db.queries.length, 0);
 });
 
-test("publication migration restores all persistence gates and is redelivery-safe", async () => {
-  const sql = (await readFile("db/postgres/migrations/030_published_stage.sql", "utf8")).toLowerCase();
+// The baseline is one file, so assertions about what a single command does (or never does) are scoped to that
+// function's body rather than to the whole schema. Expects lower-cased SQL.
+function functionBody(sql: string, qualifiedName: string): string {
+  const start = sql.indexOf(`create function ${qualifiedName}(`);
+  assert.ok(start >= 0, `${qualifiedName} must be defined in the baseline`);
+  const end = sql.indexOf("\n$$;", start);
+  assert.ok(end > start, `${qualifiedName} body must be terminated`);
+  return sql.slice(start, end);
+}
 
-  assert.match(sql, /create table if not exists corvis_consolidated\.publication_run/);
-  assert.match(sql, /alter table corvis_consolidated\.publication_run force row level security/);
-  assert.match(sql, /create or replace function corvis_consolidated\.assert_snapshot_publishable/);
+test("publication baseline enforces all persistence gates and is redelivery-safe", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).toLowerCase();
+
+  assert.match(sql, /create table corvis_consolidated\.publication_run/);
+  assert.match(sql, /alter table only corvis_consolidated\.publication_run force row level security/);
+  assert.match(sql, /create function corvis_consolidated\.assert_snapshot_publishable/);
   assert.match(sql, /blocking reconciliation exceptions remain/);
   assert.match(sql, /active data correction incident blocks publication/);
   assert.match(sql, /publication lineage or review coverage is incomplete/);
   assert.match(sql, /critical observations require finalized independent review/);
   assert.match(sql, /conflicting alternatives require attributable reconciliation resolution/);
-  assert.match(sql, /create or replace function corvis_consolidated\.append_snapshot_transition/);
+  assert.match(sql, /create function corvis_consolidated\.append_snapshot_transition/);
   assert.match(sql, /perform corvis_consolidated\.assert_snapshot_publishable/);
-  assert.match(sql, /create or replace function corvis_consolidated\.publish_consolidation/);
+  assert.match(sql, /create function corvis_consolidated\.publish_consolidation/);
   assert.match(sql, /publication requires committed consolidated-stage predecessor effect/);
   assert.match(sql, /if found then[\s\S]+existing published snapshot is missing publication event/);
-  assert.match(sql, /create or replace function corvis_consolidated\.enforce_ready_publication_before_success/);
+  assert.match(sql, /create function corvis_consolidated\.enforce_ready_publication_before_success/);
   assert.match(sql, /publication persistence blocks published-stage success/);
-  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(sql), false);
-  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(sql), false);
+  const publish = functionBody(sql, "corvis_consolidated.publish_consolidation");
+  assert.equal(/update\s+corvis_facts\.observation\s+set/i.test(publish), false);
+  assert.equal(/delete\s+from\s+corvis_facts\.observation/i.test(publish), false);
 });

@@ -1,4 +1,4 @@
--- Acceptance for migration 055: company sector classifications are assigned
+-- Acceptance: company sector classifications are assigned
 -- only through corvis_facts.assign_company_sector with optimistic
 -- concurrency, keep exactly one current row per company, preserve every
 -- prior version as immutable history, and reject codes outside the

@@ -28,7 +28,7 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../pla
  * Organization sign-in and session policy (F7, #263), behind `/api/v1/access/session-policy/**`, over either backend
  * (Postgres, or the in-memory demo store in demo mode).
  *
- * What is enforced, and where. The two limits and "sign out everywhere" are decided in SQL (migration 087): the policy
+ * What is enforced, and where. The two limits and "sign out everywhere" are decided in SQL: the policy
  * bounds are CHECK constraints, the Organization-Admin and compare-and-set rules are in the functions, and the
  * limits are applied by `corvis_control.enforce_session_policy` on every authoritative request
  * (authorization.ts), never only in the UI. This module only authorizes the caller, runs each change together with
@@ -189,7 +189,7 @@ export class PostgresSessionPolicyBackend implements SessionPolicyBackend {
         group by s.tenant_id, s.user_id, p.idle_timeout_minutes, p.max_session_minutes
         order by is_current desc, label
         limit 500`, [identity.tenantId, identity.authMethod, identity.subject]),
-      // The operator-managed records (migration 095): read-only here, with this tenant's predicate.
+      // The operator-managed records: read-only here, with this tenant's predicate.
       readTenantIdentityRecords(db, identity.tenantId),
     ]);
     const scimRow = scimRows[0];

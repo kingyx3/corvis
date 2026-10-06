@@ -16,7 +16,7 @@ import { logEvent } from "../../../../platform/observability/telemetry.ts";
 
 /**
  * Customer data-issue reports (F5, #261), Postgres side. A report only ever writes `corvis_control.data_issue_case`
- * and its history (migration 083): it cannot change observations, snapshots or publication, which stay with the
+ * and its history: it cannot change observations, snapshots or publication, which stay with the
  * governed correction flow (`data-correction.ts`). Visibility is a predicate in every query below: a case is read by
  * its reporter (while still entitled to the fund) and by Organization Admins, never by anyone else in the tenant.
  */

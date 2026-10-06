@@ -1,4 +1,4 @@
--- Acceptance for migration 066 (issues #230, #231, #232): transport lease
+-- Acceptance (issues #230, #231, #232): transport lease
 -- release, dead-letter reporting, deletion execution lease, snapshot-scoped
 -- publication pre-flight counts, export retry backoff column and single-use
 -- download grants. Run after the full migration chain on an isolated disposable
@@ -205,4 +205,4 @@ end
 $$;
 
 rollback;
-\echo pipeline-durability-066: ok
+\echo pipeline-durability: ok

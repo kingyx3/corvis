@@ -6,7 +6,7 @@ import { BlockList, isIP } from "node:net";
 /**
  * Outbox event types that are internal processing-transport signals.
  *
- * `claim_processing_transport_events` (migration 021) consumes exactly these
+ * `claim_processing_transport_events` consumes exactly these
  * types and uses `outbox_event.published_at` / `attempt_count` as its own
  * dispatch/dead-letter bookkeeping. They are never customer-facing webhook
  * events: a subscription may not name them, and webhook delivery never

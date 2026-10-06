@@ -2,29 +2,50 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("client portfolio layer sits above funds and preserves canonical holdings", async () => {
-  const sql = (await readFile("db/postgres/migrations/053_client_portfolio_attribution.sql","utf8")).toLowerCase();
+const BASELINE = "db/postgres/migrations/001_baseline.sql";
 
-  assert.match(sql,/create table if not exists corvis_facts\.client_portfolio \(/);
-  assert.match(sql,/create table if not exists corvis_facts\.client_portfolio_fund_position \(/);
-  assert.match(sql,/foreign key \(fund_id\)[\s\S]*references corvis_identity\.fund\(global_fund_id\)/);
-  assert.match(sql,/create or replace view corvis_serving\.client_portfolio_holding_attribution/);
-  assert.match(sql,/with recursive fund_path as/);
-  assert.match(sql,/join corvis_serving\.holdings h/);
-  assert.match(sql,/h\.target_type='fund'/);
-  assert.match(sql,/not \(h\.target_fund_id = any\(fp\.fund_path\)\)/);
-  assert.match(sql,/lookthrough_depth < 15/);
+// Slice one view definition (it ends at the first statement terminator) out of the baseline.
+function viewDefinition(sql: string, name: string): string {
+  const start = sql.indexOf(`create view ${name} `);
+  assert.ok(start >= 0, `missing view ${name}`);
+  const end = sql.indexOf(";\n", start);
+  assert.ok(end > start, `unterminated view ${name}`);
+  return sql.slice(start, end);
+}
+
+test("client portfolio layer sits above funds and preserves canonical holdings", async () => {
+  const sql = (await readFile(BASELINE,"utf8")).toLowerCase();
+  const attribution = viewDefinition(sql, "corvis_serving.client_portfolio_holding_attribution");
+  const portfolioViews = [
+    viewDefinition(sql, "corvis_serving.client_portfolios"),
+    viewDefinition(sql, "corvis_serving.client_portfolio_fund_positions"),
+    attribution,
+  ];
+
+  assert.match(sql,/create table corvis_facts\.client_portfolio \(/);
+  assert.match(sql,/create table corvis_facts\.client_portfolio_fund_position \(/);
+  assert.match(sql,/alter table only corvis_facts\.client_portfolio_fund_position\s+add constraint \w+ foreign key \(fund_id\) references corvis_identity\.fund\(global_fund_id\)/);
+  assert.match(sql,/create view corvis_serving\.client_portfolio_holding_attribution /);
+  assert.match(attribution,/with recursive fund_path as/);
+  assert.match(attribution,/join corvis_serving\.holdings h/);
+  assert.match(attribution,/h_1\.target_type = 'fund'::text/);
+  assert.match(attribution,/not \(h_1\.target_fund_id = any \(fp_1\.fund_path\)\)/);
+  assert.match(attribution,/lookthrough_depth < 15/);
 
   // The attribution view carries identity/path only. It never scales company
   // operating facts by fund ownership or by a client portfolio interest.
-  assert.equal(/revenue\s*\*/.test(sql),false);
-  assert.equal(/ebitda\s*\*/.test(sql),false);
-  assert.equal(/value_number\s*\*/.test(sql),false);
+  for (const view of portfolioViews) {
+    assert.equal(/revenue\s*\*/.test(view),false);
+    assert.equal(/ebitda\s*\*/.test(view),false);
+    assert.equal(/value_number\s*\*/.test(view),false);
+  }
 
-  assert.match(sql,/enable row level security/);
-  assert.match(sql,/force row level security/);
-  assert.match(sql,/has_workspace_access/);
-  assert.equal((sql.match(/with \(security_invoker=true\)/g) ?? []).length,3);
+  for (const table of ["client_portfolio", "client_portfolio_fund_position"]) {
+    assert.match(sql,new RegExp(`alter table corvis_facts\\.${table} enable row level security`));
+    assert.match(sql,new RegExp(`alter table only corvis_facts\\.${table} force row level security`));
+    assert.match(sql,new RegExp(`create policy \\w+ on corvis_facts\\.${table} for select using [^;]*has_workspace_access`));
+  }
+  assert.equal(portfolioViews.filter((view) => /^create view \S+ with \(security_invoker='true'\) as/.test(view)).length,3);
 });
 
 test("portfolio serving intersects workspace membership with authoritative fund entitlements", async () => {

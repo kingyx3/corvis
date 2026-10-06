@@ -4,7 +4,7 @@
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const BULK_ROLES: ReadonlySet<string> = new Set(["tenant_admin", "accountadmin", "reviewer", "analyst", "viewer"]);
-// `workspace_admin` was renamed to `accountadmin` (migration 048); CSVs prepared before the rename still use it.
+// `workspace_admin` was renamed to `accountadmin`; CSVs prepared before the rename still use it.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type CsvRecord = { line: number; fields: string[]; unterminated: boolean };

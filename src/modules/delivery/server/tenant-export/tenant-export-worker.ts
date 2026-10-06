@@ -24,7 +24,7 @@ import { countMetric } from "../../../../platform/observability/telemetry.ts";
  * depends on what an earlier attempt wrote). A source file that does not match its recorded checksum fails permanently.
  *
  * Contractual data rights decide what goes in (criterion 4): only funds and documents returned by
- * `corvis_control.tenant_export_rights` (migration 084) are exported, source files only where source-file access is also
+ * `corvis_control.tenant_export_rights` are exported, source files only where source-file access is also
  * granted, and what was left out is reported as counts in the manifest, never listed or silently dropped.
  */
 

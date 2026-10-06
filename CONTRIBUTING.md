@@ -36,7 +36,7 @@ The layout, the module layers (`domain/`, `server/`, `adapters/`, `ui/`) and the
 
 ## Rules that are easy to break
 
-- **Database migrations are immutable once merged.** The runner refuses checksum drift. Add a new numbered migration in `db/postgres/migrations/` instead of editing an old one.
+- **Database migrations are immutable once merged.** The runner refuses checksum drift. Add a new numbered migration in `db/postgres/migrations/` instead of editing an old one. `001_baseline.sql` is the squashed schema as it stood before the first deployment; every change after it is its own numbered migration.
 - **Identity comes from a signed assertion or an OIDC bearer token, never from request headers.** Tests authenticate through `src/test-support/identity-assertion.ts`.
 - **`CORVIS_DATABASE_DSN` is the only database binding.** Production requires a native `postgres://` or `postgresql://` DSN.
 - **Pin third-party GitHub Actions to a full commit SHA** and keep the readable version in a comment.

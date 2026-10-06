@@ -1,4 +1,4 @@
--- Acceptance for migration 072: corvis_source.release_clean_artifact releases a pending or
+-- Acceptance: corvis_source.release_clean_artifact releases a pending or
 -- quarantined artifact once, is idempotent for an already released one (it must not move the
 -- document backwards), and refuses an artifact that was purged by an abort, expiry or sweep.
 -- Run after the full migration chain on an isolated disposable database. Rolled back.

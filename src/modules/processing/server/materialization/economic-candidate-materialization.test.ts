@@ -2,13 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const BASELINE = "db/postgres/migrations/001_baseline.sql";
+
+// Slice one function definition out of the baseline so assertions stay scoped to that function.
+function functionDefinition(sql: string, name: string): string {
+  const start = sql.indexOf(`create function ${name}(`);
+  assert.ok(start >= 0, `missing function ${name}`);
+  const end = sql.indexOf("\n$$;", start);
+  assert.ok(end > start, `unterminated function ${name}`);
+  return sql.slice(start, end);
+}
+
 test("reviewed holding and instrument candidates materialize transactionally before observations", async () => {
-  const v2 = (await readFile("db/postgres/migrations/036_materialize_economic_candidates.sql", "utf8")).toLowerCase();
-  const v3 = (await readFile("db/postgres/migrations/037_materialize_lifecycle_events.sql", "utf8")).toLowerCase();
-  const v4 = (await readFile("db/postgres/migrations/038_materialize_reviewed_identities.sql", "utf8")).toLowerCase();
+  const baseline = (await readFile(BASELINE, "utf8")).toLowerCase();
+  const v2 = functionDefinition(baseline, "corvis_facts.canonicalize_reviewed_extraction_v2");
+  const v3 = functionDefinition(baseline, "corvis_facts.canonicalize_reviewed_extraction_v3");
+  const v4 = functionDefinition(baseline, "corvis_facts.canonicalize_reviewed_extraction_v4");
   const runtime = (await readFile("src/modules/processing/server/stages/processing-canonicalized-stage.ts", "utf8")).toLowerCase();
 
-  assert.match(v2, /create or replace function corvis_facts\.canonicalize_reviewed_extraction_v2/);
+  assert.match(v2, /^create function corvis_facts\.canonicalize_reviewed_extraction_v2\(/);
   assert.match(v2, /from corvis_review\.extraction_review_gate/);
   assert.match(v2, /g\.status='ready'/);
   assert.match(v2, /g\.blocking_candidate_count=0/);
@@ -30,20 +42,21 @@ test("reviewed holding and instrument candidates materialize transactionally bef
 });
 
 test("materialization is replay-safe and preserves immutable revision lineage", async () => {
-  const sql = (await readFile("db/postgres/migrations/036_materialize_economic_candidates.sql", "utf8")).toLowerCase();
+  const sql = (await readFile(BASELINE, "utf8")).toLowerCase();
+  const v2 = functionDefinition(sql, "corvis_facts.canonicalize_reviewed_extraction_v2");
 
-  assert.match(sql, /create table if not exists corvis_facts\.holding_revision/);
-  assert.match(sql, /create table if not exists corvis_facts\.instrument_revision/);
-  assert.match(sql, /alter table corvis_facts\.holding_revision force row level security/);
-  assert.match(sql, /alter table corvis_facts\.instrument_revision force row level security/);
+  assert.match(sql, /create table corvis_facts\.holding_revision \(/);
+  assert.match(sql, /create table corvis_facts\.instrument_revision \(/);
+  assert.match(sql, /alter table only corvis_facts\.holding_revision force row level security/);
+  assert.match(sql, /alter table only corvis_facts\.instrument_revision force row level security/);
   assert.match(sql, /effective_payload jsonb not null/);
   assert.match(sql, /source_reference_ids uuid\[\] not null/);
   assert.match(sql, /candidate_fingerprint_sha256/);
-  assert.match(sql, /on conflict do nothing/);
-  assert.match(sql, /is distinct from/);
-  assert.match(sql, /source_reference_id=c\.source_reference_ids\[1\]/);
-  assert.match(sql, /reviewed candidate set contains duplicate holding_id/);
-  assert.match(sql, /reviewed candidate set contains duplicate instrument_id/);
+  assert.match(v2, /on conflict do nothing/);
+  assert.match(v2, /is distinct from/);
+  assert.match(v2, /source_reference_id=c\.source_reference_ids\[1\]/);
+  assert.match(v2, /reviewed candidate set contains duplicate holding_id/);
+  assert.match(v2, /reviewed candidate set contains duplicate instrument_id/);
 
   // Internal revision ledgers intentionally have no direct customer RLS policy.
   assert.equal(/create policy[^;]+holding_revision/.test(sql), false);

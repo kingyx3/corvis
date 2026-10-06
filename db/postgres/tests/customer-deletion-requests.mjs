@@ -1,6 +1,6 @@
 // Real-Postgres acceptance for customer deletion requests (F10e, #325), through the application code: the customer backend in
 // src/modules/governance/server/lifecycle/customer-deletion.ts, the retention view in src/modules/governance/server/lifecycle/data-retention.ts and the unchanged operator flow in
-// src/modules/governance/server/lifecycle/data-lifecycle.ts drive migration 098 inside one transaction that is always rolled back. Covers what the pure-SQL
+// src/modules/governance/server/lifecycle/data-lifecycle.ts drive the schema inside one transaction that is always rolled back. Covers what the pure-SQL
 // test (customer-deletion-requests.sql) cannot: that the application's statements run against the real schema, that the
 // customer read never returns what only operators may see, and that the operator flow cannot execute a customer's request
 // before a different Organization Admin approved it, and still blocks it under a legal hold afterwards. Run after the full

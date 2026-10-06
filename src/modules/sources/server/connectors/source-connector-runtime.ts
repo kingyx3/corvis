@@ -5,7 +5,7 @@ import type { ConnectorDriver, SecretPayload, SecretStore, SecretWriteOptions } 
 /**
  * Placeholder project id used only by the in-memory/local store, which never
  * talks to a real GCP project. It is a syntactically valid GCP project id
- * (`[a-z0-9][a-z0-9-]{4,28}[a-z0-9]`, matching the migration 018 check
+ * (`[a-z0-9][a-z0-9-]{4,28}[a-z0-9]`, matching the database check
  * constraint) so local/dev/test references have the same shape as production
  * ones without implying a specific real project.
  */
@@ -13,7 +13,7 @@ const LOCAL_PLACEHOLDER_PROJECT_ID = "corvis-local-dev";
 
 /**
  * Builds a secret resource name that satisfies the
- * `source_connection_secret_reference_tenant_scoped` check in migration 018:
+ * `source_connection_secret_reference_tenant_scoped` check in the database:
  * after the tenant id the suffix may only use `[a-z0-9-]` and at most 64
  * characters. Provider keys legitimately contain `_` and may be 64 characters
  * long, so they are slugged and truncated here; otherwise a valid provider key

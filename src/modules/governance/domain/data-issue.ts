@@ -6,7 +6,7 @@
  * snapshot version) and a comment. The report becomes a tenant-scoped case routed to Data Operations and moves
  * received -> investigating -> corrected | no_change. Reporting records a claim only: it never changes data or
  * publication state. A corrected case links to the replacement publication produced by the governed correction
- * flow (data-correction incidents, migration 022), never to anything this module can create.
+ * flow (data-correction incidents), never to anything this module can create.
  */
 
 export const DATA_ISSUE_FIGURES = ["overview", "position_financials", "review"] as const;

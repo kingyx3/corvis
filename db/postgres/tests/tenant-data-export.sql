@@ -1,4 +1,4 @@
--- Acceptance for migration 084 (F10, #266): full tenant data export with dual approval, plus the contractual
+-- Acceptance (F10, #266): full tenant data export with dual approval, plus the contractual
 -- data-rights selection it relies on.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
@@ -15,13 +15,13 @@
 --   * tenant_export_rights fails closed: expired, partial, unspecified and non-redistributable resources are
 --     excluded, and without a workspace-level redistribution right nothing is returned;
 --   * RLS is enabled and forced with no client policy, so a role without BYPASSRLS reads nothing;
---   * migration 089 (F10d): the history trigger queues the mandatory approval notice to every other active human
+--   * (F10d) the history trigger queues the mandatory approval notice to every other active human
 --     Organization Admin and the optional outcome notice (approved, rejected, ready, failed, including a build failed by
 --     the lease reclaim) to the requester only, in words-only parameters, once per step, never blocking the step if the
 --     outbox refuses it; the approval notice cannot be a stored preference;
---   * migration 089 (F10f): expired artifacts are listed, marked deleted once (history, audit, grants removed) and a live
+--   * (F10f) expired artifacts are listed, marked deleted once (history, audit, grants removed) and a live
 --     one is never touched; expired download grants are swept past their retention, bounded and audited;
---   * Migration 094 (F10b, F10c): a build's progress report is stored and extends its lease only for the claiming attempt (a
+--   * (F10b, F10c) a build's progress report is stored and extends its lease only for the claiming attempt (a
 --     build that keeps reporting is not reclaimed, one that stops is, and a reclaimed attempt is told it lost the lease), and
 --     the rights re-check runs in SQL against the scope recorded with the archive, including the source document files
 --     (redistribution for every fund and document, source-file access for each file in it, the workspace gate, tenant scope).
@@ -423,7 +423,7 @@ begin
   if listed is distinct from 'fund:fund-b' then raise exception 'the other tenant sees only its own rights, got %', listed; end if;
 end $$;
 
--- 11. Migration 089 (F10d, F10f). A fresh tenant with three Organization Admins, an analyst, a revoked admin and a service account.
+-- 11. (F10d, F10f) A fresh tenant with three Organization Admins, an analyst, a revoked admin and a service account.
 insert into corvis_control.tenant (tenant_id,slug,display_name) values ('c0890000-0000-4000-8000-00000000000c','export-c','Export C');
 insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name) values ('c0890000-0000-4000-8000-0000000000c1','c0890000-0000-4000-8000-00000000000c','primary','C primary');
 insert into corvis_control.identity_subject (tenant_id,user_id,auth_method,subject,status)
@@ -623,7 +623,7 @@ begin
   if corvis_control.sweep_tenant_export_grants(0, null) <> 0 then raise exception 'a nonsense retention is floored to an hour, a missing limit has a default'; end if;
 end $$;
 
--- 11f. Migration 094 (F10b, F10c): the build's progress report is also its heartbeat, bound to the claiming attempt; and the rights
+-- 11f. (F10b, F10c) the build's progress report is also its heartbeat, bound to the claiming attempt; and the rights
 -- re-check runs in SQL against the scope recorded with the archive, including its source document files.
 do $$
 declare
@@ -703,7 +703,7 @@ begin
   -- The check is scoped to the tenant: another tenant's id finds no such request (the application only ever asks about its own), and an unknown request holds nothing.
   if corvis_control.tenant_export_scope_changed('a0860000-0000-4000-8000-00000000000a', progress_id) then raise exception 'a request of another tenant is not visible here'; end if;
   if corvis_control.tenant_export_scope_changed(tenant, 'c0930000-0000-4000-8000-0000000000ff') then raise exception 'an unknown request holds nothing, so nothing changed'; end if;
-  -- Archives built before migration 094 have no source files in their scope and are checked on funds and documents alone; a malformed scope holds nothing.
+  -- Archives built before source files were scoped have no source files in their scope and are checked on funds and documents alone; a malformed scope holds nothing.
   update corvis_control.tenant_export_request set manifest = '{"artifact":{"fundIds":["fund-93"],"documentIds":["doc-93"]}}'::jsonb where request_id = progress_id;
   update corvis_control.data_rights set source_document_access_allowed = false where tenant_id = tenant and resource_id = 'doc-93';
   if corvis_control.tenant_export_scope_changed(tenant, progress_id) then raise exception 'an archive without source files does not need source-file access'; end if;

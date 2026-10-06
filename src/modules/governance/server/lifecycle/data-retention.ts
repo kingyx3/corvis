@@ -16,7 +16,7 @@ import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../../pla
 /**
  * The retention periods, legal holds and deletion requests that apply to the caller's organization (F10, #266, criterion 1;
  * F10e, #325), read-only. Corvis operations own the data (`corvis_control.retention_policy`, `legal_hold` and
- * `deletion_request`, migrations 003, 017 and 098); this only reads it, scoped to the caller's tenant, for Organization
+ * `deletion_request`); this only reads it, scoped to the caller's tenant, for Organization
  * Admins, and never selects what only operations may see (see `deletion-request-view.ts`). Making and deciding a deletion
  * request is `customer-deletion.ts`.
  */

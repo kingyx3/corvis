@@ -24,7 +24,7 @@ import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../pl
 
 /**
  * Assigning and discussing review items (F3, #259), Postgres side. A thread only ever writes
- * `corvis_control.review_item_thread` and `review_item_comment` (migration 086): it cannot change observations, review
+ * `corvis_control.review_item_thread` and `review_item_comment`: it cannot change observations, review
  * events, reconciliation resolutions or publication, which stay with the existing review routes, and a comment is never
  * read when dual control is decided. Whether a person may open a thread, be assigned or be mentioned is decided in SQL
  * (`resolve_review_subject`, `review_member_eligible`) from the same entitlements the review lists apply.

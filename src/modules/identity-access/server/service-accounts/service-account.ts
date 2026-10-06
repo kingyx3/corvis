@@ -27,8 +27,8 @@ import { rfc3339FromPostgres } from "../../../../platform/database/timestamps.ts
 
 /**
  * Service accounts (F6, #262), Postgres side. An account is the identity-subject, membership and lifecycle-grant rows
- * the authorization lookup already resolves, plus `corvis_control.service_account` and its credential records
- * (migration 088). Who may act, and every state rule, is enforced in the SQL functions; nothing here can create an
+ * the authorization lookup already resolves, plus `corvis_control.service_account` and its credential records.
+ * Who may act, and every state rule, is enforced in the SQL functions; nothing here can create an
  * administrator account or accept an action from anyone who is not an active Organization Admin.
  */
 

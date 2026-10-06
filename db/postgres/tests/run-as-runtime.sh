@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the Postgres acceptance suites AS the least-privilege runtime role `corvis_runtime` (#227, migration 100) instead
+# Runs the Postgres acceptance suites AS the least-privilege runtime role `corvis_runtime` instead
 # of the owner, so row level security and the role's real grants apply (the role owns nothing and has no BYPASSRLS).
 #
 #   PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE  the OWNER role and a clean disposable database that already has the
@@ -36,9 +36,9 @@ strict_sql=(
 )
 strict_mjs=(
   session-policy tenant-identity-records export-grant-redemption authorization-cache-revocation
-  migration-073-audit-correction user-preferences
+  user-preferences
 )
-fixture_sql=(reviewed-economic-graph processing-stage-pipeline cross-document-conflicts pipeline-durability-066)
+fixture_sql=(reviewed-economic-graph processing-stage-pipeline cross-document-conflicts pipeline-durability)
 fixture_mjs=(
   tenant-data-export data-issue-reports service-accounts export-schedules export-schedule-concurrency
   review-item-discussion email-notifications

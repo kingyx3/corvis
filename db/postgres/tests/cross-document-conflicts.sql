@@ -1,4 +1,4 @@
--- Cross-document reconciliation semantics (migration 080).
+-- Cross-document reconciliation semantics.
 --
 -- Documents for the same fund-period share one draft snapshot. This fixture drives
 -- real documents through canonicalize -> reconcile -> consolidate -> publish exactly the

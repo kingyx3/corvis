@@ -1,4 +1,4 @@
--- Runtime-role privilege contract (#227, migration 100).
+-- Runtime-role privilege contract.
 --
 -- The least-privilege application role `corvis_runtime` is granted exactly what is written down below, and nothing in
 -- any corvis_* schema may exist without a deliberate decision recorded here. The manifests are the contract: a migration
@@ -319,7 +319,7 @@ declare
   v_priv text;
 begin
   select oid into rt from pg_roles where rolname = 'corvis_runtime';
-  if rt is null then raise exception 'role corvis_runtime does not exist (migration 100)'; end if;
+  if rt is null then raise exception 'role corvis_runtime does not exist'; end if;
 
   -- ---------------------------------------------------------------- the role itself
   if exists (select 1 from pg_roles where oid = rt and (rolsuper or rolbypassrls or rolcreaterole or rolcreatedb or rolreplication or rolcanlogin)) then
@@ -575,7 +575,7 @@ begin
 end
 $$;
 
--- Functions created later by the migration role are not PUBLIC-executable (alter default privileges in migration 100).
+-- Functions created later by the migration role are not PUBLIC-executable (alter default privileges in migration 002).
 -- Functional probe, rolled back.
 create function corvis_control.rt_default_acl_probe() returns integer language sql as 'select 1';
 do $$

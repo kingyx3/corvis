@@ -1,14 +1,14 @@
 // Real-Postgres acceptance for the full tenant export (F10, #266), through the application code: the Postgres backend in
-// src/modules/delivery/server/tenant-export/tenant-export.ts and the build worker in src/modules/delivery/server/tenant-export/tenant-export-worker.ts drive the SQL of migration 084
+// src/modules/delivery/server/tenant-export/tenant-export.ts and the build worker in src/modules/delivery/server/tenant-export/tenant-export-worker.ts drive the SQL of the schema
 // inside one transaction that is always rolled back. Covers what the pure-SQL test (tenant-data-export.sql) cannot:
 // that the worker's data queries run against the real schema, that contractual data rights decide what the archive
 // holds, that the archive and its checksum manifest verify, that download links are single-use and bound, and that a
-// rights change after the build blocks the download. Migration 094 (F10b, F10c) adds: the source document files in the
+// rights change after the build blocks the download. The schema adds: the source document files in the
 // archive (only for documents the tenant may redistribute AND holds source-file access for, copied through a fake object
 // store, their checksums matching the manifest, a document without access counted and never listed), data sets split into
 // parts read by keyset (with rows that share one timestamp), the archive streamed rather than buffered, the progress report
 // of a running build, and a download blocked when source-file access (not only redistribution) changes after the build.
-// Migration 089 (F10d, F10f) adds: the approval and outcome notices
+// The schema adds: the approval and outcome notices
 // dispatched through the outbox worker (send-time eligibility, opt-out, no reason or note in any email), the keyset-paged
 // request list, the sweep of expired artifacts and grants, and the operator view of failed builds. Run after the full
 // migration chain on a disposable database:

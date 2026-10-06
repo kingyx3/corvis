@@ -137,7 +137,7 @@ where tenant_id='11111111-1111-4111-8111-111111111111'
   and job_id='reviewed:22222222-2222-4222-8222-222222222222'
   and stage='reviewed' and state='running';
 
--- Migration 031 scopes predecessor lookup through the currently executing
+-- The schema scopes predecessor lookup through the currently executing
 -- canonicalized effect. Model that exact runtime boundary so this acceptance
 -- proves the production correlation contract instead of bypassing it.
 insert into corvis_control.processing_job (

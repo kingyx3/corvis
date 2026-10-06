@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { GcsObject, UploadObjectStore } from "../../../../platform/gcp/gcs.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../../platform/database/postgres.ts";
@@ -182,22 +182,17 @@ test("the batch stops starting new artifacts once its time budget is spent", asy
   assert.equal(summary.scanned, 1, "the second artifact waits for the next tick");
 });
 
-test("the latest release_clean_artifact definition refuses any scan verdict other than pending or clean", async () => {
-  const directory = "db/postgres/migrations";
-  const files = (await readdir(directory)).filter((name) => /^\d{3}_[a-z0-9_]+\.sql$/i.test(name)).sort();
-  let latest = "";
-  for (const name of files) {
-    const sql = await readFile(`${directory}/${name}`, "utf8");
-    if (/create or replace function corvis_source\.release_clean_artifact/i.test(sql)) latest = sql;
-  }
-  assert.ok(latest, "no migration defines release_clean_artifact");
-  const definition = latest.slice(latest.search(/create or replace function corvis_source\.release_clean_artifact/i));
+test("release_clean_artifact refuses any scan verdict other than pending or clean", async () => {
+  const sql = await readFile("db/postgres/migrations/001_baseline.sql", "utf8");
+  const start = sql.search(/create function corvis_source\.release_clean_artifact\(/i);
+  assert.ok(start >= 0, "the baseline does not define release_clean_artifact");
+  const definition = sql.slice(start, sql.indexOf("\n$$;", start));
   assert.match(definition, /a\.malware_scan_status into v_previous, v_scan|malware_scan_status into/i, "the verdict is read under the row lock");
   assert.match(definition, /for update/i);
   assert.match(definition, /if v_scan not in \('pending','clean'\) then\s+raise exception/i);
   assert.ok(definition.search(/v_scan not in/i) < definition.search(/update corvis_source\.document_artifact_version/i), "the guard runs before the row is rewritten");
-  // Signature and return contract are unchanged.
-  assert.match(definition, /p_tenant_id uuid,\s*p_document_id uuid,\s*p_artifact_version_id uuid,\s*p_storage_generation text,\s*p_ingestion_id text\s*\)\s*returns text/i);
+  // Signature and return contract.
+  assert.match(definition, /\(p_tenant_id uuid, p_document_id uuid, p_artifact_version_id uuid, p_storage_generation text, p_ingestion_id text\) returns text/i);
 });
 
 test("rows that stay pending or fail are stamped so they go to the back of the queue; settled rows are not", async () => {
@@ -239,16 +234,16 @@ test("the release queue is ordered by recent attempts and interleaved per tenant
   assert.match(sql, /created_at > now\(\) - make_interval\(secs => \$2\)/, "the retention window still bounds the queue");
 });
 
-test("migration 077 adds the attempt column and a partial index covering exactly the release queue", async () => {
-  const sql = (await readFile("db/postgres/migrations/077_upload_release_queue_fairness.sql", "utf8")).replace(/--.*$/gm, "").replace(/\s+/g, " ");
-  assert.match(sql, /^ ?begin; alter table corvis_source\.document_artifact_version add column if not exists last_release_attempt_at timestamptz; /);
-  assert.doesNotMatch(sql, /last_release_attempt_at timestamptz (not null|default)/, "the column is nullable with no default");
-  const index = sql.match(/create index if not exists (\w+) on corvis_source\.document_artifact_version \(([^)]*)\) where ([^;]*);/);
+test("the baseline has a nullable attempt column and a partial index covering exactly the release queue", async () => {
+  const sql = (await readFile("db/postgres/migrations/001_baseline.sql", "utf8")).replace(/--.*$/gm, "").replace(/\s+/g, " ").toLowerCase();
+  assert.match(sql, /create table corvis_source\.document_artifact_version \([^;]*? last_release_attempt_at timestamp with time zone,/);
+  assert.doesNotMatch(sql, /last_release_attempt_at timestamp with time zone (not null|default)/, "the column is nullable with no default");
+  const index = sql.match(/create index (\w+) on corvis_source\.document_artifact_version using btree \(([^)]*)\) where ([^;]*);/);
   assert.ok(index, "a partial index must be created");
   assert.equal(index[2], "tenant_id, last_release_attempt_at nulls first, created_at");
   // The index predicate must be implied by the poll's own filter, or the planner cannot use it.
   const queue = (await readFile("src/modules/sources/server/uploads/upload-release.ts", "utf8")).replace(/\s+/g, " ");
-  assert.ok(queue.includes(index[3] ?? "?"), "the index predicate must match the release poll's filter");
-  assert.doesNotMatch(sql, /release_clean_artifact/, "the release function is not touched");
-  assert.match(sql, / commit; ?$/);
+  const conjuncts = (index[3] ?? "").replaceAll("::text", "").replace(/[()]/g, "").split(" and ").map((term) => term.trim().replace(/ = /g, "="));
+  assert.deepEqual(conjuncts, ["malware_scan_status='pending'", "quarantine_status='quarantined'", "storage_generation is not null"]);
+  for (const term of conjuncts) assert.ok(queue.includes(term), `the index predicate term ${term} must match the release poll's filter`);
 });

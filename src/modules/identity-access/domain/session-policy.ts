@@ -19,7 +19,7 @@ export const SESSION_MAX_LENGTH_BOUNDS = { min: 60, max: 10080 } as const;
 /**
  * How long a session record (`tenant_session_activity`) is kept after the session was last seen (F7d, #337). It must
  * outlast every session a limit can still be measuring: the longest allowed maximum session plus a day of margin, which
- * is also the floor migration 091's purge function enforces. Anything shorter could drop a record the policy is still
+ * is also the floor the purge function enforces. Anything shorter could drop a record the policy is still
  * judging, so a requested retention is never allowed below it.
  */
 export const SESSION_ACTIVITY_RETENTION_FLOOR_MINUTES = SESSION_MAX_LENGTH_BOUNDS.max + 24 * 60;

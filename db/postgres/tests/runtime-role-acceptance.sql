@@ -1,5 +1,5 @@
 -- Runtime-role acceptance (#227): the tenant-isolation negatives of security_acceptance.sql and tenant-isolation-negative.sql,
--- run AS the least-privilege application role `corvis_runtime` (migration 100), with row level security enforced because
+-- run AS the least-privilege application role `corvis_runtime`, with row level security enforced because
 -- the role owns nothing and has no BYPASSRLS -- no owner bypass anywhere in the checked phases.
 --
 -- Fixtures are written by the session's own (owner) role; everything after `set local role corvis_runtime` runs with the
@@ -98,7 +98,7 @@ end $$;
 \ir runtime-role-helpers.sql
 
 -- Relations a subject-bound session must see only its own tenant in: base tables and the security-invoker serving views
--- (the ten older ones were owner-evaluated before migration 100).
+-- (the ten older ones were owner-evaluated before migration 002).
 select set_config('corvis.rt.scoped_relations', array_to_string(array[
   'corvis_control.tenant', 'corvis_control.workspace', 'corvis_control.membership', 'corvis_control.feature_flag',
   'corvis_control.control_evidence', 'corvis_source.document', 'corvis_serving.export_job', 'corvis_facts.holding',

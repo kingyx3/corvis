@@ -7,7 +7,7 @@ async function read(path: string): Promise<string> {
 }
 
 test("contractual rights are Corvis-controlled and tenant resources cannot be manufactured", async () => {
-  const migration = (await read("db/postgres/migrations/078_contractual_data_right_authority.sql")).toLowerCase();
+  const migration = (await read("db/postgres/migrations/001_baseline.sql")).toLowerCase();
 
   assert.match(migration, /access_policy_resource_belongs_to_tenant/);
   assert.match(migration, /from corvis_source\.document/);

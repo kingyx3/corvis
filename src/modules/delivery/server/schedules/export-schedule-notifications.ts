@@ -8,7 +8,7 @@ import type { PostgresSqlApi } from "../../../../platform/database/postgres.ts";
  * end is announced twice, and neither announcement carries data:
  *
  *  - a webhook event (`ExportScheduleRunCompleted` / `ExportScheduleRunFailed`) through the ordinary outbox, whose payload is
- *    the schedule's id and label, the run, and a closed reason code (migration 090, `emit_export_schedule_run_event`);
+ *    the schedule's id and label, the run, and a closed reason code (`emit_export_schedule_run_event`);
  *  - for a failure, an `export_schedule_failed` email to the owner, in words only (`src/modules/notifications/domain/notifications.ts`), unless the
  *    owner switched that schedule's emails off.
  *

@@ -1,4 +1,4 @@
--- Acceptance for migrations 085, 090 and 097 (F4 #260, F4b #328, F1c #332): scheduled exports, their notifications and the scorecard scope.
+-- Acceptance (F4 #260, F4b #328, F1c #332): scheduled exports, their notifications and the scorecard scope.
 --
 -- Proves, against the real SQL functions on an isolated disposable database:
 --   * a schedule is saved idempotently per owner, validated, bounded (50 per owner) and starts from "now": a calendar
@@ -356,7 +356,7 @@ begin
   if claimed.trigger_key <> 'publish:b0850000-0000-4000-8000-0000000000c9:v1' then raise exception 'tenant B sees only its own publication: %', row_to_json(claimed); end if;
 end $$;
 
--- 6b. F1c (migration 097): the performance scorecard is a schedulable scope. Unfiltered it names no fund and no snapshot (every
+-- 6b. F1c: the performance scorecard is a schedulable scope. Unfiltered it names no fund and no snapshot (every
 -- fund the owner is entitled to when a run is claimed); a fund filter makes it a fund schedule; a publication trigger can be
 -- narrowed to the funds the owner holds now, and publications of any other fund are consumed without a trigger.
 do $$
@@ -557,7 +557,7 @@ begin
   if stopped.status <> 'stopped' or stopped.stop_reason <> 'owner_inactive' then raise exception 'the application can stop one schedule: %', row_to_json(stopped); end if;
 end $$;
 
--- 8b. F4b (migration 090): the owner's notification switch, the run webhook events and the F2 category.
+-- 8b. F4b: the owner's notification switch, the run webhook events and the F2 category.
 do $$
 declare
   tenant constant uuid := 'a0850000-0000-4000-8000-00000000000a';

@@ -11,7 +11,7 @@ import { ConflictError } from "../../../platform/data/platform.ts";
 import { postgres, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
 
 /**
- * Governed company → sector classification (issue #175 A4, migration 055).
+ * Governed company → sector classification.
  * Listing and assignment are both scoped to the companies the caller's
  * entitled funds hold: a company outside that set answers exactly like an
  * unknown one, so the endpoint never confirms another fund's holdings.
