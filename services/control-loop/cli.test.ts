@@ -9,6 +9,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+/** True only when `url`'s host is (a subdomain of) storage.googleapis.com, not merely a URL containing that text anywhere. */
+function isGcsUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname === "storage.googleapis.com" || hostname.endsWith(".storage.googleapis.com");
+  } catch {
+    return false;
+  }
+}
+
 /** A fetchImpl that answers every GitHub issues-list and GCS/metadata call cli.ts's own adapters can make. */
 function stubFetch(): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
@@ -16,7 +26,7 @@ function stubFetch(): typeof fetch {
     if (url.startsWith("http://metadata.google.internal/")) {
       return jsonResponse({ access_token: "meta-token", expires_in: 3600 });
     }
-    if (url.includes(".storage.googleapis.com/")) {
+    if (isGcsUrl(url)) {
       if (init?.method === "DELETE") return new Response("", { status: 404 });
       return new Response("{}", { status: 200, headers: { "x-goog-generation": "7" } });
     }
@@ -88,7 +98,7 @@ test("runCli treats a rejected watermark read as having no last-scanned commit",
         return (async (input: string | URL | Request, init?: RequestInit) => {
           const url = String(input);
           if (url.startsWith("http://metadata.google.internal/")) return jsonResponse({ access_token: "meta-token", expires_in: 3600 });
-          if (url.includes(".storage.googleapis.com/")) {
+          if (isGcsUrl(url)) {
             // Only cli.ts's own preliminary watermark read (which tolerates a rejection) fails; the
             // orchestrator's later, unguarded read of the same key must still succeed.
             const isFirstWatermarkGet = url.includes("/watermark.json") && (!init?.method || init.method === "GET") && watermarkReads++ === 0;
@@ -118,7 +128,7 @@ test("runCli sets a nonzero exit code when the report status is failed, such as 
       fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input);
         if (url.startsWith("http://metadata.google.internal/")) return jsonResponse({ access_token: "meta-token", expires_in: 3600 });
-        if (url.includes(".storage.googleapis.com/")) {
+        if (isGcsUrl(url)) {
           // No lock or watermark exists yet in this fresh bucket.
           if (!init?.method || init.method === "GET") return new Response("", { status: 404 });
           return new Response("{}", { status: 200, headers: { "x-goog-generation": "1" } });
