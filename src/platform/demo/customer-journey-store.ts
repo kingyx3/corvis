@@ -133,7 +133,7 @@ class DemoCustomerJourneyStore {
       row.value = command.correctedValue;
       row.state = "Needs review";
     } else {
-      row.state = command.decision === "approve" ? "Approved" : command.decision === "reject" ? "Rejected" : "Needs review";
+      row.state = command.decision === "approve" ? "Approved" : "Rejected";
     }
     row.version = (row.version ?? 1) + 1;
   }
@@ -142,12 +142,19 @@ class DemoCustomerJourneyStore {
     const snapshot = this.snapshots.find((item) => item.id === command.snapshotId);
     if (!snapshot) throw new Error("Snapshot not found");
     if ((snapshot.version ?? 1) !== command.expectedVersion) throw new Error("snapshot_version_conflict");
+    // Mirrors PostgresProductionPlatform's DISALLOWED_SNAPSHOT_SOURCE_STATUSES: publish only
+    // starts from "Review" (draft/blocked); withdraw and supersede only apply to a published
+    // snapshot, and neither a withdrawn nor a superseded version can be transitioned again.
+    if (command.action === "publish" && snapshot.status !== "Review") throw new Error("snapshot_not_publishable");
+    if ((command.action === "withdraw" || command.action === "supersede") && snapshot.status !== "Published") {
+      throw new Error("snapshot_not_publishable");
+    }
     const scoped = this.observations.filter((row) => row.snapshotId === snapshot.id);
     if (command.action === "publish" && scoped.some((row) => row.state !== "Approved")) throw new Error("Publication blocked: observations still require review");
     if (command.action === "publish" && this.listReconciliationExceptions(command.snapshotId, snapshot.version ?? 1).length > 0) {
       throw new Error("Publication blocked: blocking reconciliation exceptions remain");
     }
-    snapshot.status = command.action === "publish" ? "Published" : "Review";
+    snapshot.status = command.action === "publish" ? "Published" : command.action === "withdraw" ? "Withdrawn" : "Superseded";
     snapshot.version = (snapshot.version ?? 1) + 1;
     snapshot.changed = nowLabel();
     const document = this.documents.find((item) => item.fund === snapshot.fund && item.period === snapshot.period);
