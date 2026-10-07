@@ -131,7 +131,7 @@ export function DashboardDepthSections({
         headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ pinnedFundIds: next }),
       });
-      throwIfUnauthenticated(response);
+      await throwIfUnauthenticated(response);
       if (!response.ok) throw new Error(`Preference update failed (${response.status})`);
       onSummaryChanged?.();
     } catch (reason) {

@@ -148,7 +148,7 @@ export function PositionFinancialsView({ canExport = false, canReadSources = fal
     const portfolio = portfolioAttributionEnabled && selectedPortfolio ? `&portfolioId=${encodeURIComponent(selectedPortfolio)}` : "";
     void fetch(apiUrl(`/api/v1/position-financials?periodicity=${periodicity}&limit=5000${portfolio}`), { signal: controller.signal, credentials: "include", headers: { ...workspaceContextHeaders(), accept: "application/json" } })
       .then(async (response) => {
-        throwIfUnauthenticated(response);
+        await throwIfUnauthenticated(response);
         const payload = await response.json() as ApiEnvelope;
         if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
         return payload.data ?? [];
