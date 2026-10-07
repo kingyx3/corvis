@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SECTORS, type CompanySectorRecord } from "@/modules/workspace/domain/sector-taxonomy";
 import { Modal } from "@/shared/ui/modal";
 import { workspacePort } from "@/composition/workspace-services";
@@ -25,7 +25,14 @@ export function SectorClassificationDialog({ onClose, onChanged }: { onClose: ()
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => workspacePort.listCompanySectors().then((rows) => { setCompanies(rows); setError(null); }, (reason: unknown) => setError(reason instanceof Error ? reason.message : "Company sectors are unavailable"));
+  const latest = useRef(0);
+  const load = () => {
+    const requestId = ++latest.current;
+    return workspacePort.listCompanySectors().then(
+      (rows) => { if (requestId === latest.current) { setCompanies(rows); setError(null); } },
+      (reason: unknown) => { if (requestId === latest.current) setError(reason instanceof Error ? reason.message : "Company sectors are unavailable"); },
+    );
+  };
   useEffect(() => { void load(); }, []);
 
   const save = async (company: CompanySectorRecord) => {
