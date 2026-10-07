@@ -79,6 +79,7 @@ UAT and production use one configurable root zone. Keep `CLOUDFLARE_ZONE_NAME`, 
 | Artifact Registry LiteLLM repository | `asia-southeast1-docker.pkg.dev/${GCP_PROJECT_ID}/corvis/litellm` |
 | Runtime images | accepted release digests expressed as immutable `image@sha256:<digest>` references |
 | Postgres runtime secret | `corvis-postgres-dsn-${environment}` |
+| Postgres migration secret (deploy only) | `corvis-postgres-migration-dsn-${environment}` |
 | AI provider credentials secret | `corvis-ai-provider-credentials-${environment}` |
 | LiteLLM master-key secret | `corvis-litellm-master-key-${environment}` |
 | Confluence skill read secret | `corvis-atlassian-skill-read-${environment}` |
@@ -93,7 +94,7 @@ Do not create GitHub variables for derived values such as image digest refs, Clo
 
 ## Provider/runtime secret boundary
 
-Runtime secret values belong in GCP Secret Manager or the relevant provider-managed store, not ordinary GitHub variables. The Postgres DSN is written to `corvis-postgres-dsn-${environment}` and read through WIF/IAM. Model-provider API keys, LiteLLM credentials, and Atlassian credentials follow the same persistent-storage rule and must never enter extraction evidence, logs, model prompts, Terraform variables, or committed config.
+Runtime secret values belong in GCP Secret Manager or the relevant provider-managed store, not ordinary GitHub variables. The runtime Postgres DSN is written to `corvis-postgres-dsn-${environment}`; the separate owner/migration DSN goes to `corvis-postgres-migration-dsn-${environment}` with deployment-only access. Both are read through WIF/IAM and must target the same environment database. Model-provider API keys, LiteLLM credentials, and Atlassian credentials follow the same persistent-storage rule and must never enter extraction evidence, logs, model prompts, Terraform variables, or committed config.
 
 ## Setup order
 

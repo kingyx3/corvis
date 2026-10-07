@@ -118,6 +118,7 @@ jobs:
       EXTRACTOR_IMAGE_NAME: extractor
       LITELLM_IMAGE_NAME: litellm
       POSTGRES_DSN_SECRET: ${{ format('corvis-postgres-dsn-{0}', inputs.environment) }}
+      POSTGRES_MIGRATION_DSN_SECRET: ${{ format('corvis-postgres-migration-dsn-{0}', inputs.environment) }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
     steps:
       - name: Validate deployment roots
@@ -412,9 +413,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(gcloud secrets versions list "${POSTGRES_DSN_SECRET}" --project="${GCP_PROJECT_ID}" --filter='state=ENABLED' --sort-by='~createTime' --limit=1 --format='value(name)')"
-          [[ -n "${version}" ]] || { echo "${POSTGRES_DSN_SECRET} has no enabled version. Activate the environment Postgres provider before runtime promotion."; exit 1; }
-          echo "Postgres runtime secret has an enabled version (${version##*/}); value was not logged."
+          bash tools/ci/require-secret-latest.sh "${POSTGRES_DSN_SECRET}"
+
+      - name: Require enabled Postgres migration secret
+        if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
+        run: bash tools/ci/require-secret-latest.sh "${POSTGRES_MIGRATION_DSN_SECRET}"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: inputs.action == 'apply' && inputs.environment != 'dev' && env.TF_VAR_api_image != '' && inputs.rollback_known_good != true
@@ -431,7 +434,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET}")"
+          dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_MIGRATION_DSN_SECRET}")"
           echo "::add-mask::${dsn}"
           CORVIS_DATABASE_DSN="${dsn}" CORVIS_POSTGRES_CA_CERT="${TF_VAR_postgres_ca_cert}" node db/postgres/migrate.ts --apply --applied-by="github-actions:${GITHUB_RUN_ID}" --evidence=migration-evidence.json
           unset dsn
