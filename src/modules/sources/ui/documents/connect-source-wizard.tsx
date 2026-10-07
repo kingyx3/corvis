@@ -63,7 +63,7 @@ async function request<T>(path: string, method: "GET" | "POST", body?: unknown):
       headers: { ...workspaceContextHeaders(), accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    throwIfUnauthenticated(response);
+    await throwIfUnauthenticated(response);
     if (!response.ok) return { ok: false, status: response.status };
     return { ok: true, data: (await response.json() as { data: T }).data };
   } catch (reason) {

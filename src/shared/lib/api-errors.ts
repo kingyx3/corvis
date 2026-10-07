@@ -67,16 +67,28 @@ export function notifySessionExpired(): void {
  * de-duplicates the prompt) and returns the typed error. `message` defaults to user-facing copy so raw
  * `fetch` callers that print `error.message` never show a code.
  */
-export function sessionExpiredError(code?: string, message: string = SESSION_EXPIRED_MESSAGE): UnauthenticatedError {
+export function sessionExpiredError(code?: string, message: string = code === SESSION_ENDED_BY_POLICY_CODE ? SESSION_ENDED_BY_POLICY_MESSAGE : SESSION_EXPIRED_MESSAGE): UnauthenticatedError {
   // A call that could not read the response body (no code) leaves what an earlier, coded 401 said; a coded one sets it.
   if (code !== undefined) endedByPolicy = code === SESSION_ENDED_BY_POLICY_CODE;
   notifySessionExpired();
   return new UnauthenticatedError(message, code);
 }
 
-/** For raw `fetch` callers: throw the session-expired error if the response is a 401, before any other status handling. */
-export function throwIfUnauthenticated(response: { status: number }): void {
-  if (response.status === 401) throw sessionExpiredError();
+/**
+ * For raw `fetch` callers: throw the session-expired error if the response is a 401, before any other status handling.
+ * Await it. It reads the stable reason code from a clone of the body (the caller still reads the original), so a session the
+ * organization's policy ended is told apart from a plain expiry: the shell banner and `error.message` then say why.
+ */
+export async function throwIfUnauthenticated(response: { status: number; clone?: () => { json(): Promise<unknown> } }): Promise<void> {
+  if (response.status !== 401) return;
+  let code: string | undefined;
+  try {
+    const body = await response.clone?.().json() as { error?: unknown } | null;
+    if (typeof body?.error === "string") code = body.error;
+  } catch {
+    // Not JSON, or the body was already consumed: treat it as an expiry without a stated reason.
+  }
+  throw sessionExpiredError(code);
 }
 
 /** Typed error for a non-2xx API response; a 401 additionally fires the session-expired flow. */

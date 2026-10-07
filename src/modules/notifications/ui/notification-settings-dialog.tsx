@@ -18,7 +18,7 @@ async function request(init?: RequestInit): Promise<NotificationSettings> {
     ...init,
     headers: { ...workspaceContextHeaders(), accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}) },
   });
-  throwIfUnauthenticated(response);
+  await throwIfUnauthenticated(response);
   const body = await response.json().catch(() => ({})) as { data?: NotificationSettings; error?: string };
   if (!response.ok || !body.data) throw new Error(body.error === "human_identity_required" ? "Notification settings are only available to people, not service accounts." : "Notification settings could not be loaded. Try again.");
   return body.data;

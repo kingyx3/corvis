@@ -100,6 +100,17 @@ test("an expired session while loading notification settings says so instead of 
   await expect(page.getByRole("alert", { name: /session expired/i })).toBeVisible();
 });
 
+test("a session the organization's policy ended says so on a raw fetch call too, not just the generic expiry", async ({ page }) => {
+  await page.route("**/api/v1/notification-preferences", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "session_ended_by_policy" }) }));
+  await page.goto("/?notifications=settings");
+  const dialog = page.getByRole("dialog", { name: "Notification settings" });
+  await expect(dialog.getByRole("alert")).toContainText("Your session ended because of your organization's sign-in policy. Sign in again to continue.");
+  await expect(dialog.getByRole("alert")).not.toContainText("session_ended_by_policy");
+  const banner = page.getByRole("alert", { name: /session expired/i });
+  await expect(banner).toContainText("Your session ended by organization policy");
+  await expect(banner.getByRole("button", { name: "Sign in again" })).toBeVisible();
+});
+
 test("the command palette opens notification settings", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /reporting overview/i })).toBeVisible();

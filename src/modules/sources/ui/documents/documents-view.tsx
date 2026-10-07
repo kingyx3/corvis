@@ -52,12 +52,12 @@ export function DocumentsView({ docs, onUpload, onSelect, canUpload, canManageSo
     const init = { signal: controller.signal, credentials: "include" as const, headers: workspaceContextHeaders() };
     if (!demoMode) {
       void fetch(apiUrl("/api/v1/document-lifecycle"), init)
-        .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)); })
+        .then(async (response) => { await throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: DocumentLifecycle[] }> : Promise.reject(new Error(`document_lifecycle_${response.status}`)); })
         .then((payload) => { setLifecycles(payload.data ?? []); setLifecycleState("ready"); })
         .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setLifecycles([]); setLifecycleState("error"); } });
     }
     void fetch(apiUrl("/api/v1/source-connections/activity"), init)
-      .then(async (response) => { throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)); })
+      .then(async (response) => { await throwIfUnauthenticated(response); return response.ok ? response.json() as Promise<{ data?: SourceActivityConnection[] }> : response.status === 403 ? { data: [] } : Promise.reject(new Error(`source_activity_${response.status}`)); })
       .then((payload) => setSourceActivity(payload.data ?? []))
       .catch((error: unknown) => { if ((error as { name?: string }).name !== "AbortError") { setSourceActivity([]); setActivityFailed(true); } });
     return () => controller.abort();

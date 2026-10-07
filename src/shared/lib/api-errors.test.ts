@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import {
   ApiError,
+  SESSION_ENDED_BY_POLICY_CODE,
   SESSION_ENDED_BY_POLICY_MESSAGE,
   SESSION_EXPIRED_EVENT,
   SESSION_EXPIRED_MESSAGE,
@@ -23,13 +24,13 @@ function recordEvents(): string[] {
   return fired;
 }
 
-test("throwIfUnauthenticated throws the typed error with user-facing copy and fires the session-expired event on a 401 only", () => {
+test("throwIfUnauthenticated throws the typed error with user-facing copy and fires the session-expired event on a 401 only", async () => {
   const fired = recordEvents();
-  throwIfUnauthenticated({ status: 200 });
-  throwIfUnauthenticated({ status: 403 });
-  throwIfUnauthenticated({ status: 500 });
+  await throwIfUnauthenticated({ status: 200 });
+  await throwIfUnauthenticated({ status: 403 });
+  await throwIfUnauthenticated({ status: 500 });
   assert.deepEqual(fired, []);
-  assert.throws(() => throwIfUnauthenticated({ status: 401 }), (error: unknown) => {
+  await assert.rejects(() => throwIfUnauthenticated({ status: 401 }), (error: unknown) => {
     assert.ok(error instanceof UnauthenticatedError);
     assert.equal(error.status, 401);
     assert.equal(error.message, SESSION_EXPIRED_MESSAGE);
@@ -37,6 +38,45 @@ test("throwIfUnauthenticated throws the typed error with user-facing copy and fi
     return true;
   });
   assert.deepEqual(fired, [SESSION_EXPIRED_EVENT]);
+});
+
+test("throwIfUnauthenticated reads the 401 reason from a clone, so the caller can still read the body", async () => {
+  const fired = recordEvents();
+  const ended = new Response(JSON.stringify({ error: SESSION_ENDED_BY_POLICY_CODE }), { status: 401 });
+  await assert.rejects(() => throwIfUnauthenticated(ended), (error: unknown) => {
+    assert.ok(error instanceof UnauthenticatedError);
+    assert.equal(error.code, SESSION_ENDED_BY_POLICY_CODE);
+    assert.equal(error.message, SESSION_ENDED_BY_POLICY_MESSAGE, "a raw fetch caller that prints error.message says why");
+    assert.equal(friendlyErrorMessage(error, "fallback"), SESSION_ENDED_BY_POLICY_MESSAGE);
+    return true;
+  });
+  assert.deepEqual(await ended.json(), { error: SESSION_ENDED_BY_POLICY_CODE }, "the original body is untouched");
+  assert.equal(sessionEndedByPolicy(), true);
+  assert.equal(sessionExpiredCopy().title, "Your session ended by organization policy");
+  assert.deepEqual(fired, [SESSION_EXPIRED_EVENT]);
+
+  await assert.rejects(() => throwIfUnauthenticated(new Response(JSON.stringify({ error: "authentication_required" }), { status: 401 })), (error: unknown) => {
+    assert.ok(error instanceof UnauthenticatedError);
+    assert.equal(error.code, "authentication_required");
+    assert.equal(error.message, SESSION_EXPIRED_MESSAGE);
+    return true;
+  });
+  assert.equal(sessionEndedByPolicy(), false, "a plain expiry replaces what an earlier policy-ended 401 said");
+});
+
+test("throwIfUnauthenticated treats a 401 whose body has no readable reason as a plain expiry", async () => {
+  recordEvents();
+  for (const body of ["<html>unauthorized</html>", "null", JSON.stringify({ error: 401 }), JSON.stringify({})]) {
+    await assert.rejects(() => throwIfUnauthenticated(new Response(body, { status: 401 })), (error: unknown) => {
+      assert.ok(error instanceof UnauthenticatedError);
+      assert.equal(error.code, "unauthenticated");
+      assert.equal(error.message, SESSION_EXPIRED_MESSAGE);
+      return true;
+    });
+  }
+  const consumed = new Response(JSON.stringify({ error: SESSION_ENDED_BY_POLICY_CODE }), { status: 401 });
+  await consumed.text();
+  await assert.rejects(() => throwIfUnauthenticated(consumed), UnauthenticatedError);
 });
 
 test("sessionExpiredError is safe outside a browser", () => {
@@ -83,7 +123,7 @@ test("F7c: a 401 coded session_ended_by_policy tells the person why, a generic c
   assert.match(sessionExpiredCopy().detail, /sign-in policy ended this session/);
 
   // A raw fetch caller that cannot read the body does not erase what was learned.
-  assert.throws(() => throwIfUnauthenticated({ status: 401 }), UnauthenticatedError);
+  await assert.rejects(() => throwIfUnauthenticated({ status: 401 }), UnauthenticatedError);
   assert.equal(sessionEndedByPolicy(), true);
   assert.equal(friendlyErrorMessage(sessionExpiredError(), "fallback"), SESSION_EXPIRED_MESSAGE);
 

@@ -40,7 +40,7 @@ function time(value: string | undefined): string { return value ? displayDate(va
 async function fetchConnections(signal?: AbortSignal): Promise<Fetched> {
   try {
     const response = await fetch(apiUrl("/api/v1/source-connections"), { signal, credentials: "include", headers: workspaceContextHeaders() });
-    throwIfUnauthenticated(response);
+    await throwIfUnauthenticated(response);
     if (response.status === 403) return { kind: "hidden" };
     if (!response.ok) return { kind: "error" };
     const payload = await response.json() as { data?: SourceConnectionRecord[] };
@@ -59,7 +59,7 @@ async function sendCommand<T = undefined>(path: string, method: "PATCH" | "POST"
       headers: { ...workspaceContextHeaders(), "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(body),
     });
-    throwIfUnauthenticated(response);
+    await throwIfUnauthenticated(response);
     if (!response.ok) return { ok: false, status: response.status };
     // Only the on-demand test reads a body back (a pass/fail result); no other command's response carries anything the page uses.
     return readResult ? { ok: true, data: (await response.json() as { data: T }).data } : { ok: true };

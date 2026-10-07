@@ -85,7 +85,7 @@ async function fetchScorecardPage(filters: ScorecardFilters, cursor: string | nu
   if (cursor) params.set("cursor", cursor);
   const query = params.toString();
   const response = await fetch(apiUrl(`/api/v1/performance-scorecard${query ? `?${query}` : ""}`), { signal, credentials: "include", headers: { ...workspaceContextHeaders(), accept: "application/json" } });
-  throwIfUnauthenticated(response);
+  await throwIfUnauthenticated(response);
   const payload = await response.json() as ApiEnvelope;
   if (!response.ok || !payload.data) throw new Error(payload.error || `Request failed (${response.status})`);
   return { page: payload.data, nextCursor: payload.nextCursor ?? null };
