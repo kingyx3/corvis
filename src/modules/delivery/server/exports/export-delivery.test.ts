@@ -3,6 +3,7 @@ import test from "node:test";
 import { SCORECARD_EXPORT_COLUMNS } from "../../../analytics/domain/performance-scorecard.ts";
 import { deleteExportAttemptArtifacts, deliverExportArtifact, exportAttemptObjectKey, loadArtifactRows, loadPositionFinancialRows, type QueuedExportRow } from "./export-delivery.ts";
 import { POSITION_EXPORT_COLUMNS } from "./export-renderer.ts";
+import { ExportSnapshotChangedError } from "./export-snapshot-state.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 
 const TENANT = "00000000-0000-4000-8000-0000000000a1";
@@ -25,6 +26,7 @@ class Store implements PostgresSqlApi {
   async query(sql: string, parameters: PostgresPrimitive[] = []): Promise<PostgresRow[]> {
     this.statements.push({ sql, parameters });
     if (sql.includes("from corvis_control.identity_subject s")) return this.auth;
+    if (sql.includes("join jsonb_to_recordset($4::jsonb)")) return [{ snapshot_count: JSON.parse(String(parameters[1])).length }];
     return this.handler(sql, parameters);
   }
   async execute(): Promise<void> {}
@@ -42,10 +44,34 @@ function objectStore() {
 }
 
 function job(overrides: QueuedExportRow = {}): QueuedExportRow {
-  return { tenant_id: TENANT, export_id: EXPORT, workspace_id: WORKSPACE, auth_method: "oidc", session_id: "session-1", requested_by: "idp|analyst-1", format: "csv", snapshot_ids: [], manifest: { rowCounts: {} }, ...overrides };
+  const result = { tenant_id: TENANT, export_id: EXPORT, workspace_id: WORKSPACE, auth_method: "oidc", session_id: "session-1", requested_by: "idp|analyst-1", format: "csv", snapshot_ids: [], manifest: { rowCounts: {} }, ...overrides };
+  if (Array.isArray(result.snapshot_ids) && result.snapshot_ids.length > 0) result.manifest = { ...(result.manifest as object), snapshotState: result.snapshot_ids.map((snapshotId) => ({ snapshotId, version: 1, openExceptionCount: 0 })) };
+  return result;
 }
 
 const csv = (put: { bytes: Uint8Array }) => Buffer.from(put.bytes).toString("utf8").split("\r\n");
+
+test("all export kinds refuse replaced publications before reading, or after reading before storing bytes", async () => {
+  for (const scope of [undefined, { positionFinancials: { fundId: "fund-a", holdingId: "h-1", companyId: "c-1", periodicity: "reported" } }, { performanceScorecard: true }]) {
+    const store = new Store();
+    const objects = objectStore();
+    const query = store.query.bind(store);
+    store.query = async (sql, parameters) => sql.includes("join jsonb_to_recordset($4::jsonb)") ? [{ snapshot_count: 0 }] : query(sql, parameters);
+    await assert.rejects(deliverExportArtifact(job({ snapshot_ids: ["snap-1"], manifest: { scope } }), store, objects), ExportSnapshotChangedError);
+    assert.equal(objects.puts.length, 0);
+    assert.equal(store.statements.length, 1, "only identity was read before the version refusal");
+  }
+  const store = new Store();
+  const objects = objectStore();
+  const query = store.query.bind(store);
+  let checks = 0;
+  store.query = async (sql, parameters) => sql.includes("join jsonb_to_recordset($4::jsonb)")
+    ? [{ snapshot_count: ++checks === 1 ? 1 : 0 }] : query(sql, parameters);
+  store.handler = (sql) => sql.includes("count(distinct s.snapshot_id)") ? [{ snapshot_count: 1 }] : [];
+  await assert.rejects(deliverExportArtifact(job({ snapshot_ids: ["snap-1"] }), store, objects), ExportSnapshotChangedError);
+  assert.equal(checks, 2);
+  assert.equal(objects.puts.length, 0, "a change during loading prevents the object write");
+});
 
 test("object keys are deterministic per attempt and name the export kind", () => {
   const base = { tenantId: "t", exportId: "e", attempt: 2, extension: "csv" };
