@@ -90,6 +90,28 @@ resource "google_secret_manager_secret_iam_member" "api_postgres" {
   member    = "serviceAccount:${var.api_service_account_email}"
 }
 
+# Migrations need DDL/ownership; the API and worker must never receive this DSN.
+# Values are provisioned directly through the controlled provider path, not Terraform.
+resource "google_secret_manager_secret" "postgres_migration_dsn" {
+  project   = var.project_id
+  secret_id = "corvis-postgres-migration-dsn-${var.environment}"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "deployer_postgres_migration" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.postgres_migration_dsn.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${local.deployer_service_account_email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "worker_postgres" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.postgres_dsn.secret_id

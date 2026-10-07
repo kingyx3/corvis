@@ -42,9 +42,9 @@ All authentication remains GitHub OIDC -> GCP Workload Identity Federation.
 
 ## Copy invariants
 
-For both `api` and `control-loop`:
+For `api` and `control-loop`, plus the extractor/LiteLLM pair when recorded in the accepted UAT release set:
 
-1. resolve `uat/.../<image>:git-<release_sha>` to its OCI digest;
+1. read the exact digest from UAT `known-good.json`, require its `sourceSha` to match the requested release, and verify build provenance;
 2. refuse the promotion if a prod tag with the same commit already points at a different digest;
 3. copy the UAT image to the equivalent prod tag with pinned, checksum-verified `gcrane`;
 4. resolve the prod image digest after the copy;
@@ -61,10 +61,10 @@ For a new production-like release:
 2. run **Build release image** for `uat`;
 3. run **Promote environment** for `uat` with the full release SHA and complete live acceptance;
 4. run **Promote environment** for `prod` with the same release SHA;
-5. the parent prod workflow automatically reconciles source read trust and copies/verifies both OCI images before migrations/Terraform can start;
+5. the parent prod workflow automatically reconciles source read trust and copies/verifies the accepted OCI images before migrations/Terraform can start;
 6. production acceptance advances `known-good.json` only after all required live acceptance families pass.
 
-Because migrations and Terraform run from the checked-out `main` HEAD, the deploy refuses a `release_sha` whose `db/` or `infra/` trees differ from HEAD (`assert-release-matches-head.sh` lists the differing paths). If other work merged to `main` between UAT acceptance and prod promotion and touched those trees, build and accept a new release from the current HEAD and promote that. Changes outside `db/` and `infra/` (application code, docs) do not block promotion because the image is immutable. `rollback_known_good` never runs migrations.
+For a fresh release, the deploy workflow checks out the exact `release_sha` with full history, so migrations and Terraform use the source that produced the accepted images. `assert-release-matches-head.sh` rejects a differing `db/` or `infra/` tree in that checkout. Later `main` commits do not replace the selected release tree. Plan and apply must agree on the reviewed plan digest. `rollback_known_good` skips migrations and uses the accepted immutable image set.
 
 `Build release image` intentionally offers only `dev` and `uat`; `prod` is not a valid build target.
 

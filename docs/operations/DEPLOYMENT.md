@@ -39,11 +39,12 @@ reviewed PR -> protected main -> immutable release images + provenance
 For a source commit it builds:
 
 - `corvis/api:git-${GITHUB_SHA}` — shared immutable API/worker application image;
-- `corvis/control-loop:git-${GITHUB_SHA}` — purpose-built repository-scanner image used only by the scheduled control-loop jobs.
+- `corvis/control-loop:git-${GITHUB_SHA}` — purpose-built repository-scanner image used only by the scheduled control-loop jobs;
+- `corvis/extractor:git-${GITHUB_SHA}` and `corvis/litellm:git-${GITHUB_SHA}` — separately permissioned extraction and model-gateway images, activated only with the corresponding provider configuration.
 
-Both tags are immediately resolved to immutable digests and captured in `release-image.json`. A production-like promotion resolves both images from the same reviewed source commit. A built image set is not known-good until live acceptance passes.
+The tags are resolved to immutable digests and captured in `release-image.json`. A production-like promotion binds its image set to the same reviewed source commit. A built image set is not known-good until live acceptance passes.
 
-The current builder publishes into the selected environment registry. If UAT and prod use separate GCP projects/registries, **strict build-once cross-project promotion remains a separate #13 item**: copy/promote the already-built physical image or use explicit bounded cross-project reader trust and verify the digest. Rebuilding the same source commit independently is not proof of byte-identical promotion.
+UAT is the canonical production-like build registry. Production copies the exact UAT acceptance-approved digests and verifies provenance and digest equality; it does not rebuild them. The copy path and repository-scoped reader trust are implemented in `copy-release-to-prod.yml`. See [build-once promotion](./BUILD_ONCE_PROMOTION.md).
 
 ## Promotion inputs
 
@@ -65,13 +66,13 @@ Runtime removal is never an accidental side effect of an empty release input; us
 A normal production-like promotion performs this ordered graph:
 
 1. validate `main`, target environment and release selection;
-2. for a `release_sha` apply, check out full history and refuse the deploy if `db/` or `infra/` differ between the checkout (`main` HEAD) and the release commit (`tools/ci/assert-release-matches-head.sh`);
+2. for a `release_sha` apply, check out the exact release commit with full history; `tools/ci/assert-release-matches-head.sh` checks that its `db/` and `infra/` match the selected release;
 3. verify live GitHub release governance;
 4. authenticate through WIF and require the bootstrap-owned remote state bucket;
 5. resolve the API/worker and control-loop image tags to immutable digests;
 6. for a fresh prod runtime deploy (not a known-good rollback), refuse an empty `MONITORING_NOTIFICATION_CHANNEL_IDS` so production alerts cannot be inert (`tools/ci/assert-prod-alerting.sh`);
-7. validate Terraform and produce the exact locked plan, rendered (truncated to 60 kB) into the job summary;
-8. require the enabled canonical Postgres DSN secret;
+7. validate Terraform and produce the locked plan and digest for review; apply regenerates the plan and refuses a digest mismatch;
+8. require enabled `latest` runtime and migration DSN versions (rollback requires only the runtime version);
 9. apply versioned forward-only migrations and retain sanitized evidence (skipped for `rollback_known_good`);
 10. apply the exact Terraform plan;
 11. verify public API health when the edge is enabled;
@@ -79,9 +80,9 @@ A normal production-like promotion performs this ordered graph:
 13. only when all acceptance families pass, record the accepted API/worker + control-loop image set in `known-good.json`;
 14. complete the parent promotion run.
 
-Migrations and Terraform always run from the checked-out `main` HEAD, while the image comes from `release_sha`. The step 2 guard therefore blocks promoting an older accepted release after later `main` commits changed `db/` or `infra/`: build, accept in UAT and promote a release from the current HEAD instead. Migrations run before the Terraform apply because the new image needs them, so a failed apply leaves the database migrated with no Terraform change; migrations are forward-only.
+For a new release, migrations and Terraform run from the exact `release_sha` checkout alongside its immutable image set. Later changes to `main` do not silently substitute a different schema or infrastructure tree. Migrations run before the Terraform apply because the new image needs them, so a failed apply can leave the database migrated; migrations remain forward-only.
 
-`rollback_known_good=true` redeploys the recorded older image set and never runs migrations, because forward-only migrations from HEAD must not execute under an older image. The Postgres secret check and the Terraform apply still run. The production alerting-channel check applies to fresh releases only: an incident rollback is never blocked by missing alert channels.
+`rollback_known_good=true` redeploys the recorded older image set and never runs migrations, because forward-only migrations from HEAD must not execute under an older image. The runtime Postgres secret check and the Terraform apply still run; migration-secret readiness is skipped. The production alerting-channel check applies to fresh releases only: an incident rollback is never blocked by missing alert channels.
 
 A failed deploy never starts acceptance. Failed or incomplete acceptance never advances known-good.
 
@@ -113,7 +114,7 @@ Cloud Scheduler invokes the Cloud Run Jobs API with an OAuth token for the contr
 
 The production state adapter stores watermark, lock and sanitized latest run reports in GCS. Lock acquisition uses Cloud Storage object-generation preconditions, so overlapping job executions cannot both acquire the mutation lease. The existing GitHub Actions scheduler remains a build-phase/read-only bootstrap until provider activation; it must not be promoted to a parallel mutation path.
 
-Customer-web/admin-web runtime separation remains a separate #10/#13 item and must be implemented together with real application-level surface boundaries. Extra Cloud Run service names around the same unrestricted application would not create a meaningful security boundary.
+Customer and admin presentation services are implemented as separate Cloud Run services with separate identities and route-surface gates. Neither receives database credentials. Their edge Workers route permitted API calls to the authoritative API origin, with the admin edge limited to privileged route families. See [runtime surfaces](../architecture/RUNTIME_SURFACES.md); live provider acceptance remains required.
 
 ## Authentication and secrets
 
@@ -121,7 +122,8 @@ Production OIDC bearer tokens are verified directly against the configured issue
 
 - GCP provider access uses WIF, never JSON keys.
 - `corvis-postgres-dsn-${environment}` is the canonical runtime database secret.
-- API, worker, migration and live acceptance consume that same managed DSN through IAM.
+- API, worker and live acceptance consume that runtime DSN through IAM.
+- Migrations consume only `corvis-postgres-migration-dsn-${environment}`, with payload access granted to the deploy identity only; there is no runtime-credential fallback.
 - The control loop does not receive the Postgres DSN or API/worker identities.
 - The API Gateway edge key is Terraform-generated and restricted to the managed API.
 - Provider-management credentials such as the scoped Cloudflare token are deployment-only and are never injected into runtime containers.

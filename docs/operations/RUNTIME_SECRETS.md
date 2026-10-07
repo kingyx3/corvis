@@ -6,7 +6,8 @@ GitHub is the deployment control plane; GCP Secret Manager is the runtime secret
 
 Terraform owns the Secret Manager containers and baseline IAM needed by the runtime/control plane:
 
-- `corvis-postgres-dsn-${environment}` — authoritative Supabase/Postgres runtime DSN.
+- `corvis-postgres-dsn-${environment}` — authoritative Supabase/Postgres runtime DSN for the API, worker and live security acceptance.
+- `corvis-postgres-migration-dsn-${environment}` — separate owner/migration DSN; only the deployment identity receives payload access. API/worker identities receive no grant or binding to this secret.
 - `corvis-control-loop-github-token-${environment}` (UAT/prod) — optional read-only GitHub token for the control-loop jobs. Terraform creates the empty container and grants the control-loop identity read access; the jobs reference it only after `CONTROL_LOOP_GITHUB_TOKEN_CONFIGURED=true` (a job referencing a secret with no version cannot start).
 - `corvis-ai-provider-credentials-${environment}` (UAT/prod) — provider-neutral JSON map of model/gateway provider environment variables to secret values.
 - `corvis-litellm-master-key-${environment}` (UAT/prod) — LiteLLM root/gateway credential when LiteLLM is active.
@@ -15,7 +16,7 @@ Terraform owns the Secret Manager containers and baseline IAM needed by the runt
 
 Terraform owns the containers but not their values. The AI integration resources grant the deployment service account only `secretVersionAdder` on those four containers. They deliberately do **not** grant the Corvis API/worker service accounts provider or Atlassian secret access. Future extraction-harness/LiteLLM service accounts receive individual `secretAccessor` grants only for the secrets they actually require.
 
-Cloud Run consumes the latest enabled Postgres version through its service identity. The DSN value is not a Terraform input. The real database credential never enters Terraform state or a long-lived GitHub secret.
+Cloud Run consumes Postgres version `latest` through its service identity. `latest` means the newest created version; disabling it does not fall back to an older enabled version. The DSN value is not a Terraform input. The real database credential never enters Terraform state or a long-lived GitHub secret.
 
 The Postgres server CA bundle is **not** a secret. When the provider's certificates chain to a private root (Supabase), set the PEM bundle as the `CORVIS_POSTGRES_CA_CERT` GitHub Environment variable (default empty). The deploy workflow passes it to Terraform as `postgres_ca_cert` (a plain `CORVIS_POSTGRES_CA_CERT` env var on the API and worker services) and to the migration and security-acceptance steps. It narrows trust for Postgres TLS only; verification is never disabled. See `docs/architecture/DATA_PLATFORM.md`.
 
@@ -25,11 +26,11 @@ The baseline production transport does **not** use a shared gateway/worker ident
 
 ## Lifecycle workflows
 
-`.github/workflows/runtime-secrets.yml` uses GitHub OIDC -> GCP Workload Identity Federation. `Runtime secret readiness` verifies that the Terraform-managed Postgres secret container exists and has an enabled version. It reads version metadata only; it never accesses secret payloads.
+`.github/workflows/runtime-secrets.yml` uses GitHub OIDC -> GCP Workload Identity Federation. `Runtime secret readiness` verifies that both Terraform-managed Postgres secret containers exist and that each latest version is enabled. It reads version metadata only; it never accesses secret payloads.
 
-The workflow deliberately does **not** invent, accept, rotate or print a Postgres DSN. DSN creation belongs to the controlled Supabase/Postgres activation path because the connection endpoint and database credential are provider-derived runtime material. That path must write the value directly to `corvis-postgres-dsn-${environment}` without routing plaintext through Terraform or repository configuration.
+The workflow deliberately does **not** invent, accept, rotate or print a Postgres DSN. DSN creation belongs to the controlled Supabase/Postgres activation path because the connection endpoint and database credential are provider-derived runtime material. That path writes each credential directly to its corresponding runtime or migration container without routing plaintext through Terraform or repository configuration.
 
-**Least-privilege runtime credential (#227).** Today this one DSN is both the application's runtime credential and the credential the deploy workflow applies migrations with, and it is an owner/service role. The schema adds the least-privilege `corvis_runtime` group role. Moving the runtime onto it means (1) a *separate* migration credential first, because the runtime role has no DDL, then (2) a new enabled version of `corvis-postgres-dsn-${environment}` for a login role that is a member of `corvis_runtime`, written through the same controlled provider path, with the previous version kept for rollback. The ordered, per-environment plan (UAT then production) and the rollback are in [`RUNTIME_DATABASE_ROLE.md`](../security/RUNTIME_DATABASE_ROLE.md); no secret or Terraform wiring was changed by the schema.
+**Least-privilege runtime credential (#227 / #358).** The deploy workflow applies migrations only with `corvis-postgres-migration-dsn-${environment}`; it never falls back to the runtime DSN. Runtime services and security acceptance continue to use `corvis-postgres-dsn-${environment}`. Foundation bootstrap creates both empty containers. Provision the migration credential before a forward deployment, then switch the runtime credential to a login with only `corvis_runtime` membership after the role is installed and verified. Known-good rollback skips migrations and does not require migration-secret readiness. The ordered per-environment rollout, retained-version policy and rollback are in [`RUNTIME_DATABASE_ROLE.md`](../security/RUNTIME_DATABASE_ROLE.md). This wiring does not create provider credentials or prove that any deployed login has been switched.
 
 `.github/workflows/ai-integration-secrets.yml` is different by design: it is an explicit operator rotation path for protected UAT/prod GitHub Environment **secrets**. It accepts no plaintext `workflow_dispatch` inputs. Instead it reads whichever of the four approved AI integration secrets are configured, relies on GitHub's secret masking, validates JSON-shaped credential maps without printing them, and pipes each supplied value directly into a new Secret Manager version. It fails when Terraform has not created the canonical containers and refuses a no-op run when no provisioning secret is present.
 
@@ -44,22 +45,22 @@ Once copied, deployed runtimes consume the GCP Secret Manager values through IAM
 
 ## Readiness and failure behavior
 
-A missing Terraform-managed Postgres container or missing enabled Postgres version fails its audit closed. The readiness workflow never creates parallel secret containers, changes runtime IAM, or reads the DSN value.
+A missing Terraform-managed Postgres container or missing, disabled or destroyed `latest` version fails its audit closed, even if an older version remains enabled. The readiness workflow never creates parallel secret containers, changes runtime IAM, or reads the DSN value.
 
-Terraform can create empty Secret Manager containers without requiring provider credentials. Normal UAT/prod deployment then refuses to continue until provider activation has inserted an enabled Postgres DSN version. AI extraction remains independently fail-closed while `CORVIS_EXTRACTION_ENDPOINT` is empty; model/provider and Atlassian secrets do not activate extraction by themselves.
+Terraform can create empty Secret Manager containers without requiring provider credentials. Normal UAT/prod deployment then refuses to continue until provider activation has inserted enabled `latest` versions for both runtime and migration DSNs. AI extraction remains independently fail-closed while `CORVIS_EXTRACTION_ENDPOINT` is empty; model/provider and Atlassian secrets do not activate extraction by themselves.
 
 The AI provisioning workflow similarly refuses to create substitute secret containers. This prevents spelling drift or ad-hoc names from becoming a second credential source. It adds versions only to the four Terraform-managed integration containers.
 
-Security acceptance and the deployment migration step use the same canonical Postgres secret name before exercising live RLS tenant-isolation checks. This prevents deployment or acceptance from silently reading a differently named parallel secret.
+Security acceptance deliberately uses the runtime credential to exercise the actual application boundary. Migration authority is restricted to the separate deploy-only credential. Both secrets must point to the same environment database; verify that during provider activation. Metadata readiness cannot prove DSN contents, login privileges or connectivity.
 
 ## Operator sequence
 
 1. Apply the reviewed GCP bootstrap/foundation so the baseline Secret Manager resources exist.
-2. Activate the separate Supabase/Postgres environment and write its provider-derived DSN directly into `corvis-postgres-dsn-${environment}` through the controlled provider path.
-3. Run `Runtime secret readiness`; the Postgres runtime secret must report an enabled version.
+2. Activate the separate Supabase/Postgres environment and write its provider-derived runtime and migration DSNs directly into their separate containers through the controlled provider path.
+3. Run `Runtime secret readiness`; both Postgres secrets must report an enabled `latest` version.
 4. Apply the UAT/prod runtime Terraform so the AI integration secret containers exist.
 5. When AI extraction is being activated or credentials rotated, configure the required protected GitHub Environment AI integration secrets and run **AI integration secret provisioning**. Leave the Atlassian update secret unset unless the governed skill-maintenance path is intentionally enabled.
-6. Build/select the immutable Corvis release and run the normal Terraform deployment path, which applies versioned Postgres migrations using the managed DSN before runtime promotion.
+6. Build/select the immutable Corvis release and run the normal Terraform deployment path, which applies versioned Postgres migrations using the migration DSN before runtime promotion.
 7. Deploy the separately permissioned extraction-harness/LiteLLM runtime with least-privilege access to only its required integration secrets, then configure `CORVIS_EXTRACTION_ENDPOINT`.
 8. Run production-like Security acceptance and retain sanitized evidence.
 

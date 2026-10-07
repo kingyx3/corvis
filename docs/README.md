@@ -81,6 +81,7 @@ Documents are grouped by kind. Add a new document to the folder that matches its
 - [`REPO_STRUCTURE_REVIEW.md`](./reviews/REPO_STRUCTURE_REVIEW.md) — repository directory-structure review: a historical record of the pre-restructure layout, the gaps it found and the migration plan that #363 then carried out in full.
 - [`REVIEW_2026_09_30.md`](./reviews/REVIEW_2026_09_30.md) — repository/Confluence review findings, fixes, validation scope and outstanding risks.
 - [`REVIEW_2026_10_06.md`](./reviews/REVIEW_2026_10_06.md) — service credential and scorecard fixes, documentation reconciliation and remaining activation gates.
+- [`REVIEW_2026_10_07.md`](./reviews/REVIEW_2026_10_07.md) — migration credential separation, exact secret readiness, evidence-test wiring and release/runtime documentation reconciliation.
 
 ### Operational runbooks (`ops/`)
 

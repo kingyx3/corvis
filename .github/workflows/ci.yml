@@ -423,6 +423,7 @@ jobs:
           # two documents on one fund-period: conflicting values block, identical values merge lineage. Rolled back.
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/cross-document-conflicts.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/integrity-hardening.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/control-evidence-append-only.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/pipeline-durability.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
           # Data-issue reports (F5): reporting is inert, the case state machine and its link to the governed correction, immutability, tenant/RLS. Rolled back.

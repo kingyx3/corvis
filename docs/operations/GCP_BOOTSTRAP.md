@@ -50,15 +50,15 @@ This re-adoption step is why normal deployment must fail when the state bucket i
 
 ## After bootstrap apply
 
-Bootstrap creates the empty Terraform-owned `corvis-postgres-dsn-${environment}` Secret Manager container but never a DSN version. No GitHub workflow writes, rotates or accepts the DSN (see [`RUNTIME_SECRETS.md`](./RUNTIME_SECRETS.md)). Before the first UAT/prod runtime promotion, complete this one-time provider-activation step outside GitHub:
+Bootstrap creates the empty Terraform-owned `corvis-postgres-dsn-${environment}` and `corvis-postgres-migration-dsn-${environment}` Secret Manager containers but never a DSN version. The second holds the deploy-only owner/migration credential; API and worker identities can read only the first. Provision both for the same environment database before forward deployment. No GitHub workflow writes, rotates or accepts the DSN (see [`RUNTIME_SECRETS.md`](./RUNTIME_SECRETS.md)). Before the first UAT/prod runtime promotion, complete this one-time provider-activation step outside GitHub:
 
-- Activate the separate environment Supabase/Postgres project and obtain its provider-derived, TLS-verified DSN.
-- An operator authorized to add secret versions on that single secret (for example `roles/secretmanager.secretVersionAdder` scoped to `corvis-postgres-dsn-${environment}`) writes it directly as a new version, via the Secret Manager console's *New version* action or an equivalent stdin-fed `gcloud secrets versions add corvis-postgres-dsn-${environment} --data-file=-`. Never place the value in Terraform variables, workflow inputs, GitHub secrets/variables, shell history or logs.
-- Repeat the same provider-side write to rotate the credential, then disable the superseded version.
+- Activate the separate environment Supabase/Postgres project and obtain TLS-verified runtime and owner/migration DSNs for that same database. Follow the [runtime role rollout](../security/RUNTIME_DATABASE_ROLE.md) before switching the runtime login.
+- An operator authorized to add secret versions on each required secret (for example `roles/secretmanager.secretVersionAdder` scoped individually to the runtime and migration containers) writes it directly as a new version, via the Secret Manager console's *New version* action or an equivalent stdin-fed `gcloud secrets versions add corvis-postgres-dsn-${environment} --data-file=-`. Never place the value in Terraform variables, workflow inputs, GitHub secrets/variables, shell history or logs.
+- Repeat the same provider-side write to rotate the credential, retain the superseded version for the documented rollback window, then disable it.
 
 Then use GitHub Actions in this order:
 
-1. **Runtime secret readiness** — audit that `corvis-postgres-dsn-${environment}` exists and has an enabled version. The workflow reads version metadata only; it does not install, rotate or read secret payloads, and it fails closed until the provider-activation write above has happened.
+1. **Runtime secret readiness** — audit that both Postgres containers exist and their `latest` versions are enabled. The workflow reads version metadata only; it does not install, rotate or read secret payloads, and it fails closed until the provider-activation write above has happened.
 2. **Build release image** — build the selected `main` commit into the environment's Artifact Registry and create GitHub build provenance.
 3. **Terraform deploy** — run `plan`, then `apply`, passing the full built commit SHA as `release_sha`. The workflow resolves it to an immutable image digest and, when the edge is enabled, provisions/updates Cloud Run, API Gateway and the Cloudflare Worker path from Terraform.
 4. **Security acceptance** — execute the production-like Worker/gateway/Cloud Run IAM and Postgres RLS checks. Only successful live acceptance may advance the known-good rollback pointer.
