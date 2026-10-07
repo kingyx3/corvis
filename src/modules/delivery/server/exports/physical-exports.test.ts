@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExportScope } from "../../domain/delivery.ts";
 import type { RequestIdentity } from "../../../../shared/domain/enterprise.ts";
-import { createPhysicalExport, exportStatusFromJob, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "./physical-exports.ts";
+import { createPhysicalExport, exportStatusFromJob, getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from "./physical-exports.ts";
 import type { PostgresPrimitive, PostgresRow, PostgresSqlApi } from "../../../../platform/database/postgres.ts";
 
 class FakeDb implements PostgresSqlApi {
@@ -32,6 +32,15 @@ const identity: RequestIdentity = {
     redistributionAllowed: true,
   },
 };
+
+test("missing exports return no status and malformed grants never query the database", async () => {
+  const db = new FakeDb(() => []);
+  assert.equal(await getPhysicalExportStatus(identity, "missing", db), null);
+  const before = db.queries.length;
+  assert.equal(await redeemPhysicalExportGrant(identity, "missing", "", db), null);
+  assert.equal(await redeemPhysicalExportGrant(identity, "missing", "x".repeat(257), db), null);
+  assert.equal(db.queries.length, before);
+});
 
 test("without a scope, every entitled fund's published snapshots are exported (existing behavior)", async () => {
   const db = new FakeDb((sql) => {
@@ -170,7 +179,7 @@ test("a finished export stops being visible once a newer snapshot version (withd
   const artifactRow: PostgresRow = {
     export_id: "00000000-0000-4000-8000-000000000001", format: "csv", state: "complete",
     snapshot_ids: ["00000000-0000-4000-8000-0000000000aa"],
-    manifest: { snapshotIds: ["00000000-0000-4000-8000-0000000000aa"], artifact: { fundIds: ["fund-a"], documentIds: ["doc-1"] } },
+    manifest: { snapshotIds: ["00000000-0000-4000-8000-0000000000aa"], snapshotState: [{ snapshotId: "00000000-0000-4000-8000-0000000000aa", version: 1 }], artifact: { fundIds: ["fund-a"], documentIds: ["doc-1"] } },
     created_at: "2026-09-01T00:00:00Z",
   };
   await assert.rejects(exportStatusFromJob(identity, artifactRow, db), (error: unknown) => error instanceof Error && error.name === "AuthorizationError");

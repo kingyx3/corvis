@@ -1,3 +1,4 @@
+import { assertExportSnapshotVersions } from "./export-snapshot-state.ts";
 import { createHash } from "crypto";
 import type { PositionFinancialStatementRow } from "../../../../shared/domain/contracts.ts";
 import type { ExportScope, PositionFinancialsExportScope } from "../../domain/delivery.ts";
@@ -315,6 +316,7 @@ export async function deliverExportArtifact(
   const format = required(row, "format");
   if (format !== "csv" && format !== "xlsx" && format !== "parquet") throw new Error("export_invalid_format");
   const existingManifest = row.manifest && typeof row.manifest === "object" ? row.manifest as Record<string, unknown> : {};
+  await assertExportSnapshotVersions(identity, snapshotIds, existingManifest.snapshotState, store);
   const scopedPosition = positionScope(existingManifest.scope as ExportScope | undefined);
   const scopedScorecard = performanceScorecardScope(existingManifest.scope);
   const rows = scopedPosition
@@ -322,6 +324,8 @@ export async function deliverExportArtifact(
     : scopedScorecard
       ? await loadScorecardExportRows(identity, snapshotIds, store, scopedScorecard)
       : await loadArtifactRows(identity, snapshotIds, store);
+  // A publication may change while a multi-query loader is running. Never store those bytes under the old manifest.
+  await assertExportSnapshotVersions(identity, snapshotIds, existingManifest.snapshotState, store);
   const rendered = renderExport(format, rows, scopedPosition ? POSITION_EXPORT_COLUMNS : scopedScorecard ? SCORECARD_EXPORT_COLUMNS : EXPORT_COLUMNS);
   const checksumSha256 = createHash("sha256").update(rendered.bytes).digest("hex");
   const exportId = required(row, "export_id");

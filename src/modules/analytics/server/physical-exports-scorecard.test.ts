@@ -113,7 +113,7 @@ test("the position snapshot lookup refuses a fund or document the caller is not 
 
 test("export status normalizes timestamps, falls back to the manifest's snapshots and omits an absent checksum", async () => {
   const db = new FakeDb(() => [{ snapshot_count: 1 }]);
-  const manifest = { snapshotIds: ["snap-a"], artifact: { fundIds: ["fund-a"], documentIds: [DOC] } };
+  const manifest = { snapshotIds: ["snap-a"], snapshotState: [{ snapshotId: "snap-a", version: 1 }], artifact: { fundIds: ["fund-a"], documentIds: [DOC] } };
   const status = await exportStatusFromJob(identity, { export_id: "e", format: "csv", state: "complete", manifest, created_at: new Date("2026-09-01T00:00:00Z"), completed_at: new Date("2026-09-01T01:00:00Z"), expires_at: new Date(Date.now() + 3_600_000) }, db);
   assert.equal(status.createdAt, "2026-09-01T00:00:00.000Z");
   assert.equal(status.checksumSha256, undefined);
@@ -130,7 +130,7 @@ test("an artifact is not downloadable when the caller's current entitlements no 
 });
 
 test("an export without an artifact re-checks the caller's funds and snapshot currency", async () => {
-  const row: PostgresRow = { export_id: "e", format: "csv", state: "queued", snapshot_ids: ["snap-a"], manifest: { snapshotIds: ["snap-a"] } };
+  const row: PostgresRow = { export_id: "e", format: "csv", state: "queued", snapshot_ids: ["snap-a"], manifest: { snapshotIds: ["snap-a"], snapshotState: [{ snapshotId: "snap-a", version: 1 }] } };
   const noFunds = { ...identity, entitlements: { ...identity.entitlements, fundIds: undefined } };
   await assert.rejects(exportStatusFromJob(noFunds, row, new FakeDb(() => [])), AuthorizationFailure);
   await assert.rejects(exportStatusFromJob(identity, row, new FakeDb(() => [])), AuthorizationFailure, "an empty answer counts as no current snapshots");

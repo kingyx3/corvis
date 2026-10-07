@@ -124,7 +124,7 @@ test("snapshot-scoped exports are rechecked sequentially and revoked snapshots a
   const snapshotA = "00000000-0000-4000-8000-00000000a001";
   const snapshotB = "00000000-0000-4000-8000-00000000b001";
   const withoutArtifact = (id: string, snapshot: string) => {
-    const manifest = { ...(job(id).manifest as Record<string, unknown>), snapshotIds: [snapshot] };
+    const manifest = { ...(job(id).manifest as Record<string, unknown>), snapshotIds: [snapshot], snapshotState: [{ snapshotId: snapshot, version: 1 }] };
     delete (manifest as { artifact?: unknown }).artifact;
     return job(id, { manifest, snapshot_ids: [snapshot] });
   };
@@ -138,7 +138,7 @@ test("snapshot-scoped exports are rechecked sequentially and revoked snapshots a
 });
 
 test("infrastructure failures still fail the listing rather than silently hiding exports", async () => {
-  const manifest = { ...(job("1").manifest as Record<string, unknown>), snapshotIds: ["00000000-0000-4000-8000-00000000a001"] };
+  const manifest = { ...(job("1").manifest as Record<string, unknown>), snapshotIds: ["00000000-0000-4000-8000-00000000a001"], snapshotState: [{ snapshotId: "00000000-0000-4000-8000-00000000a001", version: 1 }] };
   delete (manifest as { artifact?: unknown }).artifact;
   const { store } = fakeStore([job("1", { manifest, snapshot_ids: manifest.snapshotIds })], { failSnapshots: true });
   await assert.rejects(listPhysicalExportStatuses(identity(), 20, store), /postgres_unavailable/);
