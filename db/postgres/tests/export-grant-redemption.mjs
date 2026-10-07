@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from '../../../src/modules/delivery/server/exports/physical-exports.ts';
+import { assertExportSnapshotVersions } from '../../../src/modules/delivery/server/exports/export-snapshot-state.ts';
 
 const dsn = process.env.CORVIS_DATABASE_DSN;
 assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
@@ -102,6 +103,35 @@ try {
     const expiredExportGrant = await issueGrant();
     await tx.execute(`update corvis_serving.export_job set expires_at = now() - interval '1 minute' where export_id=$1`, [exportId]);
     assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, expiredExportGrant, tx), null, 'an expired export must not redeem');
+
+    // Same snapshot ID, newer published version: old bytes and old manifests must stop being served.
+    const snapshotId = 'e9000000-0000-4000-8000-000000000004';
+    const owner = identity('owner', { entitlements: { fundIds: ['export-grant-fund'], documentIds: [], redistributionAllowed: true } });
+    const pins = [{ snapshotId, version: 1, openExceptionCount: 0 }];
+    const manifest = { snapshotIds: [snapshotId], snapshotState: pins, artifact: { fundIds: ['export-grant-fund'], documentIds: [] } };
+    await tx.execute(`insert into corvis_consolidated.fund_period_snapshot
+      (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
+      values ($1,$2,'export-grant-fund','2026-Q3',1,'published','v1','v1')`, [tenantId, snapshotId]);
+    await tx.execute(`update corvis_serving.export_job set expires_at=now()+interval '1 hour',
+      snapshot_ids=array[$2::uuid],manifest=$3::jsonb where export_id=$1`, [exportId, snapshotId, JSON.stringify(manifest)]);
+    const pinnedStatus = await getPhysicalExportStatus(owner, exportId, tx);
+    assert.ok(pinnedStatus.downloadAvailable);
+    const pinnedToken = new URL(pinnedStatus.downloadUrl, 'https://corvis.test').searchParams.get('grant');
+    await assertExportSnapshotVersions(owner, [snapshotId], pins, tx);
+    // Leave v1 published too: the latest-version guard must still reject it.
+    await tx.execute(`insert into corvis_consolidated.fund_period_snapshot
+      (tenant_id,snapshot_id,fund_id,report_period,version,status,schema_version,taxonomy_version)
+      values ($1,$2,'export-grant-fund','2026-Q3',2,'published','v1','v1')`, [tenantId, snapshotId]);
+    const changed = (error) => error.code === 'export_snapshot_authorization_expired';
+    await assert.rejects(getPhysicalExportStatus(owner, exportId, tx), changed);
+    await assert.rejects(redeemPhysicalExportGrant(owner, exportId, pinnedToken, tx), changed);
+    await assert.rejects(assertExportSnapshotVersions(owner, [snapshotId], pins, tx), changed);
+    const replacementPins = [{ ...pins[0], version: 2 }];
+    await assertExportSnapshotVersions(owner, [snapshotId], replacementPins, tx);
+    await assert.rejects(assertExportSnapshotVersions(identity('owner'), [snapshotId], replacementPins, tx), changed);
+    await assert.rejects(assertExportSnapshotVersions({ ...owner, tenantId: 'e9000000-0000-4000-8000-0000000000ff' }, [snapshotId], replacementPins, tx), changed);
+    await tx.execute(`update corvis_consolidated.fund_period_snapshot set status='withdrawn' where tenant_id=$1 and snapshot_id=$2 and version=2`, [tenantId, snapshotId]);
+    await assert.rejects(assertExportSnapshotVersions(owner, [snapshotId], replacementPins, tx), changed);
 
     throw ROLLBACK;
   }), (error) => error === ROLLBACK);

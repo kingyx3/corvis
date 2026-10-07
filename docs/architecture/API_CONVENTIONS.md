@@ -370,6 +370,12 @@ Implementation tracker: GitHub issue #261. A customer who doubts a **published**
 
 **Demo mode** serves the same routes from an in-memory per-tenant store (`src/modules/governance/adapters/data-issue-store.ts`, selected in `src/modules/governance/server/data-issues/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
 
+## Physical export publication versions
+
+The per-user observation, Position Financials and performance-scorecard exports pin each snapshot's exact version in `manifest.snapshotState`. A matching snapshot ID alone is insufficient: the recorded version must still be the latest published version, in the same tenant and within the caller's current fund rights. Delivery checks before and after loading rows; status reads, history and download redemption check again before exposing stored artifacts. Existing document and redistribution checks still apply.
+
+A replaced, withdrawn or unverifiable publication fails closed. The worker records `export_snapshot_authorization_expired` as a permanent failure; the caller must request a new export. Missing, partial, duplicate or malformed version metadata cannot be used to serve an old artifact. The API uses the existing authorization refusal, and history omits inaccessible exports. Empty exports with no snapshots do not require version metadata. This contract also applies to scheduled runs using the same pipeline; the separate Organization Admin tenant-archive pipeline retains its own rights and approval contract.
+
 ## Scheduled exports (F4)
 
 Implementation tracker: GitHub issue #260. A schedule saves one "Export this view" (D3) scope with a format and a trigger. It never exports anything itself: each due trigger becomes one governed export request made **as the schedule's owner**, through the same `createPhysicalExport` and export worker as `POST /api/v1/exports` (no second export path), and appears in Data delivery with the schedule's label. The routes are product surfaces, classified `workspace_control` in `openapi/v1-route-classification.json`.
