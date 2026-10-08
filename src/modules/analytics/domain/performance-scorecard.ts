@@ -44,7 +44,7 @@ export const INVESTMENT_SCORECARD_METRICS: readonly ScorecardMetric[] = [
   { code: "fair_value", label: "Fair value", kind: "money", definition: "Fair value of the fund's investment, as reported by the GP." },
   { code: "gross_moic", label: "Gross MOIC", kind: "multiple", definition: "Gross multiple of invested capital on the investment, before fees and carry, as reported by the GP." },
   { code: "gross_irr", label: "Gross IRR", kind: "percent", definition: "Gross internal rate of return on the investment, before fees and carry, as reported by the GP." },
-  { code: "ownership_pct", label: "Ownership", kind: "percent", definition: "Percentage of the company owned by the fund, as reported by the GP." },
+  { code: "ownership_pct", label: "Ownership", kind: "percent", definition: "Ownership percentage for a company- or underlying-fund-targeted holding, on the stated basis, as reported by the GP." },
 ];
 
 /** Every metric code the scorecard reads; the serving query selects exactly these. */
