@@ -2,9 +2,9 @@
 
 import { Fragment, useMemo, useState, type HTMLAttributes, type Key, type ReactNode } from "react";
 import type { TableDensity } from "./table-density-toggle";
+import { sortRows, type Direction, type SortValue } from "./sortable-data-table-sort";
 
-type SortValue = string | number | null | undefined;
-export type Direction = "ascending" | "descending";
+export type { Direction } from "./sortable-data-table-sort";
 type SortableRowAttributes = HTMLAttributes<HTMLTableRowElement> & { "data-role"?: string };
 
 export type SortableColumn<Row> = {
@@ -18,14 +18,6 @@ export type SortableColumn<Row> = {
   cellClassName?: string;
   cellTitle?: (row: Row) => string | undefined;
 };
-
-function compareSortValues(left: SortValue, right: SortValue): number {
-  if (left == null && right == null) return 0;
-  if (left == null) return 1;
-  if (right == null) return -1;
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
-}
 
 /**
  * One implementation for dense, keyboard-sortable tables. Sorting is always
@@ -59,15 +51,7 @@ export function SortableDataTable<Row>({
     if (!sort) return [...rows];
     const column = columns.find((candidate) => candidate.id === sort.columnId);
     if (!column?.sortValue) return [...rows];
-    return rows.map((row, index) => ({ row, index })).sort((left, right) => {
-      const leftValue = column.sortValue!(left.row);
-      const rightValue = column.sortValue!(right.row);
-      // A row with no value (for example a metric that was "Not reported") stays last in both directions instead of leading a descending sort.
-      if ((leftValue == null) !== (rightValue == null)) return leftValue == null ? 1 : -1;
-      const compared = compareSortValues(leftValue, rightValue);
-      const stable = compared || left.index - right.index;
-      return sort.direction === "ascending" ? stable : -stable;
-    }).map(({ row }) => row);
+    return sortRows(rows, column.sortValue, sort.direction);
   }, [columns, rows, sort]);
 
   const toggleSort = (columnId: string) => {
