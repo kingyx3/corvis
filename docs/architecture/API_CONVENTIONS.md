@@ -319,7 +319,7 @@ Responses are `{ data: { kind, tenantId, changed, version }, correlationId }`; s
 
 ## Service accounts (F6)
 
-Implementation tracker: GitHub issue #262; design, assumptions and the open decision are in [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md). Organization Admins (`tenant_admin`, held by a person; `accountadmin` and any service account are refused with `403 tenant_admin_required`) manage non-human identities under `/api/v1/access/service-accounts` (classified `tenant_control`, not a stable data-integration API). A service account is a normal identity subject with one role in one workspace under the existing RBAC, entitlement and data-rights model: there is no separate API-scope plane.
+Implementation tracker: GitHub issue #262; design, assumptions and the shipped credential-acceptance decision (#350, #340) are in [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md). Organization Admins (`tenant_admin`, held by a person; `accountadmin` and any service account are refused with `403 tenant_admin_required`) manage non-human identities under `/api/v1/access/service-accounts` (classified `tenant_control`, not a stable data-integration API). A service account is a normal identity subject with one role in one workspace under the existing RBAC, entitlement and data-rights model: there is no separate API-scope plane.
 
 | Route | Who | Purpose |
 | --- | --- | --- |
