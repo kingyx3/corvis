@@ -46,7 +46,7 @@ Every environment requires `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER`. Before a pro
 
 `RELEASE_GOVERNANCE_TOKEN` **must contain GitHub App credential JSON, not a fine-grained or classic PAT**. The expected shape is documented in [`RELEASE_GOVERNANCE.md`](./RELEASE_GOVERNANCE.md). The verifier signs a short-lived App JWT and requests a repository-scoped installation token for each run; long-lived PATs are rejected by code.
 
-Configure all three GitHub Environments to allow deployment from `main` only. Production should require independent reviewers and disallow administrator bypass when the GitHub account/plan and operating model support it. In the documented solo-maintainer mode, the exact-release checks, non-bypassable `main` ruleset, reviewed Terraform plan digest, UAT acceptance gate, and live post-deploy acceptance are mandatory compensating controls.
+Configure all three GitHub Environments with a custom deployment branch policy that allows the branch `main` only; the release workflows read each environment's policy and fail if it is missing, broader or has extra patterns, so a branch workflow cannot obtain the environment's secrets (`RELEASE_GOVERNANCE_TOKEN`, the WIF variables). This needs the release-governance GitHub App to have Environments: Read. Production should require independent reviewers and disallow administrator bypass when the GitHub account/plan and operating model support it. In the documented solo-maintainer mode, the exact-release checks, non-bypassable `main` ruleset, reviewed Terraform plan digest, UAT acceptance gate, and live post-deploy acceptance are mandatory compensating controls.
 
 The GCP WIF provider is also fail-closed to repository + environment + `assertion.ref == 'refs/heads/main'`; `verify-gcp-trust-anchor.sh` rejects a broader provider condition.
 
@@ -121,7 +121,8 @@ The build-once promotion sequence is: build/attest in UAT -> deploy exact digest
 ## Checklist
 
 - [ ] `GCP_PROJECT_ID` and `GCP_WIF_PROVIDER` are configured for each environment.
-- [ ] each environment allows deployment from `main` only; prod reviewer/no-bypass protection is enabled when available.
+- [ ] each environment has a custom deployment branch policy allowing exactly `main` (verified by the release workflows); prod reviewer/no-bypass protection is enabled when available.
+- [ ] the release-governance GitHub App has Environments: Read in addition to Administration, Checks and Contents.
 - [ ] `RELEASE_GOVERNANCE_TOKEN` contains GitHub App credential JSON, not a PAT.
 - [ ] UAT `GCP_MONTHLY_BUDGET_USD` is `5` unless intentionally overridden.
 - [ ] GCP foundation bootstrap succeeds before runtime activation.
