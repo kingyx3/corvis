@@ -1,4 +1,5 @@
 import { apiError, json } from "../../../../platform/http/api/http.ts";
+import { readBoundedRequestText, RequestBodyTooLargeError } from "../../../../platform/http/api/bounded-body.ts";
 import { getServerConfig, type ServerConfig } from "../../../../platform/config/config.ts";
 import { normalizeOidcIssuer, OidcVerifier, unverifiedLogoutTokenIssuer, type OidcLogoutToken } from "./oidc.ts";
 import { postgres, type PostgresSqlApi } from "../../../../platform/database/postgres.ts";
@@ -53,8 +54,13 @@ function rejected(id: string): Response {
 
 async function readLogoutToken(request: Request): Promise<string | undefined> {
   if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return undefined;
-  const body = await request.text();
-  if (body.length > MAX_BODY_BYTES) return undefined;
+  let body: string;
+  try {
+    body = await readBoundedRequestText(request, MAX_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) return undefined;
+    throw error;
+  }
   const values = new URLSearchParams(body).getAll("logout_token");
   return values.length === 1 && values[0] ? values[0] : undefined;
 }

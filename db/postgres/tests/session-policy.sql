@@ -13,7 +13,7 @@
 --     it is idempotent, refuses the caller themself, a user outside the tenant and a missing reason;
 --   * the application's authoritative lookup (session_revocation) really excludes the revoked sessions;
 --   * (091) the housekeeping purge removes only session records not seen for the whole retention (never below the longest
---     allowed session plus a day), in every tenant, a bounded batch at a time, never touches session revocations, and leaves
+--     allowed session plus a day), in every tenant, a bounded batch at a time, preserves existing revocations and records policy expiry, and leaves
 --     enforcement and sign-out-everywhere working;
 --   * (099, F7a #334) Require SSO: only an OIDC session whose verified issuer and audience equal the tenant's bound record passes
 --     (SAML, gateway assertions and wrong claims are refused; service identities and other tenants are unaffected); enabling it needs
@@ -333,17 +333,28 @@ begin
   update corvis_control.tenant_session_activity set first_seen_at = now() - interval '13000 minutes', last_seen_at = now() - interval '12000 minutes' where tenant_id = t and session_id = 'hk-quiet';
   if corvis_control.purge_tenant_session_activity(11520) <> 2 then raise exception 'at the floor, a session unseen for over 11520 minutes is purged'; end if;
   if exists (select 1 from corvis_control.tenant_session_activity where session_id in ('hk-edge', 'hk-quiet')) then raise exception 'those two are gone'; end if;
-  -- A session that comes back after its record was purged is simply a new session: it is recorded again and measured from now.
-  if corvis_control.enforce_session_policy(t,'oidc','idp|member','hk-edge') <> 'ok' then raise exception 'a purged session that returns is recorded as new'; end if;
+  -- The same stable IdP session must not gain a new timeout clock after cleanup.
+  if (select count(*) from corvis_control.session_revocation where tenant_id = t
+      and session_id in ('hk-old-1','hk-old-2','hk-edge','hk-quiet')
+      and revoked_by_subject = 'system:session-activity-sweep') <> 4 then
+    raise exception 'purged policy-expired sessions must remain refused';
+  end if;
+  if exists (select 1 from corvis_control.session_revocation where tenant_id = other and session_id = 'hk-old-other') then
+    raise exception 'cleanup without timeout limits must not introduce a new sign-out policy';
+  end if;
+  if corvis_control.enforce_session_policy(other,'oidc','idp|b-owner','hk-old-other') <> 'ok' then
+    raise exception 'a tenant without timeout limits retains its existing behavior';
+  end if;
 
-  -- Revoked sessions keep working as revoked: the revocation table is not touched, so the authoritative lookup still excludes them.
-  if (select count(*) from corvis_control.session_revocation) <> revocations_before then raise exception 'the purge never touches session revocations'; end if;
+  -- Existing revocations retain their actor and reason; the authoritative lookup still excludes them.
+  if (select count(*) from corvis_control.session_revocation) <> revocations_before + 4 then raise exception 'the purge only adds missing policy-expiry revocations'; end if;
   if exists (
     select 1 from corvis_control.identity_subject s
     where s.tenant_id = t and s.subject = 'idp|analyst' and s.auth_method = 'oidc'
       and not exists (select 1 from corvis_control.session_revocation r
         where r.tenant_id = s.tenant_id and r.auth_method = s.auth_method and r.subject = s.subject and r.session_id = 'hk-revoked')
   ) then raise exception 'a revoked session must not resolve, though its activity record was purged'; end if;
+  if not exists (select 1 from corvis_control.session_revocation where tenant_id=t and session_id='hk-revoked' and revoked_by_subject='idp|admin-1' and reason='Housekeeping test') then raise exception 'an existing revocation must not be overwritten'; end if;
   if (select count(*) from corvis_control.tenant_session_activity where session_id = 'hk-revoked') <> 0 then raise exception 'the revoked session''s activity record was purged'; end if;
 
   -- Sign-out-everywhere still works on what remains, and the revocations it writes are not purged either.
