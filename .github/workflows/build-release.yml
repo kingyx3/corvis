@@ -57,6 +57,7 @@ jobs:
       - name: Verify effective release governance
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
+          RELEASE_ENVIRONMENTS: ${{ inputs.environment }}
         run: node tools/ci/release-governance.mjs
 
       - name: Authenticate to GCP with Workload Identity Federation

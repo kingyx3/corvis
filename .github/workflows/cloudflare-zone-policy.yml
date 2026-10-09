@@ -113,6 +113,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_GOVERNANCE_TOKEN }}
           RELEASE_SHA: ${{ github.sha }}
+          # The apply reads UAT secrets and is gated by prod's reviewers, so both environments must be main-only.
+          RELEASE_ENVIRONMENTS: uat,prod
         run: node tools/ci/release-governance.mjs
 
       - name: Authenticate to GCP for shared Terraform state

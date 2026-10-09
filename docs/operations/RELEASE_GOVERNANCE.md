@@ -18,6 +18,7 @@ The App must be installed only on `kingyx3/corvis` and have these repository per
 - Administration: **Read and write** (required to see ruleset bypass actors);
 - Checks: **Read**;
 - Contents: **Read**;
+- Environments: **Read** (required to verify each environment's deployment branch policy; requested only when a workflow names environments, see below);
 - Metadata: implicit read.
 
 `tools/ci/release-governance.mjs` signs a short-lived App JWT, resolves the installation for the current repository, and requests a repository-scoped installation token for each workflow invocation. The verifier accepts that `ghs_` installation token internally and explicitly rejects fine-grained or classic long-lived PAT credentials.
@@ -26,7 +27,7 @@ Rotate the GitHub App private key on the same cadence as other high-trust releas
 
 ## GitHub Environment protection
 
-Repository code cannot enforce GitHub Environment protection settings. Configure them explicitly:
+Repository code cannot set GitHub Environment protection, so configure it explicitly. It can notice drift, and it does: every workflow that runs `release-governance.mjs` also reads the deployment branch policy of the environments whose secrets it uses (`RELEASE_ENVIRONMENTS`: the input environment for build-release and terraform-deploy; `uat,prod` for the shared Cloudflare zone policy) and fails unless each one is a **custom branch policy that allows exactly the branch `main`**. "All branches" and "protected branches" are refused, as are extra branch or tag patterns. The GitHub App therefore also needs the Environments read permission above; without it the governed workflows fail on the read rather than skip the check.
 
 - `dev`: deployment branches/tags restricted to `main` only;
 - `uat`: deployment branches/tags restricted to `main` only;

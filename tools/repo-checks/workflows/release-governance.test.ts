@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 // @ts-expect-error Workflow script runs directly in Node; no declaration file needed.
-import { evaluateGovernance, MISSING_BYPASS_VISIBILITY, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../ci/release-governance.mjs';
+import { evaluateEnvironmentProtection, evaluateGovernance, MISSING_BYPASS_VISIBILITY, parseReleaseEnvironments, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../ci/release-governance.mjs';
+import { readFileSync } from 'node:fs';
 
 function fixture(approvals = 1) {
   const checks = REQUIRED_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));
@@ -101,4 +102,105 @@ test('release governance mints a repository-scoped short-lived GitHub App instal
 test('unauthorized API reads fail rather than assuming governance is configured', async () => {
   await assert.rejects(verifyReleaseGovernance({ GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: 'a'.repeat(40), GITHUB_TOKEN: 'ghs_' + 'x'.repeat(40) },
     async () => new Response('{}', { status: 403 })), /governance read failed/);
+});
+
+const mainOnly = { deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } };
+
+test('an environment is accepted only when its deployment branch policy allows exactly the branch main', () => {
+  assert.deepEqual(evaluateEnvironmentProtection('prod', mainOnly, [{ id: 1, name: 'main', type: 'branch' }]), []);
+  // Older responses carry no `type`; a policy without one is a branch policy.
+  assert.deepEqual(evaluateEnvironmentProtection('uat', mainOnly, [{ id: 1, name: 'main' }]), []);
+  for (const [environment, policies] of [
+    [{ deployment_branch_policy: null }, []],
+    [{}, []],
+    [{ deployment_branch_policy: { protected_branches: true, custom_branch_policies: false } }, []],
+    [{ deployment_branch_policy: { protected_branches: true, custom_branch_policies: true } }, [{ name: 'main', type: 'branch' }]],
+    [{ deployment_branch_policy: { protected_branches: false, custom_branch_policies: false } }, []],
+    [mainOnly, []],
+    [mainOnly, [{ name: 'main', type: 'tag' }]],
+    [mainOnly, [{ name: 'main', type: 'branch' }, { name: 'release/*', type: 'branch' }]],
+    [mainOnly, [{ name: 'release/*', type: 'branch' }]],
+    [mainOnly, [{ name: 'ma*', type: 'branch' }]],
+  ] as Array<[object, Array<{ name: string; type?: string }>]>) {
+    const failures = evaluateEnvironmentProtection('prod', environment, policies);
+    assert.equal(failures.length, 1, JSON.stringify([environment, policies]));
+    assert.match(failures[0]!, /GitHub Environment prod/);
+  }
+  assert.match(evaluateEnvironmentProtection('prod', mainOnly, [{ name: 'a', type: 'branch' }, { name: 'b', type: 'tag' }])[0]!, /found: branch:a, tag:b/);
+  assert.match(evaluateEnvironmentProtection('prod', mainOnly, [])[0]!, /found: none/);
+});
+
+test('RELEASE_ENVIRONMENTS names only the governed environments', () => {
+  assert.deepEqual(parseReleaseEnvironments(undefined), []);
+  assert.deepEqual(parseReleaseEnvironments(''), []);
+  assert.deepEqual(parseReleaseEnvironments('uat, prod,uat'), ['uat', 'prod']);
+  assert.throws(() => parseReleaseEnvironments('uat,staging'), /may only name dev, uat, prod/);
+});
+
+test('the installation token asks for environments:read only when environments are verified', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const credential = JSON.stringify({ appId: '1', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  const requested: Array<Record<string, string>> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input).endsWith('/installation')) return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    requested.push((JSON.parse(String(init?.body)) as { permissions: Record<string, string> }).permissions);
+    return new Response(JSON.stringify({ token: 'ghs_' + 'y'.repeat(40) }), { status: 201 });
+  };
+  await resolveReleaseGovernanceToken(credential, 'example/repo', fakeFetch);
+  await resolveReleaseGovernanceToken(credential, 'example/repo', fakeFetch, { environments: 'read' });
+  assert.deepEqual(requested, [
+    { administration: 'write', contents: 'read', checks: 'read' },
+    { administration: 'write', contents: 'read', checks: 'read', environments: 'read' },
+  ]);
+});
+
+function governedApi(environments: Record<string, { environment: object; policies: object[] }>): typeof fetch {
+  const { rules, sets, checks } = fixture(0);
+  const routes: Record<string, unknown> = {
+    'compare/main...': { status: 'identical', ahead_by: 0 },
+    'rules/branches/main': rules,
+    'rulesets/1': sets[0],
+    'check-runs': { check_runs: checks },
+  };
+  return async (input) => {
+    const path = String(input).replace('https://api.github.com/repos/example/repo/', '').split('?')[0]!;
+    const env = /^environments\/([a-z]+)(\/deployment-branch-policies)?$/.exec(path);
+    if (env) {
+      const found = environments[env[1]!];
+      if (!found) return new Response('{}', { status: 404 });
+      return new Response(JSON.stringify(env[2] ? { total_count: found.policies.length, branch_policies: found.policies } : found.environment), { status: 200 });
+    }
+    const key = Object.keys(routes).find((candidate) => path.startsWith(candidate) || path.endsWith(candidate));
+    return key ? new Response(JSON.stringify(routes[key]), { status: 200 }) : new Response('{}', { status: 404 });
+  };
+}
+
+const governedEnv = { GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: 'a'.repeat(40), GITHUB_TOKEN: 'ghs_' + 'x'.repeat(40) };
+
+test('release governance verifies each named environment against the live branch policy', async () => {
+  const mainOnlyEnvironment = { environment: mainOnly, policies: [{ id: 1, name: 'main', type: 'branch' }] };
+  const open = { environment: { deployment_branch_policy: null }, policies: [] };
+
+  assert.deepEqual(await verifyReleaseGovernance(governedEnv, governedApi({})), { passed: true, failures: [] }, 'no environments named: unchanged');
+  assert.deepEqual(await verifyReleaseGovernance({ ...governedEnv, RELEASE_ENVIRONMENTS: 'uat,prod' }, governedApi({ uat: mainOnlyEnvironment, prod: mainOnlyEnvironment })), { passed: true, failures: [] });
+
+  const drifted = await verifyReleaseGovernance({ ...governedEnv, RELEASE_ENVIRONMENTS: 'uat,prod' }, governedApi({ uat: mainOnlyEnvironment, prod: open }));
+  assert.equal(drifted.passed, false);
+  assert.deepEqual(drifted.failures, ['GitHub Environment prod has no deployment branch policy: restrict it to the branch main only']);
+
+  await assert.rejects(verifyReleaseGovernance({ ...governedEnv, RELEASE_ENVIRONMENTS: 'prod' }, governedApi({})), /governance read failed \(404\)/);
+  await assert.rejects(verifyReleaseGovernance({ ...governedEnv, RELEASE_ENVIRONMENTS: 'staging' }, governedApi({})), /may only name/);
+});
+
+test('every workflow that runs release governance names the environments whose secrets it reads', () => {
+  const expected: Record<string, RegExp> = {
+    '.github/workflows/build-release.yml': /RELEASE_ENVIRONMENTS: \$\{\{ inputs\.environment \}\}/,
+    '.github/workflows/terraform-deploy.yml': /RELEASE_ENVIRONMENTS: \$\{\{ inputs\.environment \}\}/,
+    '.github/workflows/cloudflare-zone-policy.yml': /RELEASE_ENVIRONMENTS: uat,prod/,
+  };
+  for (const [file, pattern] of Object.entries(expected)) {
+    const workflow = readFileSync(file, 'utf8');
+    const step = /- name: Verify effective release governance[\s\S]*?run: node tools\/ci\/release-governance\.mjs/.exec(workflow)?.[0] ?? '';
+    assert.match(step, pattern, file);
+  }
 });

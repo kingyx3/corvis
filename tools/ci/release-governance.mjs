@@ -44,8 +44,9 @@ async function githubJson(path, options, fetchImpl = fetch) {
  * Store JSON instead: {"appId":"123456","privateKey":"-----BEGIN PRIVATE KEY-----\\n..."}.
  * The workflow mints a repository-scoped installation token for each invocation.
  * A pre-minted `ghs_` installation token is accepted only for composition/tests.
+ * `extraPermissions` adds repository permissions to that request (the environment-protection read asks for `environments: read`).
  */
-export async function resolveReleaseGovernanceToken(rawCredential, repository, fetchImpl = fetch) {
+export async function resolveReleaseGovernanceToken(rawCredential, repository, fetchImpl = fetch, extraPermissions = {}) {
   const raw = String(rawCredential ?? '').trim();
   if (/^ghs_[A-Za-z0-9_]+$/.test(raw)) return raw;
   if (!raw.startsWith('{')) {
@@ -73,7 +74,7 @@ export async function resolveReleaseGovernanceToken(rawCredential, repository, f
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       repositories: [repo],
-      permissions: { administration: 'write', contents: 'read', checks: 'read' },
+      permissions: { administration: 'write', contents: 'read', checks: 'read', ...extraPermissions },
     }),
   }, fetchImpl);
   const token = tokenResponse?.token;
@@ -136,13 +137,45 @@ export function evaluateGovernance(rules, rulesets, checks) {
   return { passed: failures.length === 0, failures };
 }
 
+export const GOVERNED_ENVIRONMENTS = ['dev', 'uat', 'prod'];
+
+/** The comma-separated GitHub Environments named by RELEASE_ENVIRONMENTS, validated; empty when none are named. */
+export function parseReleaseEnvironments(raw) {
+  const names = String(raw ?? '').split(',').map((name) => name.trim()).filter(Boolean);
+  const unique = [...new Set(names)];
+  const unknown = unique.filter((name) => !GOVERNED_ENVIRONMENTS.includes(name));
+  if (unknown.length > 0) throw new Error(`RELEASE_ENVIRONMENTS may only name ${GOVERNED_ENVIRONMENTS.join(', ')}`);
+  return unique;
+}
+
+/**
+ * Repository code cannot set GitHub Environment protection, but it can notice drift: an environment whose secrets
+ * (RELEASE_GOVERNANCE_TOKEN, the WIF provider variables) can be read by a workflow run from any branch. Requires a custom
+ * deployment branch policy that allows exactly the branch `main`; "all branches" and "protected branches" are refused
+ * because a second protected branch, or none, widens who can obtain the environment. Required reviewers stay an
+ * operating-mode choice (see docs/operations/RELEASE_GOVERNANCE.md) and are not judged here.
+ */
+export function evaluateEnvironmentProtection(name, environment, branchPolicies) {
+  const policy = environment?.deployment_branch_policy;
+  if (!policy) return [`GitHub Environment ${name} has no deployment branch policy: restrict it to the branch main only`];
+  if (policy.custom_branch_policies !== true || policy.protected_branches !== false) {
+    return [`GitHub Environment ${name} must use a custom deployment branch policy limited to main, not all or protected branches`];
+  }
+  const allowsOnlyMain = branchPolicies.length === 1 && branchPolicies[0]?.name === 'main' &&
+    (branchPolicies[0].type === undefined || branchPolicies[0].type === 'branch');
+  if (allowsOnlyMain) return [];
+  const found = branchPolicies.map((entry) => `${entry?.type ?? 'branch'}:${entry?.name}`).join(', ') || 'none';
+  return [`GitHub Environment ${name} deployment branch policy must allow exactly the branch main (found: ${found})`];
+}
+
 export async function verifyReleaseGovernance(env = process.env, fetchImpl = fetch) {
   const { GITHUB_REPOSITORY: repository } = env;
   const sha = env.RELEASE_SHA || env.GITHUB_SHA;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '') || !/^[a-f0-9]{40}$/.test(sha ?? '') || !env.GITHUB_TOKEN) {
     throw new Error('Repository, exact release SHA and RELEASE_GOVERNANCE_TOKEN credential are required');
   }
-  const token = await resolveReleaseGovernanceToken(env.GITHUB_TOKEN, repository, fetchImpl);
+  const environments = parseReleaseEnvironments(env.RELEASE_ENVIRONMENTS);
+  const token = await resolveReleaseGovernanceToken(env.GITHUB_TOKEN, repository, fetchImpl, environments.length > 0 ? { environments: 'read' } : {});
   async function get(path) {
     const response = await fetchImpl(`https://api.github.com/repos/${repository}/${path}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
@@ -171,7 +204,13 @@ export async function verifyReleaseGovernance(env = process.env, fetchImpl = fet
   if (ids.some((id) => !Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid ruleset identity');
   const rulesets = await Promise.all(ids.map((id) => get(`rulesets/${id}?includes_parents=true`)));
   const checks = await pages(`commits/${sha}/check-runs?filter=latest`, 'check_runs');
-  return evaluateGovernance(rules, rulesets, checks);
+  const result = evaluateGovernance(rules, rulesets, checks);
+  for (const name of environments) {
+    const environment = await get(`environments/${name}`);
+    const branchPolicies = await pages(`environments/${name}/deployment-branch-policies`, 'branch_policies');
+    result.failures.push(...evaluateEnvironmentProtection(name, environment, branchPolicies));
+  }
+  return { passed: result.failures.length === 0, failures: result.failures };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -179,7 +218,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const result = await verifyReleaseGovernance();
     for (const failure of result.failures) console.error(failure);
     if (!result.passed) process.exitCode = 1;
-    else console.log('Release source checks and non-bypassable main rules verified with a short-lived GitHub App token');
+    else {
+      const checked = parseReleaseEnvironments(process.env.RELEASE_ENVIRONMENTS);
+      console.log(`Release source checks and non-bypassable main rules verified with a short-lived GitHub App token${checked.length > 0 ? `; deployment environments limited to main: ${checked.join(', ')}` : ''}`);
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Release governance verification failed');
     process.exitCode = 1;
