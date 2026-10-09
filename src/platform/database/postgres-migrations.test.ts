@@ -43,8 +43,8 @@ test("migration contract suite discovers every versioned SQL migration in determ
   assert.deepEqual(files, allSqlFiles, "every SQL file in the Postgres migration directory must use the versioned migration naming contract");
   assert.deepEqual(
     files.map((file) => file.slice(file.lastIndexOf("/") + 1)),
-    ["001_baseline.sql", "002_runtime_database_role.sql", "003_control_evidence_record_no_truncate.sql"],
-    "the migration directory holds exactly the schema baseline, the runtime database role migration and the control evidence truncate guard",
+    ["001_baseline.sql", "002_runtime_database_role.sql", "003_control_evidence_record_no_truncate.sql", "004_session_activity_expiry_revocation.sql"],
+    "the migration directory holds exactly the schema baseline, the runtime database role migration the control evidence truncate guard and session expiry preservation",
   );
 
   const numbers = files.map((file) => {

@@ -170,9 +170,11 @@ try {
     assert.equal(await count(`select count(*)::int as n from corvis_control.tenant_session_activity where tenant_id=$1 and session_id in ('sid-hk-live','sid-hk-quiet')`), 2, 'a live session and one quiet for days are kept');
     assert.equal(await sweepTenantSessionActivity(tx), 0, 'nothing is left to purge');
     assert.ok(await authorization.resolve(principal(member, 'sid-hk-live')), 'an active session still resolves after the sweep');
+    assert.equal(await authorization.resolve(principal(member, 'sid-hk-old')), null, 'a policy-expired session cannot return with a fresh clock after housekeeping');
+    assert.equal(await authorization.resolve(principal(member, 'sid-hk-old'), { applySessionPolicy: false }), null, 'background reauthorization also rejects the purged expired session');
     assert.equal(await authorization.resolve(principal(member, 'sid-hk-revoked-old')), null, 'a revoked session stays revoked although its activity record was purged');
     assert.equal(await authorization.resolve(principal(member, 'sid-hk-revoked-old'), { applySessionPolicy: false }), null, 'also for background re-authorization');
-    assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1`), revocationsBefore, 'the sweep never touches a revocation');
+    assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1`), revocationsBefore + 1, 'the sweep preserves expired session identity without replacing existing revocations');
     assert.equal(await count(`select count(*)::int as n from corvis_control.session_revocation where tenant_id=$1 and session_id='sid-member-1'`), 1, 'earlier sign-outs still hold');
     await tx.execute(`update corvis_control.tenant_session_activity set first_seen_at = now() - interval '8 days' where tenant_id=$1 and session_id='sid-hk-live'`, [tenantId]);
     await sweepTenantSessionActivity(tx);

@@ -81,6 +81,41 @@ function assertSecretSafe(): void {
 }
 const body = async (response: Response) => await response.text();
 
+test("logout bodies are bounded in bytes before verification, including dishonest or missing lengths", async (t) => {
+  capture(t);
+  for (const declared of [undefined, "1", "16385"]) {
+    let pulls = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        if (pulls === 1) controller.enqueue(new TextEncoder().encode("logout_token=" + "a".repeat(16384)));
+        else controller.error(new Error("must not read beyond the limit"));
+      },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
+    if (declared !== undefined) headers["content-length"] = declared;
+    const request = new Request("https://corvis.test/logout", { method: "POST", headers, body: stream, duplex: "half" } as RequestInit);
+    const db = database([]);
+    const response = await handleBackchannelLogout(request, { config, db, verifier: realVerifier(), now, limiter: new RateLimiter(10), correlationId: "bounded" });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_request", correlationId: "bounded" });
+    assert.equal(pulls, declared === "16385" ? 0 : 1);
+    assert.equal(cancelled, declared !== "16385");
+    assert.equal(db.calls.length, 0);
+  }
+  // UTF-8 bytes, not JS character count: an otherwise valid token with ignored padding must be refused.
+  const db = database([]);
+  const request = form(undefined, { body: `logout_token=${logoutJwt()}&padding=${"é".repeat(8192)}` });
+  assert.equal((await handleBackchannelLogout(request, { config, db, verifier: realVerifier(), now, limiter: new RateLimiter(10) })).status, 400);
+  assert.equal(db.calls.length, 0);
+  const broken = new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error("stream interrupted")); } });
+  const interrupted = new Request("https://corvis.test/logout", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: broken, duplex: "half" } as RequestInit);
+  assert.equal((await handleBackchannelLogout(interrupted, { config, db, now, limiter: new RateLimiter(10) })).status, 500);
+  assertSecretSafe();
+});
+
 test("a valid logout token from the shared provider ends the session immediately, answers 200 with nothing in the body, and is applied once", async (t) => {
   capture(t);
   const db = database([]);
