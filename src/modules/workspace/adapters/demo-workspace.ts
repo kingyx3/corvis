@@ -1,6 +1,6 @@
 import { workspaceContext } from "../../../shared/lib/workspace-context.ts";
 import { safeGetItem } from "../../../shared/lib/safe-storage.ts";
-import type { Permission, ResearchPin } from "@/shared/domain/enterprise";
+import type { Permission, ResearchAnswer, ResearchPin } from "@/shared/domain/enterprise";
 import type { TenantAccessMember, WorkspaceIdentity, WorkspacePort } from "@/shared/domain/workspace";
 import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/platform/demo/customer-journey-store";
 import { demoExposureDimensionFacts, portfolioValueFacts } from "@/platform/demo/catalog";
@@ -136,9 +136,11 @@ export function createDemoWorkspacePort(): WorkspacePort {
       });
     },
     async listCompanySectors() {
-      return demoCompanySectorStore().list();
+      // The secondary workspace intentionally has no data, like every other list method here.
+      return secondaryWorkspace() ? [] : demoCompanySectorStore().list();
     },
     async assignCompanySector(command) {
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       const result = demoCompanySectorStore().assign("demo|reviewer", command);
       if ("refused" in result) throw new Error(result.refused);
       return { accepted: true as const, companyId: command.companyId, sectorCode: command.sectorCode, newVersion: result.newVersion };
@@ -182,11 +184,17 @@ export function createDemoWorkspacePort(): WorkspacePort {
     async research(question, signal) {
       signal?.throwIfAborted();
       assertDemoModuleAvailable("research");
+      if (secondaryWorkspace()) return { answer: `Demo response for: ${question}`, citations: [], semanticQueryIds: [], uncertainty: "Demo mode" };
       return demoCustomerJourneyStore.research(question);
     },
     async researchStream(question, onEvent, signal) {
       signal?.throwIfAborted();
       assertDemoModuleAvailable("research");
+      if (secondaryWorkspace()) {
+        const data: ResearchAnswer = { answer: `Demo response for: ${question}`, citations: [], semanticQueryIds: [], uncertainty: "Demo mode" };
+        onEvent({ type: "result", data });
+        return data;
+      }
       onEvent({ type: "progress", phase: "planning" });
       signal?.throwIfAborted();
       onEvent({ type: "progress", phase: "retrieval" });
@@ -213,6 +221,7 @@ export function createDemoWorkspacePort(): WorkspacePort {
       return demoCustomerJourneyStore.sourceEvidence(sourceReferenceId);
     },
     async review(command) {
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       demoCustomerJourneyStore.review(command);
       return {
         accepted: true,
@@ -222,10 +231,12 @@ export function createDemoWorkspacePort(): WorkspacePort {
       };
     },
     async resolveReconciliation(command) {
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       demoCustomerJourneyStore.resolveException(command.exceptionId);
       return { accepted: true, resolutionEventId: crypto.randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" as const };
     },
     async publish(command) {
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       demoCustomerJourneyStore.publish(command);
     },
   };
