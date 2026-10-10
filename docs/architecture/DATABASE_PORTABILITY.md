@@ -92,7 +92,7 @@ New multi-statement mutation code should use `requireTransaction` from `src/plat
 
 It fails closed when the selected transport cannot provide a native transaction. This avoids the dangerous compatibility behavior where a business mutation commits but its audit/event/outbox statement fails separately.
 
-`withTransaction` in `src/platform/database/postgres.ts` remains temporarily as a compatibility alias to the legacy optional behavior. Existing call sites can migrate incrementally; security- or audit-sensitive mutation paths should move first.
+`withTransaction` in `src/platform/database/postgres.ts` is a backwards-compatible alias to `requireTransaction`: mutation callers fail closed when a transport lacks native transactions. `withOptionalTransaction` remains available by explicit import only for non-critical/read-only use.
 
 ## Convex reference model
 

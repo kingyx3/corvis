@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PostgresHttpSqlApi } from "../../test-support/http-sql-driver.ts";
-import { postgres, postgresRuntime, registerDatabaseDriver } from "./postgres.ts";
+import { postgres, postgresRuntime, registerDatabaseDriver, withTransaction } from "./postgres.ts";
 
 test("database factory fails closed for missing and unsupported bindings", () => {
   assert.throws(
@@ -48,4 +48,14 @@ test("native PostgreSQL runtime advertises transaction and PostgreSQL session ca
   assert.equal(runtime.capabilities.logicalReplication, true);
   assert.equal(cachedRuntime.provider, "gcp-cloud-sql");
   assert.equal(cachedRuntime.api, runtime.api);
+});
+
+test("legacy transaction alias rejects non-transactional transports before mutation", async () => {
+  const db = postgres("https://postgres.example.test/sql");
+  let called = false;
+  await assert.rejects(
+    async () => withTransaction(db, async () => { called = true; }),
+    /Database transport does not provide native transactions/,
+  );
+  assert.equal(called, false);
 });
