@@ -109,14 +109,20 @@ export function SourceConnectionsSection({ runHistoryAvailable, lastRuns, onOpen
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${withoutOAuthReturn(window.location.search)}${window.location.hash}`);
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchConnections(controller.signal).then((result) => {
-      if (controller.signal.aborted) return;
+  // Every refresh shares this counter so a slower, earlier-issued fetch (e.g. from runTest) can never
+  // overwrite the state set by a faster, later one (e.g. from finish after a Pause/Resume/Revoke).
+  const latest = useRef(0);
+  const refresh = () => {
+    const requestId = ++latest.current;
+    return fetchConnections().then((result) => {
+      if (requestId !== latest.current) return;
       setNow(new Date());
       setState(result);
     });
-    return () => controller.abort();
+  };
+
+  useEffect(() => {
+    void refresh();
   }, [reloadKey]);
 
   // After a command the opener may have been replaced (Pause becomes Resume), so focus lands on the row it changed.
@@ -132,9 +138,7 @@ export function SourceConnectionsSection({ runHistoryAvailable, lastRuns, onOpen
     setDialog(null);
     setOutcome({ tone: "success", text: `${connection.connectionLabel}: ${text}` });
     focusId.current = connection.sourceConnectionId;
-    const result = await fetchConnections();
-    setNow(new Date());
-    setState(result);
+    await refresh();
     onChanged();
   };
 
@@ -148,9 +152,7 @@ export function SourceConnectionsSection({ runHistoryAvailable, lastRuns, onOpen
   };
 
   const reload = async () => {
-    const result = await fetchConnections();
-    setNow(new Date());
-    setState(result);
+    await refresh();
     onChanged();
   };
 
