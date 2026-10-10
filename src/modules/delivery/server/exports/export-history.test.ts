@@ -106,7 +106,8 @@ test("export history is scoped to the caller's tenant and own requests and reads
   assert.equal(listQueries.length, 1, "artifact-scoped rows must not be re-read one by one");
   assert.match(listQueries[0]!.sql, /where tenant_id=\$1 and requested_by=\$2/);
   assert.match(listQueries[0]!.sql, /order by created_at desc/);
-  assert.deepEqual(listQueries[0]!.parameters, [TENANT, "analyst@example.test", 50]);
+  assert.match(listQueries[0]!.sql, /workspace_id=\$4::uuid and auth_method=\$5/);
+  assert.deepEqual(listQueries[0]!.parameters, [TENANT, "analyst@example.test", 50, identity().workspaceId, identity().authMethod]);
 
   const { store: lowStore, calls: lowCalls } = fakeStore([job("1")]);
   await listPhysicalExportStatuses(identity(), 0, lowStore);

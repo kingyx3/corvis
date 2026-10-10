@@ -372,6 +372,8 @@ Implementation tracker: GitHub issue #261. A customer who doubts a **published**
 
 ## Physical export publication versions
 
+Physical export ownership is the tuple `(tenantId, workspaceId, authMethod, subject)` recorded when the job is requested. History, status/grant issuance, redemption and failed-download grant restoration all require that same tuple. A matching subject string in another authentication method or workspace does not own the export, even with identical data entitlements. A fresh session for the same owner may retrieve an unexpired export after normal current authorization; exports are not tied to the original session ID.
+
 The per-user observation, Position Financials and performance-scorecard exports pin each snapshot's exact version in `manifest.snapshotState`. A matching snapshot ID alone is insufficient: the recorded version must still be the latest published version, in the same tenant and within the caller's current fund rights. Delivery checks before and after loading rows; status reads, history and download redemption check again before exposing stored artifacts. Existing document and redistribution checks still apply.
 
 A replaced, withdrawn or unverifiable publication fails closed. The worker records `export_snapshot_authorization_expired` as a permanent failure; the caller must request a new export. Missing, partial, duplicate or malformed version metadata cannot be used to serve an old artifact. The API uses the existing authorization refusal, and history omits inaccessible exports. Empty exports with no snapshots do not require version metadata. This contract also applies to scheduled runs using the same pipeline; the separate Organization Admin tenant-archive pipeline retains its own rights and approval contract.
