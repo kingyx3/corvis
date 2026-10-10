@@ -1,7 +1,10 @@
 import { createSign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-export const REQUIRED_CHECKS = ['frontend', 'container', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts'];
+// Container CI is mandatory through frontend's fan-in. Keep the live ruleset's
+// stable contexts separate from the additional exact-commit release evidence.
+export const REQUIRED_CHECKS = ['frontend', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts'];
+export const RELEASE_CHECKS = [...REQUIRED_CHECKS, 'container'];
 
 export const MISSING_BYPASS_VISIBILITY = 'Release governance GitHub App lacks ruleset admin visibility: GitHub omitted bypass_actors ' +
   'from every applicable ruleset. Configure RELEASE_GOVERNANCE_TOKEN as GitHub App credential JSON for an app installed ' +
@@ -124,13 +127,13 @@ export function evaluateGovernance(rules, rulesets, checks) {
   const required = enforced.filter((rule) => rule.type === 'required_status_checks' &&
     rule.parameters?.strict_required_status_checks_policy === true)
     .flatMap((rule) => rule.parameters.required_status_checks ?? []);
-  for (const name of REQUIRED_CHECKS) {
+  for (const name of RELEASE_CHECKS) {
     const check = checks.filter((entry) => entry.name === name && entry.app?.slug === 'github-actions')
       .sort((a, b) => b.id - a.id)[0];
     if (!check || check.status !== 'completed' || check.conclusion !== 'success') {
       failures.push(`release commit lacks successful GitHub Actions check: ${name}`);
     }
-    if (!required.some((entry) => entry.context === name && check && entry.integration_id === check.app.id)) {
+    if (REQUIRED_CHECKS.includes(name) && !required.some((entry) => entry.context === name && check && entry.integration_id === check.app.id)) {
       failures.push(`main lacks strict required check bound to GitHub Actions: ${name}`);
     }
   }

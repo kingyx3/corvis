@@ -255,7 +255,7 @@ jobs:
   # Keep the historic required-check context stable while the expensive gates run
   # independently. Every prior frontend check remains blocking through this fan-in.
   frontend:
-    needs: [quality, dockerfile-lint, terraform, build, e2e, non-demo]
+    needs: [quality, dockerfile-lint, terraform, build, e2e, non-demo, container]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -269,9 +269,10 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           NON_DEMO_RESULT: ${{ needs.non-demo.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
         run: |
           set -euo pipefail
-          for result in "$QUALITY_RESULT" "$DOCKERFILE_LINT_RESULT" "$TERRAFORM_RESULT" "$BUILD_RESULT" "$E2E_RESULT" "$NON_DEMO_RESULT"; do
+          for result in "$QUALITY_RESULT" "$DOCKERFILE_LINT_RESULT" "$TERRAFORM_RESULT" "$BUILD_RESULT" "$E2E_RESULT" "$NON_DEMO_RESULT" "$CONTAINER_RESULT"; do
             test "$result" = "success"
           done
 
