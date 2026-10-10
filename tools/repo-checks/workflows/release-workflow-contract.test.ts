@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 async function read(path: string): Promise<string> {
@@ -60,9 +61,9 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
   const end = workflow.indexOf("\n  container:\n", start);
   assert.ok(start > 0 && end > start);
   const frontend = workflow.slice(start, end);
-  assert.match(frontend, /needs:\s*\[quality, dockerfile-lint, terraform, build, e2e, non-demo\]/);
+  assert.match(frontend, /needs:\s*\[quality, dockerfile-lint, terraform, build, e2e, non-demo, container\]/);
   assert.match(frontend, /if:\s*always\(\)/);
-  for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo"]) {
+  for (const job of ["quality", "dockerfile-lint", "terraform", "build", "e2e", "non-demo", "container"]) {
     assert.match(frontend, new RegExp(`needs\\.${job}\\.result`), job);
   }
   assert.match(workflow, /npm run lint/);
@@ -72,6 +73,18 @@ test("frontend ci parallelizes independent gates behind the stable aggregate che
   assert.match(workflow, /npm run build/);
   assert.match(workflow, /npm run test:e2e/);
   assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
+});
+
+test("the required frontend gate fails on every unsuccessful container outcome", async () => {
+  const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const frontend = workflow.slice(workflow.indexOf("\n  frontend:\n"), workflow.indexOf("\n  container:\n"));
+  const script = frontend.slice(frontend.indexOf("        run: |\n") + "        run: |\n".length)
+    .split("\n").map((line) => line.replace(/^          /, "")).join("\n");
+  const successful = Object.fromEntries(["QUALITY", "DOCKERFILE_LINT", "TERRAFORM", "BUILD", "E2E", "NON_DEMO"].map((name) => [`${name}_RESULT`, "success"]));
+  for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+    const run = spawnSync("bash", ["-c", script], { env: { ...process.env, ...successful, CONTAINER_RESULT: result } });
+    assert.equal(run.status, result === "success" ? 0 : 1, `container result: ${result}`);
+  }
 });
 
 test("dev deploys never run production-like runtime secret or migration steps", async () => {

@@ -2,6 +2,8 @@
 
 Corvis release workflows fail closed unless the exact release commit is already on `main`, every required GitHub Actions check succeeded for that commit, and the effective `main` ruleset is active, strict, and non-bypassable.
 
+The live ruleset requires five GitHub Actions contexts: `frontend`, `rate-limit-postgres`, `Analyze TypeScript`, `secret-history`, and `forbidden-artifacts`. `frontend` waits for quality, Dockerfile lint, Terraform, build, all browser tests, non-demo smoke, and **container** validation; any failed, cancelled or skipped dependency fails the aggregate. The release verifier additionally requires a successful exact-commit `container` check, without requiring a sixth independent ruleset context. Container build, runtime smoke and vulnerability scanning therefore remain mandatory at both merge and release boundaries.
+
 ## GitHub App credential
 
 `RELEASE_GOVERNANCE_TOKEN` is retained as the historical secret name, but **it must not contain a PAT**. Store a GitHub App credential object in each `dev`, `uat`, and `prod` GitHub Environment:

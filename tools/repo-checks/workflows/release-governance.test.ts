@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 // @ts-expect-error Workflow script runs directly in Node; no declaration file needed.
-import { evaluateEnvironmentProtection, evaluateGovernance, MISSING_BYPASS_VISIBILITY, parseReleaseEnvironments, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../ci/release-governance.mjs';
+import { evaluateEnvironmentProtection, evaluateGovernance, MISSING_BYPASS_VISIBILITY, parseReleaseEnvironments, RELEASE_CHECKS, REQUIRED_CHECKS, resolveReleaseGovernanceToken, verifyReleaseGovernance } from '../../ci/release-governance.mjs';
 import { readFileSync } from 'node:fs';
 
 function fixture(approvals = 1) {
-  const checks = REQUIRED_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));
+  const checks = RELEASE_CHECKS.map((name: string, id: number) => ({ name, id, app: { slug: 'github-actions', id: 15368 }, status: 'completed', conclusion: 'success' }));
   const rules = [
     { ruleset_id: 1, type: 'pull_request', parameters: {
       required_approving_review_count: approvals,
@@ -23,6 +23,17 @@ function fixture(approvals = 1) {
 test('release gate accepts multi-operator approval governance and successful exact-commit checks', () => {
   const { rules, sets, checks } = fixture();
   assert.equal(evaluateGovernance(rules, sets, checks).passed, true);
+});
+
+test('container evidence remains mandatory with the five-context live ruleset', () => {
+  const { rules, sets, checks } = fixture(0);
+  assert.deepEqual(REQUIRED_CHECKS, ['frontend', 'rate-limit-postgres', 'Analyze TypeScript', 'secret-history', 'forbidden-artifacts']);
+  assert.equal(evaluateGovernance(rules, sets, checks).passed, true);
+  for (const conclusion of ['failure', 'cancelled', 'skipped', null]) {
+    const failed = checks.map((check: { name: string }) => check.name === 'container' ? { ...check, conclusion } : check);
+    assert.deepEqual(evaluateGovernance(rules, sets, failed).failures, ['release commit lacks successful GitHub Actions check: container']);
+  }
+  assert.equal(evaluateGovernance(rules, sets, checks.filter((check: { name: string }) => check.name !== 'container')).passed, false);
 });
 
 test('release gate accepts the current solo-maintainer PR policy only when it is non-bypassable', () => {
