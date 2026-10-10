@@ -1,6 +1,6 @@
 import {
   POSTGRES_BASELINE_CAPABILITIES,
-  withOptionalTransaction,
+  requireTransaction,
   type DatabaseApi,
   type DatabasePrimitive,
   type DatabaseProvider,
@@ -20,7 +20,7 @@ export type PostgresSqlApi = DatabaseApi;
  * requireTransaction from database.ts so a non-transactional transport cannot
  * silently weaken atomicity.
  */
-export const withTransaction = withOptionalTransaction;
+export const withTransaction = requireTransaction;
 
 const nativeClients = new Map<string, NativePostgresSqlApi>();
 const NATIVE_POSTGRES_DSN = /^postgres(?:ql)?:\/\//i;
