@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { NativePostgresSqlApi } from '../../../src/platform/database/postgres-native.ts';
 import { getPhysicalExportStatus, redeemPhysicalExportGrant, restorePhysicalExportGrant } from '../../../src/modules/delivery/server/exports/physical-exports.ts';
 import { assertExportSnapshotVersions } from '../../../src/modules/delivery/server/exports/export-snapshot-state.ts';
+import { listPhysicalExportStatuses } from '../../../src/modules/delivery/server/exports/export-history.ts';
 
 const dsn = process.env.CORVIS_DATABASE_DSN;
 assert.ok(dsn, 'CORVIS_DATABASE_DSN is required');
@@ -57,6 +58,19 @@ try {
       return issued;
     };
 
+    // Equal subject strings are not interchangeable across authentication methods or workspaces.
+    // Give every caller the same data rights so these negatives prove ownership, not entitlement denial.
+    const otherContexts = [
+      identity('owner', { authMethod: 'saml' }),
+      identity('owner', { workspaceId: 'e9000000-0000-4000-8000-000000000099' }),
+    ];
+    for (const other of otherContexts) {
+      assert.equal(await getPhysicalExportStatus(other, exportId, tx), null, 'another login context cannot read the manifest or mint a grant');
+      assert.deepEqual(await listPhysicalExportStatuses(other, 20, tx), [], 'history is scoped to the requesting login context');
+      assert.equal(await redeemPhysicalExportGrant(other, exportId, token, tx), null, 'another login context cannot consume the owner grant');
+    }
+    assert.equal((await listPhysicalExportStatuses(identity('owner'), 20, tx)).length, 1);
+
     // Only the owner, in the same tenant, with the exact token, can redeem it -- and only once.
     const redeemed = await redeemPhysicalExportGrant(identity('owner'), exportId, token, tx);
     assert.deepEqual(redeemed, { objectUri, format: 'csv', checksumSha256: 'a'.repeat(64) });
@@ -76,7 +90,11 @@ try {
     assert.ok(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx));
     await restorePhysicalExportGrant(identity('someone-else'), exportId, restorable, tx);
     assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), null, 'another subject cannot restore the grant');
-    await restorePhysicalExportGrant(identity('owner'), exportId, restorable, tx);
+    for (const other of otherContexts) {
+      await restorePhysicalExportGrant(other, exportId, restorable, tx);
+      assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), null, 'another login context cannot restore a consumed grant');
+    }
+    await restorePhysicalExportGrant(identity('owner', { sessionId: 'new-session' }), exportId, restorable, tx);
     assert.ok(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), 'the owner\'s restored grant redeems again');
     assert.equal(await redeemPhysicalExportGrant(identity('owner'), exportId, restorable, tx), null, 'and is single use again');
 
