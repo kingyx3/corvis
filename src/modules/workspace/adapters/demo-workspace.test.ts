@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import test from "node:test";
-import { createDemoWorkspacePort } from "./demo-workspace.ts";
 import type { ResearchAnswer } from "@/shared/domain/enterprise";
+
+// demo-workspace.ts uses the Next.js "@/..." alias; see research-http.test.ts.
+register(new URL("../../../test-support/alias-loader.mjs", import.meta.url), import.meta.url);
+
+const { createDemoWorkspacePort } = await import("./demo-workspace.ts");
 
 const globals = globalThis as Record<string, unknown>;
 
