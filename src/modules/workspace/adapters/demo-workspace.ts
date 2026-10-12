@@ -210,11 +210,13 @@ export function createDemoWorkspacePort(): WorkspacePort {
     },
     async pinResearchAnswer(command) {
       assertDemoModuleAvailable("research");
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       const pin: ResearchPin = { pinId: crypto.randomUUID(), question: command.question, answer: command.answer, askedAt: command.askedAt, pinnedAt: new Date().toISOString() };
       researchPins = [pin, ...researchPins].slice(0, 50);
       return pin;
     },
     async unpinResearchAnswer(pinId) {
+      if (secondaryWorkspace()) throw new Error("workspace_read_only");
       researchPins = researchPins.filter((pin) => pin.pinId !== pinId);
     },
     async sourceEvidence(sourceReferenceId) {
