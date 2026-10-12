@@ -319,7 +319,7 @@ Responses are `{ data: { kind, tenantId, changed, version }, correlationId }`; s
 
 ## Service accounts (F6)
 
-Implementation tracker: GitHub issue #262; design, assumptions and the open decision are in [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md). Organization Admins (`tenant_admin`, held by a person; `accountadmin` and any service account are refused with `403 tenant_admin_required`) manage non-human identities under `/api/v1/access/service-accounts` (classified `tenant_control`, not a stable data-integration API). A service account is a normal identity subject with one role in one workspace under the existing RBAC, entitlement and data-rights model: there is no separate API-scope plane.
+Implementation tracker: GitHub issue #262; design, assumptions and the shipped credential-acceptance decision (#350, #340) are in [`SERVICE_ACCOUNTS.md`](../features/SERVICE_ACCOUNTS.md). Organization Admins (`tenant_admin`, held by a person; `accountadmin` and any service account are refused with `403 tenant_admin_required`) manage non-human identities under `/api/v1/access/service-accounts` (classified `tenant_control`, not a stable data-integration API). A service account is a normal identity subject with one role in one workspace under the existing RBAC, entitlement and data-rights model: there is no separate API-scope plane.
 
 | Route | Who | Purpose |
 | --- | --- | --- |
@@ -371,6 +371,8 @@ Implementation tracker: GitHub issue #261. A customer who doubts a **published**
 **Demo mode** serves the same routes from an in-memory per-tenant store (`src/modules/governance/adapters/data-issue-store.ts`, selected in `src/modules/governance/server/data-issues/data-issue-service.ts`), seeded per reporting subject with a corrected case carrying an unseen update, an investigating case and a received case. It is never production evidence.
 
 ## Physical export publication versions
+
+Physical export ownership is the tuple `(tenantId, workspaceId, authMethod, subject)` recorded when the job is requested. History, status/grant issuance, redemption and failed-download grant restoration all require that same tuple. A matching subject string in another authentication method or workspace does not own the export, even with identical data entitlements. A fresh session for the same owner may retrieve an unexpired export after normal current authorization; exports are not tied to the original session ID.
 
 The per-user observation, Position Financials and performance-scorecard exports pin each snapshot's exact version in `manifest.snapshotState`. A matching snapshot ID alone is insufficient: the recorded version must still be the latest published version, in the same tenant and within the caller's current fund rights. Delivery checks before and after loading rows; status reads, history and download redemption check again before exposing stored artifacts. Existing document and redistribution checks still apply.
 

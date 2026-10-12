@@ -28,8 +28,9 @@ export async function listPhysicalExportStatuses(
   const rows = await store.query(`select ${EXPORT_STATUS_COLUMNS}
     from corvis_serving.export_job
     where tenant_id=$1 and requested_by=$2
+      and workspace_id=$4::uuid and auth_method=$5
     order by created_at desc
-    limit $3`, [identity.tenantId, identity.subject, boundedLimit]);
+    limit $3`, [identity.tenantId, identity.subject, boundedLimit, identity.workspaceId, identity.authMethod]);
   const statuses: ExportStatus[] = [];
   for (const row of rows) {
     try {

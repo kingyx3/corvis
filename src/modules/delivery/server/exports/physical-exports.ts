@@ -280,7 +280,8 @@ export async function getPhysicalExportStatus(
   const rows = await store.query(`select ${EXPORT_STATUS_COLUMNS}
     from corvis_serving.export_job
     where tenant_id=$1 and export_id=$2::uuid and requested_by=$3
-    limit 1`, [identity.tenantId, exportId, identity.subject]);
+      and workspace_id=$4::uuid and auth_method=$5
+    limit 1`, [identity.tenantId, exportId, identity.subject, identity.workspaceId, identity.authMethod]);
   const row = rows[0];
   if (!row) return null;
   const result = await exportStatusFromJob(identity, row, store);
@@ -314,7 +315,8 @@ export async function redeemPhysicalExportGrant(
       and g.tenant_id=$1 and g.export_id=$2::uuid and g.subject=$3
       and g.token_sha256=$4 and g.expires_at>now() and g.consumed_at is null
       and j.requested_by=$3 and j.state='complete' and j.expires_at>now()
-    returning j.object_uri,j.format,j.checksum_sha256,j.snapshot_ids,j.manifest`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+      and j.workspace_id=$5::uuid and j.auth_method=$6
+    returning j.object_uri,j.format,j.checksum_sha256,j.snapshot_ids,j.manifest`, [identity.tenantId, exportId, identity.subject, sha256(token), identity.workspaceId, identity.authMethod]);
   const row = rows[0];
   if (!row?.object_uri || !row?.checksum_sha256) return null;
   const manifest = row.manifest as DeliveryManifest;
@@ -330,7 +332,7 @@ export async function redeemPhysicalExportGrant(
 /**
  * Gives a consumed grant back when the download failed before a single byte was handed to the caller (the object
  * store errored or the object is missing), so a transient failure does not force a fresh grant. Bound to the same
- * tenant, export, subject and token hash as the redemption; it never revives an expired grant.
+ * tenant, export, workspace, authentication method, subject and token hash as the redemption; it never revives an expired grant.
  */
 export async function restorePhysicalExportGrant(
   identity: RequestIdentity,
@@ -339,10 +341,14 @@ export async function restorePhysicalExportGrant(
   store: PostgresSqlApi = postgres(getServerConfig().databaseDsn),
 ): Promise<void> {
   if (!token || token.length > 256) return;
-  await store.execute(`update corvis_serving.export_download_grant
+  await store.execute(`update corvis_serving.export_download_grant g
     set consumed_at=null
-    where tenant_id=$1 and export_id=$2::uuid and subject=$3 and token_sha256=$4
-      and consumed_at is not null and expires_at>now()`, [identity.tenantId, exportId, identity.subject, sha256(token)]);
+    from corvis_serving.export_job j
+    where j.tenant_id=g.tenant_id and j.export_id=g.export_id
+      and g.tenant_id=$1 and g.export_id=$2::uuid and g.subject=$3 and g.token_sha256=$4
+      and g.consumed_at is not null and g.expires_at>now()
+      and j.requested_by=$3 and j.workspace_id=$5::uuid and j.auth_method=$6`,
+  [identity.tenantId, exportId, identity.subject, sha256(token), identity.workspaceId, identity.authMethod]);
 }
 
 export function exportObjectKey(objectUri: string): string {

@@ -660,15 +660,16 @@ const EXPORT_ROW = {
   object_uri: "gs://bucket/exports/x.csv", manifest: { exportId: SOME_UUID, tenantId: TENANT, format: "csv", snapshotIds: [] },
 };
 
-test("GET /exports/{id} is owner-scoped: the lookup carries tenant and subject, another user's export is a 404", async () => {
+test("GET /exports/{id} carries the full owner context and another user's export is a 404", async () => {
   const handlers = await load("exports/[exportId]/route.ts");
   seedDatabase(() => []);
   const response = await handlers.GET!(requestFor(`/exports/${SOME_UUID}`, { roles: ["analyst"], subject: "someone-else", redistribution: true }), paramsFor("exports/[exportId]/route.ts"));
   assert.equal(response.status, 404);
   const lookup = queries.find((query) => query.sql.includes("corvis_serving.export_job"));
   assert.ok(lookup);
-  assert.deepEqual(lookup.parameters, [TENANT, SOME_UUID, "someone-else"]);
+  assert.deepEqual(lookup.parameters, [TENANT, SOME_UUID, "someone-else", WORKSPACE, "oidc"]);
   assert.match(lookup.sql, /requested_by=\$3/);
+  assert.match(lookup.sql, /workspace_id=\$4::uuid and auth_method=\$5/);
 
   assert.equal((await handlers.GET!(requestFor("/exports/nope", { roles: ["analyst"], redistribution: true }), { params: Promise.resolve({ exportId: "nope" }) })).status, 400);
 
@@ -704,7 +705,8 @@ test("download grants are issued to the owner only, hashed at rest, and redeemed
   assert.equal(redeemed.status, 404, "a grant that matches no row for this subject is a 404, not an artifact");
   const redemption = queries.find((query) => query.sql.includes("export_download_grant"));
   assert.ok(redemption);
-  assert.deepEqual(redemption.parameters, [TENANT, SOME_UUID, "thief", createHash("sha256").update(token).digest("hex")]);
+  assert.deepEqual(redemption.parameters, [TENANT, SOME_UUID, "thief", createHash("sha256").update(token).digest("hex"), WORKSPACE, "oidc"]);
+  assert.match(redemption.sql, /j\.workspace_id=\$5::uuid and j\.auth_method=\$6/);
   for (const predicate of [/g\.subject=\$3/, /g\.tenant_id=\$1/, /g\.token_sha256=\$4/, /g\.expires_at>now\(\)/, /j\.requested_by=\$3/, /j\.state='complete'/, /j\.expires_at>now\(\)/]) {
     assert.match(redemption.sql, predicate);
   }
