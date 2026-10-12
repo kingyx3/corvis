@@ -7,6 +7,7 @@ import {
   type DatabaseRow,
   type DatabaseRuntime,
 } from "./database.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isProductionEnvironment } from "../config/config.ts";
 import { NativePostgresSqlApi } from "./postgres-native.ts";
 
@@ -20,7 +21,21 @@ export type PostgresSqlApi = DatabaseApi;
  * requireTransaction from database.ts so a non-transactional transport cannot
  * silently weaken atomicity.
  */
-export const withTransaction = requireTransaction;
+const activeTransactionHandles = new AsyncLocalStorage<WeakSet<DatabaseApi>>();
+
+/**
+ * Existing transaction handles have no nested transaction method. Trust only
+ * handles supplied by a transaction callback entered through this helper;
+ * never treat an arbitrary transaction-less adapter as already transactional.
+ */
+export function withTransaction<T>(db: DatabaseApi, fn: (tx: DatabaseApi) => Promise<T>): Promise<T> {
+  if (activeTransactionHandles.getStore()?.has(db)) return fn(db);
+  return requireTransaction(db, (tx) => {
+    const handles = new WeakSet<DatabaseApi>();
+    handles.add(tx);
+    return activeTransactionHandles.run(handles, () => fn(tx));
+  });
+}
 
 const nativeClients = new Map<string, NativePostgresSqlApi>();
 const NATIVE_POSTGRES_DSN = /^postgres(?:ql)?:\/\//i;
