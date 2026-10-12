@@ -59,3 +59,23 @@ test("legacy transaction alias rejects non-transactional transports before mutat
   );
   assert.equal(called, false);
 });
+
+
+test("legacy helper reuses verified nested transaction handles", async () => {
+  let transactions = 0;
+  const handle = { query: async () => [], execute: async () => {}, health: async () => true };
+  const root = { ...handle, transaction: async <T>(fn: (tx: typeof handle) => Promise<T>) => {
+    transactions++;
+    return fn(handle);
+  } };
+  const value = await withTransaction(root, async (tx) => {
+    assert.equal(tx, handle);
+    return withTransaction(tx, async (nested) => {
+      assert.equal(nested, handle);
+      return 42;
+    });
+  });
+  assert.equal(value, 42);
+  assert.equal(transactions, 1);
+  await assert.rejects(async () => withTransaction(handle, async () => 1), /native transactions/);
+});
