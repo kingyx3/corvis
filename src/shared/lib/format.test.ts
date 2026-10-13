@@ -16,6 +16,11 @@ test("formatBytes carries into the next unit when rounding reaches 1024", () => 
   assert.equal(formatBytes(1024 ** 3 - 1), "1.0 GB");
 });
 
+test("formatBytes treats a negative size as 0 instead of producing NaN text", () => {
+  assert.equal(formatBytes(-5), "0 B");
+  assert.equal(formatBytes(-1024), "0 B");
+});
+
 test("formatBytes keeps ordinary sizes unchanged", () => {
   assert.equal(formatBytes(0), "0 B");
   assert.equal(formatBytes(1), "1 B");

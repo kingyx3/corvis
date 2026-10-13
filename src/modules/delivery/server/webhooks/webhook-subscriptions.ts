@@ -156,7 +156,7 @@ export async function listWebhookSubscriptions(
 ): Promise<WebhookSubscriptionRecord[]> {
   const rows = await db.query(`select webhook_id, endpoint_url, event_types, status, created_at, updated_at
     from corvis_control.webhook_subscription
-    where tenant_id=$1
+    where tenant_id=$1::uuid
     order by webhook_id`, [identity.tenantId]);
   return rows.map(toSubscriptionRecord);
 }
@@ -173,7 +173,7 @@ async function transitionStatus(
   const actorAssignment = actorColumn ? `,${actorColumn}=$5,${actorColumn === "paused_by" ? "paused_at" : "revoked_at"}=now()` : "";
   const rows = await db.query(`update corvis_control.webhook_subscription
     set status=$3, updated_at=now()${actorAssignment}
-    where tenant_id=$1 and webhook_id=$2::uuid and status = any($4::text[])
+    where tenant_id=$1::uuid and webhook_id=$2::uuid and status = any($4::text[])
     returning webhook_id, endpoint_url, event_types, status, created_at, updated_at`,
   [identity.tenantId, webhookId, to, postgresTextArrayLiteral(from), ...(actorColumn ? [identity.subject] : [])]);
   const row = rows[0];
@@ -190,7 +190,7 @@ export async function resumeWebhookSubscription(identity: RequestIdentity, webho
   // The database refuses subscriptions that hold no customer-facing event types, and its check
   // constraint refuses to activate one. Report that as a client error instead of a database failure (500).
   const existing = await db.query(`select event_types from corvis_control.webhook_subscription
-    where tenant_id=$1 and webhook_id=$2::uuid and status='paused' limit 1`, [identity.tenantId, webhookId]);
+    where tenant_id=$1::uuid and webhook_id=$2::uuid and status='paused' limit 1`, [identity.tenantId, webhookId]);
   if (existing[0] && (!Array.isArray(existing[0].event_types) || existing[0].event_types.length === 0)) throw new WebhookSubscriptionError("event_types_required");
   return transitionStatus(identity, webhookId, ["paused"], "active", null, db);
 }
@@ -231,7 +231,7 @@ export async function rotateWebhookSigningKey(
 ): Promise<WebhookSigningKeyRotated> {
   assertWebhookId(webhookId);
   const existing = await db.query(`select status from corvis_control.webhook_subscription
-    where tenant_id=$1 and webhook_id=$2::uuid limit 1`, [identity.tenantId, webhookId]);
+    where tenant_id=$1::uuid and webhook_id=$2::uuid limit 1`, [identity.tenantId, webhookId]);
   const status = text(existing[0] ?? {}, "status");
   if (!status || status === "revoked") throw new WebhookSubscriptionError("webhook_subscription_not_found");
 
@@ -289,7 +289,7 @@ export async function listWebhookDeliveries(
   const rows = await db.query(`select delivery_id, event_id, attempt, state, status_code, last_error, created_at, completed_at,
       to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_created_at
     from corvis_control.webhook_delivery
-    where tenant_id=$1 and webhook_id=$2::uuid
+    where tenant_id=$1::uuid and webhook_id=$2::uuid
       and ($4::timestamptz is null or (created_at, delivery_id) < ($4::timestamptz, $5::uuid))
     order by created_at desc, delivery_id desc
     limit $3`, [identity.tenantId, webhookId, limit + 1, after?.createdAt ?? null, after?.deliveryId ?? null]);

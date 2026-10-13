@@ -230,9 +230,9 @@ export async function loadFeatureFlagSnapshot(
   const [flagRows, stopRows] = await Promise.all([
     db.query(`select flag_key, enabled, kill_switch, kill_switch_reason, configuration, owner,
         created_at, retire_by, retired_at, updated_at, updated_by
-      from corvis_control.feature_flag where tenant_id=$1 order by flag_key`, [identity.tenantId]),
+      from corvis_control.feature_flag where tenant_id=$1::uuid order by flag_key`, [identity.tenantId]),
     db.query(`select engaged, reason, engaged_by, engaged_at
-      from corvis_control.feature_flag_emergency_stop where tenant_id=$1 limit 1`, [identity.tenantId]),
+      from corvis_control.feature_flag_emergency_stop where tenant_id=$1::uuid limit 1`, [identity.tenantId]),
   ]);
 
   const flags: Record<string, FeatureFlagRecord> = {};
@@ -371,7 +371,7 @@ export async function setFeatureFlag(
   const definition = REGISTRY_BY_KEY.get(write.key);
   if (!definition) throw new FeatureFlagGovernanceError("unregistered_flag");
   const existing = await db.query(`select owner, retire_by, retired_at, configuration from corvis_control.feature_flag
-    where tenant_id=$1 and flag_key=$2 limit 1`, [identity.tenantId, write.key]);
+    where tenant_id=$1::uuid and flag_key=$2 limit 1`, [identity.tenantId, write.key]);
   const current = existing[0];
   if (current && text(current, "retired_at")) throw new FeatureFlagGovernanceError("flag_retired");
 
@@ -418,7 +418,7 @@ export async function setFeatureFlagKillSwitch(
       kill_switch_by=case when $3 then $5 else null end,
       updated_at=now(),
       updated_by=$5
-    where tenant_id=$1 and flag_key=$2
+    where tenant_id=$1::uuid and flag_key=$2
     returning flag_key`, [identity.tenantId, key, engaged, engaged ? trimmed : null, identity.subject]);
   if (updated.length === 0) throw new FeatureFlagGovernanceError("flag_not_configured");
 }
@@ -430,7 +430,7 @@ export async function retireFeatureFlag(
 ): Promise<void> {
   const updated = await db.query(`update corvis_control.feature_flag set
       enabled=false, retired_at=now(), retired_by=$3, updated_at=now(), updated_by=$3
-    where tenant_id=$1 and flag_key=$2 and retired_at is null
+    where tenant_id=$1::uuid and flag_key=$2 and retired_at is null
     returning flag_key`, [identity.tenantId, key, identity.subject]);
   if (updated.length === 0) throw new FeatureFlagGovernanceError("flag_not_configured");
 }
