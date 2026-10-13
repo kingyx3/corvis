@@ -1,6 +1,7 @@
 -- Acceptance: corvis_source.release_clean_artifact releases a pending or
 -- quarantined artifact once, is idempotent for an already released one (it must not move the
--- document backwards), and refuses an artifact that was purged by an abort, expiry or sweep.
+-- document backwards), refuses an artifact that was purged by an abort, expiry or sweep, and
+-- refuses an artifact/document pair that don't actually belong together.
 -- Run after the full migration chain on an isolated disposable database. Rolled back.
 
 \set ON_ERROR_STOP on
@@ -80,6 +81,25 @@ begin
     get stacked diagnostics failure = message_text;
     if failure <> 'artifact not found' then raise exception 'unexpected unknown-artifact failure: %', failure; end if;
   end;
+
+  -- 5. A real artifact paired with a document it doesn't actually belong to is refused, even
+  -- though both ids individually exist (and belong to the same tenant). Catches a caller that
+  -- passes a mismatched pair instead of the two ids from the same joined row.
+  begin
+    perform corvis_source.release_clean_artifact(tenant,doc_purged,art_ok,'gen-4','ing-4');
+    raise exception 'a mismatched artifact/document pair must not be released';
+  exception when others then
+    get stacked diagnostics failure = message_text;
+    if failure <> 'artifact does not belong to document' then raise exception 'unexpected mismatch failure: %', failure; end if;
+  end;
+  if (select quarantine_status from corvis_source.document_artifact_version where document_artifact_version_id=art_ok) <> 'released' then
+    raise exception 'a refused mismatched release must leave the real artifact alone';
+  end if;
+  if (select status from corvis_source.document where document_id=doc_purged) <> 'aborted' then
+    raise exception 'a refused mismatched release must leave the unrelated document alone';
+  end if;
+  select count(*) into n from corvis_control.processing_job where tenant_id=tenant and document_id=doc_purged;
+  if n <> 0 then raise exception 'a refused mismatched release must not create a job for the unrelated document, got %', n; end if;
 end;
 $$;
 
