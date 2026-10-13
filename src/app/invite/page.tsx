@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { safeGetItem, safeRemoveItem, safeSetItem } from "@/shared/lib/safe-storage";
 
 type Outcome = { status: "loading" | "accepted"; message: string } | { status: "error"; message: string; retry?: () => void };
@@ -56,6 +55,12 @@ export default function InvitationPage() {
     <h1 id="invite-heading">{outcome.status === "accepted" ? "Invitation accepted" : "Accept your invitation"}</h1>
     <p role={outcome.status === "error" ? "alert" : "status"} className={outcome.status === "error" ? "tone-danger" : ""}>{outcome.message}</p>
     {outcome.status === "error" && outcome.retry && <button className="primary-button" type="button" onClick={outcome.retry}>Try again</button>}
-    {outcome.status === "accepted" && <Link className="primary-button" href="/">Continue to Corvis</Link>}
+    {/* A full navigation, not next/link's client-side routing: workspaceContext() pins its
+        result to the page's Window identity, so a same-tab client-side transition would keep
+        serving the workspace the user was in before accepting this invitation. */}
+    {outcome.status === "accepted" && <button className="primary-button" type="button" onClick={() => {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a hard navigation is required; see the comment above this button.
+      window.location.assign("/");
+    }}>Continue to Corvis</button>}
   </section></main>;
 }
