@@ -1,5 +1,5 @@
 export function formatBytes(bytes: number) {
-  if (!bytes) return "0 B";
+  if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const fixed = (index: number) => (bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0);
   let index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
