@@ -320,7 +320,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.route("**/api/v1/invitations/accept", (route) => route.fulfill(json({ data: { tenantId: "tenant-1", workspaceId: "workspace-1" } })));
     await page.goto("/invite?tenantId=tenant-1&workspaceId=workspace-1#one-time-token");
     await expect(page.getByRole("heading", { name: /invitation accepted/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /continue to corvis/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /continue to corvis/i })).toBeVisible();
     const violations = await blockingViolations(page);
     expect(violations, describe(violations)).toEqual([]);
   });
