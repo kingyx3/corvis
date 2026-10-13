@@ -62,7 +62,12 @@ async function refused(tx, run) {
 const db = new NativePostgresSqlApi(dsn);
 try {
   await assert.rejects(db.transaction(async (tx) => {
-    const backend = new PostgresExportScheduleBackend(() => tx);
+    // The fixture already runs inside one native PostgreSQL transaction. Nested
+    // mutation scopes reuse that same connection; the outer fixture rolls back.
+    const transactionalTx = Object.assign(Object.create(tx), {
+      transaction: async (fn) => fn(tx),
+    });
+    const backend = new PostgresExportScheduleBackend(() => transactionalTx);
     await tx.execute(`insert into corvis_control.tenant (tenant_id,slug,display_name) values ($1,'f4-ci','F4 CI'),($2,'f4-ci-other','F4 CI Other')`, [tenantId, otherTenantId]);
     await tx.execute(`insert into corvis_control.workspace (workspace_id,tenant_id,slug,display_name) values ($1,$2,'ws','Growth Fund Workspace')`, [workspaceId, tenantId]);
     for (const person of [owner, colleague, boss, leaver]) {
@@ -85,7 +90,7 @@ try {
     const runsOf = async (scheduleId) => (await tx.query(`select trigger_key,outcome,export_id,failure_reason from corvis_control.export_schedule_run where tenant_id=$1 and schedule_id=$2 order by created_at,trigger_key`, [tenantId, scheduleId])).map((row) => ({ ...row }));
     const audits = async (scheduleId) => (await tx.query(`select action,outcome,actor_subject from corvis_control.audit_event where tenant_id=$1 and target_id=$2 order by occurred_at,action`, [tenantId, scheduleId])).map((row) => [row.action, row.outcome, row.actor_subject]);
     const forceDue = (scheduleId) => tx.execute(`update corvis_control.export_schedule set next_run_at = now() - interval '1 hour' where tenant_id=$1 and schedule_id=$2`, [tenantId, scheduleId]);
-    const tick = () => processDueExportSchedules(25, {}, tx);
+    const tick = () => processDueExportSchedules(25, {}, transactionalTx);
 
     // ------------------------------------------------------------ saving a schedule
     const baseline = await exportJobs();
