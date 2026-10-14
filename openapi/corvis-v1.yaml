@@ -233,6 +233,7 @@ paths:
               $ref: '#/components/schemas/ReviewDecision'
       responses:
         '202': { description: Review event accepted }
+        '400': { description: 'Invalid review command', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'Version conflict', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -250,6 +251,8 @@ paths:
               $ref: '#/components/schemas/SnapshotPublication'
       responses:
         '202': { description: Publication command accepted }
+        '400': { description: 'Invalid snapshot command', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 'Version conflict or publication blocked', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -258,6 +261,7 @@ paths:
   /research:
     post:
       operationId: research
+      description: Requires research:query.
       requestBody:
         required: true
         content:
