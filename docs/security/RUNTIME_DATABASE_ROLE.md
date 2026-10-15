@@ -78,7 +78,7 @@ Not runnable as a non-owner, because they perform owner-only operations the appl
 
 Application code paths that no real-Postgres suite exercises (and the checks above therefore cannot prove) rest on the static derivation; that is what the UAT step below exists to catch.
 
-## Live rollout gate (#358)
+## Repeatable runtime login bootstrap (#358)\n\nAfter an authorized operator has provisioned **both** the migration and runtime DSNs\ninto their separate Secret Manager containers, dispatch\n`.github/workflows/runtime-login-bootstrap.yml` for `uat` first and then `prod`.\nThe workflow uses GitHub environment approvals, workload identity, a per-environment\nconcurrency group, and reads credentials directly from Secret Manager. It never\ncreates or rotates passwords. The script `tools/ci/bootstrap-runtime-login.sh`\ncompares database endpoints, serializes concurrent database operations using a\ntransaction-scoped advisory lock, grants missing `corvis_runtime` membership,\nand runs the live attestation. A repeated successful run does not modify grants\nor secret versions. It refuses unsafe role attributes and other unexpected\nprivileges; it cannot fix such drift automatically.\n\n**Not fully automated:** initial database login creation and secret provisioning,\ncontrolled rotation, Cloud Run promotion/rollback, worker-cycle testing and\nprovider-side evidence. Do not claim #358 complete until those are verified.\n\n## Live rollout gate (#358)
 
 The `Security acceptance` workflow's `postgres-rls` job now runs
 `db/postgres/tests/live-runtime-login-attestation.sql` using the **runtime**
