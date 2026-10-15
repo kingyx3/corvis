@@ -1,0 +1,58 @@
+name: Runtime login bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        options: [uat, prod]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: runtime-login-bootstrap-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ format('corvis-deploy@{0}.iam.gserviceaccount.com', vars.GCP_PROJECT_ID) }}
+      CORVIS_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify idempotent bootstrap behavior\n        run: bash tools/ci/test-bootstrap-runtime-login.sh\n      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 416.0.0"
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+      - name: Verify credential containers and bootstrap role
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_secret="corvis-postgres-dsn-${CORVIS_ENVIRONMENT}"
+          migration_secret="corvis-postgres-migration-dsn-${CORVIS_ENVIRONMENT}"
+          for secret in "$runtime_secret" "$migration_secret"; do
+            version="$(gcloud secrets versions describe latest --secret="$secret" --project="$GCP_PROJECT_ID" --format='value(state)')"
+            [[ "$version" == "ENABLED" ]] || { echo "Latest secret version not enabled for $secret"; exit 1; }
+          done
+          export CORVIS_RUNTIME_DSN="$(gcloud secrets versions access latest --project="$GCP_PROJECT_ID" --secret="$runtime_secret")"
+          export CORVIS_MIGRATION_DSN="$(gcloud secrets versions access latest --project="$GCP_PROJECT_ID" --secret="$migration_secret")"
+          echo "::add-mask::${CORVIS_RUNTIME_DSN}"
+          echo "::add-mask::${CORVIS_MIGRATION_DSN}"
+          bash tools/ci/bootstrap-runtime-login.sh
+          unset CORVIS_RUNTIME_DSN CORVIS_MIGRATION_DSN

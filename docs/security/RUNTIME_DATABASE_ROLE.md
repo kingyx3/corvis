@@ -78,6 +78,24 @@ Not runnable as a non-owner, because they perform owner-only operations the appl
 
 Application code paths that no real-Postgres suite exercises (and the checks above therefore cannot prove) rest on the static derivation; that is what the UAT step below exists to catch.
 
+## Repeatable runtime login bootstrap (#358)\n\nAfter an authorized operator has provisioned **both** the migration and runtime DSNs\ninto their separate Secret Manager containers, dispatch\n`.github/workflows/runtime-login-bootstrap.yml` for `uat` first and then `prod`.\nThe workflow uses GitHub environment approvals, workload identity, a per-environment\nconcurrency group, and reads credentials directly from Secret Manager. It never\ncreates or rotates passwords. The script `tools/ci/bootstrap-runtime-login.sh`\ncompares database endpoints, serializes concurrent database operations using a\ntransaction-scoped advisory lock, grants missing `corvis_runtime` membership,\nand runs the live attestation. A repeated successful run does not modify grants\nor secret versions. It refuses unsafe role attributes and other unexpected\nprivileges; it cannot fix such drift automatically.\n\n**Not fully automated:** initial database login creation and secret provisioning,\ncontrolled rotation, Cloud Run promotion/rollback, worker-cycle testing and\nprovider-side evidence. Do not claim #358 complete until those are verified.\n\n## Live rollout gate (#358)
+
+The `Security acceptance` workflow's `postgres-rls` job now runs
+`db/postgres/tests/live-runtime-login-attestation.sql` using the **runtime**
+Secret Manager DSN before the existing tenant-isolation probes. It fails closed
+when the credential is an owner/service login, has unsafe role attributes,
+lacks `corvis_runtime` membership, has extra direct role memberships, or can
+create database objects, access the migration schema or truncate audit events.
+It deliberately prints no login name or secret. The evidence includes the
+`runtime-login-least-privilege` check only when this probe is attempted; a
+failure marks the overall result failed.
+
+This is a **verification gate**, not credential provisioning or proof of a
+worker cycle. Operators still need to provision separate credentials, apply
+migration 002, rotate the runtime DSN, exercise the worker and check for
+SQLSTATE 42501 in both environments. The issue must remain open until live
+UAT and production evidence exists.
+
 ## Rollout plan
 
 Per environment, UAT first, then production. Terraform creates separate runtime and migration secret containers; the deploy workflow uses only the migration container for schema changes. Provider login creation, DSN provisioning and live acceptance still require the controlled provider path.
