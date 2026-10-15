@@ -78,6 +78,24 @@ Not runnable as a non-owner, because they perform owner-only operations the appl
 
 Application code paths that no real-Postgres suite exercises (and the checks above therefore cannot prove) rest on the static derivation; that is what the UAT step below exists to catch.
 
+## Live rollout gate (#358)
+
+The `Security acceptance` workflow's `postgres-rls` job now runs
+`db/postgres/tests/live-runtime-login-attestation.sql` using the **runtime**
+Secret Manager DSN before the existing tenant-isolation probes. It fails closed
+when the credential is an owner/service login, has unsafe role attributes,
+lacks `corvis_runtime` membership, has extra direct role memberships, or can
+create database objects, access the migration schema or truncate audit events.
+It deliberately prints no login name or secret. The evidence includes the
+`runtime-login-least-privilege` check only when this probe is attempted; a
+failure marks the overall result failed.
+
+This is a **verification gate**, not credential provisioning or proof of a
+worker cycle. Operators still need to provision separate credentials, apply
+migration 002, rotate the runtime DSN, exercise the worker and check for
+SQLSTATE 42501 in both environments. The issue must remain open until live
+UAT and production evidence exists.
+
 ## Rollout plan
 
 Per environment, UAT first, then production. Terraform creates separate runtime and migration secret containers; the deploy workflow uses only the migration container for schema changes. Provider login creation, DSN provisioning and live acceptance still require the controlled provider path.
