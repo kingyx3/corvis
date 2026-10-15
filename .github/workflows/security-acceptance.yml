@@ -224,10 +224,13 @@ jobs:
           dsn="$(gcloud secrets versions access latest --project="${GCP_PROJECT_ID}" --secret="${POSTGRES_DSN_SECRET_NAME}")"
           echo "::add-mask::${dsn}"
           result="pass"
-          if ! PGCONNECT_TIMEOUT=15 psql "${dsn}" -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql; then result="fail"; fi
+          # The runtime secret must authenticate as a least-privilege login, not
+          # an owner/service credential. Fail before accepting RLS evidence.
+          if ! PGCONNECT_TIMEOUT=15 psql "${dsn}" -X -v ON_ERROR_STOP=1 -f db/postgres/tests/live-runtime-login-attestation.sql; then result="fail"; fi
+          if [[ "${result}" == "pass" ]] && ! PGCONNECT_TIMEOUT=15 psql "${dsn}" -X -v ON_ERROR_STOP=1 -f db/postgres/security_acceptance.sql; then result="fail"; fi
           unset dsn
           checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n --arg environment "${CORVIS_ENVIRONMENT}" --arg checkedAt "${checked_at}" --arg result "${result}" '{schemaVersion:"corvis.postgres-rls-security-acceptance.v1", environment:$environment, checkedAt:$checkedAt, source:"github-actions", result:$result, checks:["two-tenant-workspace-read-isolation","two-tenant-feature-flag-read-isolation","two-tenant-control-evidence-read-isolation","two-tenant-source-document-read-isolation","two-tenant-export-read-isolation","authenticated-control-mutation-denied"]}' > postgres-rls-security-acceptance-evidence.json
+          jq -n --arg environment "${CORVIS_ENVIRONMENT}" --arg checkedAt "${checked_at}" --arg result "${result}" '{schemaVersion:"corvis.postgres-rls-security-acceptance.v1", environment:$environment, checkedAt:$checkedAt, source:"github-actions", result:$result, checks:["two-tenant-workspace-read-isolation","two-tenant-feature-flag-read-isolation","two-tenant-control-evidence-read-isolation","two-tenant-source-document-read-isolation","two-tenant-export-read-isolation","authenticated-control-mutation-denied","runtime-login-least-privilege"]}' > postgres-rls-security-acceptance-evidence.json
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized Postgres RLS evidence
         if: always()
