@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Idempotent, fail-closed role membership bootstrap. No passwords or DSNs are logged.
+set -euo pipefail
+: "${CORVIS_MIGRATION_DSN:?migration DSN required}"
+: "${CORVIS_RUNTIME_DSN:?runtime DSN required}"
+command -v psql >/dev/null
+export PGCONNECT_TIMEOUT=15
+# Compare database identity without printing connection strings.
+migration_db="$(psql "$CORVIS_MIGRATION_DSN" -XAt -v ON_ERROR_STOP=1 -c "select current_database()")"
+runtime_db="$(psql "$CORVIS_RUNTIME_DSN" -XAt -v ON_ERROR_STOP=1 -c "select current_database()")"
+[[ -n "$migration_db" && "$migration_db" == "$runtime_db" ]] || { echo 'Database name mismatch'; exit 1; }
+# Runtime login must already exist and be provisioned by the controlled secret path.
+login="$(psql "$CORVIS_RUNTIME_DSN" -XAt -v ON_ERROR_STOP=1 -c 'select current_user')"
+[[ "$login" =~ ^[a-zA-Z_][a-zA-Z_0-9]*$ ]] || { echo 'Invalid login identifier'; exit 1; }
+# One transaction serializes repeated and concurrent runs. Existing unexpected grants fail closed.
+psql "$CORVIS_MIGRATION_DSN" -X -v ON_ERROR_STOP=1 -v runtime_login="$login" <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtext('corvis_runtime_bootstrap_v1'));
+DO $check$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'corvis_runtime' AND NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls) THEN
+    RAISE EXCEPTION 'corvis_runtime group missing or unsafe; apply migration 002 first';
+  END IF;
+END
+$check$;
+SELECT format('GRANT corvis_runtime TO %I', :'runtime_login')
+WHERE NOT pg_has_role(:'runtime_login', 'corvis_runtime', 'member') \gexec
+COMMIT;
+SQL
+psql "$CORVIS_RUNTIME_DSN" -X -v ON_ERROR_STOP=1 -f db/postgres/tests/live-runtime-login-attestation.sql
+echo 'Runtime membership bootstrap and attestation passed'
