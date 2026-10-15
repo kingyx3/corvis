@@ -29,8 +29,8 @@ $check$;
 SELECT set_config('corvis.bootstrap_login', :'runtime_login', true);
 DO $validate$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('corvis.bootstrap_login') AND (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication)) THEN
-    RAISE EXCEPTION 'unsafe login attributes';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('corvis.bootstrap_login') AND rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication) THEN
+    RAISE EXCEPTION 'missing login or unsafe login attributes';
   END IF;
 END
 $validate$;
