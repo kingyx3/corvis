@@ -14,7 +14,10 @@ login="$(psql "$CORVIS_RUNTIME_DSN" -XAt -v ON_ERROR_STOP=1 -c 'select current_u
 [[ "$login" =~ ^[a-zA-Z_][a-zA-Z_0-9]*$ ]] || { echo 'Invalid login identifier'; exit 1; }
 # Verify the existing login is safe before granting anything. Membership is the only
 # privilege this bootstrap is authorized to add.
-psql "$CORVIS_RUNTIME_DSN" -X -v ON_ERROR_STOP=1 -f db/postgres/tests/live-runtime-login-attestation.sql >/dev/null 2>&1 && { echo 'Runtime login already attested; no changes needed'; exit 0; }
+if psql "$CORVIS_RUNTIME_DSN" -X -v ON_ERROR_STOP=1 -f db/postgres/tests/live-runtime-login-attestation.sql >/dev/null 2>&1; then
+  echo 'Runtime login already attested; no changes needed'
+  exit 0
+fi
 # One transaction serializes repeated and concurrent runs. Existing unexpected grants fail closed.
 psql "$CORVIS_MIGRATION_DSN" -X -v ON_ERROR_STOP=1 -v runtime_login="$login" <<'SQL'
 BEGIN;
