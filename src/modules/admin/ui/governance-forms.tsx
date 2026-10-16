@@ -3,6 +3,7 @@
 import { copyToClipboard } from "@/shared/lib/clipboard";
 import { useState, type ReactNode } from "react";
 import { Modal } from "@/shared/ui/modal";
+import { apiUrl } from "@/shared/lib/api-url";
 
 type SubmitState = { sending: boolean; status?: number; result?: unknown; error?: string; invitationUrl?: string };
 type FormProps = { onSuccess: () => Promise<void> };
@@ -82,7 +83,7 @@ function GovernedMutation({ title, description, endpoint, body, valid, onSuccess
     if (!valid || !preview) return;
     setState({ sending: true });
     try {
-      const response = await fetch(preview.endpoint, {
+      const response = await fetch(apiUrl(preview.endpoint), {
         method,
         credentials: "include",
         headers: { "content-type": "application/json", accept: "application/json" },
