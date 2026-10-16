@@ -1,79 +1,44 @@
 version: 2
+
+# One consolidated version-update PR for all supported ecosystems each week.
+# Dependabot security updates remain separate so urgent fixes are not delayed.
+# This is a native multi-ecosystem group: no custom PR aggregation workflow.
+multi-ecosystem-groups:
+  weekly-dependencies:
+    schedule:
+      interval: weekly
+
 updates:
+  # Application (production + development) and Convex CLI updates participate
+  # in the same batch, including major upgrades. CI determines compatibility.
   - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
+    directories:
+      - /
+      - /tools/convex-conformance
+    patterns: ["*"]
+    multi-ecosystem-group: weekly-dependencies
     open-pull-requests-limit: 10
-    groups:
-      production-dependencies:
-        dependency-type: production
-      development-dependencies:
-        dependency-type: development
-    ignore:
-      # TypeScript 7 is held back: typescript-eslint (8.71.0, peer
-      # typescript <6.1.0) throws at load on TS 7, which ships no JS compiler API.
-      # @types/node majors beyond 26 stay held until the Node runtime moves.
-      # ESLint majors are no longer ignored (on 10 since #216).
-      - dependency-name: typescript
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@types/node"
-        update-types: ["version-update:semver-major"]
 
-  # The Convex CLI is intentionally isolated from Corvis production dependencies.
-  # Keep the deterministic CI pin current through normal dependency PRs; the
-  # scheduled conformance canary separately exercises the upstream `latest` image.
-  - package-ecosystem: npm
-    directory: /tools/convex-conformance
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
-    groups:
-      convex-conformance:
-        patterns:
-          - "convex"
-
+  # External actions remain pinned by immutable SHA; Dependabot updates the SHA.
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: weekly-dependencies
     open-pull-requests-limit: 5
-    # Combine SHA-pinned action updates while isolating breaking major releases.
-    # Grouping applies to version updates; security updates stay independently actionable.
-    groups:
-      github-actions-routine:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-      github-actions-major:
-        patterns:
-          - "*"
-        update-types:
-          - "major"
 
   - package-ecosystem: docker
     directories:
       - /
       - /services/control-loop
       - /services/extractor
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: weekly-dependencies
     open-pull-requests-limit: 5
-    groups:
-      docker-base-images:
-        patterns:
-          - "*"
 
   - package-ecosystem: terraform
     directories:
       - /infra/terraform/environments/*
       - /infra/terraform/modules/*
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: weekly-dependencies
     open-pull-requests-limit: 5
-    groups:
-      terraform-providers:
-        patterns:
-          - "*"
