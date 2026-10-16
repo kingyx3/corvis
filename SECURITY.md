@@ -24,6 +24,8 @@ Do not include real customer documents, credentials, tokens or confidential cust
 
 Executable third-party GitHub Actions used by Corvis workflows and composite actions are pinned to full immutable commit SHAs. Human-readable major versions remain beside the pinned references for review context, and GitHub Actions dependencies remain under weekly Dependabot review. Repository tests fail if a mutable external action tag, branch or other non-immutable `uses:` reference is introduced.
 
+Dependabot runs weekly **version** updates in grouped PRs: application npm production and development dependencies in separate groups; the Convex conformance CLI in its own group; GitHub Actions routine (minor/patch) and major updates in separate groups; and Docker base images and Terraform providers each in their own group. All grouped updates still run CI, and major upgrades require review. Security update PRs remain independent of these routine version groups so urgent fixes can be evaluated promptly. Existing single-dependency PRs are not retroactively combined when this policy is changed.
+
 ## Scope priorities
 
 The highest-priority surfaces include authentication and tenant isolation, document upload/processing, source-evidence access, APIs/exports, downstream analytics and secure-sharing controls (only once explicitly activated), AI retrieval, secrets and privileged administration.
