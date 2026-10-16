@@ -63,19 +63,19 @@ test("Dependabot covers every dependency ecosystem the repository ships", () => 
 test("Dependabot consolidates version updates without mixing Actions major upgrades", () => {
   const source = readFileSync(".github/dependabot.yml", "utf8");
   const blocks = source.split(/^  - package-ecosystem: /m).slice(1);
-  const rootNpm = blocks.find((block) => block.startsWith("npm\\n") && /^    directory: \\/$/m.test(block));
-  const convexNpm = blocks.find((block) => block.startsWith("npm\\n") && /directory: \\/tools\\/convex-conformance/.test(block));
-  const actions = blocks.find((block) => block.startsWith("github-actions\\n"));
+  const rootNpm = blocks.find((block) => block.startsWith("npm\n") && /^    directory: \/$/m.test(block));
+  const convexNpm = blocks.find((block) => block.startsWith("npm\n") && /directory: \/tools\/convex-conformance/.test(block));
+  const actions = blocks.find((block) => block.startsWith("github-actions\n"));
 
   assert.ok(rootNpm, "root npm update block must exist");
-  assert.match(rootNpm, /groups:\\n\\s+production-dependencies:\\n\\s+dependency-type: production\\n\\s+development-dependencies:\\n\\s+dependency-type: development/);
+  assert.match(rootNpm, /groups:\n\s+production-dependencies:\n\s+dependency-type: production\n\s+development-dependencies:\n\s+dependency-type: development/);
 
   assert.ok(convexNpm, "isolated Convex npm update block must exist");
-  assert.match(convexNpm, /groups:\\n\\s+convex-conformance:\\n\\s+patterns:\\n\\s+- "convex"/);
+  assert.match(convexNpm, /groups:\n\s+convex-conformance:\n\s+patterns:\n\s+- "convex"/);
 
   assert.ok(actions, "GitHub Actions update block must exist");
   assert.match(
     actions,
-    /groups:\\n\\s+github-actions-routine:\\n\\s+patterns:\\n\\s+- "\\*"\\n\\s+update-types:\\n\\s+- "minor"\\n\\s+- "patch"\\n\\s+github-actions-major:\\n\\s+patterns:\\n\\s+- "\\*"\\n\\s+update-types:\\n\\s+- "major"/,
+    /groups:\n\s+github-actions-routine:\n\s+patterns:\n\s+- "\*"\n\s+update-types:\n\s+- "minor"\n\s+- "patch"\n\s+github-actions-major:\n\s+patterns:\n\s+- "\*"\n\s+update-types:\n\s+- "major"/,
   );
 });
