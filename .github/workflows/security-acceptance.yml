@@ -68,7 +68,7 @@ jobs:
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -163,7 +163,7 @@ jobs:
         run: node tools/ci/security-acceptance.mjs
       - name: Upload sanitized edge security evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: edge-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: security-acceptance-evidence.json
@@ -194,7 +194,7 @@ jobs:
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -234,7 +234,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized Postgres RLS evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: postgres-rls-security-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: postgres-rls-security-acceptance-evidence.json
@@ -266,7 +266,7 @@ jobs:
       CORVIS_POSTGRES_CA_CERT: ${{ vars.CORVIS_POSTGRES_CA_CERT || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -340,7 +340,7 @@ jobs:
           [[ "${result}" == "pass" ]]
       - name: Upload sanitized control-loop evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: control-loop-runtime-acceptance-${{ inputs.environment }}-${{ github.run_id }}
           path: control-loop-runtime-acceptance-evidence.json
