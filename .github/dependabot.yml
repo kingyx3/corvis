@@ -1,44 +1,50 @@
 version: 2
 
-# One consolidated version-update PR for all supported ecosystems each week.
-# Dependabot security updates remain separate so urgent fixes are not delayed.
-# This is a native multi-ecosystem group: no custom PR aggregation workflow.
+# One weekly version-update PR across all supported ecosystems.
+# Security updates are still independently actionable.
 multi-ecosystem-groups:
   weekly-dependencies:
     schedule:
-      interval: weekly
+      interval: "weekly"
 
 updates:
-  # Application (production + development) and Convex CLI updates participate
-  # in the same batch, including major upgrades. CI determines compatibility.
-  - package-ecosystem: npm
-    directories:
-      - /
-      - /tools/convex-conformance
+  # Explicit directory entries match the documented multi-ecosystem format.
+  # No per-ecosystem schedules, PR limits, or subgroups: the group owns cadence.
+  - package-ecosystem: "npm"
+    directory: "/"
     patterns: ["*"]
-    multi-ecosystem-group: weekly-dependencies
-    open-pull-requests-limit: 10
+    multi-ecosystem-group: "weekly-dependencies"
 
-  # External actions remain pinned by immutable SHA; Dependabot updates the SHA.
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "npm"
+    directory: "/tools/convex-conformance"
     patterns: ["*"]
-    multi-ecosystem-group: weekly-dependencies
-    open-pull-requests-limit: 5
+    multi-ecosystem-group: "weekly-dependencies"
 
-  - package-ecosystem: docker
-    directories:
-      - /
-      - /services/control-loop
-      - /services/extractor
+  # Keep full immutable SHA pins for every third-party action.
+  - package-ecosystem: "github-actions"
+    directory: "/"
     patterns: ["*"]
-    multi-ecosystem-group: weekly-dependencies
-    open-pull-requests-limit: 5
+    multi-ecosystem-group: "weekly-dependencies"
 
-  - package-ecosystem: terraform
-    directories:
-      - /infra/terraform/environments/*
-      - /infra/terraform/modules/*
+  - package-ecosystem: "docker"
+    directory: "/"
     patterns: ["*"]
-    multi-ecosystem-group: weekly-dependencies
-    open-pull-requests-limit: 5
+    multi-ecosystem-group: "weekly-dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/services/control-loop"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/services/extractor"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+
+  # Globs are supported by 'directories', unlike 'directory'.
+  - package-ecosystem: "terraform"
+    directories:
+      - "/infra/terraform/environments/*"
+      - "/infra/terraform/modules/*"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
