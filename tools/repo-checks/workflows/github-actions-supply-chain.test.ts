@@ -39,39 +39,33 @@ test("external GitHub Actions are pinned to immutable commits", () => {
   assert.deepEqual(violations, [], `mutable external action references:\n${violations.join("\n")}`);
 });
 
-test("Dependabot sends one weekly PR for all version-update ecosystems", () => {
+test("Dependabot uses a single, minimal, documented multi-ecosystem group", () => {
   const source = readFileSync(".github/dependabot.yml", "utf8");
-
-  assert.match(
-    source,
-    /^multi-ecosystem-groups:\n  weekly-dependencies:\n    schedule:\n      interval: weekly\n/m,
-    "one top-level multi-ecosystem schedule is required",
-  );
-  assert.equal(
-    (source.match(/^  [a-z0-9-]+:\n    schedule:/gm) ?? []).length,
-    1,
-    "do not add another separately scheduled version-update group",
-  );
+  assert.match(source, /^version: 2\n/m);
+  assert.match(source, /^multi-ecosystem-groups:\n  weekly-dependencies:\n    schedule:\n      interval: "weekly"\n/m);
+  assert.equal((source.match(/^      interval:/gm) ?? []).length, 1);
 
   const blocks = source.split(/^  - package-ecosystem: /m).slice(1);
-  const ecosystems = blocks.map((block) => block.split("\n", 1)[0].trim());
-  assert.deepEqual(ecosystems, ["npm", "github-actions", "docker", "terraform"]);
+  assert.deepEqual(blocks.map((block) => block.split("\n", 1)[0].trim()), [
+    '"npm"', '"npm"', '"github-actions"', '"docker"', '"docker"', '"docker"', '"terraform"',
+  ]);
 
   for (const block of blocks) {
-    assert.match(block, /^    patterns: \["\*"\]$/m, "include every dependency");
-    assert.match(block, /^    multi-ecosystem-group: weekly-dependencies$/m);
-    assert.match(block, /^    open-pull-requests-limit: \d+$/m);
-    assert.doesNotMatch(block, /^    schedule:/m, "schedule comes only from the batch");
-    assert.doesNotMatch(block, /^    groups:/m, "no additional per-ecosystem version PRs");
-    assert.doesNotMatch(block, /^    ignore:/m, "major upgrades must not be excluded");
+    assert.match(block, /^    patterns: \["\*"\]$/m);
+    assert.match(block, /^    multi-ecosystem-group: "weekly-dependencies"$/m);
+    // The native multi-ecosystem group owns the cadence and PR; keeping its
+    // entries minimal prevents regressions to unsupported option combinations.
+    for (const disallowed of ["schedule", "groups", "ignore", "open-pull-requests-limit"]) {
+      assert.doesNotMatch(block, new RegExp("^    " + disallowed + ":", "m"));
+    }
   }
 
-  const [npm, actions, docker, terraform] = blocks;
-  assert.match(npm, /directories:\n\s+- \/\n\s+- \/tools\/convex-conformance\n/);
-  assert.match(actions, /^    directory: \/$/m);
-  assert.match(docker, /directories:\n\s+- \/\n\s+- \/services\/control-loop\n\s+- \/services\/extractor\n/);
+  const directory = (block: string) => block.match(/^    directory: "([^"]+)"$/m)?.[1];
+  assert.deepEqual(blocks.slice(0, 6).map(directory), [
+    "/", "/tools/convex-conformance", "/", "/", "/services/control-loop", "/services/extractor",
+  ]);
   assert.match(
-    terraform,
-    /directories:\n\s+- \/infra\/terraform\/environments\/\*\n\s+- \/infra\/terraform\/modules\/\*/,
+    blocks[6],
+    /directories:\n      - "\/infra\/terraform\/environments\/\*"\n      - "\/infra\/terraform\/modules\/\*"\n/,
   );
 });
