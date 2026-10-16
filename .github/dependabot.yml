@@ -38,6 +38,20 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Combine SHA-pinned action updates while isolating breaking major releases.
+    # Grouping applies to version updates; security updates stay independently actionable.
+    groups:
+      github-actions-routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      github-actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
 
   - package-ecosystem: docker
     directories:
