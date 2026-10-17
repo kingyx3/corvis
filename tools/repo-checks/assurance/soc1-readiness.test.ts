@@ -61,3 +61,18 @@ test("SOC 1 control objective evidence entries that name repository files point 
   assert.ok(entries.length > 0, "expected at least one repository-path evidence entry");
   for (const [id, entry] of entries) assert.ok(existsSync(new URL(`../../../${entry}`, import.meta.url)), `${id} evidence points at a missing file: ${entry}`);
 });
+
+test("the SOC 1 data-path map names only repository paths that exist and keeps the segregation caveat", () => {
+  const document = readFileSync(new URL("../../../docs/security/SOC1_READINESS.md", import.meta.url), "utf8");
+  const start = document.indexOf("## Financially relevant data path and decision rights");
+  const end = document.indexOf("## Intended financially relevant control objectives");
+  assert.ok(start >= 0 && end > start, "the data-path section must exist before the control objectives");
+  const section = document.slice(start, end);
+  const paths = [...new Set([...section.matchAll(/`((?:src|db|services|infra|tools|ops|docs)\/[^`\s]+)`/g)].map((match) => match[1] as string))];
+  assert.ok(paths.length >= 20, "expected the data-path map to cite the code that implements each stage");
+  for (const path of paths) assert.ok(existsSync(new URL(`../../../${path}`, import.meta.url)), `data-path map cites a missing file: ${path}`);
+  for (const stage of ["Customer upload", "Connector sync", "Registration", "Representation", "Extraction", "Human review", "Canonicalization", "Reconciliation and exceptions", "Consolidation and serving", "Publication gate", "Delivery", "Data correction"]) {
+    assert.ok(section.includes(stage), `data-path map is missing the ${stage} stage`);
+  }
+  assert.ok(section.includes("Separation of duties is **not** yet demonstrated end to end"), "the segregation caveat must not be dropped until segregation is demonstrated");
+});
