@@ -16,7 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   # Pins live in one place each: the Convex CLI version in
@@ -49,10 +48,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - name: Authenticate to GitHub Container Registry for upstream image pull
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run Corvis database semantics against pinned upstream Convex + PostgreSQL
         run: bash tools/convex-conformance/run.sh
 
@@ -77,7 +72,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
+      CONVEX_BACKEND_IMAGE: ghcr.io/convex/convex-backend:latest
       CONVEX_CLI_VERSION: latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
       CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted

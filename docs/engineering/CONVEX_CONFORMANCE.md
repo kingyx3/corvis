@@ -4,7 +4,7 @@ Corvis directly consumes the supported self-hosted Convex backend as a **databas
 
 ## Why this boundary
 
-The useful upstream boundary is the self-hosted backend and public Convex CLI/client surface, not Convex's internal Rust crates. The backend repository publishes self-hosted images at `ghcr.io/get-convex/convex-backend`, and the Convex CLI supports self-hosted deployments.
+The useful upstream boundary is the self-hosted backend and public Convex CLI/client surface, not Convex's internal Rust crates. The backend repository publishes self-hosted images at `ghcr.io/convex/convex-backend`, and the Convex CLI supports self-hosted deployments.
 
 Depending on internal workspace crates would couple Corvis to implementation details that are not a stable TypeScript-facing library contract. Running the official backend instead means improvements to Convex's transaction engine, optimistic concurrency control and schema/runtime behavior are exercised by Corvis without vendoring those implementations.
 
@@ -41,7 +41,7 @@ These are reference semantics, not Corvis storage. **`db/postgres/tests/convex-p
 `.github/workflows/convex-conformance.yml` has two modes:
 
 - pull requests, pushes to `main` and manual runs use a known Convex backend release SHA and an exact Convex CLI version. The workflow runs on every pull request (no path filter), so the check always reports;
-- the weekly scheduled canary uses `ghcr.io/get-convex/convex-backend:latest` and `convex@latest`, and opens (or comments on) a `convex-canary` issue when it fails.
+- the weekly scheduled canary uses `ghcr.io/convex/convex-backend:latest` and `convex@latest`, and opens (or comments on) a `convex-canary` issue when it fails.
 
 Both modes use PostgreSQL as Convex's persistence engine. This split keeps normal CI reproducible while still letting upstream Convex changes continuously test Corvis's required semantics.
 
