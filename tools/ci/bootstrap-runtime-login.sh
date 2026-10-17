@@ -35,6 +35,21 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('corvis.bootstrap_login') AND rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication) THEN
     RAISE EXCEPTION 'missing login or unsafe login attributes';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_auth_members m
+    JOIN pg_roles parent ON parent.oid = m.roleid
+    JOIN pg_roles child ON child.oid = m.member
+    WHERE child.rolname = current_setting('corvis.bootstrap_login')
+      AND parent.rolname <> 'corvis_runtime'
+  ) THEN
+    RAISE EXCEPTION 'runtime login has unexpected role memberships';
+  END IF;
+  IF has_database_privilege(current_setting('corvis.bootstrap_login'), current_database(), 'CREATE')
+     OR has_schema_privilege(current_setting('corvis.bootstrap_login'), 'corvis_control', 'CREATE')
+     OR has_schema_privilege(current_setting('corvis.bootstrap_login'), 'corvis_migration', 'USAGE')
+     OR has_table_privilege(current_setting('corvis.bootstrap_login'), 'corvis_control.audit_event', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'runtime login has forbidden privileges';
+  END IF;
 END
 $validate$;
 SELECT format('GRANT corvis_runtime TO %I', :'runtime_login')
