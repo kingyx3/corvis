@@ -46,6 +46,15 @@ Execute the required scenarios in `acceptance-plan.json` against dedicated synth
 
 Each evidence record should identify environment, release digest, scenario ID, timestamp, actor/service identity, sanitized resource reference, expected result, observed result and the immutable location of confidential supporting evidence. A skipped, incomplete or unexecuted scenario is not a pass. Failed mandatory evidence must not advance the known-good release pointer.
 
+`npm run uat:acceptance -- <evidence.json> [acceptance-plan.json]` evaluates a campaign's records against the plan (default `ops/uat/acceptance-plan.json`) and exits non-zero unless the result is `ready`. The evidence file is `{ "records": [...] }`; each record has `environment` (`uat`), `releaseDigest` (`sha256:…`), `recordedAt` (ISO, not in the future), `actor`, `resourceRef`, `expected`, `observed`, `outcome` (`passed`, `failed` or `skipped`) and `evidenceUri` (an `https:` or `gs:` location with no credentials, query or fragment), plus either `scenarioId` and `assertionId` for one assertion of a plan scenario, or `evidenceKey` for one `requiredEvidence` item. Rules enforced by `src/modules/governance/server/evidence/uat-acceptance.ts`:
+
+- With no records the campaign is `blocked` and every required scenario and evidence item reads `missing`; the repository ships no passing evidence.
+- A required scenario passes only when every assertion has a passing record, and every `requiredEvidence` item needs its own passing record. Optional scenarios are reported but never gate.
+- For one assertion or evidence item the latest record decides, so a retest supersedes an earlier failure and a later failure supersedes an earlier pass. Equal timestamps resolve to the worse outcome.
+- Every record must name the same release digest; unknown scenario, assertion or evidence IDs, malformed fields, and records that carry credential-like keys or secret-looking values are rejected.
+
+A `ready` result is necessary, not sufficient: it checks that evidence is complete and well formed, not that the underlying provider behaviour was real. Reviewers still inspect the confidential evidence the URIs point to.
+
 ## Backfill launch decision
 
 No separate bulk backfill command is required for initial launch. Governed correction replay/republication is the approved bounded operating path for retained-evidence corrections. If onboarding later requires tenant/document-range historical reprocessing, add a separately authorized bulk-backfill workflow using the same durable journey/idempotency contracts; do not use direct database edits or widen correction replay implicitly.
