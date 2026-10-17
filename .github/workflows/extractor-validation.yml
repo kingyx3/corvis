@@ -30,6 +30,9 @@ jobs:
       - name: Parse extractor runtime
         run: node --check services/extractor/server.mjs
 
+      - name: Exercise extractor runtime regressions
+        run: node --test services/extractor/server.regression.test.mjs
+
       - name: Guard extraction contract and privilege boundaries
         shell: bash
         run: |

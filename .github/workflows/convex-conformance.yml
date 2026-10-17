@@ -72,7 +72,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
+      CONVEX_BACKEND_IMAGE: ghcr.io/convex/convex-backend:latest
       CONVEX_CLI_VERSION: latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
       CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted
