@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
 
-const PORT = Number(process.env.PORT || "8080");
+const PORT = Number(process.env.PORT ?? "8080");
 const CONTRACT_VERSION = "1";
 const SCHEMA_VERSION = "1.6";
 const SKILL_ID = "quarterly_fund_report_extraction";
@@ -87,7 +87,10 @@ async function fetchBounded(url, init = {}, timeoutMs = 15_000) {
     const consume = async (limit) => {
       try {
         const declared = Number(response.headers.get("content-length"));
-        if (Number.isFinite(declared) && declared > limit) throw new Error("upstream response exceeded size limit");
+        if (Number.isFinite(declared) && declared > limit) {
+          await response.body?.cancel();
+          throw new Error("upstream response exceeded size limit");
+        }
         const reader = response.body?.getReader();
         if (!reader) return Buffer.alloc(0);
         const chunks = [];
@@ -101,7 +104,7 @@ async function fetchBounded(url, init = {}, timeoutMs = 15_000) {
             chunks.push(Buffer.from(value));
           }
         } catch (error) {
-          await reader.cancel().catch(() => {});
+          void reader.cancel().catch(() => {});
           throw error;
         }
         return Buffer.concat(chunks, size);
