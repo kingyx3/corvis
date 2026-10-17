@@ -6,13 +6,14 @@ import { Icon } from "@/shared/ui/icon";
 import { Modal } from "@/shared/ui/modal";
 import { friendlyErrorMessage, throwIfUnauthenticated } from "@/shared/lib/api-errors";
 import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
+import { apiUrl } from "@/shared/lib/api-url";
 
 type Draft = Record<string, { enabled: boolean; delivery: NotificationDelivery }>;
 
 const ENDPOINT = "/api/v1/notification-preferences";
 
 async function request(init?: RequestInit): Promise<NotificationSettings> {
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(apiUrl(ENDPOINT), {
     credentials: "include",
     cache: "no-store",
     ...init,

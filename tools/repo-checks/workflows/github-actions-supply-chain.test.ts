@@ -39,23 +39,42 @@ test("external GitHub Actions are pinned to immutable commits", () => {
   assert.deepEqual(violations, [], `mutable external action references:\n${violations.join("\n")}`);
 });
 
-test("Dependabot covers every dependency ecosystem the repository ships", () => {
+test("Dependabot uses a single, minimal, documented multi-ecosystem group", () => {
   const source = readFileSync(".github/dependabot.yml", "utf8");
-  const blocks = source.split(/^  - package-ecosystem: /m).slice(1);
-  const byEcosystem = new Map(blocks.map((block) => [block.split("\n", 1)[0].trim(), block]));
+  assert.match(source, /^version: 2\n/m);
+  assert.match(source, /^multi-ecosystem-groups:\n  weekly-dependencies:\n    schedule:\n      interval: "weekly"\n/m);
+  assert.equal((source.match(/^      interval:/gm) ?? []).length, 1);
 
-  for (const ecosystem of ["npm", "github-actions", "docker", "terraform"]) {
-    const block = byEcosystem.get(ecosystem);
-    assert.ok(block, `${ecosystem} ecosystem must be configured`);
-    assert.match(block, /interval: weekly/, ecosystem);
-    assert.match(block, /open-pull-requests-limit: \d+/, ecosystem);
+  const blocks = source.split(/^  - package-ecosystem: /m).slice(1);
+  assert.deepEqual(blocks.map((block) => block.split("\n", 1)[0].trim()), [
+    '"npm"', '"npm"', '"github-actions"', '"docker"', '"docker"', '"docker"', '"terraform"',
+  ]);
+
+  for (const block of blocks) {
+    assert.match(block, /^    patterns: \["\*"\]$/m);
+    assert.match(block, /^    multi-ecosystem-group: "weekly-dependencies"$/m);
+    // The native multi-ecosystem group owns the cadence and PR.
+    for (const disallowed of ["schedule", "groups", "open-pull-requests-limit"]) {
+      assert.doesNotMatch(block, new RegExp("^    " + disallowed + ":", "m"));
+    }
   }
 
-  const docker = byEcosystem.get("docker")!;
-  assert.match(docker, /directories:\n\s+- \/\n\s+- \/services\/control-loop\n\s+- \/services\/extractor\n/);
-  assert.match(docker, /groups:\n\s+docker-base-images:\n\s+patterns:\n\s+- "\*"/);
+  // Known incompatible TypeScript 7 must not break the weekly batch.
+  // Other ecosystems and the Convex npm root must not silently accumulate holds.
+  assert.match(
+    blocks[0],
+    /ignore:\n      - dependency-name: "typescript"\n        update-types: \["version-update:semver-major"\]/,
+  );
+  for (const block of blocks.slice(1)) {
+    assert.doesNotMatch(block, /^    ignore:/m);
+  }
 
-  const terraform = byEcosystem.get("terraform")!;
-  assert.match(terraform, /directories:\n\s+- \/infra\/terraform\/environments\/\*\n\s+- \/infra\/terraform\/modules\/\*/);
-  assert.match(terraform, /groups:\n\s+terraform-providers:\n\s+patterns:\n\s+- "\*"/);
+  const directory = (block: string) => block.match(/^    directory: "([^"]+)"$/m)?.[1];
+  assert.deepEqual(blocks.slice(0, 6).map(directory), [
+    "/", "/tools/convex-conformance", "/", "/", "/services/control-loop", "/services/extractor",
+  ]);
+  assert.match(
+    blocks[6],
+    /directories:\n      - "\/infra\/terraform\/environments\/\*"\n      - "\/infra\/terraform\/modules\/\*"\n/,
+  );
 });

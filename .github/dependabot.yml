@@ -1,65 +1,56 @@
 version: 2
+
+# One weekly version-update PR across all supported ecosystems.
+# Security updates are still independently actionable.
+multi-ecosystem-groups:
+  weekly-dependencies:
+    schedule:
+      interval: "weekly"
+
 updates:
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      production-dependencies:
-        dependency-type: production
-      development-dependencies:
-        dependency-type: development
+  # Explicit directory entries match the documented multi-ecosystem format.
+  # No per-ecosystem schedules, PR limits, or subgroups: the group owns cadence.
+  - package-ecosystem: "npm"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+    # Temporary compatibility hold: eslint-config-next's typescript-eslint 8.x
+    # aborts when it loads TypeScript 7 (requires the TS <= 6 compiler API).
+    # Remove once the lint toolchain supports TS 7, then validate in CI.
     ignore:
-      # TypeScript 7 is held back: typescript-eslint (8.71.0, peer
-      # typescript <6.1.0) throws at load on TS 7, which ships no JS compiler API.
-      # @types/node majors beyond 26 stay held until the Node runtime moves.
-      # ESLint majors are no longer ignored (on 10 since #216).
-      - dependency-name: typescript
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@types/node"
+      - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
 
-  # The Convex CLI is intentionally isolated from Corvis production dependencies.
-  # Keep the deterministic CI pin current through normal dependency PRs; the
-  # scheduled conformance canary separately exercises the upstream `latest` image.
-  - package-ecosystem: npm
-    directory: /tools/convex-conformance
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
-    groups:
-      convex-conformance:
-        patterns:
-          - "convex"
+  - package-ecosystem: "npm"
+    directory: "/tools/convex-conformance"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
 
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+  # Keep full immutable SHA pins for every third-party action.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
 
-  - package-ecosystem: docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/services/control-loop"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/services/extractor"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+
+  # Globs are supported by 'directories', unlike 'directory'.
+  - package-ecosystem: "terraform"
     directories:
-      - /
-      - /services/control-loop
-      - /services/extractor
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      docker-base-images:
-        patterns:
-          - "*"
-
-  - package-ecosystem: terraform
-    directories:
-      - /infra/terraform/environments/*
-      - /infra/terraform/modules/*
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      terraform-providers:
-        patterns:
-          - "*"
+      - "/infra/terraform/environments/*"
+      - "/infra/terraform/modules/*"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
