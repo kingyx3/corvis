@@ -53,11 +53,20 @@ test("Dependabot uses a single, minimal, documented multi-ecosystem group", () =
   for (const block of blocks) {
     assert.match(block, /^    patterns: \["\*"\]$/m);
     assert.match(block, /^    multi-ecosystem-group: "weekly-dependencies"$/m);
-    // The native multi-ecosystem group owns the cadence and PR; keeping its
-    // entries minimal prevents regressions to unsupported option combinations.
-    for (const disallowed of ["schedule", "groups", "ignore", "open-pull-requests-limit"]) {
+    // The native multi-ecosystem group owns the cadence and PR.
+    for (const disallowed of ["schedule", "groups", "open-pull-requests-limit"]) {
       assert.doesNotMatch(block, new RegExp("^    " + disallowed + ":", "m"));
     }
+  }
+
+  // Known incompatible TypeScript 7 must not break the weekly batch.
+  // Other ecosystems and the Convex npm root must not silently accumulate holds.
+  assert.match(
+    blocks[0],
+    /ignore:\n      - dependency-name: "typescript"\n        update-types: \["version-update:semver-major"\]/,
+  );
+  for (const block of blocks.slice(1)) {
+    assert.doesNotMatch(block, /^    ignore:/m);
   }
 
   const directory = (block: string) => block.match(/^    directory: "([^"]+)"$/m)?.[1];
