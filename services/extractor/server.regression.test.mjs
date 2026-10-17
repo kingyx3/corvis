@@ -45,8 +45,10 @@ test("EXT-01 valid default configuration starts and serves health", async () => 
   assert.equal(response.status, 200);
   assert.equal((await response.json()).ok, true);
 });
-test("EXT-02 custom alias exists and is accepted by the model map", () => {
-  assert.equal(baseEnv.CORVIS_LITELLM_MODELS_JSON.includes("corvis-extract-custom"), true);
+test("EXT-02 custom primary alias is actually used during startup validation", async () => {
+  const x = await launch({ CORVIS_EXTRACTION_MODEL: "corvis-extract-custom", CORVIS_LITELLM_MODELS_JSON: JSON.stringify({ "corvis-extract-primary": "test/model" }) });
+  assert.notEqual(x.code, 0);
+  assert.match(x.logs, /primary extraction alias corvis-extract-custom/);
 });
 async function launch(overrides) {
   const child = spawn(process.execPath, ["services/extractor/server.mjs"], {
