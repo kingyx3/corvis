@@ -20,9 +20,9 @@ const LITELLM_URL = requiredEnv("CORVIS_LITELLM_URL").replace(/\/$/, "");
 const LITELLM_AUDIENCE = (process.env.CORVIS_LITELLM_AUDIENCE || LITELLM_URL).replace(/\/$/, "");
 const LITELLM_MASTER_KEY = requiredEnv("LITELLM_MASTER_KEY");
 const ALLOWED_BUCKET = requiredEnv("CORVIS_OBJECT_STORE_BUCKET");
-const MODEL_MAP = parseModelMap(requiredEnv("CORVIS_LITELLM_MODELS_JSON"));
 const PRIMARY_ALIAS = process.env.CORVIS_EXTRACTION_MODEL || "corvis-extract-primary";
 const VERIFIER_ALIAS = process.env.CORVIS_EXTRACTION_VERIFIER_MODEL || "corvis-extract-verifier";
+const MODEL_MAP = parseModelMap(requiredEnv("CORVIS_LITELLM_MODELS_JSON"));
 
 const CANDIDATE_TYPES = new Set([
   "fund", "company", "holding", "instrument", "lifecycle_event",
@@ -74,8 +74,53 @@ function stableJson(value) {
 async function fetchBounded(url, init = {}, timeoutMs = 15_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("request timed out")), timeoutMs);
-  try { return await fetch(url, { ...init, signal: controller.signal, cache: "no-store" }); }
-  finally { clearTimeout(timer); }
+  const parentSignal = init.signal;
+  const onParentAbort = () => controller.abort(parentSignal.reason);
+  if (parentSignal?.aborted) onParentAbort();
+  else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  const cleanup = () => {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  };
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal, cache: "no-store" });
+    const consume = async (limit) => {
+      try {
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > limit) throw new Error("upstream response exceeded size limit");
+        const reader = response.body?.getReader();
+        if (!reader) return Buffer.alloc(0);
+        const chunks = [];
+        let size = 0;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > limit) throw new Error("upstream response exceeded size limit");
+            chunks.push(Buffer.from(value));
+          }
+        } catch (error) {
+          await reader.cancel().catch(() => {});
+          throw error;
+        }
+        return Buffer.concat(chunks, size);
+      } finally {
+        cleanup();
+      }
+    };
+    response.readBoundedBytes = consume;
+    response.text = async () => (await consume(MAX_MODEL_RESPONSE_BYTES)).toString("utf8");
+    response.json = async () => JSON.parse((await consume(MAX_MODEL_RESPONSE_BYTES)).toString("utf8"));
+    response.arrayBuffer = async () => {
+      const bytes = await consume(MAX_REPRESENTATION_BYTES);
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    };
+    return response;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 async function googleAccessToken() {
@@ -141,7 +186,7 @@ async function gcsDownload(uri, generation) {
   if (!response.ok) throw new Error(`GCS object read failed (${response.status})`);
   const declared = Number(response.headers.get("content-length") || "0");
   if (declared > MAX_REPRESENTATION_BYTES) throw new Error("representation exceeds extraction size limit");
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const bytes = await response.readBoundedBytes(MAX_REPRESENTATION_BYTES);
   if (bytes.length > MAX_REPRESENTATION_BYTES) throw new Error("representation exceeds extraction size limit");
   return bytes;
 }
@@ -294,7 +339,7 @@ async function callModel(alias, system, user) {
   }, MODEL_TIMEOUT_MS);
   const declared = Number(response.headers.get("content-length") || "0");
   if (declared > MAX_MODEL_RESPONSE_BYTES) throw new Error("model response exceeded extraction limit");
-  const text = await response.text();
+  const text = (await response.readBoundedBytes(MAX_MODEL_RESPONSE_BYTES)).toString("utf8");
   if (Buffer.byteLength(text) > MAX_MODEL_RESPONSE_BYTES) throw new Error("model response exceeded extraction limit");
   if (!response.ok) throw new Error(`LiteLLM model call failed (${response.status})`);
   let envelope;
@@ -313,7 +358,7 @@ function mapPrompt(skill, unit, request) {
     "",
     `Extraction run: ${request.extractionRunId}`,
     `Work unit: ${unit.id}; extract only facts anchored in ${target}. Adjacent pages, when present, are context only and must not be emitted unless the source reference is on a target page.`,
-    "Return one JSON object with keys candidates and coveredPages. candidates is an array. Each candidate must have candidateKey, candidateType, payload, confidence, provenance, exceptionCodes, sourceReferences. sourceReferences must carry exact pageNumber or sheetName, documentSegmentId, workUnitId, fundContextIds, pageCoverageState and extractionMethod. Use full source-reported company operating values; never ownership-prorate unless the source itself reports an ownership-adjusted value. Never invent a fund attribution. Use FUND_ATTRIBUTION_UNRESOLVED when materially unresolved.",
+    "Return one JSON object with keys candidates and coveredPages. candidates is an array. Each candidate must have candidateKey, candidateType, payload, confidence, provenance, exceptionCodes, sourceReferences. sourceReferences must carry a stable nonempty referenceKey unique within each candidate, exact pageNumber or sheetName, documentSegmentId, workUnitId, fundContextIds, pageCoverageState and extractionMethod. Use full source-reported company operating values; never ownership-prorate unless the source itself reports an ownership-adjusted value. Never invent a fund attribution. Use FUND_ATTRIBUTION_UNRESOLVED when materially unresolved.",
     `For this work unit coveredPages must equal exactly ${JSON.stringify(unit.targetPages)}.`,
     "",
     "Representation segment:",
@@ -330,6 +375,8 @@ function normalizeCandidate(candidate) {
   const references = value.sourceReferences.map((reference) => {
     const ref = object(reference);
     if (!ref) throw new Error(`model candidate ${value.candidateKey} has invalid source reference`);
+    if (typeof ref.referenceKey !== "string" || !ref.referenceKey.trim()) throw new Error(`model candidate ${value.candidateKey} source reference lacks referenceKey`);
+    ref.referenceKey = ref.referenceKey.trim();
     const hasPage = Number.isSafeInteger(Number(ref.pageNumber)) && Number(ref.pageNumber) > 0;
     const hasSheet = typeof ref.sheetName === "string" && ref.sheetName.trim();
     if (!hasPage && !hasSheet) throw new Error(`model candidate ${value.candidateKey} source reference lacks page/sheet evidence`);
