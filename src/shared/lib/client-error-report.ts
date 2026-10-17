@@ -1,4 +1,5 @@
 import { workspaceContextHeaders } from "./workspace-context.ts";
+import { apiBase } from "./api-url.ts";
 
 /**
  * Structured, PII-free client error events. Only fields that cannot carry user or tenant data are
@@ -61,10 +62,6 @@ export function parseClientErrorEvent(value: unknown): ClientErrorEvent | undefi
 }
 
 export const CLIENT_ERROR_ENDPOINT = "/api/v1/client-errors";
-
-function apiBase(): string {
-  return (process.env.NEXT_PUBLIC_CORVIS_API_BASE ?? "").replace(/\/$/, "");
-}
 
 /** Best-effort delivery to the ingest endpoint; never throws and never retries. */
 function sendClientError(event: ClientErrorEvent): void {
