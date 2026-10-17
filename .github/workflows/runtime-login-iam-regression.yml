@@ -1,0 +1,42 @@
+name: Runtime login IAM regression
+on:
+  pull_request:
+    paths:
+      - "tools/ci/bootstrap-runtime-login.sh"
+      - "tools/ci/test-bootstrap-runtime-login*.sh"
+      - "db/postgres/tests/live-runtime-login-attestation.sql"
+      - ".github/workflows/runtime-login-iam-regression.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/ci/bootstrap-runtime-login.sh"
+      - "tools/ci/test-bootstrap-runtime-login*.sh"
+      - "db/postgres/tests/live-runtime-login-attestation.sql"
+      - ".github/workflows/runtime-login-iam-regression.yml"
+permissions:
+  contents: read
+jobs:
+  postgres-iam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-disposable-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ci-disposable-only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Hermetic bootstrap checks
+        run: bash tools/ci/test-bootstrap-runtime-login.sh
+      - name: Live PostgreSQL privilege checks
+        run: bash tools/ci/test-bootstrap-runtime-login-postgres.sh
