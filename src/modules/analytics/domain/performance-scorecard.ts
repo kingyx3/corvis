@@ -36,7 +36,7 @@ export const FUND_SCORECARD_METRICS: readonly ScorecardMetric[] = [
   { code: "dpi", label: "DPI", kind: "multiple", definition: "Distributions to paid-in capital, as reported by the GP." },
   { code: "rvpi", label: "RVPI", kind: "multiple", definition: "Residual value to paid-in capital, as reported by the GP." },
   { code: "net_irr", label: "Net IRR", kind: "percent", definition: "Internal rate of return to investors, net of fees and carry, as reported by the GP." },
-  { code: "net_moic", label: "Net MOIC", kind: "multiple", definition: "Multiple of invested capital to investors, net of fees and carry, as reported by the GP." },
+  { code: "net_moic", label: "Net MOIC", kind: "multiple", definition: "Net multiple on invested capital under the source definition, as reported by the GP." },
 ];
 
 export const INVESTMENT_SCORECARD_METRICS: readonly ScorecardMetric[] = [
@@ -83,6 +83,8 @@ export type ScorecardFact = {
   period: string;
   actuality: string | null;
   scenarioType: string | null;
+  /** GP document version (separate from scenario/actuality and from Corvis publication). */
+  sourceVersionStatus: string | null;
   isRestated: boolean;
   isDerived: boolean;
   derivationFormula: string | null;
@@ -232,15 +234,17 @@ function normalized(value: string | null): string {
  * Trust flag of one published figure, or null when the fact is not a reported result and must not be shown.
  *
  * Final: published and not flagged otherwise. Preliminary: the GP marked the figure provisional
- * (`actuality` preliminary/provisional/estimate/flash). Restated: the GP flagged the figure as a
- * restatement (`isRestated`). A data-correction supersession is deliberately not a restatement: it is
+ * (`sourceVersionStatus=preliminary` or `actuality` preliminary/provisional/estimate/flash).
+ * A source explicitly marked draft is not a published GP result for this view. Restated: the GP
+ * flagged the figure as a restatement (`isRestated`). A data-correction supersession is deliberately not a restatement: it is
  * Corvis fixing its own extraction, not the GP restating, and the replacement is simply the current
  * published version. Preliminary outranks Restated, as in the Review trend and Position Financials.
  */
-export function reportedFigureStatus(fact: Pick<ScorecardFact, "actuality" | "scenarioType" | "isRestated">): ReportedFigureStatus | null {
+export function reportedFigureStatus(fact: Pick<ScorecardFact, "actuality" | "scenarioType" | "isRestated"> & Partial<Pick<ScorecardFact, "sourceVersionStatus">>): ReportedFigureStatus | null {
   const actuality = normalized(fact.actuality);
-  if (NOT_A_RESULT.has(actuality) || NOT_A_RESULT.has(normalized(fact.scenarioType))) return null;
-  if (PRELIMINARY_ACTUALITY.has(actuality)) return "Preliminary";
+  const sourceVersion = normalized(fact.sourceVersionStatus ?? null);
+  if (NOT_A_RESULT.has(actuality) || NOT_A_RESULT.has(normalized(fact.scenarioType)) || sourceVersion === "draft") return null;
+  if (sourceVersion === "preliminary" || PRELIMINARY_ACTUALITY.has(actuality)) return "Preliminary";
   return fact.isRestated ? "Restated" : "Final";
 }
 
