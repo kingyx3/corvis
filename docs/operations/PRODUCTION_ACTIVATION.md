@@ -19,7 +19,7 @@ The checked-in production-like path now contains the following repository-side b
 - provider-neutral direct OIDC token verification with Postgres-authoritative membership/roles/rights/session resolution;
 - separate IAM-private Cloud Run worker identity/runtime;
 - keyless Pub/Sub push, Cloud Tasks retry and Cloud Scheduler outbox dispatch using Google OIDC and an explicit worker audience;
-- a single Terraform-owned `corvis-postgres-dsn-${environment}` Secret Manager contract consumed by migration, API, worker and acceptance paths;
+- separate Terraform-owned Secret Manager containers: `corvis-postgres-dsn-${environment}` for API, worker and live acceptance, and deploy-only `corvis-postgres-migration-dsn-${environment}` for forward migrations; no migration fallback to the runtime credential;
 - forward-only checksum/ledger-backed Postgres migration execution inside the normal promotion workflow before runtime apply;
 - protected/versioned Terraform remote state plus guarded idle/full decommission workflows;
 - GCS/KMS source storage, object-level runtime IAM, Artifact Registry cleanup, queue/DLQ primitives and baseline monitoring.
@@ -33,7 +33,7 @@ Before a production-like release can operate, the environment still needs:
 1. **GCP trust bootstrap** — billed project, `corvis-deploy`, repository/environment-scoped GitHub WIF provider and the deploy IAM required by the checked-in root.
 2. **Cloudflare ownership** — authoritative zone and scoped Terraform token for environments where the public API edge is enabled.
 3. **Identity provider** — approved OIDC issuer/audience (or a reviewed SAML/identity-broker path). Production OIDC is verified directly; no Corvis assertion proxy is required for the default path.
-4. **Supabase/Postgres** — isolated Singapore environment project, TLS-verified runtime DSN written directly into `corvis-postgres-dsn-${environment}`, approved backup posture and provider ownership.
+4. **Supabase/Postgres** — isolated Singapore environment project, TLS-verified runtime and separate owner/migration credentials for the same database, written directly into their respective Secret Manager containers (`corvis-postgres-dsn-${environment}` and `corvis-postgres-migration-dsn-${environment}`); approved backup posture and provider ownership. Terraform creates the containers, not the provider credentials or enabled secret versions.
 5. **Customer/admin browser surfaces and SSO session integration** — publish only after their distinct runtime/security boundary and approved browser identity flow are implemented; do not manufacture a provider choice in Terraform.
 6. **Malware/representation/extraction/retrieval/AI/delivery providers** — only the integrations actually enabled for the UAT/customer journey, with credentials kept out of source control and normal logs.
 7. **Monitoring ownership** — real notification recipients/budget ownership where alerts/budgets are enabled.
@@ -45,11 +45,11 @@ Snowflake is not a launch dependency unless separately activated as downstream a
 For a production-like environment:
 
 1. bootstrap GCP trust and foundation from GitHub;
-2. activate the isolated Postgres provider and write its DSN to Secret Manager;
+2. activate the isolated Postgres provider; provision the separate runtime and migration DSNs in their respective Secret Manager containers through the controlled provider path;
 3. configure the approved OIDC issuer/audience and Cloudflare roots;
 4. run **Build release image** from reviewed `main`;
 5. run **Terraform deploy** plan;
-6. on apply, the workflow verifies the Postgres secret, applies only pending migrations with evidence, applies the exact Terraform plan, and requires public API health through the edge;
+6. on apply, the workflow verifies enabled `latest` runtime and migration DSN versions, applies only pending migrations with the deploy-only migration credential and retained evidence, applies the exact Terraform plan, and requires public API health through the edge (known-good rollback skips forward migrations and migration-secret readiness);
 7. run **Security acceptance**;
 8. only full acceptance advances the environment's known-good digest.
 
