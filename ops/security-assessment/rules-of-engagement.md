@@ -17,7 +17,7 @@ Only the explicitly identified Corvis UAT tenant(s), hostnames, cloud project(s)
 
 ## Required technical coverage
 
-Test authentication/session handling, tenant isolation/RLS, admin authorization, customer/admin/API/worker runtime boundaries, direct-origin and gateway bypass attempts, upload/source controls, queue and service-identity authentication, webhooks, exports, replay/recovery/correction paths, rate controls, error/log redaction, dependency/configuration weaknesses and privilege escalation.
+Test authentication/session handling, tenant isolation/RLS, admin authorization, customer/admin/API/worker runtime boundaries, direct-origin and gateway bypass attempts, upload/source controls, queue and service-identity authentication, webhooks, exports, replay/recovery/correction paths, rate controls, error/log redaction, dependency/configuration weaknesses and privilege escalation. Include SCIM provisioning, the internal service endpoints, service accounts and API keys, the AI runtime's budget and outbound boundaries, the runtime-versus-migration database credential split, and the shared Cloudflare zone's UAT hostnames.
 
 ## Finding lifecycle
 
