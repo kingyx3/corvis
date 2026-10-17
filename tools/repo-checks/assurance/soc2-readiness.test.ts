@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const readiness = JSON.parse(readFileSync(new URL("../../../ops/soc2-controls.json", import.meta.url), "utf8")) as {
@@ -50,4 +50,14 @@ test("SOC 2 readiness map keeps audit issuance as an external final gate", () =>
   assert.ok(readiness.target.mandatoryCategories.includes("confidentiality"));
   assert.ok(readiness.target.mandatoryCategories.includes("processing_integrity"));
   assert.ok(readiness.target.conditionalCategories.includes("privacy"));
+});
+
+// Evidence references mix prose (Confluence pages, auditor decisions) with repository files. Prose is not checkable
+// here, but an entry that is nothing but a repository path must still exist, so a renamed or deleted file cannot leave
+// the readiness map pointing at evidence that is gone.
+test("SOC 2 control family evidence entries that name repository files point at files that exist", () => {
+  const repositoryPath = /^[\w./-]+\.(?:md|json|ts|sql|ya?ml|tf|sh|mjs)$/;
+  const entries = readiness.families.flatMap((item) => item.evidence.filter((entry) => repositoryPath.test(entry)).map((entry) => [item.id, entry] as const));
+  assert.ok(entries.length > 0, "expected at least one repository-path evidence entry");
+  for (const [id, entry] of entries) assert.ok(existsSync(new URL(`../../../${entry}`, import.meta.url)), `${id} evidence points at a missing file: ${entry}`);
 });
