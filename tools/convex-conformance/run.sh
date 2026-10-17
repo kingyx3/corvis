@@ -42,6 +42,13 @@ if [[ "$CONVEX_CLI_VERSION" != "latest" && "$installed_cli" != "$CONVEX_CLI_VERS
 fi
 echo "Convex CLI ${installed_cli}; backend image ${CONVEX_BACKEND_IMAGE}"
 
+# The pinned backend is public, but GHCR sometimes rejects anonymous manifest
+# requests on CI runners. Actions passes an ephemeral read-only packages token.
+# Local developers can still pull anonymously without providing credentials.
+if [[ -n "${GHCR_PULL_TOKEN:-}" ]]; then
+  : "${GHCR_PULL_USER:?GHCR_PULL_USER must accompany GHCR_PULL_TOKEN}"
+  printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io --username "$GHCR_PULL_USER" --password-stdin >/dev/null
+fi
 docker pull "$CONVEX_BACKEND_IMAGE"
 docker_args=(
   -d
