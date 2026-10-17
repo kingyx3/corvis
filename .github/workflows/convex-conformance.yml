@@ -43,6 +43,8 @@ jobs:
     env:
       GHCR_PULL_USER: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ github.token }}
+      # Temporary pullability diagnostic; restore the digest pin after confirming availability.
+      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
       CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted
       CONVEX_POSTGRES_REQUIRE_TLS: "false"
