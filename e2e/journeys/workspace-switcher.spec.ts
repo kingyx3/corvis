@@ -76,3 +76,19 @@ test("the mobile Workspace button stays out of the desktop sidebar", async ({ pa
   await expect(page.getByRole("combobox", { name: "Current workspace" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Workspace and access" })).toBeHidden();
 });
+
+
+// #178 E9: a desktop-only switcher is still part of the cross-browser, light/dark
+// accessibility contract even when the mobile projects hide the desktop sidebar.
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`desktop workspace switcher is accessible in ${colorScheme} theme @matrix`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.emulateMedia({ colorScheme });
+    await page.goto("/");
+    const selector = page.getByRole("combobox", { name: "Current workspace" });
+    await expect(selector).toBeVisible();
+    await expect(selector).toHaveAttribute("aria-label", "Current workspace");
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    expect(results.violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
+  });
+}
