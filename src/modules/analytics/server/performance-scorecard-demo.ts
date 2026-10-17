@@ -33,6 +33,7 @@ type Figure = {
   unit?: string | null;
   valueString?: string | null;
   actuality?: string;
+  sourceVersionStatus?: string;
   isRestated?: boolean;
   isDerived?: boolean;
   derivationFormula?: string;
@@ -62,6 +63,7 @@ function fact(figure: Figure): ScorecardFact {
     period: report.period,
     actuality: figure.actuality ?? "actual",
     scenarioType: "reported",
+    sourceVersionStatus: figure.sourceVersionStatus ?? (figure.actuality === "preliminary" ? "preliminary" : "final"),
     isRestated: figure.isRestated ?? false,
     isDerived: figure.isDerived ?? false,
     derivationFormula: figure.derivationFormula ?? null,
