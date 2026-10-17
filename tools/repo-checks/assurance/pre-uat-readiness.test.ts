@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 type AcceptancePlan = {
@@ -92,7 +92,7 @@ test("production-like performance budgets are explicit and fail closed", async (
 test("security assessment pack is safe for a public repo and matches runtime boundaries", async () => {
   const scope = (await read("ops/security-assessment/README.md")).toLowerCase();
   const roe = (await read("ops/security-assessment/rules-of-engagement.md")).toLowerCase();
-  const corpus = await readJson<{ classification: string; tenants: unknown[]; constraints: string[] }>("ops/security-assessment/sanitized-test-corpus.json");
+  const corpus = await readJson<{ classification: string; tenants: unknown[]; constraints: string[]; identities: Array<{ role: string; tenant: string | null }>; tenantObjects: Array<{ tenant: string; kinds: string[] }> }>("ops/security-assessment/sanitized-test-corpus.json");
 
   for (const boundary of ["cloudflare", "api gateway", "cloud run", "postgres rls", "pub/sub", "cloud tasks", "control-loop"]) {
     assert.ok(scope.includes(boundary), `assessment scope missing ${boundary}`);
@@ -100,6 +100,25 @@ test("security assessment pack is safe for a public repo and matches runtime bou
   for (const negative of ["cross-tenant", "direct origin", "unauthorized worker", "rls bypass", "webhook", "export"]) {
     assert.ok(scope.includes(negative), `assessment negative coverage missing ${negative}`);
   }
+  // Components added after the first scope pack stay in scope and keep their own negatives.
+  for (const component of ["services/extractor", "services/litellm-gateway", "/api/v1/scim/v2", "/api/internal/budget-guard", "/api/internal/delivery", "/api/internal/processing-stage", "service accounts and api keys", "corvis_runtime", "api-uat", "app-uat", "admin-uat"]) {
+    assert.ok(scope.includes(component), `assessment scope missing ${component}`);
+  }
+  for (const negative of ["cross-tenant scim", "internal service endpoints", "ai gateway budget", "beyond its granted data scope", "owner or migration actions", "hostname or credential confusion"]) {
+    assert.ok(scope.includes(negative), `assessment negative coverage missing ${negative}`);
+  }
+  for (const topic of ["scim", "internal service endpoints", "service accounts", "runtime-versus-migration database credential", "cloudflare zone"]) {
+    assert.ok(roe.includes(topic), `rules of engagement missing ${topic}`);
+  }
+  for (const path of ["services/extractor", "services/litellm-gateway", "src/app/api/v1/scim/v2", "src/app/api/internal/budget-guard", "src/app/api/internal/delivery", "src/app/api/internal/processing-stage", "docs/features/SERVICE_ACCOUNTS.md", "docs/security/RUNTIME_DATABASE_ROLE.md", "docs/operations/CLOUDFLARE_SHARED_ZONE.md"]) {
+    await stat(path).catch(() => assert.fail(`scope pack names a path that does not exist: ${path}`));
+  }
+  assert.ok(scope.includes("source-derived preparation"), "the pack must keep saying it is not an assessment");
+  assert.ok(corpus.identities.some((identity) => identity.role === "corvis-operator" && identity.tenant === null));
+  assert.ok(corpus.identities.filter((identity) => identity.role === "service-account").length >= 2);
+  assert.ok(corpus.identities.filter((identity) => identity.role === "tenant-admin").length >= 2);
+  assert.equal(corpus.tenantObjects.length, corpus.tenants.length);
+  for (const entry of corpus.tenantObjects) assert.ok(entry.kinds.includes("document") && entry.kinds.includes("webhook") && entry.kinds.includes("export"));
   assert.ok(roe.includes("synthetic/sanitized test data only"));
   assert.ok(roe.includes("persistent denial of service"));
   assert.ok(roe.includes("full sensitive evidence remains in the access-controlled assessment repository"));

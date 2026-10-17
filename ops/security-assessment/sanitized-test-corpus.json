@@ -8,7 +8,17 @@
   "identities": [
     {"id":"human-red","tenant":"tenant-red","role":"ordinary-user"},
     {"id":"human-blue","tenant":"tenant-blue","role":"ordinary-user"},
-    {"id":"admin-operator","tenant":"tenant-red","role":"admin"}
+    {"id":"admin-operator","tenant":"tenant-red","role":"admin"},
+    {"id":"org-admin-red","tenant":"tenant-red","role":"tenant-admin"},
+    {"id":"org-admin-blue","tenant":"tenant-blue","role":"tenant-admin"},
+    {"id":"review-analyst-red","tenant":"tenant-red","role":"review-analyst"},
+    {"id":"corvis-operator","tenant":null,"role":"corvis-operator"},
+    {"id":"service-account-red","tenant":"tenant-red","role":"service-account"},
+    {"id":"service-account-blue","tenant":"tenant-blue","role":"service-account"}
+  ],
+  "tenantObjects": [
+    {"tenant":"tenant-red","kinds":["fund","document","export","webhook","source-connection","service-account"]},
+    {"tenant":"tenant-blue","kinds":["fund","document","export","webhook","source-connection","service-account"]}
   ],
   "documents": [
     {"id":"synthetic-quarterly-red","tenant":"tenant-red","expectedClassification":"quarterly-fund-report"},
@@ -18,6 +28,7 @@
     "no-real-customer-data",
     "no-production-secrets",
     "no-provider-credential-material",
-    "deterministic-expected-results"
+    "deterministic-expected-results",
+    "per-tenant-objects-for-idor-tests"
   ]
 }
