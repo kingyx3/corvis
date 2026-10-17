@@ -1,5 +1,5 @@
 import { AuthorizationError, type RequestIdentity } from "../../../shared/domain/enterprise.ts";
-import { nameOrder, SCORECARD_METRIC_CODES, SCORECARD_NON_RESULT_VALUES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../domain/performance-scorecard.ts";
+import { FUND_SCORECARD_METRICS, INVESTMENT_SCORECARD_METRICS, nameOrder, SCORECARD_METRIC_CODES, SCORECARD_NON_RESULT_VALUES, scorecardPeriodOptions, type ScorecardFact, type ScorecardFilters, type ScorecardFund, type ScorecardPayload } from "../domain/performance-scorecard.ts";
 import { getServerConfig } from "../../../platform/config/config.ts";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "../../../platform/http/api/pagination.ts";
 import { postgres, type PostgresPrimitive, type PostgresRow, type PostgresSqlApi } from "../../../platform/database/postgres.ts";
@@ -86,6 +86,7 @@ function mapFact(row: PostgresRow): ScorecardFact {
     period: text(row, "economic_period"),
     actuality: nullableText(row, "actuality"),
     scenarioType: nullableText(row, "scenario_type"),
+    sourceVersionStatus: nullableText(row, "source_version_status"),
     isRestated: bool(row, "is_restated"),
     isDerived: bool(row, "is_derived"),
     derivationFormula: nullableText(row, "derivation_formula"),
@@ -108,6 +109,10 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
   // Closed, code-owned vocabulary shared with the domain filter, never request data. Filter before
   // ranking so a later projection cannot displace an older actual and become "Not reported" in the UI.
   const nonResults = SCORECARD_NON_RESULT_VALUES.map((value) => `'${value}'`).join(",");
+  // The governed dictionary (Confluence 262391) defines fund returns at fund level and
+  // position economics at holding level, never company-operating facts as a fund position.
+  const fundCodes = FUND_SCORECARD_METRICS.map((metric) => `'${metric.code}'`).join(",");
+  const holdingCodes = INVESTMENT_SCORECARD_METRICS.map((metric) => `'${metric.code}'`).join(",");
   return `with current_snapshot as (
         select distinct on (s.snapshot_id)
                s.tenant_id,s.snapshot_id,s.version,s.fund_id,s.report_period,s.status,s.fact_ids,s.published_at
@@ -127,6 +132,7 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
                coalesce(nullif(btrim(f.value->'semanticDimensions'->>'asOfDate'),''),nullif(btrim(f.value->'semanticDimensions'->>'periodEnd'),'')) as as_of,
                nullif(btrim(f.value->'semanticDimensions'->>'actuality'),'') as actuality,
                nullif(btrim(f.value->'semanticDimensions'->>'scenarioType'),'') as scenario_type,
+               nullif(btrim(f.value->'semanticDimensions'->>'sourceVersionStatus'),'') as source_version_status,
                coalesce(f.value->'semanticDimensions'->>'isRestated','')='true' as is_restated,
                coalesce(f.value->'semanticDimensions'->>'isDerived','')='true' as is_derived,
                nullif(btrim(f.value->'semanticDimensions'->>'derivationFormula'),'') as derivation_formula
@@ -138,6 +144,7 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
           and f.metric_code in (select jsonb_array_elements_text($4::jsonb))
           and coalesce(lower(btrim(f.value->'semanticDimensions'->>'actuality')),'') not in (${nonResults})
           and coalesce(lower(btrim(f.value->'semanticDimensions'->>'scenarioType')),'') not in (${nonResults})
+          and coalesce(lower(btrim(f.value->'semanticDimensions'->>'sourceVersionStatus')),'')<>'draft'
           and coalesce(f.value->>'semanticGrainRelationship','')<>'conflicting_alternative'
           and nullif(btrim(f.value->'semanticDimensions'->>'breakdownCategory'),'') is null
           and nullif(btrim(f.value->'semanticDimensions'->>'lookthroughSource'),'') is null${periodPredicate}
@@ -145,7 +152,8 @@ function factChain(snapshotPredicate: string, periodPredicate: string): string {
         select pf.*,
                case when pf.subject_level='fund' then 'fund' else 'investment' end as level
         from published_fact pf
-        where pf.subject_level in ('fund','holding','company')
+        where (pf.subject_level='fund' and pf.metric_code in (${fundCodes}))
+           or (pf.subject_level='holding' and pf.metric_code in (${holdingCodes}))
       ), identified_fact as (
         select sf.*,
                h.target_fund_id,
@@ -271,7 +279,7 @@ export class PostgresPerformanceScorecardRepository {
       select fact_id::text as fact_id,snapshot_id::text as snapshot_id,published_at,fund_id,level,investment_key,investment_name,
              holding_id,company_id,metric_code,value_number,value_string,value_raw,currency,unit,as_of,
              coalesce(nullif(economic_period,''),report_period) as economic_period,
-             actuality,scenario_type,is_restated,is_derived,derivation_formula,
+             actuality,scenario_type,source_version_status,is_restated,is_derived,derivation_formula,
              document_id,source_reference_id,page_number,sheet_name,cell_range
       from ranked_fact
       where latest_rank=1
