@@ -128,3 +128,9 @@ test("REF-05 prompt requests the downstream reference key", () => {
     { id: "wu-0001", kind: "pages", targetPages: [1], source: "{}" }, { extractionRunId: "run-1" });
   assert.match(prompt, /referenceKey/);
 });
+
+test("REF-06 duplicate reference keys are rejected before downstream ID derivation", () => {
+  const c = candidate();
+  c.sourceReferences.push({ ...reference(), pageNumber: 2 });
+  assert.throws(() => normalizeCandidate(c), /duplicate referenceKey/);
+});
