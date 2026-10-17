@@ -390,6 +390,11 @@ function normalizeCandidate(candidate) {
     if (!EXTRACTION_METHODS.has(ref.extractionMethod)) throw new Error(`model candidate ${value.candidateKey} has invalid extractionMethod`);
     return ref;
   });
+  const keys = new Set();
+  for (const ref of references) {
+    if (keys.has(ref.referenceKey)) throw new Error(`model candidate ${value.candidateKey} has duplicate referenceKey`);
+    keys.add(ref.referenceKey);
+  }
   const confidence = {};
   for (const [key, raw] of Object.entries(value.confidence)) {
     const score = Number(raw);
