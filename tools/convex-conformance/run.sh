@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONVEX_BACKEND_IMAGE="${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend@sha256:cdf345b33d353676205f7b204e62fbf235f0a2e6361fda83aa8ba60ba90802e3}"
+CONVEX_BACKEND_IMAGE="${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend@sha256:7503ce6a9d31e3211f6578338255046a19cee79278d6ad197c92c3ac967c0c9d}"
 CONVEX_POSTGRES_URL="${CONVEX_POSTGRES_URL:-}"
 CONVEX_POSTGRES_REQUIRE_TLS="${CONVEX_POSTGRES_REQUIRE_TLS:-true}"
 # Optional: a client DSN for the database Convex persists into. When set, the
