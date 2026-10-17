@@ -315,6 +315,38 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(violations, describe(violations)).toEqual([]);
   });
 
+  test(`operator view of tenant health (loaded, empty and refused) passes axe in ${colorScheme} theme @matrix`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    let mode: "loaded" | "empty" | "refused" = "loaded";
+    await page.route("**/api/v1/admin/tenant-health**", (route) => {
+      if (mode === "refused") return route.fulfill(json({ error: "operations_admin_required" }, 403));
+      if (mode === "empty") return route.fulfill(json({ data: [] }));
+      return route.fulfill(json({
+        data: [
+          { tenantId: "tenant-1", tenantName: "Meridian Capital", workspaceCount: 3, tenantAdminCount: 2, activeSupportGrants: 1, pendingSupportAcknowledgements: 1, pendingInvitations: 4 },
+          { tenantId: "tenant-2", tenantName: "Harbour Partners", workspaceCount: 1, tenantAdminCount: 1, activeSupportGrants: 0, pendingSupportAcknowledgements: 0, pendingInvitations: 0 },
+        ],
+      }));
+    });
+    await page.goto("/admin/tenant-health");
+    await expect(page.getByRole("heading", { name: "Tenant health" })).toBeVisible();
+    const table = page.getByRole("region", { name: "Tenant health" });
+    await expect(table).toContainText("Meridian Capital");
+    await expect(table).toContainText("Harbour Partners");
+    let violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    mode = "empty";
+    await page.reload();
+    await expect(table).toContainText("No tenants found.");
+    violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+    mode = "refused";
+    await page.reload();
+    await expect(page.getByRole("alert").filter({ hasText: "operations_admin_required" })).toBeVisible();
+    violations = await blockingViolations(page);
+    expect(violations, describe(violations)).toEqual([]);
+  });
+
   test(`invitation page (accepted) passes axe in ${colorScheme} theme @matrix`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     await page.route("**/api/v1/invitations/accept", (route) => route.fulfill(json({ data: { tenantId: "tenant-1", workspaceId: "workspace-1" } })));
