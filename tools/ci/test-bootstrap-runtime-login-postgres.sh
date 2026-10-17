@@ -12,6 +12,8 @@ CREATE SCHEMA corvis_control;
 CREATE SCHEMA corvis_migration;
 CREATE TABLE corvis_control.audit_event (id integer);
 REVOKE ALL ON SCHEMA corvis_control, corvis_migration FROM PUBLIC;
+GRANT USAGE ON SCHEMA corvis_control TO corvis_runtime;
+GRANT SELECT ON corvis_control.audit_event TO corvis_runtime;
 REVOKE CREATE ON DATABASE postgres FROM PUBLIC;
 SQL
 # IAM-01 safe missing membership: only the intended grant is applied.
