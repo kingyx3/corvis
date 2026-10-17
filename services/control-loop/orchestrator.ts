@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { applyActions, type ApplyMode, type EditApplier } from "./apply.ts";
 import { dedupeFindings, sortFindings } from "./classifiers/fingerprint.ts";
 import { planActions } from "./plan.ts";
-import { closureDecision, evaluateHealth, healthFinding } from "./reports/health.ts";
+import { CONTROL_LOOP_HEALTH_FINGERPRINT, closureDecision, evaluateHealth, healthFinding } from "./reports/health.ts";
 import { scanArchitectureDrift } from "./scanners/architecture-drift.ts";
 import { scanDocumentationAuthority } from "./scanners/documentation-authority.ts";
 import { scanInternalLinks } from "./scanners/internal-links.ts";
@@ -214,6 +214,7 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
       snapshot: deps.issueSnapshot ?? { fetchedAt: startedAt, issues: [] },
       status,
       closureAllowed: closureDecision({ status, health: computeHealth(computeWatermark()), scanComplete: allScannersComplete, fullScan: scanFull }).allowed,
+      health: { finding: degraded, closeAllowed: status === "complete" && degraded === null },
     });
     try {
       await deps.stateStore.write(`plan_${deps.mode}`, JSON.stringify({ runId, startedAt, headCommit: deps.headCommit ?? null, plan, issuePlan }));
@@ -256,7 +257,9 @@ export async function runControlLoop(deps: RunDependencies): Promise<RunReport> 
     if (deps.issueSnapshot) {
       try {
         issueReconciliation = await applyIssueReconciliation(
-          issuePlan.filter((action) => action.type !== "close" || closure.allowed),
+          // The health issue is not derived from scanned files, so closing it
+          // needs a complete, healthy run but not a full scan.
+          issuePlan.filter((action) => action.type !== "close" || closure.allowed || (action.fingerprint === CONTROL_LOOP_HEALTH_FINGERPRINT && status === "complete" && computeHealth(computeWatermark()).healthy)),
           {
             mode: deps.issueApplyMode ?? "dry-run",
             budget: deps.issueMutationBudget ?? DEFAULT_MUTATION_BUDGET,

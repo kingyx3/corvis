@@ -1,6 +1,7 @@
 import { validateMutationBudget } from "./mutation-budget.ts";
 import { classifyFailure } from "./failure.ts";
 import type { Finding, RunStatus } from "./types.ts";
+import { CONTROL_LOOP_HEALTH_FINGERPRINT } from "./reports/health.ts";
 import { CONTROL_LOOP_LABEL, type IssueSnapshot, type IssueSnapshotItem } from "./scanners/issue-hygiene.ts";
 
 export type ReconciliationActionType = "create" | "reopen" | "close";
@@ -28,6 +29,15 @@ export interface ReconciliationInput {
   status: RunStatus;
   /** Mirrors the orchestrator's own closure gate: never close on an incomplete/partial/unhealthy run. */
   closureAllowed: boolean;
+  /**
+   * The control loop's own health (CL-HEALTH-001), kept apart from `findings`
+   * so hygiene never sees it. `finding` is non-null while unhealthy and tracks
+   * one issue by its stable fingerprint. `closeAllowed` is the caller's gate
+   * for closing that issue: it needs a complete run and healthy health, but
+   * not a full scan, because health is not derived from scanned files. When
+   * omitted, the health issue is left alone.
+   */
+  health?: { finding: Finding | null; closeAllowed: boolean };
 }
 
 function isTracked(issue: IssueSnapshotItem): issue is IssueSnapshotItem & { fingerprint: string } {
@@ -60,6 +70,10 @@ function closeComment(fingerprint: string): string {
   return `Closed automatically: finding \`${fingerprint}\` is no longer present after a complete, healthy scan.`;
 }
 
+function healthCloseComment(fingerprint: string): string {
+  return `Closed automatically: control-loop health finding \`${fingerprint}\` cleared after a complete, healthy run.`;
+}
+
 /**
  * Pure, deterministic reconciliation: given the currently active findings and
  * the last-known issue snapshot, decides which control-loop-labeled GitHub
@@ -69,10 +83,11 @@ function closeComment(fingerprint: string): string {
  * orchestrator already uses to decide automatic closure is safe.
  */
 export function planIssueReconciliation(input: ReconciliationInput): ReconciliationAction[] {
-  const { findings, snapshot, status, closureAllowed } = input;
+  const { findings, snapshot, status, closureAllowed, health } = input;
   if (status === "failed") return [];
 
   const active = new Map(findings.map((finding) => [finding.fingerprint, finding]));
+  if (health?.finding) active.set(health.finding.fingerprint, health.finding);
   const openByFingerprint = new Map<string, number>();
   const closedByFingerprint = new Map<string, number>();
   for (const issue of [...snapshot.issues].filter(isTracked).sort((left, right) => left.number - right.number)) {
@@ -96,10 +111,12 @@ export function planIssueReconciliation(input: ReconciliationInput): Reconciliat
     actions.push({ type: "create", fingerprint, issueNumber: null, title: issueTitle(finding), body: issueBody(finding) });
   }
 
-  if (closureAllowed) {
+  if (closureAllowed || health?.closeAllowed) {
     for (const [fingerprint, number] of [...openByFingerprint.entries()].sort((left, right) => (left[0] < right[0] ? -1 : 1))) {
-      if (!active.has(fingerprint)) {
-        actions.push({ type: "close", fingerprint, issueNumber: number, title: null, body: closeComment(fingerprint) });
+      if (active.has(fingerprint)) continue;
+      const isHealth = fingerprint === CONTROL_LOOP_HEALTH_FINGERPRINT;
+      if (isHealth ? health?.closeAllowed === true : closureAllowed) {
+        actions.push({ type: "close", fingerprint, issueNumber: number, title: null, body: isHealth ? healthCloseComment(fingerprint) : closeComment(fingerprint) });
       }
     }
   }

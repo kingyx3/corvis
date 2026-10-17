@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CONTROL_LOOP_HEALTH_FINGERPRINT, healthFinding } from "./reports/health.ts";
 import { applyIssueReconciliation, planIssueReconciliation, type IssueWriter } from "./issue-reconciliation.ts";
 import type { Finding } from "./types.ts";
 import type { IssueSnapshot } from "./scanners/issue-hygiene.ts";
@@ -84,6 +85,43 @@ test("an issue without the control-loop label is never touched even if its finge
   // Not recognized as tracked, so a duplicate create is planned rather than silently ignored.
   assert.equal(actions.length, 1);
   assert.equal(actions[0]?.type, "create");
+});
+
+// ---- control-loop health issue ----
+
+const unhealthy = healthFinding({ healthy: false, reasons: ["incomplete_weekly_scan"], automaticClosureEnabled: false }) as Finding;
+const healthIssue = (state: "open" | "closed") => ({ number: 40, state, title: "t", fingerprint: CONTROL_LOOP_HEALTH_FINGERPRINT, labels: ["control-loop"] });
+
+test("an unhealthy loop plans one health issue and a failed run still plans nothing", () => {
+  const created = planIssueReconciliation({ findings: [], snapshot: snapshot([]), status: "incomplete", closureAllowed: false, health: { finding: unhealthy, closeAllowed: false } });
+  assert.deepEqual(created.map((action) => [action.type, action.fingerprint]), [["create", CONTROL_LOOP_HEALTH_FINGERPRINT]]);
+  assert.ok(created[0]?.title?.includes("CL-HEALTH-001"));
+  assert.ok(created[0]?.body?.includes("incomplete_weekly_scan"));
+  assert.deepEqual(planIssueReconciliation({ findings: [], snapshot: snapshot([]), status: "failed", closureAllowed: false, health: { finding: unhealthy, closeAllowed: false } }), []);
+});
+
+test("an open health issue is not duplicated and a closed one is reopened", () => {
+  const open = planIssueReconciliation({ findings: [], snapshot: snapshot([healthIssue("open")]), status: "complete", closureAllowed: false, health: { finding: unhealthy, closeAllowed: false } });
+  assert.deepEqual(open, []);
+  const reopened = planIssueReconciliation({ findings: [], snapshot: snapshot([healthIssue("closed")]), status: "complete", closureAllowed: false, health: { finding: unhealthy, closeAllowed: false } });
+  assert.deepEqual(reopened.map((action) => [action.type, action.issueNumber]), [["reopen", 40]]);
+});
+
+test("the health issue closes on its own gate, independent of the full-scan content closure gate", () => {
+  const closes = planIssueReconciliation({ findings: [], snapshot: snapshot([healthIssue("open")]), status: "complete", closureAllowed: false, health: { finding: null, closeAllowed: true } });
+  assert.deepEqual(closes.map((action) => [action.type, action.issueNumber]), [["close", 40]]);
+  assert.ok(closes[0]?.body?.includes("health finding"));
+  const held = planIssueReconciliation({ findings: [], snapshot: snapshot([healthIssue("open")]), status: "incomplete", closureAllowed: false, health: { finding: null, closeAllowed: false } });
+  assert.deepEqual(held, []);
+});
+
+test("the health issue is left alone unless the caller supplies health, and a content close does not close it", () => {
+  const content = finding();
+  const snap = snapshot([healthIssue("open"), { number: 41, state: "open", title: "t", fingerprint: content.fingerprint, labels: ["control-loop"] }]);
+  const withoutHealth = planIssueReconciliation({ findings: [], snapshot: snap, status: "complete", closureAllowed: true });
+  assert.deepEqual(withoutHealth.map((action) => [action.type, action.issueNumber]), [["close", 41]]);
+  const contentGateClosed = planIssueReconciliation({ findings: [], snapshot: snap, status: "complete", closureAllowed: true, health: { finding: null, closeAllowed: false } });
+  assert.deepEqual(contentGateClosed.map((action) => action.issueNumber), [41]);
 });
 
 // ---- applyIssueReconciliation ----
