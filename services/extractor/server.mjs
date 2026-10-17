@@ -615,3 +615,5 @@ server.requestTimeout = 540_000;
 server.headersTimeout = 30_000;
 server.keepAliveTimeout = 5_000;
 server.listen(PORT, "0.0.0.0", () => console.log(JSON.stringify({ severity: "INFO", event: "extractor_started", port: PORT })));
+
+export { server, fetchBounded, normalizeCandidate, mapPrompt };
