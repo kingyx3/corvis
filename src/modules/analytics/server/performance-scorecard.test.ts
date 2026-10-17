@@ -52,7 +52,7 @@ const FACT_ROW: PostgresRow = {
   fact_id: "fact-1", snapshot_id: "snap-1", published_at: new Date("2026-07-01T00:00:00.000Z"), fund_id: "fund-a", level: "fund",
   investment_key: null, investment_name: null, holding_id: null, company_id: null, metric_code: "nav", value_number: "100.0000000000",
   value_string: null, value_raw: "USD 100m", currency: "USD", unit: "millions", as_of: "2026-06-30", economic_period: "Q2 2026",
-  actuality: "actual", scenario_type: "reported", is_restated: false, is_derived: false, derivation_formula: null,
+  actuality: "actual", scenario_type: "reported", source_version_status: "final", is_restated: false, is_derived: false, derivation_formula: null,
   document_id: DOCUMENT, source_reference_id: "33333333-3333-4333-8333-333333333333", page_number: "12", sheet_name: null, cell_range: null,
 };
 
@@ -82,6 +82,11 @@ test("the load is tenant-, fund- and document-scoped and reads only current publ
   assert.match(sql, /<>'conflicting_alternative'/, "a conflicting alternative is not a reported figure");
   assert.match(sql, /breakdownCategory/);
   assert.match(sql, /lookthroughSource/);
+  assert.match(sql, /sourceVersionStatus/);
+  assert.match(sql, /<>'draft'/, "draft sources are removed before ranking, so they cannot hide an earlier published final value");
+  assert.match(sql, /pf\.subject_level='fund' and pf\.metric_code in/, "fund performance metric codes stay on fund facts");
+  assert.match(sql, /pf\.subject_level='holding' and pf\.metric_code in/, "holding metrics cannot be filled by unrelated company operating values");
+  assert.doesNotMatch(sql, /pf\.subject_level in \('fund','holding','company'\)/);
   assert.match(sql, /latest_rank=1/);
   assert.doesNotMatch(sql, /snapshot_id::text in/, "no snapshot restriction unless an export pins one");
   assert.match(sql, new RegExp(`limit ${SCORECARD_MAX_FACTS + 1}`));
@@ -101,19 +106,19 @@ test("fact rows map to wire facts: exact decimal text, ISO as-of, source and fla
     ...FACT_ROW, fact_id: "fact-2", level: "investment", investment_key: "company-1", investment_name: "Acme", holding_id: "holding-1", company_id: "company-1",
     metric_code: "ownership_pct", value_number: "12.5000000000", currency: null, unit: "percent", published_at: "2026-07-02T00:00:00Z",
     page_number: null, sheet_name: "SOI", cell_range: "B4:C4", is_restated: "true", is_derived: true, derivation_formula: "x / y",
-    actuality: "preliminary", scenario_type: null, as_of: null, economic_period: "",
+    actuality: "preliminary", scenario_type: null, source_version_status: "preliminary", as_of: null, economic_period: "",
   };
   const { db } = fakeDb({ funds: FUND_ROWS, facts: [FACT_ROW, investment, { fact_id: "fact-3", level: "fund", published_at: null, page_number: "n/a", value_number: "" }] });
   const { facts } = await new PostgresPerformanceScorecardRepository(db).load(identity());
   assert.deepEqual(facts[0], {
     factId: "fact-1", snapshotId: "snap-1", publishedAt: "2026-07-01T00:00:00.000Z", fundId: "fund-a", level: "fund", investmentKey: null, investment: null,
     holdingId: null, companyId: null, metricCode: "nav", valueNumber: "100.0000000000", valueString: null, valueRaw: "USD 100m", currency: "USD", unit: "millions",
-    asOf: "2026-06-30", period: "Q2 2026", actuality: "actual", scenarioType: "reported", isRestated: false, isDerived: false, derivationFormula: null,
+    asOf: "2026-06-30", period: "Q2 2026", actuality: "actual", scenarioType: "reported", sourceVersionStatus: "final", isRestated: false, isDerived: false, derivationFormula: null,
     source: { documentId: DOCUMENT, sourceReferenceId: "33333333-3333-4333-8333-333333333333", page: 12, sheetName: null, cellRange: null },
   });
   assert.deepEqual(
-    [facts[1]!.level, facts[1]!.investmentKey, facts[1]!.investment, facts[1]!.holdingId, facts[1]!.companyId, facts[1]!.publishedAt, facts[1]!.asOf, facts[1]!.period, facts[1]!.isRestated, facts[1]!.isDerived, facts[1]!.derivationFormula, facts[1]!.source],
-    ["investment", "company-1", "Acme", "holding-1", "company-1", "2026-07-02T00:00:00Z", null, "", true, true, "x / y", { documentId: DOCUMENT, sourceReferenceId: "33333333-3333-4333-8333-333333333333", page: null, sheetName: "SOI", cellRange: "B4:C4" }],
+    [facts[1]!.level, facts[1]!.investmentKey, facts[1]!.investment, facts[1]!.holdingId, facts[1]!.companyId, facts[1]!.publishedAt, facts[1]!.asOf, facts[1]!.period, facts[1]!.sourceVersionStatus, facts[1]!.isRestated, facts[1]!.isDerived, facts[1]!.derivationFormula, facts[1]!.source],
+    ["investment", "company-1", "Acme", "holding-1", "company-1", "2026-07-02T00:00:00Z", null, "", "preliminary", true, true, "x / y", { documentId: DOCUMENT, sourceReferenceId: "33333333-3333-4333-8333-333333333333", page: null, sheetName: "SOI", cellRange: "B4:C4" }],
   );
   assert.deepEqual([facts[2]!.publishedAt, facts[2]!.valueNumber, facts[2]!.source.page, facts[2]!.level], [null, null, null, "fund"]);
 });
