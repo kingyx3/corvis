@@ -52,6 +52,7 @@ function fact(overrides: Partial<ScorecardFact> = {}): ScorecardFact {
     period: "Q2 2026",
     actuality: "actual",
     scenarioType: null,
+    sourceVersionStatus: null,
     isRestated: false,
     isDerived: false,
     derivationFormula: null,
@@ -84,6 +85,9 @@ test("a published figure is Final unless the GP flagged it preliminary or restat
     assert.equal(reportedFigureStatus({ actuality, scenarioType: null, isRestated: false }), "Preliminary", actuality);
   }
   assert.equal(reportedFigureStatus({ actuality: "preliminary", scenarioType: null, isRestated: true }), "Preliminary");
+  assert.equal(reportedFigureStatus({ actuality: "actual", scenarioType: "reported", sourceVersionStatus: " preliminary ", isRestated: false }), "Preliminary", "the GP document version is independent of actuality");
+  assert.equal(reportedFigureStatus({ actuality: "actual", scenarioType: "reported", sourceVersionStatus: "FINAL", isRestated: true }), "Restated");
+  assert.equal(reportedFigureStatus({ actuality: "actual", scenarioType: "reported", sourceVersionStatus: "draft", isRestated: false }), null, "an explicitly draft GP source must not be presented as Final");
 });
 
 test("a forecast, budget or target is not a reported result and has no status", () => {
@@ -93,8 +97,10 @@ test("a forecast, budget or target is not a reported result and has no status", 
   }
 });
 
-test("TVPI follows the source definition and never silently asserts a net-of-fees basis", () => {
+test("TVPI and net MOIC retain the source-defined economic basis in the canonical dictionary", () => {
   assert.doesNotMatch(FUND_SCORECARD_METRICS.find((metric) => metric.code === "tvpi")!.definition, /net of fees/i);
+  assert.match(FUND_SCORECARD_METRICS.find((metric) => metric.code === "net_moic")!.definition, /under the source definition/i);
+  assert.doesNotMatch(FUND_SCORECARD_METRICS.find((metric) => metric.code === "net_moic")!.definition, /after fees and carry/i);
 });
 
 test("compareLatestFirst orders by as-of, then publication, then snapshot, then fact id", () => {
@@ -139,6 +145,8 @@ test("latestFigures keeps the latest as-of figure and drops history, never 0 for
 
 test("latestFigures skips projections and facts with nothing to show, so the metric is Not reported rather than blank or zero", () => {
   assert.deepEqual(latestFigures([fact({ actuality: "forecast" })]), []);
+  assert.deepEqual(latestFigures([fact({ sourceVersionStatus: "draft" })]), []);
+  assert.deepEqual(latestFigures([fact({ sourceVersionStatus: "preliminary" })]).map((figure) => figure.status), ["Preliminary"]);
   assert.deepEqual(latestFigures([fact({ valueNumber: null, valueString: null, valueRaw: null })]), []);
   assert.deepEqual(latestFigures([fact({ valueNumber: "not-a-number", valueString: " ", valueRaw: "" })]), []);
   assert.deepEqual(latestFigures([fact({ valueNumber: " ", valueString: null, valueRaw: null })]), []);
