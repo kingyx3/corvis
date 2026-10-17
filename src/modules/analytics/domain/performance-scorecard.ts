@@ -11,7 +11,7 @@
  * Governed definitions: Confluence Canonical Metric Dictionary (262391), Controlled Taxonomies
  * (327724) and Canonical Data Model (425985). Metric-definition rows remain tenant data:
  * - fund-level metrics are reported with subject level `fund`: nav, tvpi, dpi, rvpi, net_irr, net_moic;
- * - investment-level metrics are reported with subject level `holding` or `company`: cost, fair_value,
+ * - investment-level metrics are reported with subject level `holding`: cost, fair_value,
  *   gross_moic, gross_irr, ownership_pct. A look-through row, a breakdown row (e.g. fair value by
  *   sector) and an `instrument`-level fact are not an investment's headline figure and never appear.
  */
