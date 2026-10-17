@@ -21,12 +21,15 @@ export function evaluateHealth(input: HealthInput): HealthState {
   return { healthy: reasons.length === 0, reasons, automaticClosureEnabled: reasons.length === 0 };
 }
 
+/** Stable fingerprint of the CL-HEALTH-001 finding, so its tracking issue can be told apart from content findings. */
+export const CONTROL_LOOP_HEALTH_FINGERPRINT = fingerprintFor(rule("CL-HEALTH-001"), CONTROL_LOOP_HEALTH_SUBJECT);
+
 export function healthFinding(health: HealthState): Finding | null {
   if (health.healthy) return null;
   const definition = rule("CL-HEALTH-001");
   return {
     ruleId: definition.id,
-    fingerprint: fingerprintFor(definition, CONTROL_LOOP_HEALTH_SUBJECT),
+    fingerprint: CONTROL_LOOP_HEALTH_FINGERPRINT,
     subject: CONTROL_LOOP_HEALTH_SUBJECT,
     severity: definition.severity,
     authority: definition.authority,

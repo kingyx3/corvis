@@ -64,6 +64,7 @@ Before #27 enables GitHub/Confluence writes, one scheduler must become authorita
 - dry-run by default;
 - nonnegative safe-integer mutation budgets and canonical-path allowlist enforcement; zero disables writes, invalid values fail before work;
 - budgets count attempted logical actions, including uncertain writes and state changes whose follow-up comment fails (one issue action may issue a state request plus a comment);
+- the loop's own health (`CL-HEALTH-001`) is tracked as one control-loop issue under a stable fingerprint, through the same dry-run-by-default, budgeted reconciliation as content findings: created while the loop is unhealthy, reopened if it recurs, never duplicated while open, and closed only after a complete run whose health is healthy (not tied to the full-scan gate, since health is not derived from scanned files). A failed run plans nothing. The health finding is deliberately kept out of the issue-hygiene scanner's active set. A loop that is not running at all cannot open its own issue, so a run that never starts is outside what this issue can report;
 - budget exhaustion, missing configured writers and failed writes mark the run incomplete and retain the prior success watermark; no later issue closure follows a failed reconciliation action;
 - final health/findings/closure reflect the final run outcome; the CLI exits nonzero on non-skipped incomplete or failed runs;
 - atomic production lease and stale-lock reclamation;
@@ -79,7 +80,7 @@ The runtime/scheduler infrastructure is no longer the primary code gap, but #27 
 
 1. live Confluence read/reconciliation is not wired into the scheduled runtime;
 2. GitHub issue create/reopen/close by fingerprint and allowlisted repository documentation remediation are implemented, but scheduled writes remain disabled pending the single-writer cutover, scoped credentials and rollback/acceptance evidence;
-3. automated health-issue synchronization and Confluence remediation are not implemented;
+3. Confluence remediation is not implemented;
 4. business-maturity comparison against the Confluence gap/readiness/control/risk registers is not implemented;
 5. production scheduler cutover and recurring provider-backed execution evidence have not yet been demonstrated;
 6. incident/postmortem feedback into regression rules remains future work.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { acquireLock } from "./lock.ts";
+import { CONTROL_LOOP_HEALTH_FINGERPRINT } from "./reports/health.ts";
 import { runControlLoop } from "./orchestrator.ts";
 import { InMemoryStateStore } from "./state.ts";
 import { readWatermark } from "./watermark.ts";
@@ -283,7 +284,8 @@ test("a writer failure never rejects the run: the report and watermark are still
     assert.equal(created.length, 1);
     assert.notEqual(report.status, "complete");
     assert.equal(report.status, "incomplete");
-    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["applied", "failed"]);
+    // Two broken links plus the unhealthy first run's own CL-HEALTH-001 issue.
+    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["applied", "failed", "skipped"]);
     assert.equal(report.issueReconciliation?.outcomes[1]?.reason, "github_403");
     assert.equal(report.issueReconciliation?.haltedReason, "github_403");
     assert.ok(report.notes.includes("issue_reconciliation_action_failed"));
@@ -312,7 +314,7 @@ test("a 403 stops the remaining reconciliation writes instead of hammering the A
       issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: writer,
     });
     assert.equal(attempts, 1);
-    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["failed", "skipped"]);
+    assert.deepEqual(report.issueReconciliation?.outcomes.map((o) => o.outcome), ["failed", "skipped", "skipped"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -366,6 +368,102 @@ test("reconciliation budget exhaustion is surfaced in the report notes", async (
     });
     assert.equal(report.issueReconciliation?.budgetExceeded, true);
     assert.ok(report.notes.includes("issue_mutation_budget_exceeded"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const CLEAN_REPO = { "docs/README.md": "# Hi\n" };
+const HEALTH_ISSUE = (state: "open" | "closed") => ({
+  fetchedAt: NOW.toISOString(),
+  issues: [{ number: 77, state, title: "[control-loop] CL-HEALTH-001: continuous-governance", fingerprint: CONTROL_LOOP_HEALTH_FINGERPRINT, labels: ["control-loop"] }],
+});
+
+function recordingIssueWriter() {
+  const calls: string[] = [];
+  const writer = {
+    create: async (input: { title: string }) => { calls.push(`create:${input.title}`); return { number: 900 }; },
+    setState: async (number: number, state: "open" | "closed") => { calls.push(`${state === "open" ? "reopen" : "close"}:${number}`); },
+    comment: async () => {},
+  };
+  return { writer, calls };
+}
+
+test("an unhealthy loop opens one tracked CL-HEALTH-001 issue and never duplicates it while it stays open", async () => {
+  const root = await tempRepo(CLEAN_REPO);
+  try {
+    const first = recordingIssueWriter();
+    const report = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(), issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueApplyMode: "execute", issueWriter: first.writer });
+    assert.equal(report.health.healthy, false);
+    assert.deepEqual(first.calls, ["create:[control-loop] CL-HEALTH-001: continuous-governance"]);
+    assert.equal(report.issueReconciliation?.outcomes[0]?.fingerprint, CONTROL_LOOP_HEALTH_FINGERPRINT);
+    // The hygiene scanner never sees the health finding, so tracking it does not raise issue-hygiene findings.
+    assert.equal(report.findings.some((finding) => finding.ruleId.startsWith("CL-ISSUE-")), false);
+
+    const second = recordingIssueWriter();
+    await runControlLoop({ root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(), issueSnapshot: HEALTH_ISSUE("open"), issueApplyMode: "execute", issueWriter: second.writer });
+    assert.deepEqual(second.calls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a closed CL-HEALTH-001 issue is reopened when the loop is unhealthy again", async () => {
+  const root = await tempRepo(CLEAN_REPO);
+  try {
+    const { writer, calls } = recordingIssueWriter();
+    await runControlLoop({ root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(), issueSnapshot: HEALTH_ISSUE("closed"), issueApplyMode: "execute", issueWriter: writer });
+    assert.deepEqual(calls, ["reopen:77"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the health issue is dry-run by default and is never written without an opt-in", async () => {
+  const root = await tempRepo(CLEAN_REPO);
+  try {
+    const { writer, calls } = recordingIssueWriter();
+    const report = await runControlLoop({ root, mode: "daily", now: NOW, stateStore: new InMemoryStateStore(), issueSnapshot: EMPTY_ISSUE_SNAPSHOT, issueWriter: writer });
+    assert.deepEqual(calls, []);
+    assert.equal(report.issueReconciliation?.outcomes[0]?.outcome, "dry-run");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the health issue closes after a complete, healthy run, even when that run is an incremental scan", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo(CLEAN_REPO);
+  try {
+    await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT, headCommit: "a".repeat(40) });
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const { writer, calls } = recordingIssueWriter();
+    const report = await runControlLoop({
+      root, mode: "daily", now: later, stateStore: store, issueSnapshot: HEALTH_ISSUE("open"), issueApplyMode: "execute", issueWriter: writer,
+      changedPaths: ["docs/README.md"], headCommit: "b".repeat(40),
+    });
+    assert.equal(report.scan.full, false);
+    assert.equal(report.closure.allowed, false, "an incremental scan still cannot close content issues");
+    assert.equal(report.health.healthy, true);
+    assert.deepEqual(calls, ["close:77"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the health issue stays open when the run is downgraded to incomplete after planning", async () => {
+  const store = new InMemoryStateStore();
+  const root = await tempRepo({ "docs/OTHER.md": "# Other\n", "docs/README.md": "[x](./OTHER-OLD/OTHER.md)\n" });
+  try {
+    await runControlLoop({ root, mode: "weekly", now: NOW, stateStore: store, issueSnapshot: EMPTY_ISSUE_SNAPSHOT });
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const { writer, calls } = recordingIssueWriter();
+    const report = await runControlLoop({
+      root, mode: "daily", now: later, stateStore: store, issueSnapshot: HEALTH_ISSUE("open"), issueApplyMode: "execute", issueWriter: writer,
+      applyMode: "execute", applier: { apply: async () => { throw new Error("disk full"); } },
+    });
+    assert.equal(report.status, "incomplete");
+    assert.equal(calls.includes("close:77"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
