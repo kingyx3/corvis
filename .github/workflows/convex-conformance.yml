@@ -16,7 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   # Pins live in one place each: the Convex CLI version in
@@ -41,10 +40,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      GHCR_PULL_USER: ${{ github.actor }}
-      GHCR_PULL_TOKEN: ${{ github.token }}
-      # Temporary pullability diagnostic; restore the digest pin after confirming availability.
-      CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
       CONVEX_POSTGRES_VERIFY_DSN: postgresql://postgres@localhost:5432/convex_self_hosted
       CONVEX_POSTGRES_REQUIRE_TLS: "false"
@@ -62,7 +57,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      packages: read
       issues: write
     services:
       postgres:
@@ -78,8 +72,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      GHCR_PULL_USER: ${{ github.actor }}
-      GHCR_PULL_TOKEN: ${{ github.token }}
       CONVEX_BACKEND_IMAGE: ghcr.io/get-convex/convex-backend:latest
       CONVEX_CLI_VERSION: latest
       CONVEX_POSTGRES_URL: postgresql://postgres@host.docker.internal:5432
