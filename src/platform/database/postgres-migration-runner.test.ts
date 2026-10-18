@@ -226,8 +226,8 @@ test("the repository's own migration directory produces a valid, gapless replay 
   const plan = await planFromDirectory();
   assert.deepEqual(
     plan.migrations.map((migration) => [migration.version, migration.name]),
-    [[1, "001_baseline.sql"], [2, "002_runtime_database_role.sql"], [3, "003_control_evidence_record_no_truncate.sql"], [4, "004_session_activity_expiry_revocation.sql"], [5, "005_candidate_review_event_append_only.sql"], [6, "006_release_clean_artifact_document_guard.sql"]],
-    "the directory holds the schema baseline, the runtime database role migration the control evidence truncate guard, session expiry preservation, review-event append-only guard and artifact-document guard",
+    [[1, "001_baseline.sql"], [2, "002_runtime_database_role.sql"], [3, "003_control_evidence_record_no_truncate.sql"], [4, "004_session_activity_expiry_revocation.sql"], [5, "005_candidate_review_event_append_only.sql"], [6, "006_release_clean_artifact_document_guard.sql"], [7, "007_audit_tables_append_only.sql"]],
+    "the directory holds the schema baseline, the runtime database role migration the control evidence truncate guard, session expiry preservation, review-event append-only guard, artifact-document guard and the six-table audit append-only guard",
   );
   assert.deepEqual(plan.applied, []);
   assert.equal(plan.pending.length, plan.migrations.length);
