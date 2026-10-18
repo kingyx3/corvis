@@ -10,7 +10,7 @@ The baseline target includes Security/Common Criteria plus Availability, Confide
 
 ## Machine-readable readiness map
 
-[`../ops/soc2-controls.json`](../../ops/soc2-controls.json) maps the SOC 2 criteria families to Corvis owners, implementation/evidence sources and readiness states. CI tests fail if a required family disappears, if an entry loses ownership/evidence, or if the repository starts claiming an issued report prematurely.
+[`../../ops/soc2-controls.json`](../../ops/soc2-controls.json) maps the SOC 2 criteria families to Corvis owners, implementation/evidence sources and readiness states. CI tests fail if a required family disappears, if an entry loses ownership/evidence, or if the repository starts claiming an issued report prematurely.
 
 The map intentionally does not copy the AICPA criteria text. The AICPA Trust Services Criteria and SOC 2 Description Criteria remain authoritative for the examination.
 
