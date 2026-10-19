@@ -88,6 +88,16 @@ const { overrideSourceConnectionService, postgresSourceConnectionService } = awa
 // store; this file exists to drive the real library path against the fake Postgres backend above.
 overrideSourceConnectionService(postgresSourceConnectionService);
 
+// Reauthorize now runs a connectivity test right after storing the credential (so a bad credential
+// cannot come back as "active" unverified), so every test exercising reauthorize needs a registered
+// driver for the default `validCreateBody()` provider up front.
+sourceConnectorDrivers().set("acme-portal", {
+  providerKey: "acme-portal", connectorVersion: "1.0.0",
+  testConnection: async () => ({ ok: true }),
+  discover: async () => [],
+  download: async () => ({ bytes: Buffer.from(""), contentType: "application/pdf" }),
+});
+
 const TENANT_A = "tenant-alpha";
 const TENANT_B = "tenant-beta";
 
@@ -113,8 +123,8 @@ function validCreateBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function createConnection(tenant = TENANT_A, workspace?: string): Promise<{ sourceConnectionId: string }> {
-  const response = await createPost(request("POST", "/api/v1/source-connections", { tenant, workspace, body: validCreateBody() }));
+async function createConnection(tenant = TENANT_A, workspace?: string, bodyOverrides: Record<string, unknown> = {}): Promise<{ sourceConnectionId: string }> {
+  const response = await createPost(request("POST", "/api/v1/source-connections", { tenant, workspace, body: validCreateBody(bodyOverrides) }));
   assert.equal(response.status, 201);
   const payload = await response.json() as { data: { sourceConnectionId: string } };
   return payload.data;
@@ -235,17 +245,40 @@ test("POST reauthorize rejects a missing secret with 400", async () => {
   assert.equal(payload.error, "secret_required");
 });
 
-test("POST reauthorize rotates the secret and reactivates the connection", async () => {
+test("POST reauthorize tests the rotated secret and only then reactivates the connection", async () => {
   const { sourceConnectionId } = await createConnection(TENANT_A);
   const response = await reauthorizePost(request("POST", `/api/v1/source-connections/${sourceConnectionId}/reauthorize`, { tenant: TENANT_A, body: { secret: { token: "rotated" } } }), params(sourceConnectionId));
   assert.equal(response.status, 200);
-  const payload = await response.json() as { data: { status: string; consecutiveFailures: number } };
-  assert.equal(payload.data.status, "active");
-  assert.equal(payload.data.consecutiveFailures, 0);
+  const payload = await response.json() as { data: { connection: { status: string; consecutiveFailures: number }; test: { ok: boolean } } };
+  assert.equal(payload.data.test.ok, true);
+  assert.equal(payload.data.connection.status, "active");
+  assert.equal(payload.data.connection.consecutiveFailures, 0);
+});
+
+test("POST reauthorize does not leave a connection active when the rotated secret still fails its test", async () => {
+  sourceConnectorDrivers().set("still-bad-credential-portal", {
+    providerKey: "still-bad-credential-portal", connectorVersion: "1.0.0",
+    testConnection: async () => ({ ok: false, errorClass: "auth" }),
+    discover: async () => [],
+    download: async () => ({ bytes: Buffer.from(""), contentType: "application/pdf" }),
+  });
+  const { sourceConnectionId } = await createConnection(TENANT_A, undefined, { providerKey: "still-bad-credential-portal" });
+  const response = await reauthorizePost(request("POST", `/api/v1/source-connections/${sourceConnectionId}/reauthorize`, { tenant: TENANT_A, body: { secret: { token: "still-bad" } } }), params(sourceConnectionId));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { data: { connection: { status: string }; test: { ok: boolean; errorClass?: string } } };
+  assert.equal(payload.data.test.ok, false);
+  assert.equal(payload.data.test.errorClass, "auth");
+  // The route's own response already reflects the post-test connection, but confirm the stored
+  // row agrees: an unverified "active" that the next scheduled sync would silently fail against
+  // is exactly the bug this guards against.
+  assert.equal(payload.data.connection.status, "reauthorization_required");
+  const statusResponse = await itemGet(request("GET", `/api/v1/source-connections/${sourceConnectionId}`, { tenant: TENANT_A }), params(sourceConnectionId));
+  const statusPayload = await statusResponse.json() as { data: { status: string } };
+  assert.equal(statusPayload.data.status, "reauthorization_required");
 });
 
 test("POST test fails closed for an unregistered provider", async () => {
-  const { sourceConnectionId } = await createConnection(TENANT_A);
+  const { sourceConnectionId } = await createConnection(TENANT_A, undefined, { providerKey: "no-driver-registered-portal" });
   const response = await testPost(request("POST", `/api/v1/source-connections/${sourceConnectionId}/test`, { tenant: TENANT_A }), params(sourceConnectionId));
   assert.equal(response.status, 422);
   const payload = await response.json() as { error: string };
@@ -254,12 +287,6 @@ test("POST test fails closed for an unregistered provider", async () => {
 
 test("POST test activates a pending connection once a driver is registered and reports success", async () => {
   const { sourceConnectionId } = await createConnection(TENANT_A);
-  sourceConnectorDrivers().set("acme-portal", {
-    providerKey: "acme-portal", connectorVersion: "1.0.0",
-    testConnection: async () => ({ ok: true }),
-    discover: async () => [],
-    download: async () => ({ bytes: Buffer.from(""), contentType: "application/pdf" }),
-  });
 
   const response = await testPost(request("POST", `/api/v1/source-connections/${sourceConnectionId}/test`, { tenant: TENANT_A }), params(sourceConnectionId));
   assert.equal(response.status, 200);

@@ -200,15 +200,16 @@ test("reauthorize over HTTP never echoes the credential, clears the error and ho
   const text = await ok.text();
   assert.equal(text.includes(secret), false, "the response never contains the submitted credential");
   assert.doesNotMatch(text, /secretReference|"secret"|"token"/);
-  const body = JSON.parse(text) as { data: Connection };
-  assert.equal(body.data.status, "active");
-  assert.equal(body.data.consecutiveFailures, 0);
-  assert.equal(body.data.lastErrorClass, undefined);
+  const body = JSON.parse(text) as { data: { connection: Connection; test: { ok: boolean } } };
+  assert.equal(body.data.test.ok, true);
+  assert.equal(body.data.connection.status, "active");
+  assert.equal(body.data.connection.consecutiveFailures, 0);
+  assert.equal(body.data.connection.lastErrorClass, undefined);
   assert.equal((await send(REAUTH, {})).status, 400);
   assert.equal((await send(REVOKED, { secret: { token: "x" } })).status, 409);
   assert.equal((await send(ID(97), { secret: { token: "x" } })).status, 404);
   const paused = await send(PAUSED, { secret: { token: "x" } });
-  assert.equal((await paused.json() as { data: Connection }).data.status, "paused");
+  assert.equal((await paused.json() as { data: { connection: Connection } }).data.connection.status, "paused");
 });
 
 test("the activity route answers from the demo store, and attention clears when the connection recovers", async () => {
