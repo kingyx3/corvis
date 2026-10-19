@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { WorkspaceMembershipSummary } from "@/shared/domain/enterprise";
 import type { WorkspaceIdentity } from "@/shared/domain/workspace";
 import { workspacePort } from "@/composition/workspace-services";
+import { apiUrl } from "@/shared/lib/api-url";
 import { safeRemoveItem, safeSetItem } from "@/shared/lib/safe-storage";
 import { WORKSPACE_CONTEXT_KEY } from "@/shared/lib/workspace-context";
 
@@ -36,8 +37,7 @@ export function WorkspaceSwitcher({ identity, variant = "sidebar" }: { identity:
     try {
       const context = { tenantId: identity.tenantId, workspaceId };
       if (process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE !== "true") {
-        const base = process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/, "") ?? "";
-        const response = await fetch(`${base}/api/v1/me`, { credentials: "include", cache: "no-store", headers: { "x-corvis-tenant": context.tenantId, "x-corvis-workspace": context.workspaceId } });
+        const response = await fetch(apiUrl("/api/v1/me"), { credentials: "include", cache: "no-store", headers: { "x-corvis-tenant": context.tenantId, "x-corvis-workspace": context.workspaceId } });
         if (!response.ok) throw new Error("Workspace access could not be verified. Your current workspace is unchanged.");
         const body = await response.json() as { data?: WorkspaceIdentity };
         if (body.data?.tenantId !== context.tenantId || body.data.workspaceId !== context.workspaceId) throw new Error("The server did not select this workspace.");
