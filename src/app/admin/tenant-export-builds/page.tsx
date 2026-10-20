@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { StatusPill } from "@/shared/ui/status-pill";
 import { displayDate } from "@/shared/lib/display-format";
+import { apiUrl } from "@/shared/lib/api-url";
 import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
 
 /**
@@ -30,11 +31,10 @@ const FILTERS: Array<[Filter, string]> = [["all", "All"], ["failed", "Failed"], 
 function time(value: string): string { return displayDate(value, { timeStyle: "short" }); }
 
 async function load(filter: Filter, cursor: string | null, signal?: AbortSignal): Promise<{ items: Issue[]; nextCursor: string | null }> {
-  const base = process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/, "") ?? "";
   const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (filter !== "all") query.set("status", filter);
   if (cursor) query.set("cursor", cursor);
-  const response = await fetch(`${base}/api/v1/admin/tenant-export-builds?${query}`, { credentials: "include", cache: "no-store", headers: workspaceContextHeaders(), signal });
+  const response = await fetch(apiUrl(`/api/v1/admin/tenant-export-builds?${query}`), { credentials: "include", cache: "no-store", headers: workspaceContextHeaders(), signal });
   const body = await response.json().catch(() => ({})) as { data?: Issue[]; nextCursor?: string | null; error?: string };
   if (!response.ok) throw new Error(body.error === "operations_admin_required" ? "Only Corvis operations can view export builds." : "Export builds are unavailable.");
   return { items: body.data ?? [], nextCursor: body.nextCursor ?? null };

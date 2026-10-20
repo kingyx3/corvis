@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { bulkInviteErrorText, tenantAdminRows } from "@/modules/identity-access/domain/bulk-invite-csv";
 import { throwIfUnauthenticated } from "@/shared/lib/api-errors";
 import { downloadText } from "@/shared/lib/download";
+import { apiUrl } from "@/shared/lib/api-url";
 import { workspaceContextHeaders } from "@/shared/lib/workspace-context";
 import { DataExportApprovalNotice, DataGovernanceSections } from "@/modules/identity-access/ui/access/data-governance-section";
 import { SessionPolicySection } from "@/modules/identity-access/ui/access/session-policy-section";
@@ -25,7 +26,6 @@ const ROLE_GUIDE=[
   ["Corvis Support (break-glass)","Temporary elevated access for authorized Corvis support staff. Always time-limited and fully audited."],
 ];
 
-function apiUrl(path:string){const base=process.env.NEXT_PUBLIC_CORVIS_API_BASE?.replace(/\/$/,"")??"";return `${base}${path}`;}
 async function api<T>(path:string,init:RequestInit={}):Promise<T>{const headers=new Headers(init.headers);for(const [key,value] of Object.entries(workspaceContextHeaders()))headers.set(key,value);const response=await fetch(apiUrl(path),{credentials:"include",cache:"no-store",...init,headers});await throwIfUnauthenticated(response);const body=await response.json().catch(()=>({})) as {data?:T;error?:string};if(!response.ok)throw new Error(body.error??`Request failed (${response.status})`);return body.data as T;}
 function invitationUrl(invitation:Invitation,token:string){const url=new URL("/invite",window.location.origin);url.searchParams.set("tenantId",invitation.tenantId);url.searchParams.set("workspaceId",invitation.workspaceId);url.hash=token;return url.toString();}
 
