@@ -41,6 +41,18 @@ test("publish() is blocked while an unresolved reconciliation exception remains,
   );
 });
 
+test("resolveException() refuses a stale or unknown version/id, then accepts the correct one, then refuses re-resolving it", () => {
+  assert.throws(() => demoCustomerJourneyStore.resolveException("demo-source-authority", 2), /reconciliation_exception_not_found_or_version_conflict/);
+  assert.throws(() => demoCustomerJourneyStore.resolveException("not-a-real-exception", 1), /reconciliation_exception_not_found_or_version_conflict/);
+  assert.ok(
+    demoCustomerJourneyStore.listReconciliationExceptions("seed-snapshot-2", 1).length > 0,
+    "a refused resolveException call must not have resolved the exception",
+  );
+  demoCustomerJourneyStore.resolveException("demo-source-authority", 1);
+  assert.equal(demoCustomerJourneyStore.listReconciliationExceptions("seed-snapshot-2", 1).length, 0);
+  assert.throws(() => demoCustomerJourneyStore.resolveException("demo-source-authority", 1), /reconciliation_exception_not_found_or_version_conflict/);
+});
+
 test("publish({action: 'withdraw'}) sets status to Withdrawn, not back to Review", () => {
   const before = demoCustomerJourneyStore.listSnapshots().find((item) => item.id === "seed-snapshot-4");
   assert.equal(before?.status, "Published", "fixture seed-snapshot-4 must start Published");
