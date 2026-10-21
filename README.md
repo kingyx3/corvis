@@ -132,7 +132,7 @@ Local development uses demo/mock adapters only when explicitly enabled. Producti
 
 ## Current stack
 
-- Next.js 16.3
+- Next.js 16.4
 - React 19.3
 - TypeScript
 
