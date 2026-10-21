@@ -174,7 +174,11 @@ class DemoCustomerJourneyStore {
       publishedHistory: [{ reportPeriod: "Q3 2025", value: { number: 270, currency: "USD", unit: "million" } }, { reportPeriod: "Q4 2025", value: { number: 281, currency: "USD", unit: "million" }, restated: true }, { reportPeriod: "Q1 2026", value: { number: 290, currency: "USD", unit: "million" }, preliminary: true }],
     } }];
   }
-  resolveException(id: string): void { this.resolvedExceptions.add(id); }
+  resolveException(id: string, expectedVersion: number): void {
+    if (id !== "demo-source-authority" || this.resolvedExceptions.has(id)) throw new Error("reconciliation_exception_not_found_or_version_conflict");
+    if (expectedVersion !== 1) throw new Error("reconciliation_exception_not_found_or_version_conflict");
+    this.resolvedExceptions.add(id);
+  }
   sourceEvidence(sourceReferenceId: string): SourceEvidence {
     return this.evidence.get(sourceReferenceId) ?? {
       sourceReferenceId,
