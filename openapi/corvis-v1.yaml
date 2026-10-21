@@ -12,7 +12,16 @@ paths:
     get:
       operationId: getSession
       responses:
-        '200': { description: Authenticated tenant/workspace session }
+        '200':
+          description: Authenticated tenant/workspace session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, correlationId]
+                properties:
+                  data: { $ref: '#/components/schemas/SessionIdentity' }
+                  correlationId: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -718,6 +727,7 @@ paths:
                   data:
                     $ref: '#/components/schemas/WebhookSubscriptionCreated'
                   correlationId: { type: string }
+        '400': { description: 'Invalid endpoint URL or event types (`event_types_required`, `event_type_not_supported`, `endpoint_url_required`, `endpoint_url_invalid`, `endpoint_url_must_be_https`, `endpoint_url_too_long`, or the endpoint resolves to a blocked host)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'The tenant already holds the maximum of 25 non-revoked (active or paused) subscriptions (`webhook_subscription_limit_reached`); revoke one to free capacity', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -744,6 +754,7 @@ paths:
       responses:
         '200': { description: 'Subscription transitioned. revoke is terminal; pause/resume are reversible.' }
         '400': { description: 'Invalid or unrecognized action', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 'Subscription not found (`webhook_subscription_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: "The requested transition is not valid from the subscription's current status", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -791,6 +802,7 @@ paths:
       responses:
         '200': { description: 'Paginated delivery attempts, newest first (state, attempt, status code, last error)' }
         '400': { $ref: '#/components/responses/InvalidCursor' }
+        '404': { description: 'Subscription not found (`webhook_subscription_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -826,7 +838,7 @@ components:
                 properties:
                   error: { enum: [authentication_required, session_ended_by_policy] }
     Forbidden:
-      description: The caller's role lacks the required permission, the resource is outside its entitlements, or a tenant-administrator-only action was attempted.
+      description: The caller's role lacks the required permission, the resource is outside its entitlements, or a tenant-administrator-only action was attempted. Every operation that references this shared response answers with `forbidden`; `apiError()` maps every authorization failure to that one code regardless of which permission was missing.
       content:
         application/json:
           schema:
@@ -834,7 +846,7 @@ components:
               - $ref: '#/components/schemas/ErrorResponse'
               - type: object
                 properties:
-                  error: { type: string, description: 'Usually `forbidden`; `feature_disabled` when a governed feature is off and `tenant_admin_required` for tenant-administrator-only actions.' }
+                  error: { type: string, enum: [forbidden] }
     RateLimited:
       description: The per-tenant, per-subject request budget is exhausted. Retry after the number of seconds in `Retry-After`.
       headers:
@@ -910,6 +922,33 @@ components:
         lastRecoveryAt: { type: string, format: date-time }
         lastRecoveryReasonCode: { type: string }
         lastError: { type: string }
+    SessionIdentity:
+      type: object
+      required: [subject, tenantId, workspaceId, roles, entitlements, tenantAdmin]
+      properties:
+        subject: { type: string }
+        tenantId: { type: string }
+        workspaceId: { type: string }
+        roles:
+          type: array
+          items:
+            type: string
+            enum: ['admin', 'reviewer', 'analyst', 'api_client', 'read_only']
+        tenantDisplayName: { type: string }
+        workspaceDisplayName: { type: string }
+        tenantAdmin: { type: boolean }
+        entitlements:
+          type: object
+          required: [workspaceIds, sourceDocumentAccessAllowed]
+          properties:
+            workspaceIds: { type: array, items: { type: string } }
+            fundIds: { type: array, items: { type: string } }
+            documentIds: { type: array, items: { type: string } }
+            sourceDocumentIds: { type: array, items: { type: string } }
+            sourceDocumentAccessAllowed: { type: boolean }
+            internalAnalyticsAllowed: { type: boolean }
+            modelTrainingAllowed: { type: boolean }
+            redistributionAllowed: { type: boolean }
     WorkspaceCapabilities:
       type: object
       required: [permissions, sourceDocumentAccessAllowed, redistributionAllowed]
