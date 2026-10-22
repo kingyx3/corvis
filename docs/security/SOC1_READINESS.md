@@ -59,7 +59,7 @@ Separation of duties is **not** yet demonstrated end to end. The code enforces t
 - **Correction then approval:** for critical facts, the same person can submit a correction and then be one of the two approvers.
 - **Exception resolution, publication and correction** (stages 7, 9, 11) are each single-actor. One `admin` can resolve exceptions and publish; one tenant administrator can open and resolve a data-correction incident (`resolved_by` is not compared with `opened_by`).
 - **Automated publication** publishes with no human sign-off when review and reconciliation are clean, and writes no audit row; its evidence is `snapshot_publication_event`, `publication_run` and the outbox event.
-- **Audit coverage:** stages with no audit row are connector sync runs, upload and registration, representation through consolidation, automated reconciliation, export creation and download, and individual webhook deliveries. `reconciliation_resolution_event` and `snapshot_publication_event` have no append-only trigger; the runtime role is limited to insert and select.
+- **Audit coverage:** stages with no audit row are connector sync runs, upload and registration, representation through consolidation, automated reconciliation, export creation and download, and individual webhook deliveries.
 - **Not verified here:** how the tenant administrator flag is derived, how the worker identity allowlist is configured, and whether replay re-review needs a human beyond the normal review gate.
 
 Which of these need dual control, an audit row or an append-only guard is a policy decision with the auditor, not a code default; this section exists so that decision is made against the real behaviour.
