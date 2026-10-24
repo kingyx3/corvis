@@ -1,5 +1,5 @@
 import type { DocumentRecord, FundSnapshot, ObservationRecord } from "@/shared/domain/contracts";
-import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication, ReconciliationException } from "@/shared/domain/enterprise";
+import type { ExportManifest, ResearchAnswer, ReviewDecision, SnapshotPublication, ReconciliationException, ReconciliationResolutionCommand } from "@/shared/domain/enterprise";
 import type { SourceEvidence } from "@/shared/domain/workspace";
 import { UnauthenticatedError } from "@/shared/lib/api-errors";
 import { safeGetItem } from "@/shared/lib/safe-storage";
@@ -27,6 +27,8 @@ function checksum(value: unknown): string {
   }
   return (hash >>> 0).toString(16).padStart(8, "0").repeat(8).slice(0, 64);
 }
+
+const DEMO_SOURCE_AUTHORITY_SOURCE_REFERENCE_ID = "11111111-1111-4111-8111-111111111155";
 
 export type DemoModuleName = "documents" | "snapshots" | "observations" | "research" | "delivery" | "upload";
 
@@ -167,16 +169,25 @@ class DemoCustomerJourneyStore {
   listReconciliationExceptions(snapshotId: string, snapshotVersion: number): ReconciliationException[] {
     if (snapshotId !== "seed-snapshot-2" || this.resolvedExceptions.has("demo-source-authority")) return [];
     const document = this.documents.find((d) => d.fund === "Nordic Capital Fund V") ?? this.documents[0];
-    const sourceReferenceId = "11111111-1111-4111-8111-111111111155";
+    const sourceReferenceId = DEMO_SOURCE_AUTHORITY_SOURCE_REFERENCE_ID;
     const evidence = { sourceReferenceId, documentId: document.id, page: 52, excerpt: "Illustrative competing source values for Northstar Health." }; this.evidence.set(sourceReferenceId, evidence);
     return [{ exceptionId: "demo-source-authority", snapshotId, snapshotVersion, fundId: "fund-nordic-v", reportPeriod: "Q2 2026", type: "source_authority", subjectType: "company", subjectId: "company-northstar-health", metricCode: "fair_value", summary: "Northstar Health fair value differs between source reports", materiality: "material", status: "open", version: 1, allowedActions: ["select_source"], sourceReferences: [evidence], createdAt: "2026-09-30T00:00:00Z", context: {
       competingValues: [{ value: { number: 294.5, currency: "USD", unit: "million" }, sourceReferenceId }, { value: { number: 300, currency: "USD", unit: "million" }, sourceReferenceId }],
       publishedHistory: [{ reportPeriod: "Q3 2025", value: { number: 270, currency: "USD", unit: "million" } }, { reportPeriod: "Q4 2025", value: { number: 281, currency: "USD", unit: "million" }, restated: true }, { reportPeriod: "Q1 2026", value: { number: 290, currency: "USD", unit: "million" }, preliminary: true }],
     } }];
   }
-  resolveException(id: string, expectedVersion: number): void {
+  // Mirrors PostgresProductionPlatform.resolveReconciliation: the action must be one of the
+  // exception's own allowedActions (demo-source-authority only allows "select_source"), and a
+  // select_source resolution must name one of the exception's own entitled source references,
+  // same as applyReconciliationResolution's selectingSource check in platform-repositories.ts.
+  resolveException(command: ReconciliationResolutionCommand): void {
+    const { exceptionId: id, expectedVersion, action, selectedSourceReferenceId } = command;
     if (id !== "demo-source-authority" || this.resolvedExceptions.has(id)) throw new Error("reconciliation_exception_not_found_or_version_conflict");
     if (expectedVersion !== 1) throw new Error("reconciliation_exception_not_found_or_version_conflict");
+    if (action !== "select_source") throw new Error("reconciliation_resolution_not_allowed");
+    if (selectedSourceReferenceId !== DEMO_SOURCE_AUTHORITY_SOURCE_REFERENCE_ID) {
+      throw new Error("reconciliation_exception_not_found_or_version_conflict");
+    }
     this.resolvedExceptions.add(id);
   }
   sourceEvidence(sourceReferenceId: string): SourceEvidence {
