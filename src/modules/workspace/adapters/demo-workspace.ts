@@ -234,7 +234,7 @@ export function createDemoWorkspacePort(): WorkspacePort {
     },
     async resolveReconciliation(command) {
       if (secondaryWorkspace()) throw new Error("workspace_read_only");
-      demoCustomerJourneyStore.resolveException(command.exceptionId, command.expectedVersion);
+      demoCustomerJourneyStore.resolveException(command);
       return { accepted: true, resolutionEventId: crypto.randomUUID(), newVersion: command.expectedVersion + 1, status: "resolved" as const };
     },
     async publish(command) {
