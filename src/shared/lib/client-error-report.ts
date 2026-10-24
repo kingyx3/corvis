@@ -1,5 +1,5 @@
 import { workspaceContextHeaders } from "./workspace-context.ts";
-import { apiBase } from "./api-url.ts";
+import { apiUrl } from "./api-url.ts";
 
 /**
  * Structured, PII-free client error events. Only fields that cannot carry user or tenant data are
@@ -68,7 +68,7 @@ function sendClientError(event: ClientErrorEvent): void {
   if (typeof window === "undefined" || typeof fetch !== "function") return;
   if (process.env.NEXT_PUBLIC_CORVIS_DEMO_MODE === "true") return;
   try {
-    void fetch(`${apiBase()}${CLIENT_ERROR_ENDPOINT}`, {
+    void fetch(apiUrl(CLIENT_ERROR_ENDPOINT), {
       method: "POST",
       credentials: "include",
       keepalive: true,
