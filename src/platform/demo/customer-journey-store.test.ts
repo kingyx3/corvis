@@ -41,16 +41,36 @@ test("publish() is blocked while an unresolved reconciliation exception remains,
   );
 });
 
-test("resolveException() refuses a stale or unknown version/id, then accepts the correct one, then refuses re-resolving it", () => {
-  assert.throws(() => demoCustomerJourneyStore.resolveException("demo-source-authority", 2), /reconciliation_exception_not_found_or_version_conflict/);
-  assert.throws(() => demoCustomerJourneyStore.resolveException("not-a-real-exception", 1), /reconciliation_exception_not_found_or_version_conflict/);
+const SELECT_SOURCE_REFERENCE_ID = "11111111-1111-4111-8111-111111111155";
+
+test("resolveException() refuses a stale or unknown version/id, a disallowed action, or an unselected source, then accepts the correct command, then refuses re-resolving it", () => {
+  assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 2, action: "select_source", reasonCode: "x", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID }),
+    /reconciliation_exception_not_found_or_version_conflict/,
+  );
+  assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "not-a-real-exception", expectedVersion: 1, action: "select_source", reasonCode: "x", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID }),
+    /reconciliation_exception_not_found_or_version_conflict/,
+  );
+  assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 1, action: "mark_immaterial", reasonCode: "x" }),
+    /reconciliation_resolution_not_allowed/,
+    "demo-source-authority only allows select_source, mirroring allowedActions() in platform.ts",
+  );
+  assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 1, action: "select_source", reasonCode: "x", selectedSourceReferenceId: "not-an-entitled-source" }),
+    /reconciliation_exception_not_found_or_version_conflict/,
+  );
   assert.ok(
     demoCustomerJourneyStore.listReconciliationExceptions("seed-snapshot-2", 1).length > 0,
     "a refused resolveException call must not have resolved the exception",
   );
-  demoCustomerJourneyStore.resolveException("demo-source-authority", 1);
+  demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 1, action: "select_source", reasonCode: "x", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID });
   assert.equal(demoCustomerJourneyStore.listReconciliationExceptions("seed-snapshot-2", 1).length, 0);
-  assert.throws(() => demoCustomerJourneyStore.resolveException("demo-source-authority", 1), /reconciliation_exception_not_found_or_version_conflict/);
+  assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 1, action: "select_source", reasonCode: "x", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID }),
+    /reconciliation_exception_not_found_or_version_conflict/,
+  );
 });
 
 test("publish({action: 'withdraw'}) sets status to Withdrawn, not back to Review", () => {
