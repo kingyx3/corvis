@@ -428,6 +428,7 @@ jobs:
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/control-evidence-table-append-only.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/candidate-review-event-append-only.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/007-audit-tables-append-only.sql
+          PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/009-entity-lifecycle-observation-correction-append-only.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/pipeline-durability.sql
           PGDATABASE=corvis_migration_smoke psql -X -v ON_ERROR_STOP=1 -f db/postgres/tests/release-clean-artifact-guard.sql
           # Data-issue reports (F5): reporting is inert, the case state machine and its link to the governed correction, immutability, tenant/RLS. Rolled back.
