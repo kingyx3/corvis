@@ -45,6 +45,11 @@ const SELECT_SOURCE_REFERENCE_ID = "11111111-1111-4111-8111-111111111155";
 
 test("resolveException() refuses a stale or unknown version/id, a disallowed action, or an unselected source, then accepts the correct command, then refuses re-resolving it", () => {
   assert.throws(
+    () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 1, action: "select_source", reasonCode: "", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID }),
+    /Resolution reason is required/,
+    "mirrors PostgresProductionPlatform.resolveReconciliation's unconditional reasonCode check",
+  );
+  assert.throws(
     () => demoCustomerJourneyStore.resolveException({ exceptionId: "demo-source-authority", expectedVersion: 2, action: "select_source", reasonCode: "x", selectedSourceReferenceId: SELECT_SOURCE_REFERENCE_ID }),
     /reconciliation_exception_not_found_or_version_conflict/,
   );
