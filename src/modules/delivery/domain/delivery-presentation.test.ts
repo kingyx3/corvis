@@ -36,6 +36,7 @@ test("rowCoverage() prefers scorecard rows, then position-financials rows, then 
 
 test("reviewStateLabel() reports 'Not recorded' for pre-D16 exports and summarizes version range + open exceptions otherwise", () => {
   assert.equal(reviewStateLabel(manifest()), "Not recorded");
+  assert.equal(reviewStateLabel(manifest({ snapshotState: [] })), "Not recorded");
   assert.equal(reviewStateLabel(manifest({ snapshotState: [{ snapshotId: "a", version: 2, openExceptionCount: 0 }] })), "v2 · no open exceptions");
   assert.equal(
     reviewStateLabel(manifest({ snapshotState: [
@@ -44,4 +45,5 @@ test("reviewStateLabel() reports 'Not recorded' for pre-D16 exports and summariz
     ] })),
     "v2–v5 · 3 open exceptions",
   );
+  assert.equal(reviewStateLabel(manifest({ snapshotState: [{ snapshotId: "a", version: 1, openExceptionCount: 1 }] })), "v1 · 1 open exception");
 });
