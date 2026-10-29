@@ -159,7 +159,15 @@ jobs:
 
   e2e:
     name: e2e (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.shards }})
-    runs-on: ubuntu-latest
+    # Pinned to 22.04 (not ubuntu-latest): since ~2026-10-24 every webkit e2e job has failed with
+    # "MiniBrowser: error while loading shared libraries: libicudata.so.74: cannot open shared
+    # object file" even though `playwright install-deps`/`install --with-deps` run on every job.
+    # This points at ubuntu-latest's current base image no longer shipping the exact ICU SONAME
+    # the pinned @playwright/test's webkit build (package.json) was built against. Pinning the
+    # e2e job to the 22.04 LTS image (same libc/ICU generation 1.64.0's webkit targets) is the
+    # minimal fix to try before bumping @playwright/test, which would need a wider revalidation.
+    # If this doesn't clear the failure, revert and bump @playwright/test instead.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     # Balance the slower WebKit tests separately; each runner retains two workers.
     strategy:
