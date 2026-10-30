@@ -99,7 +99,7 @@ export async function apiResponseError(response: Response): Promise<ApiError> {
   const message = body.reasons?.length
     ? `${body.error || "request_failed"}: ${body.reasons.join("; ")}`
     : body.error || `Corvis API request failed (${response.status})`;
-  if (response.status === 401) return sessionExpiredError(body.error, message);
+  if (response.status === 401) return sessionExpiredError(body.error);
   return new ApiError(message, response.status, body.error);
 }
 
