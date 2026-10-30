@@ -1,3 +1,5 @@
+"use client";
+
 import { displayValue as formatValue, displayNumberFormatter, displayDate } from "@/shared/lib/display-format";
 import { formatReceivedTime } from "@/shared/lib/received-time";
 import { usePreferences } from "@/modules/workspace/ui/preferences/preference-provider";
