@@ -1,4 +1,4 @@
--- Acceptance: the four tables guarded by 009_revision_tables_append_only_guards.sql are
+-- Acceptance: the four tables guarded by 010_revision_tables_append_only_guards.sql are
 -- actually append-only (holding_revision, instrument_revision), and all four now have a
 -- tenant-scoped SELECT policy (holding_revision, instrument_revision - newly added here;
 -- tenant_entity_revision, tenant_lifecycle_revision - already had one, re-asserted so a
