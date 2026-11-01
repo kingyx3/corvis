@@ -43,8 +43,8 @@ test("migration contract suite discovers every versioned SQL migration in determ
   assert.deepEqual(files, allSqlFiles, "every SQL file in the Postgres migration directory must use the versioned migration naming contract");
   assert.deepEqual(
     files.map((file) => file.slice(file.lastIndexOf("/") + 1)),
-    ["001_baseline.sql", "002_runtime_database_role.sql", "003_control_evidence_record_no_truncate.sql", "004_session_activity_expiry_revocation.sql", "005_candidate_review_event_append_only.sql", "006_release_clean_artifact_document_guard.sql", "007_audit_tables_append_only.sql", "008_control_evidence_append_only.sql", "010_revision_tables_append_only_guards.sql"],
-    "the migration directory holds exactly the schema baseline, the runtime database role migration the control evidence truncate guard, session expiry preservation, review-event append-only guard, artifact-document guard, the six-table audit append-only guard, the control_evidence append-only guard, and the revision-table append-only + select-policy guards",
+    ["001_baseline.sql", "002_runtime_database_role.sql", "003_control_evidence_record_no_truncate.sql", "004_session_activity_expiry_revocation.sql", "005_candidate_review_event_append_only.sql", "006_release_clean_artifact_document_guard.sql", "007_audit_tables_append_only.sql", "008_control_evidence_append_only.sql", "009_entity_lifecycle_observation_correction_append_only.sql", "010_revision_tables_append_only_guards.sql"],
+    "the migration directory holds exactly the schema baseline, the runtime database role migration the control evidence truncate guard, session expiry preservation, review-event append-only guard, artifact-document guard, the six-table audit append-only guard, the control_evidence append-only guard, the entity_lifecycle_event/observation_correction append-only guard, and the revision-table append-only + select-policy guards",
   );
 
   const numbers = files.map((file) => {
