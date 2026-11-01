@@ -181,7 +181,8 @@ class DemoCustomerJourneyStore {
   // select_source resolution must name one of the exception's own entitled source references,
   // same as applyReconciliationResolution's selectingSource check in platform-repositories.ts.
   resolveException(command: ReconciliationResolutionCommand): void {
-    const { exceptionId: id, expectedVersion, action, selectedSourceReferenceId } = command;
+    const { exceptionId: id, expectedVersion, action, selectedSourceReferenceId, reasonCode } = command;
+    if (!reasonCode) throw new Error("Resolution reason is required");
     if (id !== "demo-source-authority" || this.resolvedExceptions.has(id)) throw new Error("reconciliation_exception_not_found_or_version_conflict");
     if (expectedVersion !== 1) throw new Error("reconciliation_exception_not_found_or_version_conflict");
     if (action !== "select_source") throw new Error("reconciliation_resolution_not_allowed");
