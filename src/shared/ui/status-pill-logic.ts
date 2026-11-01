@@ -1,0 +1,67 @@
+/** JSX-free status-pill tone/slug logic, extracted from status-pill.tsx so it is testable. */
+
+export type StatusPillTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+/** Documented status vocabulary. Unknown server-provided values deliberately fall back to neutral. */
+export const STATUS_PILL_VOCABULARY = {
+  Published: "success",
+  Final: "success",
+  Approved: "success",
+  Complete: "success",
+  Corrected: "success",
+  Completed: "success",
+  Ready: "success",
+  Active: "success",
+  Healthy: "success",
+  Current: "success",
+  Review: "warning",
+  "Needs review": "warning",
+  "Needs attention": "warning",
+  Preliminary: "warning",
+  Pending: "warning",
+  Stale: "warning",
+  Draft: "neutral",
+  Superseded: "neutral",
+  Queued: "neutral",
+  Received: "neutral",
+  "No change": "neutral",
+  Inactive: "neutral",
+  Paused: "neutral",
+  Revoked: "neutral",
+  "Not started": "neutral",
+  Processing: "info",
+  "In progress": "info",
+  Investigating: "info",
+  Updated: "info",
+  Derived: "info",
+  Restated: "info",
+  Normal: "info",
+  Retrying: "info",
+  Blocking: "danger",
+  High: "danger",
+  Failed: "danger",
+  Error: "danger",
+  Rejected: "danger",
+  Unhealthy: "danger",
+  Suspended: "danger",
+  "Needs reauthorization": "danger",
+  Expired: "danger",
+  Withdrawn: "danger",
+} as const satisfies Record<string, StatusPillTone>;
+
+export type KnownStatusPill = keyof typeof STATUS_PILL_VOCABULARY;
+export type StatusPillStatus = KnownStatusPill | (string & Record<never, never>);
+
+export function statusSlug(status: string): string {
+  return status.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unknown";
+}
+
+export function statusPillTone(status: string): StatusPillTone {
+  return Object.prototype.hasOwnProperty.call(STATUS_PILL_VOCABULARY, status)
+    ? STATUS_PILL_VOCABULARY[status as KnownStatusPill]
+    : "neutral";
+}
+
+export function isKnownStatusPill(status: string): boolean {
+  return Object.prototype.hasOwnProperty.call(STATUS_PILL_VOCABULARY, status);
+}
