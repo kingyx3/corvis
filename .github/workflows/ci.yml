@@ -159,7 +159,16 @@ jobs:
 
   e2e:
     name: e2e (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.shards }})
-    runs-on: ubuntu-latest
+    # Pinned to 24.04 (not ubuntu-latest, and not 22.04 - see below): since ~2026-10-24 every
+    # webkit e2e job has failed with "MiniBrowser: error while loading shared libraries:
+    # libicudata.so.74: cannot open shared object file" even though
+    # `playwright install-deps`/`install --with-deps` run on every job. @playwright/test 1.64.0's
+    # pinned webkit build needs ICU 74 specifically. ubuntu-latest has rolled past the LTS release
+    # that ships it, so first try was pinning to 22.04 (jammy) - that still failed identically,
+    # because jammy's default apt repos only carry ICU 70, not 74. 24.04 (noble) is the LTS that
+    # actually ships libicu74 as its default ICU package, so pin to that explicitly instead of
+    # ubuntu-latest (which can roll past it again) or 22.04 (which never had it).
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Balance the slower WebKit tests separately; each runner retains two workers.
     strategy:

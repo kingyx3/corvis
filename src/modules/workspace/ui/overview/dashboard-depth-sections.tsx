@@ -142,7 +142,7 @@ export function DashboardDepthSections({
 
   const toggleCompare = (fundId: string) => setCompareFundIds((current) => current.includes(fundId) ? current.filter((id) => id !== fundId) : [...current, fundId]);
 
-  const digestSection = <section className="panel" aria-labelledby="workspace-digest-heading">
+  const digestSection = <section className="panel" id="customer-overview" aria-labelledby="workspace-digest-heading">
     <div className="panel-heading"><div><p className="eyebrow">Since your last visit</p><h2 id="workspace-digest-heading">What changed</h2></div>{dashboard.digest.since && <span className="muted-time">Since {timeLabel(dashboard.digest.since)}</span>}</div>
     {dashboard.digest.since === null ? <div className="empty-row"><strong>Baseline established</strong><span>This is the first acknowledged visit for this workspace. Future visits will show new publishes, reconciliation changes and published value movements since this point.</span></div>
       : dashboard.digest.items.length === 0 ? <div className="empty-row"><strong>Nothing material changed</strong><span>No new fund-period publications, reconciliation exception changes or published value deltas were recorded since your last visit.</span></div>

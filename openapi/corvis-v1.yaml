@@ -282,6 +282,7 @@ paths:
                 question: { type: string, minLength: 1, maxLength: 4000 }
       responses:
         '200': { description: Semantic and source-grounded answer }
+        '400': { description: 'The question is missing, empty, or exceeds the maximum length (`invalid_question`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -305,6 +306,7 @@ paths:
           description: Newline-delimited JSON stream of progress/result/error events
           content:
             application/x-ndjson: { schema: { type: string } }
+        '400': { description: 'The question is missing, empty, or exceeds the maximum length (`invalid_question`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -337,9 +339,10 @@ paths:
                 askedAt: { type: string, format: date-time }
       responses:
         '201': { description: Saved answer created }
+        '400': { description: 'The request body, answer shape, or timestamp is malformed (`invalid_request`, `invalid_answer`, `invalid_question`, `invalid_timestamp`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '403': { description: 'Missing permission (`forbidden`), or a cited source reference or computed result is outside the caller''s current entitlements (`answer_not_permitted`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'Per-subject saved-answer limit reached', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -354,6 +357,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200': { description: Saved answer removed }
+        '400': { description: 'pinId is not a valid UUID (`invalid_pin_id`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '404': { description: 'No matching saved answer for this caller', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -611,7 +615,7 @@ paths:
         '409': { description: 'The idempotency key was already used for a different upload, or by a different uploader or workspace (`upload_idempotency_mismatch`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '415': { description: 'The file type or media type is not accepted (`unsupported_file_type`, `unsupported_media_type`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403': { description: 'Missing permission or entitlement (`forbidden`), or the request origin is not on this workspace''s allowed list (`upload_origin_not_allowed`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }

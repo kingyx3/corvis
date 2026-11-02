@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatBytes } from "./format.ts";
+import { classifyDocumentFile, formatBytes } from "./format.ts";
 
 test("formatBytes handles zero, byte, kilobyte, megabyte, and capped gigabyte ranges", () => {
   assert.equal(formatBytes(0), "0 B");
@@ -21,6 +21,11 @@ test("formatBytes treats a negative size as 0 instead of producing NaN text", ()
   assert.equal(formatBytes(-1024), "0 B");
 });
 
+test("formatBytes keeps sub-byte sizes in the byte unit instead of indexing before it", () => {
+  assert.equal(formatBytes(0.5), "1 B");
+  assert.equal(formatBytes(0.9), "1 B");
+});
+
 test("formatBytes keeps ordinary sizes unchanged", () => {
   assert.equal(formatBytes(0), "0 B");
   assert.equal(formatBytes(1), "1 B");
@@ -28,4 +33,14 @@ test("formatBytes keeps ordinary sizes unchanged", () => {
   assert.equal(formatBytes(1024), "1 KB");
   assert.equal(formatBytes(1048576), "1.0 MB");
   assert.equal(formatBytes(5 * 1024 ** 2 + 512 * 1024), "5.5 MB");
+});
+
+test("classifyDocumentFile covers every extension upload-modal.tsx accepts", () => {
+  assert.deepEqual(classifyDocumentFile("Fund Report.xlsx"), { tile: "excel", label: "XLS", unit: "sheets" });
+  assert.deepEqual(classifyDocumentFile("fund-report.XLS"), { tile: "excel", label: "XLS", unit: "sheets" });
+  assert.deepEqual(classifyDocumentFile("holdings.csv"), { tile: "excel", label: "XLS", unit: "sheets" });
+  assert.deepEqual(classifyDocumentFile("memo.docx"), { tile: "pdf", label: "DOC", unit: "pages" });
+  assert.deepEqual(classifyDocumentFile("deck.pptx"), { tile: "pdf", label: "PPT", unit: "pages" });
+  assert.deepEqual(classifyDocumentFile("Q2 Report.pdf"), { tile: "pdf", label: "PDF", unit: "pages" });
+  assert.deepEqual(classifyDocumentFile("no-extension"), { tile: "pdf", label: "PDF", unit: "pages" });
 });
