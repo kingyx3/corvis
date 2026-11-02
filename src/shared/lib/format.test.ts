@@ -21,6 +21,11 @@ test("formatBytes treats a negative size as 0 instead of producing NaN text", ()
   assert.equal(formatBytes(-1024), "0 B");
 });
 
+test("formatBytes keeps sub-byte sizes in the byte unit instead of indexing before it", () => {
+  assert.equal(formatBytes(0.5), "1 B");
+  assert.equal(formatBytes(0.9), "1 B");
+});
+
 test("formatBytes keeps ordinary sizes unchanged", () => {
   assert.equal(formatBytes(0), "0 B");
   assert.equal(formatBytes(1), "1 B");
