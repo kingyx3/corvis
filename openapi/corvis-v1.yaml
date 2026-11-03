@@ -732,7 +732,7 @@ paths:
                   data:
                     $ref: '#/components/schemas/WebhookSubscriptionCreated'
                   correlationId: { type: string }
-        '400': { description: 'Invalid endpoint URL or event types (`event_types_required`, `event_type_not_supported`, `endpoint_url_required`, `endpoint_url_invalid`, `endpoint_url_must_be_https`, `endpoint_url_too_long`, or the endpoint resolves to a blocked host)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '400': { description: 'Invalid request body or endpoint URL or event types (`invalid_request`, `event_types_required`, `event_type_not_supported`, `endpoint_url_required`, `endpoint_url_invalid`, `endpoint_url_must_be_https`, `endpoint_url_too_long`, or the endpoint resolves to a blocked host)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'The tenant already holds the maximum of 25 non-revoked (active or paused) subscriptions (`webhook_subscription_limit_reached`); revoke one to free capacity', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
