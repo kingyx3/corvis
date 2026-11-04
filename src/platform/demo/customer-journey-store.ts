@@ -130,6 +130,7 @@ class DemoCustomerJourneyStore {
     const row = this.observations.find((item) => item.id === command.observationId);
     if (!row) throw new Error("Observation not found");
     if ((row.version ?? 1) !== command.expectedVersion) throw new Error("observation_version_conflict");
+    if (!command.reasonCode?.trim()) throw new Error("Reason code is required");
     if (command.decision === "correct") {
       if (!command.correctedValue?.trim()) throw new Error("Corrected value is required");
       row.value = command.correctedValue;
