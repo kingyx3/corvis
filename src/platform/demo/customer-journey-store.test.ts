@@ -19,6 +19,22 @@ test("review(reject) persists state as Rejected, not Needs review", () => {
   assert.equal(after?.state, "Rejected");
 });
 
+test("review() requires a reasonCode, mirroring the production route's validation", () => {
+  const before = demoCustomerJourneyStore.listObservations().find((row) => row.id === "obs-5");
+  assert.ok(before, "fixture obs-5 must exist");
+  assert.throws(
+    () => demoCustomerJourneyStore.review({
+      observationId: "obs-5",
+      decision: "approve",
+      reasonCode: "",
+      expectedVersion: before!.version ?? 1,
+    }),
+    /Reason code is required/,
+  );
+  const after = demoCustomerJourneyStore.listObservations().find((row) => row.id === "obs-5");
+  assert.equal(after?.state, before?.state, "a rejected command must not mutate state");
+});
+
 test("publish() is blocked while an unresolved reconciliation exception remains, even if all observations are approved", () => {
   const scoped = demoCustomerJourneyStore.listObservations().filter((row) => row.snapshotId === "seed-snapshot-2");
   for (const row of scoped) {
