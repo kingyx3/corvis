@@ -20,11 +20,11 @@ export async function GET(request: Request) {
     if (portfolioId) await assertFeatureEnabled(identity,PORTFOLIO_ATTRIBUTION_FLAG,"customer_api");
     const requestedPeriodicity = url.searchParams.get("periodicity") ?? "reported";
     if (!PERIODICITIES.has(requestedPeriodicity as StatementPeriodicity)) {
-      return json({ error: "periodicity must be reported, quarterly or annual", correlationId: id }, { status: 400 });
+      return json({ error: "invalid_periodicity", correlationId: id }, { status: 400 });
     }
     const rawLimit = Number(url.searchParams.get("limit") ?? "5000");
     if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 5000) {
-      return json({ error: "limit must be an integer between 1 and 5000", correlationId: id }, { status: 400 });
+      return json({ error: "invalid_limit", correlationId: id }, { status: 400 });
     }
     const query = {
       portfolioId,
