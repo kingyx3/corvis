@@ -673,6 +673,7 @@ paths:
                 idempotencyKey: { type: string, maxLength: 255 }
       responses:
         '200': { description: Artifact verified and registered/quarantined }
+        '400': { description: 'The idempotency key (body `idempotencyKey` or `Idempotency-Key` header) was not a string or exceeded 256 characters (`invalid_upload_request`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '404': { description: 'Upload not found, belongs to another tenant, or was initiated by a different non-admin identity (`upload_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: 'The idempotency key does not match the session (`upload_idempotency_mismatch`), the upload is not active (`upload_not_active`) the object is incomplete (`upload_incomplete`) or the session was modified concurrently (`upload_conflict`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '410': { description: 'The upload session expired and its bytes were purged (`upload_expired`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
@@ -757,7 +758,7 @@ paths:
                 action: { type: string, enum: [pause, resume, revoke] }
       responses:
         '200': { description: 'Subscription transitioned. revoke is terminal; pause/resume are reversible.' }
-        '400': { description: 'Invalid or unrecognized action', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '400': { description: 'Invalid or unrecognized action, or `resume` was requested on a subscription that was paused with no event types left (`event_types_required`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '404': { description: 'Subscription not found (`webhook_subscription_not_found`)', content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '409': { description: "The requested transition is not valid from the subscription's current status", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -823,7 +824,7 @@ components:
       in: query
       required: false
       schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
-      description: Maximum items per page. Presence of this parameter (or `cursor`) activates pagination.
+      description: Maximum items per page. Presence of this parameter (or `cursor`) activates pagination. A value above 200 is capped to 200 rather than rejected; only a non-positive or non-integer value is rejected with `invalid_limit`.
     cursor:
       name: cursor
       in: query
