@@ -7,49 +7,8 @@ import type { ExportDeliveryStatus, ExportFormat } from "@/modules/delivery/doma
 import type { ExportManifest } from "@/shared/domain/enterprise";
 import { deliveryPort } from "@/composition/delivery-services";
 import { Icon } from "@/shared/ui/icon";
-import type { ScheduledExportMarker } from "@/modules/delivery/domain/export-schedule";
 import { ExportSchedulesPanel } from "@/modules/delivery/ui/export-schedules/export-schedules-panel";
-
-const formats: { value: ExportFormat; label: string; detail: string }[] = [
-  { value: "csv", label: "CSV", detail: "Portable tabular delivery for downstream workflows." },
-  { value: "xlsx", label: "Excel", detail: "Human-friendly workbook delivery for investment and operations teams." },
-  { value: "parquet", label: "Parquet", detail: "Typed analytical delivery for data-platform ingestion." },
-];
-
-type ScopedManifest = ExportManifest & { scopeLabel?: string };
-/** History rows an export schedule requested carry its label and trigger (F4). */
-type ListedExport = ExportDeliveryStatus & { schedule?: ScheduledExportMarker };
-
-function stateLabel(state: string): string {
-  return state.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase());
-}
-
-// Exports created before this field existed have no manifest.source; they were
-// all full-tenant requests from Data delivery itself, so that's the honest default.
-function sourceLabel(source: ExportManifest["source"]): string {
-  return source === "review" ? "Data review" : "Data delivery";
-}
-function scopeLabel(manifest: ExportManifest): string {
-  return (manifest as ScopedManifest).scopeLabel || "All entitled published snapshots";
-}
-function rowCoverage(manifest: ExportManifest): string {
-  const positionRows = manifest.rowCounts.positionFinancials;
-  const scorecardRows = manifest.rowCounts.performanceScorecard;
-  if (scorecardRows != null) return `${scorecardRows} scorecard rows · ${manifest.snapshotIds.length} snapshots`;
-  if (positionRows != null) return `${positionRows} financial rows · ${manifest.snapshotIds.length} snapshots`;
-  return `${manifest.rowCounts.observations ?? 0} observations · ${manifest.snapshotIds.length} snapshots`;
-}
-// Exports created before this field existed (#182 D16) carry no per-snapshot
-// review state; that's a fact about the export, not something to hide.
-function reviewStateLabel(manifest: ExportManifest): string {
-  const state = manifest.snapshotState;
-  if (!state || state.length === 0) return "Not recorded";
-  const openExceptions = state.reduce((sum, entry) => sum + entry.openExceptionCount, 0);
-  const versions = [...new Set(state.map((entry) => entry.version))].sort((a, b) => a - b);
-  const versionLabel = versions.length === 1 ? `v${versions[0]}` : `v${versions[0]}–v${versions[versions.length - 1]}`;
-  const exceptionLabel = openExceptions === 0 ? "no open exceptions" : `${openExceptions} open exception${openExceptions === 1 ? "" : "s"}`;
-  return `${versionLabel} · ${exceptionLabel}`;
-}
+import { DELIVERY_FORMATS as formats, reviewStateLabel, rowCoverage, scopeLabel, sourceLabel, stateLabel, type ListedExport } from "@/modules/delivery/domain/delivery-presentation";
 
 export function DeliveryView({ publishedSnapshots, canViewAllSchedules = false }: { publishedSnapshots: number; canViewAllSchedules?: boolean }) {
   usePreferences();
