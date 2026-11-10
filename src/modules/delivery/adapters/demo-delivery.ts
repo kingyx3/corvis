@@ -3,13 +3,26 @@ import { assertDemoModuleAvailable, demoCustomerJourneyStore } from "@/platform/
 import type { ExportManifest } from "@/shared/domain/enterprise";
 import { buildScorecard, scorecardExportRows, scorecardScopeLabel } from "@/modules/analytics/domain/performance-scorecard";
 import { demoPerformanceScorecard } from "@/modules/analytics/server/performance-scorecard-demo";
+import { workspaceContext } from "@/shared/lib/workspace-context";
+import { safeGetItem } from "@/shared/lib/safe-storage";
 
 const history: import("@/modules/delivery/domain/delivery").ExportDeliveryStatus[] = [];
+
+// Mirrors demo-workspace.ts's capabilities() gating: a read-only demo role or the
+// secondary (read-only) demo workspace reports redistributionAllowed: false, the same
+// signal production's assertRedistributionAllowed(identity) enforces server-side
+// (physical-exports.ts) before building a manifest.
+function redistributionAllowed(): boolean {
+  const role = safeGetItem("session", "corvis:demo:role");
+  const secondary = workspaceContext()?.workspaceId === "demo-secondary";
+  return role !== "read_only" && !secondary;
+}
 
 export function createDemoDeliveryPort(): DeliveryPort {
   return {
     async createExport(format, request?: ExportRequest) {
       assertDemoModuleAvailable("delivery");
+      if (!redistributionAllowed()) throw new Error("redistribution_not_allowed");
       const options = normalizeExportRequest(request);
       if (options.scope && "positionFinancials" in options.scope) throw new Error("Position Financials governed exports require the production delivery pipeline");
       const snapshotId = options.scope && "snapshotId" in options.scope ? options.scope.snapshotId : undefined;
