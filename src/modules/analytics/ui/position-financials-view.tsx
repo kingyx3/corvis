@@ -348,7 +348,7 @@ export function PositionFinancialsView({ canExport = false, canReadSources = fal
     <fieldset className="position-financials-segmented"><legend>Period-over-period change display</legend>{(["value", "percent", "both"] as const).map((value) => <button type="button" key={value} aria-pressed={deltaDisplay === value} className={deltaDisplay === value ? "active" : ""} onClick={() => setDeltaDisplay(value)}>{value === "value" ? "Δ value" : value === "percent" ? "Δ %" : "Δ both"}</button>)}</fieldset>
     <TableDensityToggle value={density} onChange={setDensity} label="Financial table density"/>
     <button type="button" className="secondary-button" aria-expanded={compareOpen} disabled={positions.length < 2} onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Hide comparison" : "Compare positions"}</button>
-    <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>
+    {canExport && <button type="button" className="secondary-button" disabled={!chosen || !selectedRows.length || exportBusy} onClick={() => void requestExport()}>{exportBusy ? "Requesting export…" : "Export this view"}</button>}
     {canExport && <ScheduleExportButton scope={chosen && selectedRows.length ? { positionFinancials: { fundId: chosen.fundId, holdingId: chosen.holdingId, companyId: chosen.companyId, periodicity, ...(selectedPortfolio ? { portfolioId: selectedPortfolio } : {}) } } : null}/>}
     <ReportIssueButton context={positionFinancialsReportContext(chosen, selectedRows)}/>
   </div>;
